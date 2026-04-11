@@ -66,8 +66,7 @@ impl Tool for StructuredOutputTool {
     }
 
     fn description(&self) -> &str {
-        "Return your final response using the required output schema. \
-         Call this tool exactly once at the end to provide the structured result."
+        super::prompt::STRUCTURED_OUTPUT_TOOL_DESCRIPTION
     }
 
     fn input_schema(&self) -> Value {

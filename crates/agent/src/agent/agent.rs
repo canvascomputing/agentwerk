@@ -9,7 +9,7 @@ use crate::tools::ToolRegistry;
 use super::context::InvocationContext;
 use super::output::{AgentOutput, OutputSchema};
 
-/// The single agent interface. Implemented by LlmAgent (via AgentBuilder)
+/// The single agent interface. Implemented by AgentLoop (via AgentBuilder)
 /// and any user-defined agent.
 pub trait Agent: Send + Sync {
     fn name(&self) -> &str;
@@ -22,7 +22,7 @@ pub trait Agent: Send + Sync {
 
 /// An LLM-powered agent. Calls an LLM in a loop, executing tools until done.
 /// Created via `AgentBuilder::build()`.
-pub(crate) struct LlmAgent {
+pub(crate) struct AgentLoop {
     pub(crate) name: String,
     pub(crate) description: String,
     pub(crate) model: String,
@@ -38,7 +38,7 @@ pub(crate) struct LlmAgent {
     pub(crate) sub_agents: Vec<Arc<dyn Agent>>,
 }
 
-impl Agent for LlmAgent {
+impl Agent for AgentLoop {
     fn name(&self) -> &str {
         &self.name
     }
@@ -49,6 +49,6 @@ impl Agent for LlmAgent {
         &self,
         ctx: InvocationContext,
     ) -> Pin<Box<dyn Future<Output = Result<AgentOutput>> + Send + '_>> {
-        Box::pin(async move { self.run_loop(ctx).await })
+        Box::pin(async move { self.execute(ctx).await })
     }
 }

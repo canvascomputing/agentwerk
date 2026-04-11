@@ -1,9 +1,45 @@
+use std::collections::HashMap;
 use std::path::Path;
 
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 
 use crate::error::Result;
 use crate::provider::types::{ContentBlock, Message};
+
+// ---------------------------------------------------------------------------
+// Prompt constants
+// ---------------------------------------------------------------------------
+
+pub(crate) const STRUCTURED_OUTPUT_INSTRUCTION: &str =
+    "\n\nIMPORTANT: You must provide your final response using the StructuredOutput tool \
+     with the required structured format. After using any other tools needed to complete \
+     the task, always call StructuredOutput with your final answer in the specified schema.";
+
+pub(crate) const STRUCTURED_OUTPUT_RETRY: &str =
+    "You MUST call the StructuredOutput tool to complete \
+     this request. Call this tool now with the required schema.";
+
+pub(crate) const STRUCTURED_OUTPUT_TOOL_DESCRIPTION: &str =
+    "Return your final response using the required output schema. \
+     Call this tool exactly once at the end to provide the structured result.";
+
+/// Replace {key} placeholders in a template with values from state.
+pub(crate) fn interpolate(template: &str, state: &HashMap<String, Value>) -> String {
+    let mut result = template.to_string();
+    for (key, value) in state {
+        let replacement = match value {
+            Value::String(s) => s.clone(),
+            other => other.to_string(),
+        };
+        result = result.replace(&format!("{{{key}}}"), &replacement);
+    }
+    result
+}
+
+// ---------------------------------------------------------------------------
+// PromptBuilder
+// ---------------------------------------------------------------------------
 
 /// A named section of the system prompt.
 #[derive(Debug, Clone)]

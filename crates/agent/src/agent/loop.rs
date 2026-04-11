@@ -1,79 +1,108 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
 
 use serde_json::Value;
 
 use crate::error::{AgenticError, Result};
-use crate::provider::types::{ContentBlock, Message, StopReason, Usage};
-use crate::provider::{CompletionRequest, ToolChoice};
-use crate::tools::{ToolCall, ToolContext, execute_tool_calls};
-
 use crate::persistence::session::{EntryType, TranscriptEntry};
+use crate::provider::types::{ContentBlock, Message, ModelResponse, StopReason, Usage};
+use crate::provider::{CompletionRequest, ToolChoice};
+use crate::tools::{ToolCall, ToolContext, ToolRegistry, execute_tool_calls};
 
-use super::agent::LlmAgent;
+use super::agent::AgentLoop;
 use super::context::{InvocationContext, now_millis};
 use super::event::Event;
 use super::output::{AgentOutput, StructuredOutputTool, STRUCTURED_OUTPUT_TOOL_NAME};
+use super::prompt::{self, interpolate};
 use super::queue::QueuePriority;
 
-impl LlmAgent {
-    pub(crate) async fn run_loop(&self, ctx: InvocationContext) -> Result<AgentOutput> {
-        let mut messages: Vec<Message> = Vec::new();
-        let mut total_usage = Usage::default();
-        let mut structured_output: Option<Value> = None;
-        let mut schema_retries: u32 = 0;
-        let mut discovered_tools: HashSet<String> = HashSet::new();
+/// Mutable state carried across turns of the agent loop.
+struct LoopState {
+    messages: Vec<Message>,
+    total_usage: Usage,
+    structured_output: Option<Value>,
+    schema_retries: u32,
+    discovered_tools: HashSet<String>,
+    turn: u32,
+    system_prompt: String,
+    tools: ToolRegistry,
+    tool_choice: Option<ToolChoice>,
+}
 
-        // 1. Interpolate system prompt
+impl AgentLoop {
+    pub(crate) async fn execute(&self, ctx: InvocationContext) -> Result<AgentOutput> {
+        let mut state = self.init_state(&ctx);
+        self.emit(&ctx, Event::AgentStart { agent: self.name.clone() });
+
+        loop {
+            // Guards: cancellation, turn limit, budget
+            self.check_guards(&ctx, &state)?;
+            state.turn += 1;
+            self.emit(&ctx, Event::TurnStart { agent: self.name.clone(), turn: state.turn });
+
+            // LLM call
+            let response = self.call_llm(&ctx, &state).await?;
+            self.record_usage(&ctx, &response, &mut state);
+
+            // Parse response into text and tool calls
+            let (text, tool_calls) = self.parse_response(&ctx, &response);
+            state.messages.push(Message::Assistant { content: response.content.clone() });
+            self.record_transcript(&ctx, EntryType::AssistantMessage, &state, Some(&response));
+
+            // Done? Return or retry structured output
+            if response.stop_reason != StopReason::ToolUse || tool_calls.is_empty() {
+                if let Some(output) = self.try_finish(&ctx, &mut state, text)? {
+                    return Ok(output);
+                }
+                continue;
+            }
+
+            // Execute tools and collect results
+            let results = self.execute_tools(&ctx, &state, &tool_calls).await;
+            self.extract_discoveries(&tool_calls, &results, &mut state);
+
+            // Add tool results to conversation
+            state.messages.push(Message::User { content: results });
+            self.record_transcript(&ctx, EntryType::ToolResult, &state, None);
+            self.drain_command_queue(&ctx, &mut state);
+        }
+    }
+
+    fn init_state(&self, ctx: &InvocationContext) -> LoopState {
+        let mut messages = Vec::new();
         let mut system_prompt = interpolate(&self.system_prompt, &ctx.state);
 
-        // 1b. Append structured output instruction if output_schema is set
         if self.output_schema.is_some() {
-            system_prompt.push_str(
-                "\n\nIMPORTANT: You must provide your final response using the StructuredOutput tool \
-                 with the required structured format. After using any other tools needed to complete \
-                 the task, always call StructuredOutput with your final answer in the specified schema.",
-            );
+            system_prompt.push_str(prompt::STRUCTURED_OUTPUT_INSTRUCTION);
         }
 
-        // 2. Inject context message
         if let Some(ref pb) = self.prompt_builder {
             if let Some(context_msg) = pb.build_context_message() {
                 messages.push(context_msg);
             }
         }
 
-        // 3. Add user message
         messages.push(Message::User {
-            content: vec![ContentBlock::Text {
-                text: ctx.input.clone(),
-            }],
+            content: vec![ContentBlock::Text { text: ctx.input.clone() }],
         });
 
-        // 3b. Record user message in transcript
+        // Record initial user message
         if let Some(ref store) = ctx.session_store {
-            store
-                .lock()
-                .unwrap()
-                .record(TranscriptEntry {
-                    recorded_at: now_millis(),
-                    entry_type: EntryType::UserMessage,
-                    message: messages.last().unwrap().clone(),
-                    usage: None,
-                    model: None,
-                })
-                .ok();
+            store.lock().unwrap().record(TranscriptEntry {
+                recorded_at: now_millis(),
+                entry_type: EntryType::UserMessage,
+                message: messages.last().unwrap().clone(),
+                usage: None,
+                model: None,
+            }).ok();
         }
 
-        // 4. Prepare tools (with structured output tool if needed)
         let (tools, tool_choice) = if let Some(ref schema) = self.output_schema {
             let mut tools = self.tools.clone();
             tools.register(StructuredOutputTool::new(schema.clone()));
             let choice = if self.tools.is_empty() {
-                Some(ToolChoice::Specific {
-                    name: STRUCTURED_OUTPUT_TOOL_NAME.into(),
-                })
+                Some(ToolChoice::Specific { name: STRUCTURED_OUTPUT_TOOL_NAME.into() })
             } else {
                 None
             };
@@ -82,254 +111,217 @@ impl LlmAgent {
             (self.tools.clone(), None)
         };
 
-        (ctx.on_event)(Event::AgentStart {
+        LoopState {
+            messages,
+            total_usage: Usage::default(),
+            structured_output: None,
+            schema_retries: 0,
+            discovered_tools: HashSet::new(),
+            turn: 0,
+            system_prompt,
+            tools,
+            tool_choice,
+        }
+    }
+
+    fn check_guards(&self, ctx: &InvocationContext, state: &LoopState) -> Result<()> {
+        if ctx.cancelled.load(Ordering::Relaxed) {
+            return Err(AgenticError::Aborted);
+        }
+        if let Some(max) = self.max_turns {
+            if state.turn >= max {
+                return Err(AgenticError::MaxTurnsExceeded(max));
+            }
+        }
+        if let Some(limit) = self.max_budget {
+            if ctx.cost_tracker.total_cost_usd() >= limit {
+                return Err(AgenticError::BudgetExceeded {
+                    spent: ctx.cost_tracker.total_cost_usd(),
+                    limit,
+                });
+            }
+        }
+        Ok(())
+    }
+
+    async fn call_llm(&self, ctx: &InvocationContext, state: &LoopState) -> Result<ModelResponse> {
+        let tool_defs = if state.tools.has_deferred_tools() {
+            state.tools.definitions_filtered(&state.discovered_tools)
+        } else {
+            state.tools.definitions()
+        };
+
+        ctx.provider.complete(CompletionRequest {
+            model: self.model.clone(),
+            system_prompt: state.system_prompt.clone(),
+            messages: state.messages.clone(),
+            tools: tool_defs,
+            max_tokens: self.max_tokens,
+            tool_choice: state.tool_choice.clone(),
+        }).await
+    }
+
+    fn record_usage(&self, ctx: &InvocationContext, response: &ModelResponse, state: &mut LoopState) {
+        state.total_usage.add(&response.usage);
+        ctx.cost_tracker.record_usage(&response.model, &response.usage);
+        self.emit(ctx, Event::Usage {
             agent: self.name.clone(),
+            model: response.model.clone(),
+            usage: response.usage.clone(),
         });
-        let mut turn: u32 = 0;
+    }
 
-        loop {
-            // === GUARDS ===
-            if ctx.cancelled.load(Ordering::Relaxed) {
-                return Err(AgenticError::Aborted);
-            }
-            turn += 1;
-            if let Some(max) = self.max_turns {
-                if turn > max {
-                    return Err(AgenticError::MaxTurnsExceeded(max));
+    fn parse_response(&self, ctx: &InvocationContext, response: &ModelResponse) -> (String, Vec<ToolCall>) {
+        let mut text = String::new();
+        let mut tool_calls = Vec::new();
+
+        for block in &response.content {
+            match block {
+                ContentBlock::Text { text: t } => {
+                    text.push_str(t);
+                    self.emit(ctx, Event::Text { agent: self.name.clone(), text: t.clone() });
                 }
-            }
-            if let Some(limit) = self.max_budget {
-                if ctx.cost_tracker.total_cost_usd() >= limit {
-                    return Err(AgenticError::BudgetExceeded {
-                        spent: ctx.cost_tracker.total_cost_usd(),
-                        limit,
+                ContentBlock::ToolUse { id, name, input } => {
+                    tool_calls.push(ToolCall {
+                        id: id.clone(),
+                        name: name.clone(),
+                        input: input.clone(),
                     });
                 }
+                _ => {}
             }
+        }
 
-            (ctx.on_event)(Event::TurnStart {
+        (text, tool_calls)
+    }
+
+    fn try_finish(
+        &self,
+        ctx: &InvocationContext,
+        state: &mut LoopState,
+        text: String,
+    ) -> Result<Option<AgentOutput>> {
+        // Structured output retry
+        if self.output_schema.is_some() && state.structured_output.is_none() {
+            state.schema_retries += 1;
+            if state.schema_retries > self.max_schema_retries {
+                return Err(AgenticError::SchemaRetryExhausted { retries: self.max_schema_retries });
+            }
+            state.messages.push(Message::User {
+                content: vec![ContentBlock::Text { text: prompt::STRUCTURED_OUTPUT_RETRY.into() }],
+            });
+            return Ok(None); // continue loop
+        }
+
+        self.emit(ctx, Event::AgentEnd { agent: self.name.clone(), turns: state.turn });
+        Ok(Some(AgentOutput {
+            content: text,
+            usage: state.total_usage.clone(),
+            structured_output: state.structured_output.take(),
+        }))
+    }
+
+    async fn execute_tools(
+        &self,
+        ctx: &InvocationContext,
+        state: &LoopState,
+        tool_calls: &[ToolCall],
+    ) -> Vec<ContentBlock> {
+        for call in tool_calls {
+            self.emit(ctx, Event::ToolStart {
                 agent: self.name.clone(),
-                turn,
+                tool: call.name.clone(),
+                id: call.id.clone(),
+                input: call.input.clone(),
             });
+            ctx.cost_tracker.record_tool_calls(1);
+        }
 
-            // === LLM CALL ===
-            let response = ctx
-                .provider
-                .complete(CompletionRequest {
-                    model: self.model.clone(),
-                    system_prompt: system_prompt.clone(),
-                    messages: messages.clone(),
-                    tools: if tools.has_deferred_tools() {
-                        tools.definitions_filtered(&discovered_tools)
-                    } else {
-                        tools.definitions()
-                    },
-                    max_tokens: self.max_tokens,
-                    tool_choice: tool_choice.clone(),
-                })
-                .await?;
+        let mut tool_ctx = ToolContext::new(ctx.working_directory.clone())
+            .with_registry(Arc::new(state.tools.clone()));
+        tool_ctx.set_extension(ctx.clone());
+        let results = execute_tool_calls(tool_calls, &state.tools, &tool_ctx).await;
 
-            // === RECORD USAGE ===
-            total_usage.add(&response.usage);
-            ctx.cost_tracker
-                .record_usage(&response.model, &response.usage);
-            (ctx.on_event)(Event::Usage {
-                agent: self.name.clone(),
-                model: response.model.clone(),
-                usage: response.usage.clone(),
-            });
+        for block in &results {
+            if let ContentBlock::ToolResult { tool_use_id, content, is_error } = block {
+                let tool_name = tool_calls
+                    .iter()
+                    .find(|c| c.id == *tool_use_id)
+                    .map(|c| c.name.clone())
+                    .unwrap_or_default();
+                self.emit(ctx, Event::ToolEnd {
+                    agent: self.name.clone(),
+                    tool: tool_name,
+                    id: tool_use_id.clone(),
+                    result: content.clone(),
+                    is_error: *is_error,
+                });
+            }
+        }
 
-            // === PARSE RESPONSE ===
-            let mut text = String::new();
-            let mut tool_calls = Vec::new();
-            for block in &response.content {
-                match block {
-                    ContentBlock::Text { text: t } => {
-                        text.push_str(t);
-                        (ctx.on_event)(Event::Text {
-                            agent: self.name.clone(),
-                            text: t.clone(),
-                        });
+        results
+    }
+
+    fn extract_discoveries(
+        &self,
+        tool_calls: &[ToolCall],
+        results: &[ContentBlock],
+        state: &mut LoopState,
+    ) {
+        for call in tool_calls {
+            if call.name == "tool_search" {
+                for block in results {
+                    if let ContentBlock::ToolResult { tool_use_id, content, is_error: false } = block {
+                        if *tool_use_id == call.id {
+                            extract_discovered_tool_names(content, &mut state.discovered_tools);
+                        }
                     }
-                    ContentBlock::ToolUse { id, name, input } => {
-                        tool_calls.push(ToolCall {
-                            id: id.clone(),
-                            name: name.clone(),
-                            input: input.clone(),
-                        });
-                    }
-                    _ => {}
                 }
             }
-            messages.push(Message::Assistant {
-                content: response.content.clone(),
-            });
-
-            // Record assistant message in transcript
-            if let Some(ref store) = ctx.session_store {
-                store
-                    .lock()
-                    .unwrap()
-                    .record(TranscriptEntry {
-                        recorded_at: now_millis(),
-                        entry_type: EntryType::AssistantMessage,
-                        message: Message::Assistant {
-                            content: response.content.clone(),
-                        },
-                        usage: Some(response.usage.clone()),
-                        model: Some(response.model.clone()),
-                    })
-                    .ok();
+            if call.name == STRUCTURED_OUTPUT_TOOL_NAME {
+                state.structured_output = Some(call.input.clone());
             }
+        }
+    }
 
-            // === STOP CHECK ===
-            if response.stop_reason != StopReason::ToolUse || tool_calls.is_empty() {
-                // Structured output retry enforcement
-                if self.output_schema.is_some() && structured_output.is_none() {
-                    schema_retries += 1;
-                    if schema_retries > self.max_schema_retries {
-                        return Err(AgenticError::SchemaRetryExhausted {
-                            retries: self.max_schema_retries,
-                        });
-                    }
-                    messages.push(Message::User {
-                        content: vec![ContentBlock::Text {
-                            text: "You MUST call the StructuredOutput tool to complete \
-                                   this request. Call this tool now with the required schema."
-                                .to_string(),
-                        }],
-                    });
-                    continue;
-                }
+    fn record_transcript(
+        &self,
+        ctx: &InvocationContext,
+        entry_type: EntryType,
+        state: &LoopState,
+        response: Option<&ModelResponse>,
+    ) {
+        let Some(ref store) = ctx.session_store else { return };
+        let Some(message) = state.messages.last() else { return };
+        store.lock().unwrap().record(TranscriptEntry {
+            recorded_at: now_millis(),
+            entry_type,
+            message: message.clone(),
+            usage: response.map(|r| r.usage.clone()),
+            model: response.map(|r| r.model.clone()),
+        }).ok();
+    }
 
-                (ctx.on_event)(Event::AgentEnd {
-                    agent: self.name.clone(),
-                    turns: turn,
-                });
-                return Ok(AgentOutput {
-                    content: text,
-                    usage: total_usage,
-                    structured_output,
-                });
-            }
-
-            // === EXECUTE TOOLS ===
-            // Emit tool start events
-            for call in &tool_calls {
-                (ctx.on_event)(Event::ToolStart {
-                    agent: self.name.clone(),
-                    tool: call.name.clone(),
-                    id: call.id.clone(),
-                    input: call.input.clone(),
-                });
-                ctx.cost_tracker.record_tool_calls(1);
-            }
-
-            let mut tool_ctx = ToolContext::new(ctx.working_directory.clone())
-                .with_registry(Arc::new(tools.clone()));
-            tool_ctx.set_extension(ctx.clone());
-            let tool_results = execute_tool_calls(&tool_calls, &tools, &tool_ctx).await;
-
-            // Emit tool end events
-            for block in &tool_results {
-                if let ContentBlock::ToolResult {
-                    tool_use_id,
-                    content,
-                    is_error,
-                } = block
-                {
-                    let tool_name = tool_calls
-                        .iter()
-                        .find(|c| c.id == *tool_use_id)
-                        .map(|c| c.name.clone())
-                        .unwrap_or_default();
-                    (ctx.on_event)(Event::ToolEnd {
-                        agent: self.name.clone(),
-                        tool: tool_name,
-                        id: tool_use_id.clone(),
-                        result: content.clone(),
-                        is_error: *is_error,
+    fn drain_command_queue(&self, ctx: &InvocationContext, state: &mut LoopState) {
+        let Some(ref queue) = ctx.command_queue else { return };
+        while let Some(cmd) = queue.dequeue(Some(&ctx.agent_id)) {
+            match cmd.priority {
+                QueuePriority::Now | QueuePriority::Next => {
+                    state.messages.push(Message::User {
+                        content: vec![ContentBlock::Text { text: cmd.content }],
                     });
                 }
-            }
-
-            // Extract discovered tool names from tool_search results
-            for call in &tool_calls {
-                if call.name == "tool_search" {
-                    for block in &tool_results {
-                        if let ContentBlock::ToolResult {
-                            tool_use_id,
-                            content,
-                            is_error: false,
-                        } = block
-                        {
-                            if *tool_use_id == call.id {
-                                extract_discovered_tool_names(content, &mut discovered_tools);
-                            }
-                        }
-                    }
-                }
-            }
-
-            // Extract structured output from StructuredOutput tool
-            for call in &tool_calls {
-                if call.name == STRUCTURED_OUTPUT_TOOL_NAME {
-                    structured_output = Some(call.input.clone());
-                }
-            }
-
-            messages.push(Message::User {
-                content: tool_results,
-            });
-
-            // Record tool results in transcript
-            if let Some(ref store) = ctx.session_store {
-                store
-                    .lock()
-                    .unwrap()
-                    .record(TranscriptEntry {
-                        recorded_at: now_millis(),
-                        entry_type: EntryType::ToolResult,
-                        message: messages.last().unwrap().clone(),
-                        usage: None,
-                        model: None,
-                    })
-                    .ok();
-            }
-
-            // === DRAIN COMMAND QUEUE ===
-            if let Some(ref queue) = ctx.command_queue {
-                while let Some(cmd) = queue.dequeue(Some(&ctx.agent_id)) {
-                    match cmd.priority {
-                        QueuePriority::Now | QueuePriority::Next => {
-                            messages.push(Message::User {
-                                content: vec![ContentBlock::Text {
-                                    text: cmd.content,
-                                }],
-                            });
-                        }
-                        QueuePriority::Later => {
-                            queue.enqueue(cmd);
-                            break;
-                        }
-                    }
+                QueuePriority::Later => {
+                    queue.enqueue(cmd);
+                    break;
                 }
             }
         }
     }
-}
 
-/// Replace {key} placeholders in a template with values from state.
-fn interpolate(template: &str, state: &HashMap<String, Value>) -> String {
-    let mut result = template.to_string();
-    for (key, value) in state {
-        let replacement = match value {
-            Value::String(s) => s.clone(),
-            other => other.to_string(),
-        };
-        result = result.replace(&format!("{{{key}}}"), &replacement);
+    fn emit(&self, ctx: &InvocationContext, event: Event) {
+        (ctx.on_event)(event);
     }
-    result
 }
 
 /// Extract tool names from tool_search result content.
@@ -348,6 +340,7 @@ fn extract_discovered_tool_names(content: &str, discovered: &mut HashSet<String>
 mod tests {
     use super::*;
     use crate::agent::{Agent, AgentBuilder, CommandQueue, CommandSource, QueuedCommand};
+    use crate::agent::prompt::PromptBuilder;
     use crate::error::AgenticError;
     use crate::provider::types::ContentBlock;
     use crate::testutil::*;
@@ -363,7 +356,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn agent_loop_text_response() {
+    async fn simple_text_response() {
         let harness = TestHarness::new(MockProvider::text("Hello, world!"));
         let agent = build_simple_agent();
 
@@ -374,7 +367,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn agent_loop_with_tool_execution() {
+    async fn simple_tool_execution() {
         let provider = MockProvider::tool_then_text(
             "echo_tool",
             serde_json::json!({"text": "ping"}),
@@ -395,75 +388,64 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn agent_guards_table() {
-        // max_turns exceeded
-        {
-            let provider = MockProvider::new(vec![
-                tool_response("t", "c1", serde_json::json!({})),
-                tool_response("t", "c2", serde_json::json!({})),
-                tool_response("t", "c3", serde_json::json!({})),
-            ]);
-            let agent = AgentBuilder::new()
-                .name("test")
-                .model("mock")
-                .system_prompt("")
-                .max_turns(2)
-                .tool(MockTool::new("t", false, "ok"))
-                .build()
-                .unwrap();
-            let harness = TestHarness::new(provider);
-            let err = harness.run_agent(agent.as_ref(), "go").await.unwrap_err();
-            assert!(matches!(err, AgenticError::MaxTurnsExceeded(2)));
-        }
+    async fn guard_max_turns() {
+        let provider = MockProvider::new(vec![
+            tool_response("t", "c1", serde_json::json!({})),
+            tool_response("t", "c2", serde_json::json!({})),
+            tool_response("t", "c3", serde_json::json!({})),
+        ]);
+        let agent = AgentBuilder::new()
+            .name("test").model("mock").system_prompt("")
+            .max_turns(2)
+            .tool(MockTool::new("t", false, "ok"))
+            .build().unwrap();
 
-        // budget exceeded
-        {
-            let provider = MockProvider::new(vec![
-                tool_response("t", "c1", serde_json::json!({})),
-                text_response("done"),
-            ]);
-            let agent = AgentBuilder::new()
-                .name("test")
-                .model("mock")
-                .system_prompt("")
-                .max_budget(0.0)
-                .tool(MockTool::new("t", false, "ok"))
-                .build()
-                .unwrap();
-            let harness = TestHarness::new(provider);
-            let err = harness.run_agent(agent.as_ref(), "go").await.unwrap_err();
-            assert!(matches!(err, AgenticError::BudgetExceeded { .. }));
-        }
+        let harness = TestHarness::new(provider);
+        let err = harness.run_agent(agent.as_ref(), "go").await.unwrap_err();
+        assert!(matches!(err, AgenticError::MaxTurnsExceeded(2)));
+    }
 
-        // cancellation
-        {
-            let provider = MockProvider::new(vec![
-                tool_response("t", "c1", serde_json::json!({})),
-                text_response("done"),
-            ]);
-            let agent = AgentBuilder::new()
-                .name("test")
-                .model("mock")
-                .system_prompt("")
-                .tool(MockTool::new("t", false, "ok"))
-                .build()
-                .unwrap();
-            let harness = TestHarness::new(provider);
-            harness.cancel();
-            let err = harness.run_agent(agent.as_ref(), "go").await.unwrap_err();
-            assert!(matches!(err, AgenticError::Aborted));
-        }
+    #[tokio::test]
+    async fn guard_budget() {
+        let provider = MockProvider::new(vec![
+            tool_response("t", "c1", serde_json::json!({})),
+            text_response("done"),
+        ]);
+        let agent = AgentBuilder::new()
+            .name("test").model("mock").system_prompt("")
+            .max_budget(0.0)
+            .tool(MockTool::new("t", false, "ok"))
+            .build().unwrap();
+
+        let harness = TestHarness::new(provider);
+        let err = harness.run_agent(agent.as_ref(), "go").await.unwrap_err();
+        assert!(matches!(err, AgenticError::BudgetExceeded { .. }));
+    }
+
+    #[tokio::test]
+    async fn guard_cancellation() {
+        let provider = MockProvider::new(vec![
+            tool_response("t", "c1", serde_json::json!({})),
+            text_response("done"),
+        ]);
+        let agent = AgentBuilder::new()
+            .name("test").model("mock").system_prompt("")
+            .tool(MockTool::new("t", false, "ok"))
+            .build().unwrap();
+
+        let harness = TestHarness::new(provider);
+        harness.cancel();
+        let err = harness.run_agent(agent.as_ref(), "go").await.unwrap_err();
+        assert!(matches!(err, AgenticError::Aborted));
     }
 
     #[tokio::test]
     async fn state_interpolation_in_system_prompt() {
         let provider = MockProvider::text("Answer about rust");
         let agent = AgentBuilder::new()
-            .name("test")
-            .model("mock")
+            .name("test").model("mock")
             .system_prompt("You are an expert on {topic}.")
-            .build()
-            .unwrap();
+            .build().unwrap();
 
         let harness = TestHarness::new(provider).with_state("topic", serde_json::json!("rust"));
         harness.run_agent(agent.as_ref(), "Tell me").await.unwrap();
@@ -473,15 +455,12 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn events_emitted_during_agent_run() {
+    async fn events_emitted() {
         let provider = MockProvider::tool_then_text("read", serde_json::json!({}), "Done");
         let agent = AgentBuilder::new()
-            .name("assistant")
-            .model("mock")
-            .system_prompt("")
+            .name("assistant").model("mock").system_prompt("")
             .tool(MockTool::new("read", true, "file contents"))
-            .build()
-            .unwrap();
+            .build().unwrap();
 
         let harness = TestHarness::new(provider);
         harness.run_agent(agent.as_ref(), "read it").await.unwrap();
@@ -494,18 +473,15 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn agent_drains_command_queue() {
+    async fn command_queue_drains_next() {
         let provider = MockProvider::new(vec![
             tool_response("t", "c1", serde_json::json!({})),
             text_response("final"),
         ]);
         let agent = AgentBuilder::new()
-            .name("test")
-            .model("mock")
-            .system_prompt("")
+            .name("test").model("mock").system_prompt("")
             .tool(MockTool::new("t", false, "ok"))
-            .build()
-            .unwrap();
+            .build().unwrap();
 
         let queue = Arc::new(CommandQueue::new());
         queue.enqueue(QueuedCommand {
@@ -522,39 +498,34 @@ mod tests {
 
         let output = agent.run(ctx).await.unwrap();
         assert_eq!(output.content, "final");
+
         let requests = harness.provider().requests.lock().unwrap();
-        let second_req = &requests[1];
-        let has_extra = second_req.messages.iter().any(|m| match m {
+        let has_extra = requests[1].messages.iter().any(|m| match m {
             Message::User { content } => content.iter().any(|b| match b {
                 ContentBlock::Text { text } => text.contains("extra instruction"),
                 _ => false,
             }),
             _ => false,
         });
-        assert!(has_extra, "Extra instruction should be in second request");
+        assert!(has_extra);
     }
 
     #[tokio::test]
-    async fn agent_requeues_later_commands() {
+    async fn command_queue_requeues_later() {
         let provider = MockProvider::new(vec![
             tool_response("t", "c1", serde_json::json!({})),
             text_response("final"),
         ]);
         let agent = AgentBuilder::new()
-            .name("test")
-            .model("mock")
-            .system_prompt("")
+            .name("test").model("mock").system_prompt("")
             .tool(MockTool::new("t", false, "ok"))
-            .build()
-            .unwrap();
+            .build().unwrap();
 
         let queue = Arc::new(CommandQueue::new());
         queue.enqueue(QueuedCommand {
             content: "later task".into(),
             priority: QueuePriority::Later,
-            source: CommandSource::TaskNotification {
-                task_id: "42".into(),
-            },
+            source: CommandSource::TaskNotification { task_id: "42".into() },
             agent_id: Some("test".into()),
         });
 
@@ -571,38 +542,29 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn agent_sends_filtered_definitions_when_deferred() {
+    async fn deferred_tool_filtering() {
         let provider = MockProvider::text("ok");
         let agent = AgentBuilder::new()
-            .name("test")
-            .model("mock")
-            .system_prompt("")
+            .name("test").model("mock").system_prompt("")
             .tool(MockTool::new("always", true, "ok"))
             .tool(DeferredMockTool::new("deferred"))
-            .build()
-            .unwrap();
+            .build().unwrap();
 
         let harness = TestHarness::new(provider);
         harness.run_agent(agent.as_ref(), "go").await.unwrap();
 
         let req = harness.provider().last_request().unwrap();
         let deferred_def = req.tools.iter().find(|t| t.name == "deferred").unwrap();
-        assert!(
-            deferred_def.description.is_empty(),
-            "Deferred tool should have empty description"
-        );
+        assert!(deferred_def.description.is_empty());
     }
 
     #[tokio::test]
-    async fn agent_no_filtering_without_deferred() {
+    async fn no_filtering_without_deferred() {
         let provider = MockProvider::text("ok");
         let agent = AgentBuilder::new()
-            .name("test")
-            .model("mock")
-            .system_prompt("")
+            .name("test").model("mock").system_prompt("")
             .tool(MockTool::new("read", true, "ok"))
-            .build()
-            .unwrap();
+            .build().unwrap();
 
         let harness = TestHarness::new(provider);
         harness.run_agent(agent.as_ref(), "go").await.unwrap();
@@ -615,14 +577,13 @@ mod tests {
     #[test]
     fn extract_discovered_tool_names_parses_headers() {
         let mut discovered = HashSet::new();
-        let content = "## read_file\nReads a file.\n\n## grep\nSearches content.";
-        extract_discovered_tool_names(content, &mut discovered);
+        extract_discovered_tool_names("## read_file\nReads a file.\n\n## grep\nSearches.", &mut discovered);
         assert!(discovered.contains("read_file"));
         assert!(discovered.contains("grep"));
         assert_eq!(discovered.len(), 2);
     }
 
-    // --- Structured output tests ---
+    // --- Structured output ---
 
     #[tokio::test]
     async fn structured_output_extracted() {
@@ -632,23 +593,16 @@ mod tests {
             text_response("done"),
         ]);
         let agent = AgentBuilder::new()
-            .name("classifier")
-            .model("mock")
-            .system_prompt("Classify.")
+            .name("classifier").model("mock").system_prompt("Classify.")
             .output_schema(serde_json::json!({
                 "type": "object",
-                "properties": {
-                    "category": {"type": "string"},
-                    "priority": {"type": "string"}
-                },
+                "properties": { "category": {"type": "string"}, "priority": {"type": "string"} },
                 "required": ["category", "priority"]
             }))
-            .build()
-            .unwrap();
+            .build().unwrap();
 
         let harness = TestHarness::new(provider);
         let output = harness.run_agent(agent.as_ref(), "ticket").await.unwrap();
-        assert!(output.structured_output.is_some());
         let so = output.structured_output.unwrap();
         assert_eq!(so["category"], "billing");
         assert_eq!(so["priority"], "high");
@@ -659,24 +613,17 @@ mod tests {
         let provider = MockProvider::new(vec![
             text_response("thinking..."),
             text_response("still thinking..."),
-            tool_response(
-                STRUCTURED_OUTPUT_TOOL_NAME,
-                "so1",
-                serde_json::json!({"answer": "yes"}),
-            ),
+            tool_response(STRUCTURED_OUTPUT_TOOL_NAME, "so1", serde_json::json!({"answer": "yes"})),
             text_response("done"),
         ]);
         let agent = AgentBuilder::new()
-            .name("test")
-            .model("mock")
-            .system_prompt("")
+            .name("test").model("mock").system_prompt("")
             .output_schema(serde_json::json!({
                 "type": "object",
                 "properties": {"answer": {"type": "string"}},
                 "required": ["answer"]
             }))
-            .build()
-            .unwrap();
+            .build().unwrap();
 
         let harness = TestHarness::new(provider);
         let output = harness.run_agent(agent.as_ref(), "question").await.unwrap();
@@ -693,82 +640,199 @@ mod tests {
             text_response("last nope"),
         ]);
         let agent = AgentBuilder::new()
-            .name("test")
-            .model("mock")
-            .system_prompt("")
+            .name("test").model("mock").system_prompt("")
             .output_schema(serde_json::json!({
                 "type": "object",
                 "properties": {"x": {"type": "string"}},
                 "required": ["x"]
             }))
-            .build()
-            .unwrap();
+            .build().unwrap();
 
         let harness = TestHarness::new(provider);
         let err = harness.run_agent(agent.as_ref(), "go").await.unwrap_err();
-        assert!(matches!(
-            err,
-            AgenticError::SchemaRetryExhausted { retries: 3 }
-        ));
+        assert!(matches!(err, AgenticError::SchemaRetryExhausted { retries: 3 }));
     }
 
     #[test]
     fn validate_value_table() {
         use crate::agent::validate_value;
-
         let schema = serde_json::json!({
             "type": "object",
             "properties": {
-                "name": {"type": "string"},
-                "age": {"type": "integer"},
-                "score": {"type": "number"},
-                "active": {"type": "boolean"},
-                "tags": {
-                    "type": "array",
-                    "items": {"type": "string"}
-                }
+                "name": {"type": "string"}, "age": {"type": "integer"},
+                "score": {"type": "number"}, "active": {"type": "boolean"},
+                "tags": {"type": "array", "items": {"type": "string"}}
             },
             "required": ["name", "age"]
         });
 
-        assert!(validate_value(
-            &serde_json::json!({"name": "Alice", "age": 30, "score": 9.5, "active": true, "tags": ["a", "b"]}),
-            &schema
-        ).is_ok());
+        assert!(validate_value(&serde_json::json!({"name": "Alice", "age": 30, "score": 9.5, "active": true, "tags": ["a", "b"]}), &schema).is_ok());
+        assert!(validate_value(&serde_json::json!({"name": "Bob", "age": 25}), &schema).is_ok());
+        assert!(validate_value(&serde_json::json!({"name": "Carol"}), &schema).is_err());
+        assert!(validate_value(&serde_json::json!({"name": 123, "age": 25}), &schema).is_err());
+        assert!(validate_value(&serde_json::json!({"name": "Dave", "age": "old"}), &schema).is_err());
+        assert!(validate_value(&serde_json::json!({"name": "Eve", "age": 20, "active": "yes"}), &schema).is_err());
+        assert!(validate_value(&serde_json::json!({"name": "Frank", "age": 40, "tags": [1, 2]}), &schema).is_err());
+        assert!(validate_value(&serde_json::json!("not an object"), &schema).is_err());
+    }
 
-        assert!(validate_value(
-            &serde_json::json!({"name": "Bob", "age": 25}),
-            &schema
-        ).is_ok());
+    // --- New test coverage ---
 
-        assert!(validate_value(
-            &serde_json::json!({"name": "Carol"}),
-            &schema
-        ).is_err());
+    #[tokio::test]
+    async fn llm_error_mid_loop() {
+        let provider = MockProvider::new(vec![
+            tool_response("t", "c1", serde_json::json!({})),
+            // Second call will fail — no more responses
+        ]);
+        let agent = AgentBuilder::new()
+            .name("test").model("mock").system_prompt("")
+            .tool(MockTool::new("t", false, "ok"))
+            .build().unwrap();
 
-        assert!(validate_value(
-            &serde_json::json!({"name": 123, "age": 25}),
-            &schema
-        ).is_err());
+        let harness = TestHarness::new(provider);
+        let err = harness.run_agent(agent.as_ref(), "go").await.unwrap_err();
+        assert!(format!("{err}").contains("no more mock responses"));
+    }
 
-        assert!(validate_value(
-            &serde_json::json!({"name": "Dave", "age": "old"}),
-            &schema
-        ).is_err());
+    #[tokio::test]
+    async fn multiple_tool_calls_in_one_response() {
+        let response = ModelResponse {
+            content: vec![
+                ContentBlock::ToolUse { id: "c1".into(), name: "a".into(), input: serde_json::json!({}) },
+                ContentBlock::ToolUse { id: "c2".into(), name: "b".into(), input: serde_json::json!({}) },
+            ],
+            stop_reason: StopReason::ToolUse,
+            usage: Usage::default(),
+            model: "mock".into(),
+        };
+        let provider = MockProvider::new(vec![response, text_response("done")]);
 
-        assert!(validate_value(
-            &serde_json::json!({"name": "Eve", "age": 20, "active": "yes"}),
-            &schema
-        ).is_err());
+        let agent = AgentBuilder::new()
+            .name("test").model("mock").system_prompt("")
+            .tool(MockTool::new("a", true, "result_a"))
+            .tool(MockTool::new("b", true, "result_b"))
+            .build().unwrap();
 
-        assert!(validate_value(
-            &serde_json::json!({"name": "Frank", "age": 40, "tags": [1, 2]}),
-            &schema
-        ).is_err());
+        let harness = TestHarness::new(provider);
+        let output = harness.run_agent(agent.as_ref(), "go").await.unwrap();
+        assert_eq!(output.content, "done");
 
-        assert!(validate_value(
-            &serde_json::json!("not an object"),
-            &schema
-        ).is_err());
+        // Both tools should have produced results in the second request
+        let requests = harness.provider().requests.lock().unwrap();
+        let tool_results: Vec<_> = requests[1].messages.iter()
+            .filter_map(|m| match m {
+                Message::User { content } => Some(content),
+                _ => None,
+            })
+            .flatten()
+            .filter(|b| matches!(b, ContentBlock::ToolResult { .. }))
+            .collect();
+        assert_eq!(tool_results.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn usage_accumulates_across_turns() {
+        use crate::provider::types::ModelResponse;
+
+        let r1 = ModelResponse {
+            content: vec![ContentBlock::ToolUse { id: "c1".into(), name: "t".into(), input: serde_json::json!({}) }],
+            stop_reason: StopReason::ToolUse,
+            usage: Usage { input_tokens: 100, output_tokens: 50, ..Default::default() },
+            model: "mock".into(),
+        };
+        let r2 = ModelResponse {
+            content: vec![ContentBlock::Text { text: "done".into() }],
+            stop_reason: StopReason::EndTurn,
+            usage: Usage { input_tokens: 200, output_tokens: 80, ..Default::default() },
+            model: "mock".into(),
+        };
+        let provider = MockProvider::new(vec![r1, r2]);
+
+        let agent = AgentBuilder::new()
+            .name("test").model("mock").system_prompt("")
+            .tool(MockTool::new("t", false, "ok"))
+            .build().unwrap();
+
+        let harness = TestHarness::new(provider);
+        let output = harness.run_agent(agent.as_ref(), "go").await.unwrap();
+        assert_eq!(output.usage.input_tokens, 300);
+        assert_eq!(output.usage.output_tokens, 130);
+    }
+
+    #[tokio::test]
+    async fn prompt_builder_injects_context() {
+        let provider = MockProvider::text("ok");
+        let mut pb = PromptBuilder::new("Base.".into());
+        pb.user_context("Project context here".into());
+
+        let agent = AgentBuilder::new()
+            .name("test").model("mock").system_prompt("System.")
+            .prompt_builder(pb)
+            .build().unwrap();
+
+        let harness = TestHarness::new(provider);
+        harness.run_agent(agent.as_ref(), "go").await.unwrap();
+
+        let req = harness.provider().last_request().unwrap();
+        // First message should be the context message from PromptBuilder
+        let first_msg = &req.messages[0];
+        match first_msg {
+            Message::User { content } => {
+                let text = match &content[0] {
+                    ContentBlock::Text { text } => text.clone(),
+                    _ => panic!("Expected text"),
+                };
+                assert!(text.contains("Project context here"));
+            }
+            _ => panic!("Expected user message"),
+        }
+    }
+
+    #[tokio::test]
+    async fn forced_tool_choice_with_no_other_tools() {
+        let provider = MockProvider::new(vec![
+            tool_response(STRUCTURED_OUTPUT_TOOL_NAME, "so1", serde_json::json!({"x": "y"})),
+            text_response("done"),
+        ]);
+        let agent = AgentBuilder::new()
+            .name("test").model("mock").system_prompt("")
+            .output_schema(serde_json::json!({
+                "type": "object",
+                "properties": {"x": {"type": "string"}},
+                "required": ["x"]
+            }))
+            .build().unwrap();
+
+        let harness = TestHarness::new(provider);
+        harness.run_agent(agent.as_ref(), "go").await.unwrap();
+
+        let req = harness.provider().requests.lock().unwrap();
+        match &req[0].tool_choice {
+            Some(ToolChoice::Specific { name }) => assert_eq!(name, STRUCTURED_OUTPUT_TOOL_NAME),
+            other => panic!("Expected Specific tool_choice, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn tool_error_continues_loop() {
+        let error_response = ModelResponse {
+            content: vec![ContentBlock::ToolUse {
+                id: "c1".into(), name: "failing".into(), input: serde_json::json!({}),
+            }],
+            stop_reason: StopReason::ToolUse,
+            usage: Usage::default(),
+            model: "mock".into(),
+        };
+        let provider = MockProvider::new(vec![error_response, text_response("recovered")]);
+
+        let agent = AgentBuilder::new()
+            .name("test").model("mock").system_prompt("")
+            .tool(MockTool::new("failing", false, "error: something broke"))
+            .build().unwrap();
+
+        let harness = TestHarness::new(provider);
+        let output = harness.run_agent(agent.as_ref(), "go").await.unwrap();
+        assert_eq!(output.content, "recovered");
+        assert_eq!(harness.provider().request_count(), 2);
     }
 }

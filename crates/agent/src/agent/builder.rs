@@ -6,7 +6,7 @@ use crate::error::{AgenticError, Result};
 use crate::agent::prompt::PromptBuilder;
 use crate::tools::{Tool, ToolRegistry};
 
-use super::agent::{Agent, LlmAgent};
+use super::agent::{Agent, AgentLoop};
 use super::output::OutputSchema;
 
 pub struct AgentBuilder {
@@ -105,7 +105,7 @@ impl AgentBuilder {
             .model
             .ok_or_else(|| AgenticError::Other("AgentBuilder requires a model".into()))?;
 
-        Ok(Arc::new(LlmAgent {
+        Ok(Arc::new(AgentLoop {
             name,
             description: self.description,
             model,
