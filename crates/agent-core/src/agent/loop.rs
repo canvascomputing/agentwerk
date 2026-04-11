@@ -1,424 +1,39 @@
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::{HashMap, HashSet};
 use std::future::Future;
-use std::path::PathBuf;
 use std::pin::Pin;
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::sync::atomic::Ordering;
+use std::sync::Arc;
 
 use serde_json::Value;
 
-use crate::cost::CostTracker;
 use crate::error::{AgenticError, Result};
 use crate::message::{ContentBlock, Message, StopReason, Usage};
 use crate::prompt::PromptBuilder;
-use crate::provider::{CompletionRequest, LlmProvider, ToolChoice};
-use crate::tool::{
-    Tool, ToolCall, ToolContext, ToolRegistry, ToolResult, execute_tool_calls,
+use crate::provider::{CompletionRequest, ToolChoice};
+use crate::tool::{ToolCall, ToolContext, ToolRegistry, execute_tool_calls};
+
+use super::context::{EntryType, InvocationContext, TranscriptEntry, now_millis};
+use super::event::Event;
+use super::output::{
+    AgentOutput, OutputSchema, StructuredOutputTool, STRUCTURED_OUTPUT_TOOL_NAME,
 };
+use super::queue::QueuePriority;
+use super::Agent;
 
-// ---------------------------------------------------------------------------
-// Command Queue
-// ---------------------------------------------------------------------------
-
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
-pub enum QueuePriority {
-    Now = 0,
-    Next = 1,
-    Later = 2,
-}
-
-#[derive(Debug, Clone)]
-pub struct QueuedCommand {
-    pub content: String,
-    pub priority: QueuePriority,
-    pub source: CommandSource,
-    pub agent_id: Option<String>,
-}
-
-#[derive(Debug, Clone)]
-pub enum CommandSource {
-    UserInput,
-    TaskNotification { task_id: String },
-    System,
-}
-
-/// Thread-safe priority queue for commands.
-pub struct CommandQueue {
-    inner: Arc<Mutex<VecDeque<QueuedCommand>>>,
-    notify: Arc<tokio::sync::Notify>,
-}
-
-impl CommandQueue {
-    pub fn new() -> Self {
-        Self {
-            inner: Arc::new(Mutex::new(VecDeque::new())),
-            notify: Arc::new(tokio::sync::Notify::new()),
-        }
-    }
-
-    pub fn enqueue(&self, command: QueuedCommand) {
-        self.inner.lock().unwrap().push_back(command);
-        self.notify.notify_one();
-    }
-
-    pub fn enqueue_notification(&self, task_id: &str, summary: &str) {
-        self.enqueue(QueuedCommand {
-            content: format!("Task {task_id} completed: {summary}"),
-            priority: QueuePriority::Later,
-            source: CommandSource::TaskNotification {
-                task_id: task_id.to_string(),
-            },
-            agent_id: None,
-        });
-    }
-
-    pub fn dequeue(&self, agent_id: Option<&str>) -> Option<QueuedCommand> {
-        let mut queue = self.inner.lock().unwrap();
-        // Find highest priority (lowest ordinal) matching command
-        let mut best_idx = None;
-        let mut best_priority = None;
-
-        for (i, cmd) in queue.iter().enumerate() {
-            let matches = match (&cmd.agent_id, agent_id) {
-                (None, _) => true,
-                (Some(cmd_id), Some(filter_id)) => cmd_id == filter_id,
-                (Some(_), None) => false,
-            };
-            if matches {
-                if best_priority.is_none() || cmd.priority < *best_priority.as_ref().unwrap() {
-                    best_idx = Some(i);
-                    best_priority = Some(cmd.priority.clone());
-                    if cmd.priority == QueuePriority::Now {
-                        break; // Can't do better
-                    }
-                }
-            }
-        }
-
-        best_idx.and_then(|i| queue.remove(i))
-    }
-
-    pub async fn wait_and_dequeue(&self, agent_id: Option<&str>) -> QueuedCommand {
-        loop {
-            if let Some(cmd) = self.dequeue(agent_id) {
-                return cmd;
-            }
-            self.notify.notified().await;
-        }
-    }
-}
-
-// ---------------------------------------------------------------------------
-// Events
-// ---------------------------------------------------------------------------
-
-#[derive(Debug, Clone)]
-pub enum Event {
-    TurnStart { agent: String, turn: u32 },
-    Text { agent: String, text: String },
-    ToolStart { agent: String, tool: String, id: String },
-    ToolEnd { agent: String, tool: String, id: String, result: String, is_error: bool },
-    Usage { agent: String, model: String, usage: Usage },
-    AgentStart { agent: String },
-    AgentEnd { agent: String, turns: u32 },
-    Error { agent: String, error: String },
-}
-
-// ---------------------------------------------------------------------------
-// Agent trait and output
-// ---------------------------------------------------------------------------
-
-#[derive(Debug, Clone)]
-pub struct AgentOutput {
-    pub content: String,
-    pub usage: Usage,
-    pub structured_output: Option<Value>,
-}
-
-impl AgentOutput {
-    pub fn empty(usage: Usage) -> Self {
-        Self {
-            content: String::new(),
-            usage,
-            structured_output: None,
-        }
-    }
-}
-
-pub trait Agent: Send + Sync {
-    fn name(&self) -> &str;
-    fn description(&self) -> &str;
-    fn run(
-        &self,
-        ctx: InvocationContext,
-    ) -> Pin<Box<dyn Future<Output = Result<AgentOutput>> + Send + '_>>;
-}
-
-// ---------------------------------------------------------------------------
-// Session store placeholder
-// ---------------------------------------------------------------------------
-
-/// Placeholder for SessionStore (implemented in persistence increment).
-pub struct SessionStore {
-    _private: (),
-}
-
-impl SessionStore {
-    pub fn new() -> Self {
-        Self { _private: () }
-    }
-
-    pub fn record(&mut self, _entry: TranscriptEntry) -> Result<()> {
-        Ok(())
-    }
-}
-
-pub struct TranscriptEntry {
-    pub recorded_at: u64,
-    pub entry_type: EntryType,
-    pub message: Message,
-    pub usage: Option<Usage>,
-    pub model: Option<String>,
-}
-
-#[derive(Debug, Clone)]
-pub enum EntryType {
-    UserMessage,
-    AssistantMessage,
-    ToolResult,
-}
-
-// ---------------------------------------------------------------------------
-// InvocationContext
-// ---------------------------------------------------------------------------
-
-#[derive(Clone)]
-pub struct InvocationContext {
-    pub input: String,
-    pub state: HashMap<String, Value>,
-    pub working_directory: PathBuf,
-    pub provider: Arc<dyn LlmProvider>,
-    pub cost_tracker: CostTracker,
-    pub on_event: Arc<dyn Fn(Event) + Send + Sync>,
-    pub cancelled: Arc<AtomicBool>,
-    pub session_store: Option<Arc<Mutex<SessionStore>>>,
-    pub command_queue: Option<Arc<CommandQueue>>,
-    pub agent_id: String,
-}
-
-impl InvocationContext {
-    pub fn child(&self, agent_name: &str) -> Self {
-        let mut child = self.clone();
-        child.agent_id = generate_agent_id(agent_name);
-        child
-    }
-
-    pub fn with_input(&self, input: impl Into<String>) -> Self {
-        let mut child = self.clone();
-        child.input = input.into();
-        child
-    }
-}
-
-// ---------------------------------------------------------------------------
-// Structured Output
-// ---------------------------------------------------------------------------
-
-/// A validated JSON Schema for structured output.
-#[derive(Debug, Clone)]
-pub struct OutputSchema {
-    pub schema: Value,
-}
-
-impl OutputSchema {
-    pub fn new(schema: Value) -> Result<Self> {
-        if schema.get("type").and_then(|t| t.as_str()) != Some("object") {
-            return Err(AgenticError::SchemaValidation {
-                path: String::new(),
-                message: "output schema must have \"type\": \"object\"".into(),
-            });
-        }
-        if schema.get("properties").is_none() {
-            return Err(AgenticError::SchemaValidation {
-                path: String::new(),
-                message: "output schema must have \"properties\"".into(),
-            });
-        }
-        Ok(Self { schema })
-    }
-}
-
-const STRUCTURED_OUTPUT_TOOL_NAME: &str = "StructuredOutput";
-
-struct StructuredOutputTool {
-    schema: OutputSchema,
-}
-
-impl StructuredOutputTool {
-    fn new(schema: OutputSchema) -> Self {
-        Self { schema }
-    }
-}
-
-impl Tool for StructuredOutputTool {
-    fn name(&self) -> &str {
-        STRUCTURED_OUTPUT_TOOL_NAME
-    }
-
-    fn description(&self) -> &str {
-        "Return your final response using the required output schema. \
-         Call this tool exactly once at the end to provide the structured result."
-    }
-
-    fn input_schema(&self) -> Value {
-        self.schema.schema.clone()
-    }
-
-    fn is_read_only(&self) -> bool {
-        true
-    }
-
-    fn call<'a>(
-        &'a self,
-        input: Value,
-        _ctx: &'a ToolContext,
-    ) -> Pin<Box<dyn Future<Output = Result<ToolResult>> + Send + 'a>> {
-        Box::pin(async move {
-            validate_value(&input, &self.schema.schema)?;
-            Ok(ToolResult {
-                content: "Structured output accepted.".into(),
-                is_error: false,
-            })
-        })
-    }
-}
-
-/// Validate a JSON value against a JSON Schema object.
-pub fn validate_value(value: &Value, schema: &Value) -> Result<()> {
-    let schema_type = schema.get("type").and_then(|t| t.as_str()).unwrap_or("object");
-
-    match schema_type {
-        "object" => {
-            let obj = value.as_object().ok_or_else(|| AgenticError::SchemaValidation {
-                path: String::new(),
-                message: "expected object".into(),
-            })?;
-            if let Some(required) = schema.get("required").and_then(|r| r.as_array()) {
-                for key in required {
-                    if let Some(key_str) = key.as_str() {
-                        if !obj.contains_key(key_str) {
-                            return Err(AgenticError::SchemaValidation {
-                                path: key_str.into(),
-                                message: "missing required field".into(),
-                            });
-                        }
-                    }
-                }
-            }
-            if let Some(properties) = schema.get("properties").and_then(|p| p.as_object()) {
-                for (key, prop_schema) in properties {
-                    if let Some(prop_value) = obj.get(key) {
-                        validate_value(prop_value, prop_schema).map_err(|e| match e {
-                            AgenticError::SchemaValidation { path, message } => {
-                                AgenticError::SchemaValidation {
-                                    path: if path.is_empty() {
-                                        key.clone()
-                                    } else {
-                                        format!("{key}.{path}")
-                                    },
-                                    message,
-                                }
-                            }
-                            other => other,
-                        })?;
-                    }
-                }
-            }
-            Ok(())
-        }
-        "array" => {
-            let arr = value.as_array().ok_or_else(|| AgenticError::SchemaValidation {
-                path: String::new(),
-                message: "expected array".into(),
-            })?;
-            if let Some(items_schema) = schema.get("items") {
-                for (i, item) in arr.iter().enumerate() {
-                    validate_value(item, items_schema).map_err(|e| match e {
-                        AgenticError::SchemaValidation { path, message } => {
-                            AgenticError::SchemaValidation {
-                                path: format!("[{i}].{path}"),
-                                message,
-                            }
-                        }
-                        other => other,
-                    })?;
-                }
-            }
-            Ok(())
-        }
-        "string" => {
-            if value.is_string() {
-                Ok(())
-            } else {
-                Err(AgenticError::SchemaValidation {
-                    path: String::new(),
-                    message: "expected string".into(),
-                })
-            }
-        }
-        "number" => {
-            if value.is_number() {
-                Ok(())
-            } else {
-                Err(AgenticError::SchemaValidation {
-                    path: String::new(),
-                    message: "expected number".into(),
-                })
-            }
-        }
-        "integer" => {
-            if value.is_i64() || value.is_u64() {
-                Ok(())
-            } else {
-                Err(AgenticError::SchemaValidation {
-                    path: String::new(),
-                    message: "expected integer".into(),
-                })
-            }
-        }
-        "boolean" => {
-            if value.is_boolean() {
-                Ok(())
-            } else {
-                Err(AgenticError::SchemaValidation {
-                    path: String::new(),
-                    message: "expected boolean".into(),
-                })
-            }
-        }
-        _ => Ok(()),
-    }
-}
-
-// ---------------------------------------------------------------------------
-// LlmAgent (internal)
-// ---------------------------------------------------------------------------
-
-struct LlmAgent {
-    name: String,
-    description: String,
-    model: String,
-    system_prompt: String,
-    max_tokens: u32,
-    max_turns: Option<u32>,
-    max_budget: Option<f64>,
-    output_schema: Option<OutputSchema>,
-    max_schema_retries: u32,
-    prompt_builder: Option<PromptBuilder>,
-    tools: ToolRegistry,
+pub(crate) struct LlmAgent {
+    pub(crate) name: String,
+    pub(crate) description: String,
+    pub(crate) model: String,
+    pub(crate) system_prompt: String,
+    pub(crate) max_tokens: u32,
+    pub(crate) max_turns: Option<u32>,
+    pub(crate) max_budget: Option<f64>,
+    pub(crate) output_schema: Option<OutputSchema>,
+    pub(crate) max_schema_retries: u32,
+    pub(crate) prompt_builder: Option<PromptBuilder>,
+    pub(crate) tools: ToolRegistry,
     #[allow(dead_code)]
-    sub_agents: Vec<Arc<dyn Agent>>,
+    pub(crate) sub_agents: Vec<Arc<dyn Agent>>,
 }
 
 impl Agent for LlmAgent {
@@ -737,123 +352,6 @@ impl LlmAgent {
     }
 }
 
-// ---------------------------------------------------------------------------
-// AgentBuilder
-// ---------------------------------------------------------------------------
-
-pub struct AgentBuilder {
-    name: Option<String>,
-    description: String,
-    model: Option<String>,
-    system_prompt: String,
-    max_tokens: u32,
-    max_turns: Option<u32>,
-    max_budget: Option<f64>,
-    output_schema: Option<OutputSchema>,
-    max_schema_retries: u32,
-    prompt_builder: Option<PromptBuilder>,
-    tools: ToolRegistry,
-    sub_agents: Vec<Arc<dyn Agent>>,
-}
-
-impl AgentBuilder {
-    pub fn new() -> Self {
-        Self {
-            name: None,
-            description: String::new(),
-            model: None,
-            system_prompt: String::new(),
-            max_tokens: 4096,
-            max_turns: None,
-            max_budget: None,
-            output_schema: None,
-            max_schema_retries: 3,
-            prompt_builder: None,
-            tools: ToolRegistry::new(),
-            sub_agents: Vec::new(),
-        }
-    }
-
-    pub fn name(mut self, name: impl Into<String>) -> Self {
-        self.name = Some(name.into());
-        self
-    }
-
-    pub fn description(mut self, desc: impl Into<String>) -> Self {
-        self.description = desc.into();
-        self
-    }
-
-    pub fn model(mut self, model: impl Into<String>) -> Self {
-        self.model = Some(model.into());
-        self
-    }
-
-    pub fn system_prompt(mut self, prompt: impl Into<String>) -> Self {
-        self.system_prompt = prompt.into();
-        self
-    }
-
-    pub fn max_tokens(mut self, max: u32) -> Self {
-        self.max_tokens = max;
-        self
-    }
-
-    pub fn max_turns(mut self, max: u32) -> Self {
-        self.max_turns = Some(max);
-        self
-    }
-
-    pub fn max_budget(mut self, budget: f64) -> Self {
-        self.max_budget = Some(budget);
-        self
-    }
-
-    pub fn tool(mut self, tool: impl Tool + 'static) -> Self {
-        self.tools.register(tool);
-        self
-    }
-
-    pub fn output_schema(mut self, schema: Value) -> Self {
-        self.output_schema = Some(OutputSchema::new(schema).expect("invalid output schema"));
-        self
-    }
-
-    pub fn prompt_builder(mut self, pb: PromptBuilder) -> Self {
-        self.prompt_builder = Some(pb);
-        self
-    }
-
-    pub fn sub_agent(mut self, agent: Arc<dyn Agent>) -> Self {
-        self.sub_agents.push(agent);
-        self
-    }
-
-    pub fn build(self) -> Result<Arc<dyn Agent>> {
-        let name = self.name.ok_or_else(|| AgenticError::Other("AgentBuilder requires a name".into()))?;
-        let model = self.model.ok_or_else(|| AgenticError::Other("AgentBuilder requires a model".into()))?;
-
-        Ok(Arc::new(LlmAgent {
-            name,
-            description: self.description,
-            model,
-            system_prompt: self.system_prompt,
-            max_tokens: self.max_tokens,
-            max_turns: self.max_turns,
-            max_budget: self.max_budget,
-            output_schema: self.output_schema,
-            max_schema_retries: self.max_schema_retries,
-            prompt_builder: self.prompt_builder,
-            tools: self.tools,
-            sub_agents: self.sub_agents,
-        }))
-    }
-}
-
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
 /// Replace {key} placeholders in a template with values from state.
 fn interpolate(template: &str, state: &HashMap<String, Value>) -> String {
     let mut result = template.to_string();
@@ -879,28 +377,12 @@ fn extract_discovered_tool_names(content: &str, discovered: &mut HashSet<String>
     }
 }
 
-pub fn generate_agent_id(name: &str) -> String {
-    let nanos = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_nanos();
-    format!("{name}_{nanos}")
-}
-
-fn now_millis() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_millis() as u64
-}
-
-// ---------------------------------------------------------------------------
-// Tests
-// ---------------------------------------------------------------------------
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::agent::{AgentBuilder, CommandQueue, CommandSource, QueuedCommand};
+    use crate::error::AgenticError;
+    use crate::message::ContentBlock;
     use crate::testutil::*;
     use std::sync::Arc;
 
@@ -977,12 +459,11 @@ mod tests {
                 .name("test")
                 .model("mock")
                 .system_prompt("")
-                .max_budget(0.0) // any usage exceeds $0
+                .max_budget(0.0)
                 .tool(MockTool::new("t", false, "ok"))
                 .build()
                 .unwrap();
             let harness = TestHarness::new(provider);
-            // First turn succeeds (budget checked before LLM call), second turn budget check fires
             let err = harness.run_agent(agent.as_ref(), "go").await.unwrap_err();
             assert!(matches!(err, AgenticError::BudgetExceeded { .. }));
         }
@@ -1026,11 +507,7 @@ mod tests {
 
     #[tokio::test]
     async fn events_emitted_during_agent_run() {
-        let provider = MockProvider::tool_then_text(
-            "read",
-            serde_json::json!({}),
-            "Done",
-        );
+        let provider = MockProvider::tool_then_text("read", serde_json::json!({}), "Done");
         let agent = AgentBuilder::new()
             .name("assistant")
             .model("mock")
@@ -1078,7 +555,6 @@ mod tests {
 
         let output = agent.run(ctx).await.unwrap();
         assert_eq!(output.content, "final");
-        // The second request should contain the extra instruction as a user message
         let requests = harness.provider().requests.lock().unwrap();
         let second_req = &requests[1];
         let has_extra = second_req.messages.iter().any(|m| match m {
@@ -1109,7 +585,9 @@ mod tests {
         queue.enqueue(QueuedCommand {
             content: "later task".into(),
             priority: QueuePriority::Later,
-            source: CommandSource::TaskNotification { task_id: "42".into() },
+            source: CommandSource::TaskNotification {
+                task_id: "42".into(),
+            },
             agent_id: Some("test".into()),
         });
 
@@ -1120,7 +598,6 @@ mod tests {
 
         agent.run(ctx).await.unwrap();
 
-        // Later command should still be in the queue
         let cmd = queue.dequeue(Some("test"));
         assert!(cmd.is_some());
         assert_eq!(cmd.unwrap().content, "later task");
@@ -1143,7 +620,10 @@ mod tests {
 
         let req = harness.provider().last_request().unwrap();
         let deferred_def = req.tools.iter().find(|t| t.name == "deferred").unwrap();
-        assert!(deferred_def.description.is_empty(), "Deferred tool should have empty description");
+        assert!(
+            deferred_def.description.is_empty(),
+            "Deferred tool should have empty description"
+        );
     }
 
     #[tokio::test]
@@ -1209,9 +689,6 @@ mod tests {
 
     #[tokio::test]
     async fn structured_output_retry_on_noncompliance() {
-        // First: text-only (no tool call) → retry
-        // Second: text-only → retry
-        // Third: calls StructuredOutput → success
         let provider = MockProvider::new(vec![
             text_response("thinking..."),
             text_response("still thinking..."),
@@ -1237,18 +714,16 @@ mod tests {
         let harness = TestHarness::new(provider);
         let output = harness.run_agent(agent.as_ref(), "question").await.unwrap();
         assert!(output.structured_output.is_some());
-        // 1st text + 2nd text + tool call + done = at least 3 requests
         assert!(harness.provider().request_count() >= 3);
     }
 
     #[tokio::test]
     async fn structured_output_retry_exhausted() {
-        // All text responses, never calls StructuredOutput
         let provider = MockProvider::new(vec![
             text_response("nope"),
             text_response("still nope"),
             text_response("nope again"),
-            text_response("last nope"), // 4th text = exceeds max_schema_retries (3)
+            text_response("last nope"),
         ]);
         let agent = AgentBuilder::new()
             .name("test")
@@ -1264,11 +739,16 @@ mod tests {
 
         let harness = TestHarness::new(provider);
         let err = harness.run_agent(agent.as_ref(), "go").await.unwrap_err();
-        assert!(matches!(err, AgenticError::SchemaRetryExhausted { retries: 3 }));
+        assert!(matches!(
+            err,
+            AgenticError::SchemaRetryExhausted { retries: 3 }
+        ));
     }
 
     #[test]
     fn validate_value_table() {
+        use crate::agent::validate_value;
+
         let schema = serde_json::json!({
             "type": "object",
             "properties": {
@@ -1284,49 +764,41 @@ mod tests {
             "required": ["name", "age"]
         });
 
-        // Valid complete
         assert!(validate_value(
             &serde_json::json!({"name": "Alice", "age": 30, "score": 9.5, "active": true, "tags": ["a", "b"]}),
             &schema
         ).is_ok());
 
-        // Valid minimal (only required)
         assert!(validate_value(
             &serde_json::json!({"name": "Bob", "age": 25}),
             &schema
         ).is_ok());
 
-        // Missing required field
         assert!(validate_value(
             &serde_json::json!({"name": "Carol"}),
             &schema
         ).is_err());
 
-        // Wrong type for string field
         assert!(validate_value(
             &serde_json::json!({"name": 123, "age": 25}),
             &schema
         ).is_err());
 
-        // Wrong type for integer field
         assert!(validate_value(
             &serde_json::json!({"name": "Dave", "age": "old"}),
             &schema
         ).is_err());
 
-        // Wrong type for boolean field
         assert!(validate_value(
             &serde_json::json!({"name": "Eve", "age": 20, "active": "yes"}),
             &schema
         ).is_err());
 
-        // Wrong array item type
         assert!(validate_value(
             &serde_json::json!({"name": "Frank", "age": 40, "tags": [1, 2]}),
             &schema
         ).is_err());
 
-        // Non-object input
         assert!(validate_value(
             &serde_json::json!("not an object"),
             &schema
