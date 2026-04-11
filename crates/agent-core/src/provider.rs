@@ -6,14 +6,7 @@ use serde_json::Value;
 
 use crate::error::Result;
 use crate::message::{ContentBlock, Message, ModelResponse, StopReason, Usage};
-
-/// Temporary stub — replaced by re-export from tool.rs when tools increment lands.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ToolDefinition {
-    pub name: String,
-    pub description: String,
-    pub input_schema: Value,
-}
+use crate::tool::ToolDefinition;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CompletionRequest {
