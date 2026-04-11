@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 
 use crate::error::Result;
-use crate::message::{Message, Usage};
+use crate::provider::types::{Message, Usage};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum EntryType {
@@ -197,7 +197,7 @@ impl SessionStore {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::message::{ContentBlock, Message};
+    use crate::provider::types::{ContentBlock, Message};
     use std::time::{SystemTime, UNIX_EPOCH};
 
     fn make_entry(entry_type: EntryType, text: &str) -> TranscriptEntry {

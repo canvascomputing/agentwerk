@@ -1,7 +1,7 @@
 use std::sync::{Arc, Mutex};
 
-use crate::task::{TaskStatus, TaskStore, TaskUpdate};
-use crate::tool::{Tool, ToolBuilder, ToolResult};
+use crate::persistence::task::{TaskStatus, TaskStore, TaskUpdate};
+use crate::tools::tool::{Tool, ToolBuilder, ToolResult};
 
 /// Create a `task_create` tool that captures the given TaskStore.
 pub fn task_create_tool(store: Arc<Mutex<TaskStore>>) -> impl Tool {
@@ -123,7 +123,7 @@ pub fn task_get_tool(store: Arc<Mutex<TaskStore>>) -> impl Tool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::tool::ToolContext;
+    use crate::tools::tool::ToolContext;
     use std::path::PathBuf;
 
     fn test_ctx() -> ToolContext {

@@ -3,7 +3,7 @@ use std::sync::{Arc, Mutex};
 
 use serde::{Deserialize, Serialize};
 
-use crate::message::Usage;
+use super::types::Usage;
 
 #[derive(Debug, Clone)]
 pub struct ModelCosts {

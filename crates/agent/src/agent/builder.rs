@@ -3,12 +3,11 @@ use std::sync::Arc;
 use serde_json::Value;
 
 use crate::error::{AgenticError, Result};
-use crate::prompt::PromptBuilder;
-use crate::tool::{Tool, ToolRegistry};
+use crate::agent::prompt::PromptBuilder;
+use crate::tools::{Tool, ToolRegistry};
 
-use super::r#loop::LlmAgent;
+use super::agent::{Agent, LlmAgent};
 use super::output::OutputSchema;
-use super::Agent;
 
 pub struct AgentBuilder {
     name: Option<String>,

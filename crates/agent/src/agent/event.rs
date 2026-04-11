@@ -1,4 +1,4 @@
-use crate::message::Usage;
+use crate::provider::types::Usage;
 
 #[derive(Debug, Clone)]
 pub enum Event {

@@ -3,7 +3,7 @@ use std::path::Path;
 use serde::{Deserialize, Serialize};
 
 use crate::error::Result;
-use crate::message::{ContentBlock, Message};
+use crate::provider::types::{ContentBlock, Message};
 
 /// A named section of the system prompt.
 #[derive(Debug, Clone)]

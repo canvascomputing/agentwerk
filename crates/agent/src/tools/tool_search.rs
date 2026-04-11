@@ -4,7 +4,7 @@ use std::pin::Pin;
 use serde_json::Value;
 
 use crate::error::Result;
-use crate::tool::{Tool, ToolContext, ToolResult};
+use crate::tools::tool::{Tool, ToolContext, ToolResult};
 
 /// Tool that searches the tool registry by query string.
 pub struct ToolSearchTool;
@@ -101,7 +101,7 @@ impl Tool for ToolSearchTool {
 mod tests {
     use super::*;
     use crate::testutil::MockTool;
-    use crate::tool::ToolRegistry;
+    use crate::tools::tool::ToolRegistry;
     use std::sync::Arc;
 
     fn registry_with_mock_tools() -> Arc<ToolRegistry> {

@@ -8,16 +8,16 @@
  |___._|___  |_____|__|__|____|
        |_____|                 
                     
-A minimal Rust framework for building agentic applications.
+  A minimal Rust framework for
+  building agentic applications
 ```
 
-**Features**:
-- LLM providers (Anthropic, OpenAI-compatible)
-- Tool execution (file ops, search, shell, custom)
-- Structured output (JSON Schema)
-- Multi-agent orchestration
-- Session and task persistence
-- Cost tracking
+- **Providers:** Anthropic, OpenAI-compatible (LiteLLM)
+- **Tools:** read, write, edit, glob, grep, list, bash, tool search, custom
+- **Output:** structured JSON Schema enforcement
+- **Orchestration:** multi-agent spawning
+- **Persistence:** session transcripts, task store
+- **Tracking:** per-model cost breakdowns
 
 ## Quick Start
 

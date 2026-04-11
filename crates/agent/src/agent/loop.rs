@@ -1,60 +1,24 @@
 use std::collections::{HashMap, HashSet};
-use std::future::Future;
-use std::pin::Pin;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
 
 use serde_json::Value;
 
 use crate::error::{AgenticError, Result};
-use crate::message::{ContentBlock, Message, StopReason, Usage};
-use crate::prompt::PromptBuilder;
+use crate::provider::types::{ContentBlock, Message, StopReason, Usage};
 use crate::provider::{CompletionRequest, ToolChoice};
-use crate::tool::{ToolCall, ToolContext, ToolRegistry, execute_tool_calls};
+use crate::tools::{ToolCall, ToolContext, execute_tool_calls};
 
-use crate::session::{EntryType, TranscriptEntry};
+use crate::persistence::session::{EntryType, TranscriptEntry};
 
+use super::agent::LlmAgent;
 use super::context::{InvocationContext, now_millis};
 use super::event::Event;
-use super::output::{
-    AgentOutput, OutputSchema, StructuredOutputTool, STRUCTURED_OUTPUT_TOOL_NAME,
-};
+use super::output::{AgentOutput, StructuredOutputTool, STRUCTURED_OUTPUT_TOOL_NAME};
 use super::queue::QueuePriority;
-use super::Agent;
-
-pub(crate) struct LlmAgent {
-    pub(crate) name: String,
-    pub(crate) description: String,
-    pub(crate) model: String,
-    pub(crate) system_prompt: String,
-    pub(crate) max_tokens: u32,
-    pub(crate) max_turns: Option<u32>,
-    pub(crate) max_budget: Option<f64>,
-    pub(crate) output_schema: Option<OutputSchema>,
-    pub(crate) max_schema_retries: u32,
-    pub(crate) prompt_builder: Option<PromptBuilder>,
-    pub(crate) tools: ToolRegistry,
-    #[allow(dead_code)]
-    pub(crate) sub_agents: Vec<Arc<dyn Agent>>,
-}
-
-impl Agent for LlmAgent {
-    fn name(&self) -> &str {
-        &self.name
-    }
-    fn description(&self) -> &str {
-        &self.description
-    }
-    fn run(
-        &self,
-        ctx: InvocationContext,
-    ) -> Pin<Box<dyn Future<Output = Result<AgentOutput>> + Send + '_>> {
-        Box::pin(async move { self.run_loop(ctx).await })
-    }
-}
 
 impl LlmAgent {
-    async fn run_loop(&self, ctx: InvocationContext) -> Result<AgentOutput> {
+    pub(crate) async fn run_loop(&self, ctx: InvocationContext) -> Result<AgentOutput> {
         let mut messages: Vec<Message> = Vec::new();
         let mut total_usage = Usage::default();
         let mut structured_output: Option<Value> = None;
@@ -383,9 +347,9 @@ fn extract_discovered_tool_names(content: &str, discovered: &mut HashSet<String>
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::agent::{AgentBuilder, CommandQueue, CommandSource, QueuedCommand};
+    use crate::agent::{Agent, AgentBuilder, CommandQueue, CommandSource, QueuedCommand};
     use crate::error::AgenticError;
-    use crate::message::ContentBlock;
+    use crate::provider::types::ContentBlock;
     use crate::testutil::*;
     use std::sync::Arc;
 

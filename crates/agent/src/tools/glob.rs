@@ -6,7 +6,7 @@ use std::time::SystemTime;
 use serde_json::Value;
 
 use crate::error::Result;
-use crate::tool::{Tool, ToolContext, ToolResult};
+use crate::tools::tool::{Tool, ToolContext, ToolResult};
 
 pub struct GlobTool;
 
@@ -219,7 +219,7 @@ fn seg_match_recursive(pat: &[u8], txt: &[u8]) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::tool::ToolContext;
+    use crate::tools::tool::ToolContext;
     use std::fs;
 
     fn test_ctx(path: &std::path::Path) -> ToolContext {

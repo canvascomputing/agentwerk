@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::error::Result;
-use crate::message::ContentBlock;
+use crate::provider::types::ContentBlock;
 
 // ---------------------------------------------------------------------------
 // Core types

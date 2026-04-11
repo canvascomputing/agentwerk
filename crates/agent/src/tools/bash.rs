@@ -5,7 +5,7 @@ use std::time::Duration;
 use serde_json::Value;
 
 use crate::error::Result;
-use crate::tool::{Tool, ToolContext, ToolResult};
+use crate::tools::tool::{Tool, ToolContext, ToolResult};
 
 /// Shell command execution tool.
 pub struct BashTool;

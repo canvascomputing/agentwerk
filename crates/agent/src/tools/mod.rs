@@ -1,3 +1,4 @@
+pub mod tool;
 mod bash;
 mod edit_file;
 mod glob;
@@ -9,6 +10,13 @@ pub mod task_tools;
 mod tool_search;
 mod write_file;
 
+// Re-export tool infrastructure
+pub use tool::{
+    Tool, ToolBuilder, ToolCall, ToolContext, ToolDefinition, ToolRegistry, ToolResult,
+    ToolSearchResult, Toolset, execute_tool_calls,
+};
+
+// Re-export built-in tools
 pub use bash::BashTool;
 pub use edit_file::EditFileTool;
 pub use glob::GlobTool;
@@ -19,8 +27,6 @@ pub use spawn_agent::SpawnAgentTool;
 pub use task_tools::{task_create_tool, task_get_tool, task_list_tool, task_update_tool};
 pub use tool_search::ToolSearchTool;
 pub use write_file::WriteFileTool;
-
-use crate::tool::{Tool, Toolset};
 
 /// Built-in toolset providing file operations, search, directory listing,
 /// shell execution, and tool discovery.

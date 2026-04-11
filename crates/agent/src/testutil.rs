@@ -7,11 +7,11 @@ use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, Mutex};
 
 use crate::agent::{Agent, AgentOutput, Event, InvocationContext};
-use crate::cost::CostTracker;
+use crate::provider::cost::CostTracker;
 use crate::error::{AgenticError, Result};
-use crate::message::{ContentBlock, ModelResponse, StopReason, Usage};
+use crate::provider::types::{ContentBlock, ModelResponse, StopReason, Usage};
 use crate::provider::{CompletionRequest, LlmProvider};
-use crate::tool::{Tool, ToolContext, ToolResult};
+use crate::tools::{Tool, ToolContext, ToolResult};
 
 /// A mock LLM provider that returns pre-configured responses in order.
 pub struct MockProvider {

@@ -4,7 +4,7 @@ use std::pin::Pin;
 use serde_json::Value;
 
 use crate::error::Result;
-use crate::tool::{Tool, ToolContext, ToolResult};
+use crate::tools::tool::{Tool, ToolContext, ToolResult};
 
 pub struct WriteFileTool;
 

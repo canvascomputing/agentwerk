@@ -5,7 +5,7 @@ use std::pin::Pin;
 use serde_json::Value;
 
 use crate::error::Result;
-use crate::tool::{Tool, ToolContext, ToolResult};
+use crate::tools::tool::{Tool, ToolContext, ToolResult};
 
 pub struct GrepTool;
 
@@ -300,7 +300,7 @@ fn seg_match(pat: &[u8], txt: &[u8]) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::tool::ToolContext;
+    use crate::tools::tool::ToolContext;
     use std::fs;
 
     fn test_ctx(path: &std::path::Path) -> ToolContext {

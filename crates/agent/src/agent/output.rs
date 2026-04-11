@@ -4,8 +4,8 @@ use std::pin::Pin;
 use serde_json::Value;
 
 use crate::error::{AgenticError, Result};
-use crate::message::Usage;
-use crate::tool::{Tool, ToolContext, ToolResult};
+use crate::provider::types::Usage;
+use crate::tools::{Tool, ToolContext, ToolResult};
 
 #[derive(Debug, Clone)]
 pub struct AgentOutput {
