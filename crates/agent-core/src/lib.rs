@@ -7,8 +7,7 @@ pub mod prompt;
 pub mod session;
 pub mod task;
 pub mod agent;
-pub mod spawn;
-pub mod task_tools;
+pub mod tools;
 
 #[cfg(test)]
 pub(crate) mod testutil;
@@ -19,10 +18,17 @@ pub use error::{AgenticError, Result};
 // Messages
 pub use message::{ContentBlock, Message, ModelResponse, StopReason, Usage};
 
-// Tools
+// Tool traits and infrastructure
 pub use tool::{
     Tool, ToolBuilder, ToolCall, ToolContext, ToolDefinition, ToolRegistry, ToolResult,
     ToolSearchResult, Toolset, execute_tool_calls,
+};
+
+// Built-in tools
+pub use tools::{
+    BashTool, BuiltinToolset, EditFileTool, GlobTool, GrepTool, ListDirectoryTool, ReadFileTool,
+    SpawnAgentTool, ToolSearchTool, WriteFileTool,
+    task_create_tool, task_get_tool, task_list_tool, task_update_tool,
 };
 
 // LLM providers
@@ -47,9 +53,3 @@ pub use agent::{
     Agent, AgentBuilder, AgentOutput, CommandQueue, CommandSource, Event, InvocationContext,
     OutputSchema, QueuePriority, QueuedCommand, generate_agent_id, validate_value,
 };
-
-// Orchestration
-pub use spawn::SpawnAgentTool;
-
-// Task tools
-pub use task_tools::{task_create_tool, task_get_tool, task_list_tool, task_update_tool};
