@@ -3,7 +3,7 @@ use std::sync::{Arc, Mutex};
 
 use serde::{Deserialize, Serialize};
 
-use super::types::Usage;
+use super::types::TokenUsage;
 
 #[derive(Debug, Clone)]
 pub struct ModelCosts {
@@ -130,7 +130,7 @@ impl CostTracker {
         inner.pricing.insert(model.to_string(), costs);
     }
 
-    pub fn record_usage(&self, model: &str, usage: &Usage) {
+    pub fn record_usage(&self, model: &str, usage: &TokenUsage) {
         let mut inner = self.inner.lock().unwrap();
 
         let cost = if let Some(pricing) = inner.pricing.get(model) {
@@ -223,7 +223,7 @@ mod tests {
     #[test]
     fn record_usage_accumulates() {
         let tracker = CostTracker::new();
-        let usage = Usage {
+        let usage = TokenUsage {
             input_tokens: 1000,
             output_tokens: 500,
             cache_read_input_tokens: 0,
@@ -244,7 +244,7 @@ mod tests {
         let tracker = CostTracker::new();
         tracker.record_usage(
             "claude-sonnet-4-20250514",
-            &Usage {
+            &TokenUsage {
                 input_tokens: 100,
                 output_tokens: 50,
                 ..Default::default()
@@ -252,7 +252,7 @@ mod tests {
         );
         tracker.record_usage(
             "claude-opus-4-20250514",
-            &Usage {
+            &TokenUsage {
                 input_tokens: 200,
                 output_tokens: 100,
                 ..Default::default()
@@ -279,7 +279,7 @@ mod tests {
         );
         tracker.record_usage(
             "custom-model",
-            &Usage {
+            &TokenUsage {
                 input_tokens: 1_000_000,
                 output_tokens: 0,
                 ..Default::default()
@@ -302,7 +302,7 @@ mod tests {
         let tracker = CostTracker::new();
         tracker.record_usage(
             "claude-sonnet-4-20250514",
-            &Usage {
+            &TokenUsage {
                 input_tokens: 100,
                 output_tokens: 50,
                 ..Default::default()
@@ -323,7 +323,7 @@ mod tests {
                 for _ in 0..100 {
                     t.record_usage(
                         "claude-sonnet-4-20250514",
-                        &Usage {
+                        &TokenUsage {
                             input_tokens: 1,
                             output_tokens: 1,
                             ..Default::default()

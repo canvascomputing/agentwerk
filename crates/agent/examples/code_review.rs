@@ -340,10 +340,10 @@ async fn main() {
 
     match agent.run(ctx).await {
         Ok(output) => {
-            let json = if let Some(structured) = output.structured_output {
+            let json = if let Some(structured) = output.response {
                 serde_json::to_string_pretty(&structured).unwrap()
             } else {
-                serde_json::to_string_pretty(&serde_json::json!({"summary": output.content})).unwrap()
+                serde_json::to_string_pretty(&serde_json::json!({"summary": output.response_raw})).unwrap()
             };
             std::fs::write(&config.output, &json).expect("Failed to write output file");
             eprintln!("\nReview written to {}\n", config.output);

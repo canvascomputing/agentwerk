@@ -6,7 +6,7 @@ use serde_json::Value;
 
 use crate::error::{AgenticError, Result};
 use crate::persistence::session::{EntryType, TranscriptEntry};
-use crate::provider::types::{ContentBlock, Message, ModelResponse, StopReason, Usage};
+use crate::provider::types::{ContentBlock, Message, ModelResponse, StopReason, TokenUsage};
 use crate::provider::{CompletionRequest, ToolChoice};
 use crate::tools::{ToolCall, ToolContext, ToolRegistry, execute_tool_calls};
 
@@ -20,7 +20,7 @@ use super::queue::QueuePriority;
 /// Mutable state carried across turns of the agent loop.
 struct LoopState {
     messages: Vec<Message>,
-    total_usage: Usage,
+    total_usage: TokenUsage,
     structured_output: Option<Value>,
     schema_retries: u32,
     discovered_tools: HashSet<String>,
@@ -115,7 +115,7 @@ impl AgentLoop {
 
         LoopState {
             messages,
-            total_usage: Usage::default(),
+            total_usage: TokenUsage::default(),
             structured_output: None,
             schema_retries: 0,
             discovered_tools: HashSet::new(),
@@ -218,9 +218,9 @@ impl AgentLoop {
         self.emit(ctx, Event::TurnEnd { agent_name: self.name.clone(), turn: state.turn });
         self.emit(ctx, Event::AgentEnd { agent_name: self.name.clone(), turns: state.turn });
         Ok(Some(AgentOutput {
-            content: text,
-            usage: state.total_usage.clone(),
-            structured_output: state.structured_output.take(),
+            response: state.structured_output.take(),
+            response_raw: text,
+            token_usage: state.total_usage.clone(),
         }))
     }
 
@@ -364,8 +364,8 @@ mod tests {
         let agent = build_simple_agent();
 
         let output = harness.run_agent(agent.as_ref(), "Hi").await.unwrap();
-        assert_eq!(output.content, "Hello, world!");
-        assert!(output.structured_output.is_none());
+        assert_eq!(output.response_raw, "Hello, world!");
+        assert!(output.response.is_none());
         assert_eq!(harness.provider().request_count(), 1);
     }
 
@@ -386,7 +386,7 @@ mod tests {
 
         let harness = TestHarness::new(provider);
         let output = harness.run_agent(agent.as_ref(), "Echo test").await.unwrap();
-        assert_eq!(output.content, "Done!");
+        assert_eq!(output.response_raw, "Done!");
         assert_eq!(harness.provider().request_count(), 2);
     }
 
@@ -500,7 +500,7 @@ mod tests {
         ctx.agent_id = "test".into();
 
         let output = agent.run(ctx).await.unwrap();
-        assert_eq!(output.content, "final");
+        assert_eq!(output.response_raw, "final");
 
         let requests = harness.provider().requests.lock().unwrap();
         let has_extra = requests[1].messages.iter().any(|m| match m {
@@ -606,7 +606,7 @@ mod tests {
 
         let harness = TestHarness::new(provider);
         let output = harness.run_agent(agent.as_ref(), "ticket").await.unwrap();
-        let so = output.structured_output.unwrap();
+        let so = output.response.unwrap();
         assert_eq!(so["category"], "billing");
         assert_eq!(so["priority"], "high");
     }
@@ -630,7 +630,7 @@ mod tests {
 
         let harness = TestHarness::new(provider);
         let output = harness.run_agent(agent.as_ref(), "question").await.unwrap();
-        assert!(output.structured_output.is_some());
+        assert!(output.response.is_some());
         assert!(harness.provider().request_count() >= 3);
     }
 
@@ -705,7 +705,7 @@ mod tests {
                 ContentBlock::ToolUse { id: "c2".into(), name: "b".into(), input: serde_json::json!({}) },
             ],
             stop_reason: StopReason::ToolUse,
-            usage: Usage::default(),
+            usage: TokenUsage::default(),
             model: "mock".into(),
         };
         let provider = MockProvider::new(vec![response, text_response("done")]);
@@ -718,7 +718,7 @@ mod tests {
 
         let harness = TestHarness::new(provider);
         let output = harness.run_agent(agent.as_ref(), "go").await.unwrap();
-        assert_eq!(output.content, "done");
+        assert_eq!(output.response_raw, "done");
 
         // Both tools should have produced results in the second request
         let requests = harness.provider().requests.lock().unwrap();
@@ -740,13 +740,13 @@ mod tests {
         let r1 = ModelResponse {
             content: vec![ContentBlock::ToolUse { id: "c1".into(), name: "t".into(), input: serde_json::json!({}) }],
             stop_reason: StopReason::ToolUse,
-            usage: Usage { input_tokens: 100, output_tokens: 50, ..Default::default() },
+            usage: TokenUsage { input_tokens: 100, output_tokens: 50, ..Default::default() },
             model: "mock".into(),
         };
         let r2 = ModelResponse {
             content: vec![ContentBlock::Text { text: "done".into() }],
             stop_reason: StopReason::EndTurn,
-            usage: Usage { input_tokens: 200, output_tokens: 80, ..Default::default() },
+            usage: TokenUsage { input_tokens: 200, output_tokens: 80, ..Default::default() },
             model: "mock".into(),
         };
         let provider = MockProvider::new(vec![r1, r2]);
@@ -758,8 +758,8 @@ mod tests {
 
         let harness = TestHarness::new(provider);
         let output = harness.run_agent(agent.as_ref(), "go").await.unwrap();
-        assert_eq!(output.usage.input_tokens, 300);
-        assert_eq!(output.usage.output_tokens, 130);
+        assert_eq!(output.token_usage.input_tokens, 300);
+        assert_eq!(output.token_usage.output_tokens, 130);
     }
 
     #[tokio::test]
@@ -823,7 +823,7 @@ mod tests {
                 id: "c1".into(), name: "failing".into(), input: serde_json::json!({}),
             }],
             stop_reason: StopReason::ToolUse,
-            usage: Usage::default(),
+            usage: TokenUsage::default(),
             model: "mock".into(),
         };
         let provider = MockProvider::new(vec![error_response, text_response("recovered")]);
@@ -835,7 +835,7 @@ mod tests {
 
         let harness = TestHarness::new(provider);
         let output = harness.run_agent(agent.as_ref(), "go").await.unwrap();
-        assert_eq!(output.content, "recovered");
+        assert_eq!(output.response_raw, "recovered");
         assert_eq!(harness.provider().request_count(), 2);
     }
 }

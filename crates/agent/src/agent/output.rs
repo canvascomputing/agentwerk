@@ -4,22 +4,22 @@ use std::pin::Pin;
 use serde_json::Value;
 
 use crate::error::{AgenticError, Result};
-use crate::provider::types::Usage;
+use crate::provider::types::TokenUsage;
 use crate::tools::{Tool, ToolContext, ToolResult};
 
 #[derive(Debug, Clone)]
 pub struct AgentOutput {
-    pub content: String,
-    pub usage: Usage,
-    pub structured_output: Option<Value>,
+    pub response: Option<Value>,
+    pub response_raw: String,
+    pub token_usage: TokenUsage,
 }
 
 impl AgentOutput {
-    pub fn empty(usage: Usage) -> Self {
+    pub fn empty(token_usage: TokenUsage) -> Self {
         Self {
-            content: String::new(),
-            usage,
-            structured_output: None,
+            response: None,
+            response_raw: String::new(),
+            token_usage,
         }
     }
 }

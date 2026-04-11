@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 
 use crate::error::Result;
-use crate::provider::types::{Message, Usage};
+use crate::provider::types::{Message, TokenUsage};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum EntryType {
@@ -19,7 +19,7 @@ pub struct TranscriptEntry {
     pub recorded_at: u64,
     pub entry_type: EntryType,
     pub message: Message,
-    pub usage: Option<Usage>,
+    pub usage: Option<TokenUsage>,
     pub model: Option<String>,
 }
 
@@ -212,7 +212,7 @@ mod tests {
                     text: text.to_string(),
                 }],
             },
-            usage: Some(Usage {
+            usage: Some(TokenUsage {
                 input_tokens: 100,
                 output_tokens: 50,
                 ..Default::default()

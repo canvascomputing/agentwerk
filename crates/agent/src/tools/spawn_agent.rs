@@ -7,7 +7,7 @@ use serde_json::Value;
 
 use crate::agent::{Agent, AgentBuilder, AgentOutput, InvocationContext};
 use crate::error::{AgenticError, Result};
-use crate::provider::types::Usage;
+use crate::provider::types::TokenUsage;
 use crate::tools::tool::{Tool, ToolContext, ToolResult};
 
 #[derive(Deserialize)]
@@ -79,18 +79,18 @@ impl SpawnAgentTool {
                 let result = agent.run(child_ctx).await;
                 if let Some(q) = queue {
                     match result {
-                        Ok(output) => q.enqueue_notification(&agent_id, &output.content),
+                        Ok(output) => q.enqueue_notification(&agent_id, &output.response_raw),
                         Err(e) => q.enqueue_notification(&agent_id, &format!("Failed: {e}")),
                     }
                 }
             });
 
             Ok(AgentOutput {
-                content: format!(
+                response_raw: format!(
                     "Background agent '{}' started (id: {agent_id_for_msg})",
                     description
                 ),
-                ..AgentOutput::empty(Usage::default())
+                ..AgentOutput::empty(TokenUsage::default())
             })
         } else {
             agent.run(child_ctx).await
@@ -162,7 +162,7 @@ impl Tool for SpawnAgentTool {
 
             match self.execute(spawn_input, invocation_ctx).await {
                 Ok(output) => Ok(ToolResult {
-                    content: output.content,
+                    content: output.response_raw,
                     is_error: false,
                 }),
                 Err(e) => Ok(ToolResult {
@@ -208,7 +208,7 @@ mod tests {
         ]));
 
         let output = harness.run_agent(agent.as_ref(), "Do research").await.unwrap();
-        assert_eq!(output.content, "Summary: research findings");
+        assert_eq!(output.response_raw, "Summary: research findings");
     }
 
     #[tokio::test]
@@ -252,7 +252,7 @@ mod tests {
 
         let output = agent.run(ctx).await.unwrap();
         // Parent got one of the text responses
-        assert!(!output.content.is_empty());
+        assert!(!output.response_raw.is_empty());
 
         // Wait for background task
         tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
@@ -308,7 +308,7 @@ mod tests {
         ctx.provider = provider;
 
         let output = agent.run(ctx).await.unwrap();
-        assert_eq!(output.content, "Got specialized result");
+        assert_eq!(output.response_raw, "Got specialized result");
     }
 
     #[tokio::test]
@@ -342,6 +342,6 @@ mod tests {
         ctx.provider = provider;
 
         let output = agent.run(ctx).await.unwrap();
-        assert_eq!(output.content, "Could not find agent");
+        assert_eq!(output.response_raw, "Could not find agent");
     }
 }

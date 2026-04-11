@@ -6,7 +6,7 @@ use serde_json::Value;
 use crate::error::Result;
 
 use super::provider::{CompletionRequest, HttpTransport, LlmProvider, ToolChoice};
-use super::types::{ContentBlock, Message, ModelResponse, StopReason, Usage};
+use super::types::{ContentBlock, Message, ModelResponse, StopReason, TokenUsage};
 
 pub struct MistralProvider {
     api_key: String,
@@ -177,7 +177,7 @@ impl MistralProvider {
             _ => StopReason::EndTurn,
         };
 
-        let usage = Usage {
+        let usage = TokenUsage {
             input_tokens: json["usage"]["prompt_tokens"].as_u64().unwrap_or(0),
             output_tokens: json["usage"]["completion_tokens"].as_u64().unwrap_or(0),
             cache_read_input_tokens: 0,

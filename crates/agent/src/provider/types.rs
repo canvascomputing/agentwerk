@@ -40,7 +40,7 @@ pub enum StopReason {
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
-pub struct Usage {
+pub struct TokenUsage {
     pub input_tokens: u64,
     pub output_tokens: u64,
     #[serde(default)]
@@ -49,8 +49,8 @@ pub struct Usage {
     pub cache_creation_input_tokens: u64,
 }
 
-impl Usage {
-    pub fn add(&mut self, other: &Usage) {
+impl TokenUsage {
+    pub fn add(&mut self, other: &TokenUsage) {
         self.input_tokens += other.input_tokens;
         self.output_tokens += other.output_tokens;
         self.cache_read_input_tokens += other.cache_read_input_tokens;
@@ -62,7 +62,7 @@ impl Usage {
 pub struct ModelResponse {
     pub content: Vec<ContentBlock>,
     pub stop_reason: StopReason,
-    pub usage: Usage,
+    pub usage: TokenUsage,
     pub model: String,
 }
 
@@ -125,13 +125,13 @@ mod tests {
 
     #[test]
     fn usage_add_accumulates() {
-        let mut usage = Usage {
+        let mut usage = TokenUsage {
             input_tokens: 100,
             output_tokens: 50,
             cache_read_input_tokens: 10,
             cache_creation_input_tokens: 5,
         };
-        let other = Usage {
+        let other = TokenUsage {
             input_tokens: 200,
             output_tokens: 100,
             cache_read_input_tokens: 20,

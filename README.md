@@ -45,12 +45,12 @@ let output = agent.run(InvocationContext {
     agent_id: generate_agent_id("assistant"),
 }).await?;
 
-println!("{}", output.content);
+println!("{}", output.response_raw);
 ```
 
 ## API
 
-An `LlmProvider` sends requests to an LLM. An `AgentBuilder` configures an agent with a model, system prompt, and tools. Calling `agent.run(ctx)` starts the agent loop: it calls the LLM, executes tool calls, and repeats until the LLM stops. The `InvocationContext` carries runtime state — provider, cost tracker, event callback, cancellation. `AgentOutput` contains the final text and optional structured data.
+An `LlmProvider` sends requests to an LLM. An `AgentBuilder` configures an agent with a model, system prompt, and tools. Calling `agent.run(ctx)` starts the agent loop: it calls the LLM, executes tool calls, and repeats until the LLM stops. The `InvocationContext` carries runtime state — provider, cost tracker, event callback, cancellation. `AgentOutput` contains the raw text response, optional structured data, and token usage.
 
 ### AgentBuilder
 
@@ -107,10 +107,16 @@ let output = agent.run(InvocationContext {
 ### AgentOutput
 
 ```rust
-output.content              // final text response
-output.usage                // accumulated token usage
-output.structured_output    // Some(Value) if output_schema was set
+let output = agent.run(ctx).await?;
 ```
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `response` | `Option<Value>` | Validated JSON if `output_schema` was set and the agent produced compliant data |
+| `response_raw` | `String` | Free-form text from the LLM (always present, may be empty) |
+| `token_usage` | `TokenUsage` | Accumulated token counts across all turns |
+
+When you configure `.output_schema(schema)` on the builder, the agent automatically registers a `StructuredOutput` tool. The LLM calls this tool with JSON matching your schema, which is validated and captured in `response`.
 
 ### Event
 

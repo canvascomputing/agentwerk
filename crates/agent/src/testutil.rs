@@ -9,7 +9,7 @@ use std::sync::{Arc, Mutex};
 use crate::agent::{Agent, AgentOutput, Event, InvocationContext};
 use crate::provider::cost::CostTracker;
 use crate::error::{AgenticError, Result};
-use crate::provider::types::{ContentBlock, ModelResponse, StopReason, Usage};
+use crate::provider::types::{ContentBlock, ModelResponse, StopReason, TokenUsage};
 use crate::provider::{CompletionRequest, LlmProvider};
 use crate::tools::{Tool, ToolContext, ToolResult};
 
@@ -84,7 +84,7 @@ pub fn text_response(text: &str) -> ModelResponse {
             text: text.to_string(),
         }],
         stop_reason: StopReason::EndTurn,
-        usage: Usage::default(),
+        usage: TokenUsage::default(),
         model: "mock".to_string(),
     }
 }
@@ -97,7 +97,7 @@ pub fn tool_response(tool_name: &str, id: &str, input: serde_json::Value) -> Mod
             input,
         }],
         stop_reason: StopReason::ToolUse,
-        usage: Usage::default(),
+        usage: TokenUsage::default(),
         model: "mock".to_string(),
     }
 }

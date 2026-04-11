@@ -112,7 +112,7 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
     let output = orchestrator.run(ctx).await?;
 
     println!("\n\n--- Output ---");
-    println!("{}", output.content);
+    println!("{}", output.response_raw);
     println!("\n--- Cost ---");
     println!("{}", cost_tracker.summary());
 

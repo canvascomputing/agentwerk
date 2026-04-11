@@ -5,7 +5,7 @@ use serde_json::Value;
 
 use crate::error::Result;
 
-use super::types::{ContentBlock, Message, ModelResponse, StopReason, Usage};
+use super::types::{ContentBlock, Message, ModelResponse, StopReason, TokenUsage};
 use super::provider::{CompletionRequest, HttpTransport, LlmProvider, ToolChoice};
 
 pub struct AnthropicProvider {
@@ -77,7 +77,7 @@ impl AnthropicProvider {
             _ => StopReason::EndTurn,
         };
 
-        let usage = Usage {
+        let usage = TokenUsage {
             input_tokens: json["usage"]["input_tokens"].as_u64().unwrap_or(0),
             output_tokens: json["usage"]["output_tokens"].as_u64().unwrap_or(0),
             cache_read_input_tokens: json["usage"]["cache_read_input_tokens"]
