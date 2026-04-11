@@ -1,6 +1,6 @@
 EXAMPLES_DIR := crates/agent/examples
 
-.PHONY: build test fmt clean example litellm
+.PHONY: build test fmt clean update example litellm
 
 # Build the project (warnings are errors)
 build:
@@ -17,6 +17,10 @@ fmt:
 # Remove build artifacts
 clean:
 	cargo clean
+
+# Update dependencies
+update:
+	cargo update
 
 # Override model or base URLs for examples
 # Usage: make example name=code_review
