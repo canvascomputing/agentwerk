@@ -3,6 +3,7 @@ use std::sync::Arc;
 use serde_json::Value;
 
 use crate::error::{AgenticError, Result};
+use crate::provider::model::ModelSpec;
 use super::prompts::{BehaviorPrompt, ContextBuilder, EnvironmentContext};
 use crate::tools::{Tool, ToolRegistry};
 
@@ -16,7 +17,7 @@ const READ_ONLY_MAX_TOKENS: u32 = DEFAULT_MAX_TOKENS / 2;
 pub struct AgentBuilder {
     name: Option<String>,
     description: String,
-    model: Option<String>,
+    model: ModelSpec,
     system_prompt: String,
     max_tokens: u32,
     max_turns: Option<u32>,
@@ -39,7 +40,7 @@ impl AgentBuilder {
         Self {
             name: None,
             description: String::new(),
-            model: None,
+            model: ModelSpec::Inherit,
             system_prompt: String::new(),
             max_tokens: DEFAULT_MAX_TOKENS,
             max_turns: None,
@@ -63,8 +64,9 @@ impl AgentBuilder {
         self
     }
 
+    /// Set the model ID. If not called, the agent inherits the parent's model.
     pub fn model(mut self, model: impl Into<String>) -> Self {
-        self.model = Some(model.into());
+        self.model = ModelSpec::Exact(model.into());
         self
     }
 
@@ -148,14 +150,11 @@ impl AgentBuilder {
         let name = self
             .name
             .ok_or_else(|| AgenticError::Other("AgentBuilder requires a name".into()))?;
-        let model = self
-            .model
-            .ok_or_else(|| AgenticError::Other("AgentBuilder requires a model".into()))?;
 
         Ok(Arc::new(AgentLoop {
             name,
             description: self.description,
-            model,
+            model: self.model,
             system_prompt: self.system_prompt,
             max_tokens: self.max_tokens,
             max_turns: self.max_turns,

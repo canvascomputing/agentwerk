@@ -7,6 +7,7 @@ use serde_json::Value;
 
 use crate::agent::{Agent, AgentBuilder, AgentOutput, InvocationContext};
 use crate::error::{AgenticError, Result};
+use crate::provider::model::ModelSpec;
 
 use crate::tools::tool::{Tool, ToolContext, ToolResult};
 
@@ -24,14 +25,14 @@ struct SpawnAgentInput {
 /// Tool that spawns sub-agents in foreground or background mode.
 pub struct SpawnAgentTool {
     sub_agents: Vec<Arc<dyn Agent>>,
-    default_model: String,
+    default_model: ModelSpec,
 }
 
 impl SpawnAgentTool {
     pub fn new() -> Self {
         Self {
             sub_agents: Vec::new(),
-            default_model: "claude-sonnet-4-20250514".into(),
+            default_model: ModelSpec::Inherit,
         }
     }
 
@@ -40,8 +41,10 @@ impl SpawnAgentTool {
         self
     }
 
+    /// Set the default model for ad-hoc sub-agents.
+    /// Accepts an exact model ID string.
     pub fn with_default_model(mut self, model: impl Into<String>) -> Self {
-        self.default_model = model.into();
+        self.default_model = ModelSpec::Exact(model.into());
         self
     }
 
@@ -62,11 +65,20 @@ impl SpawnAgentTool {
         let agent: Arc<dyn Agent> = if let Some(ref name) = input.agent {
             self.find_agent(name)?
         } else {
+            let model = input.model.as_deref().unwrap_or(
+                match &self.default_model {
+                    ModelSpec::Exact(id) => id.as_str(),
+                    ModelSpec::Inherit => "inherit",
+                },
+            );
+
             let mut builder = AgentBuilder::new()
                 .name(&input.description)
-                .model(input.model.as_deref().unwrap_or(&self.default_model))
                 .system_prompt(&input.prompt)
                 .max_turns(input.max_turns.unwrap_or(10));
+            if model != "inherit" {
+                builder = builder.model(model);
+            }
             if is_read_only {
                 builder = builder.read_only();
             }

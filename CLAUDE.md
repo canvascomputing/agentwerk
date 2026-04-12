@@ -1,6 +1,7 @@
 # CLAUDE.md
 
 > Keep this file up to date when the project structure or conventions change.
+> Update `README.md` when the public API changes.
 
 ## Build and test
 
@@ -23,11 +24,12 @@ crates/agent/src/
 
   provider/
     mod.rs                re-exports
-    types.rs              Message, ContentBlock, Usage, StopReason, ModelResponse
-    provider.rs           LlmProvider trait, CompletionRequest, ToolChoice, HttpTransport
-    anthropic.rs          AnthropicProvider
-    litellm.rs            LiteLlmProvider
-    mistral.rs            MistralProvider
+    trait.rs              LlmProvider trait, CompletionRequest, ToolChoice, prewarm_connection
+    types.rs              Message, ContentBlock, TokenUsage, StopReason, ModelResponse, StreamEvent
+    model.rs              ModelSpec (Exact, Inherit)
+    anthropic.rs          AnthropicProvider (with SSE streaming)
+    openai.rs             OpenAiProvider, LiteLlmProvider, MistralProvider (with SSE streaming)
+    sse.rs                SseParser, SseEvent (shared SSE line parser)
     cost.rs               CostTracker, ModelCosts, ModelUsage
 
   agent/
@@ -63,7 +65,7 @@ crates/agent/src/
   testutil.rs             MockProvider, MockTool, TestHarness, EventCollector
 
 crates/use-cases/src/
-  lib.rs                    shared transport/provider utilities
+  lib.rs                    shared provider detection, env helpers
   project_scanner/
     main.rs                 project scanning CLI
   deep_research/
@@ -75,7 +77,7 @@ Use cases are in `crates/use-cases/src/cli/`. Run with `make use-case name=<name
 
 ## Key conventions
 
-- **No new dependencies without asking.** The crate is intentionally minimal (tokio, serde, serde_json, libc). HTTP transport is injected by the caller.
+- **No new dependencies without asking.** The crate is intentionally minimal (tokio, serde, serde_json, libc, reqwest, futures-util). Providers own a `reqwest::Client` directly — no transport abstraction.
 - **No ad-hoc changes to critical types without a plan.** These types form the public API and are used across the entire codebase: `Agent`, `InvocationContext`, `ToolContext`, `Event`, `Tool` trait, `AgentBuilder`, `CompletionRequest`, `AgentOutput`. Propose changes in a plan first.
 - **Tools capture dependencies at construction time** via closures or struct fields. Do not use type-erased extension bags on context objects.
 - **`tools/tool.rs` vs `tools/`**: `tool.rs` defines the trait and infrastructure (Tool, ToolRegistry, ToolBuilder, execute_tool_calls). Other files in `tools/` are concrete implementations.

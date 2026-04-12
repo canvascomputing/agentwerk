@@ -28,6 +28,9 @@ pub struct InvocationContext {
     // LLM
     pub provider: Arc<dyn LlmProvider>,
 
+    // Model for this context — sub-agents using Inherit resolve to this
+    pub model: String,
+
     // Optional persistence
     pub session_store: Option<Arc<Mutex<SessionStore>>>,
     pub command_queue: Option<Arc<CommandQueue>>,
@@ -43,6 +46,7 @@ impl InvocationContext {
             template_variables: HashMap::new(),
             working_directory: std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")),
             provider,
+            model: String::new(),
             session_store: None,
             command_queue: None,
         }
@@ -85,6 +89,12 @@ impl InvocationContext {
 
     pub fn command_queue(mut self, queue: Arc<CommandQueue>) -> Self {
         self.command_queue = Some(queue);
+        self
+    }
+
+    /// Set the model ID for this context. Sub-agents using `Inherit` resolve to this.
+    pub fn model(mut self, model: impl Into<String>) -> Self {
+        self.model = model.into();
         self
     }
 

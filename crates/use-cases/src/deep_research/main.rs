@@ -52,6 +52,7 @@ async fn main() {
 
     let mut ctx = InvocationContext::new(provider);
     ctx.prompt = question;
+    ctx.model = model.clone();
     ctx.event_handler = Arc::new(|event| log_event(&event));
     ctx.cancel_signal = setup_cancel_signal();
 

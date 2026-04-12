@@ -9,6 +9,7 @@ use serde_json::Value;
 use crate::error::{AgenticError, Result};
 use crate::persistence::session::{EntryType, TranscriptEntry};
 use crate::provider::cost::CostTracker;
+use crate::provider::model::ModelSpec;
 use crate::provider::types::{ContentBlock, Message, ModelResponse, StopReason, StreamEvent, TokenUsage};
 use crate::provider::{CompletionRequest, ToolChoice};
 use crate::tools::{ToolCall, ToolContext, ToolRegistry, execute_tool_calls};
@@ -29,7 +30,7 @@ use super::queue::QueuePriority;
 pub(crate) struct AgentLoop {
     pub(crate) name: String,
     pub(crate) description: String,
-    pub(crate) model: String,
+    pub(crate) model: ModelSpec,
     pub(crate) system_prompt: String,
     pub(crate) max_tokens: u32,
     pub(crate) max_turns: Option<u32>,
@@ -89,9 +90,10 @@ impl AgentLoop {
             self.emit(&ctx, Event::TurnStart { agent_name: self.name.clone(), turn: state.turn });
 
             // LLM call
-            self.emit(&ctx, Event::RequestStart { agent_name: self.name.clone(), model: self.model.clone() });
+            let resolved_model = self.model.resolve(&ctx.model);
+            self.emit(&ctx, Event::RequestStart { agent_name: self.name.clone(), model: resolved_model.clone() });
             let response = self.call_llm(&ctx, &state).await?;
-            self.emit(&ctx, Event::RequestEnd { agent_name: self.name.clone(), model: self.model.clone() });
+            self.emit(&ctx, Event::RequestEnd { agent_name: self.name.clone(), model: resolved_model });
             self.record_usage(&ctx, &response, &mut state);
 
             // Parse response into text and tool calls
@@ -206,8 +208,10 @@ impl AgentLoop {
             tools.definitions()
         };
 
+        let resolved_model = self.model.resolve(&ctx.model);
+
         let request = CompletionRequest {
-            model: self.model.clone(),
+            model: resolved_model,
             system_prompt: state.system_prompt.clone(),
             messages: state.messages.clone(),
             tools: tool_defs,

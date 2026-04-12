@@ -84,7 +84,8 @@ async fn main() {
         .working_directory(config.folder)
         .event_handler(Arc::new(log_event))
         .cancel_signal(cancel)
-        .agent_name(generate_agent_name("project-scanner"));
+        .agent_name(generate_agent_name("project-scanner"))
+        .model(&model);
 
     let output = match agent.run(ctx).await {
         Ok(output) => output,
