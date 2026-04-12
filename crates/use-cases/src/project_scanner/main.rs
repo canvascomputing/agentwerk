@@ -83,10 +83,19 @@ async fn main() {
         .prompt("Scan this project and identify what it does and what languages it uses.")
         .template_var("folder_path", serde_json::Value::String(folder.display().to_string()))
         .working_directory(folder)
-        .event_handler(Arc::new(|event| {
-            if let Event::ToolCallStart { tool_name, .. } = &event {
-                eprintln!("[tool] {tool_name}");
+        .event_handler(Arc::new(|event| match &event {
+            Event::ToolCallStart { tool_name, input, .. } => {
+                let detail = input["path"].as_str()
+                    .or(input["pattern"].as_str())
+                    .unwrap_or("");
+                if detail.is_empty() {
+                    eprintln!("[tool] {tool_name}");
+                } else {
+                    eprintln!("[tool] {tool_name}: {detail}");
+                }
             }
+            Event::AgentEnd { turns, .. } => eprintln!("[done] {turns} turns"),
+            _ => {}
         }))
         .cancel_signal(cancel)
         .agent_name(generate_agent_name("project-scanner"));
