@@ -45,7 +45,9 @@ impl AgentLoop {
             self.emit(&ctx, Event::TurnStart { agent_name: self.name.clone(), turn: state.turn });
 
             // LLM call
+            self.emit(&ctx, Event::RequestStart { agent_name: self.name.clone(), model: self.model.clone() });
             let response = self.call_llm(&ctx, &state).await?;
+            self.emit(&ctx, Event::RequestEnd { agent_name: self.name.clone(), model: self.model.clone() });
             self.record_usage(&ctx, &response, &mut state);
 
             // Parse response into text and tool calls

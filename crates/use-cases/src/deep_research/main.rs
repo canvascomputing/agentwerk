@@ -215,6 +215,9 @@ fn urlencode(s: &str) -> String {
 
 fn log_event(event: &Event) {
     match event {
+        Event::RequestStart { agent_name, model } => {
+            eprintln!("[{agent_name}] requesting {model}...");
+        }
         Event::ToolCallStart { agent_name, tool_name, input, .. } if tool_name != "StructuredOutput" => {
             let detail = tool_call_summary(tool_name, input);
             eprintln!("[{agent_name}] {tool_name}: {detail}");

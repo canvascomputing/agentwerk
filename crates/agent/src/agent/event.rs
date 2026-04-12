@@ -12,4 +12,6 @@ pub enum Event {
     TokenUsage { agent_name: String, model: String, usage: TokenUsage },
     BudgetUsage { agent_name: String, spent: f64, limit: Option<f64> },
     TextChunk { agent_name: String, content: String },
+    RequestStart { agent_name: String, model: String },
+    RequestEnd { agent_name: String, model: String },
 }

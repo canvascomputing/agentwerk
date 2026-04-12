@@ -154,6 +154,7 @@ Lifecycle and progress notifications emitted during each agent run.
 use agent::Event;
 
 ctx.event_handler = Arc::new(|event| match &event {
+    Event::RequestStart { agent_name, model } => eprintln!("{agent_name} calling {model}..."),
     Event::TextChunk { content, .. } => print!("{content}"),
     Event::ToolCallStart { tool_name, input, .. } => eprintln!("[{tool_name}] {input}"),
     Event::ToolCallEnd { tool_name, is_error, .. } if *is_error => eprintln!("[error] {tool_name}"),
