@@ -1,8 +1,6 @@
 use std::sync::Arc;
 
-use agent::{
-    AnthropicProvider, LiteLlmProvider, LlmProvider, MistralProvider, default_transport,
-};
+use agent::{AnthropicProvider, LiteLlmProvider, LlmProvider, MistralProvider};
 
 /// Read an environment variable, treating empty strings as unset.
 pub fn env(name: &str) -> Option<String> {
@@ -16,24 +14,28 @@ pub fn env_or(name: &str, default: &str) -> String {
 
 /// Auto-detect an LLM provider from environment variables.
 ///
+/// Returns a shared reqwest client alongside the provider so callers
+/// can reuse the same connection pool (e.g., for prewarm_connection).
+///
 /// Detection order:
 ///   1. `LITELLM_API_URL` → LiteLLM proxy
 ///   2. `MISTRAL_API_KEY` → Mistral API
 ///   3. `ANTHROPIC_API_KEY` → Anthropic API
 ///   4. localhost:4000 reachable → LiteLLM proxy (no key needed)
-///
-/// Returns `(provider, model)`. Exits with an error if no provider is found.
 pub fn auto_detect_provider() -> (Arc<dyn LlmProvider>, String) {
-    let transport = default_transport();
+    let client = reqwest::Client::new();
 
     if let Some(url) = env("LITELLM_API_URL") {
         let key = env_or("LITELLM_API_KEY", "");
         let model = env_or("LITELLM_MODEL", "claude-sonnet-4-20250514");
-        return (Arc::new(LiteLlmProvider::new(key, transport).base_url(url)), model);
+        return (
+            Arc::new(LiteLlmProvider::new(key, client).base_url(url)),
+            model,
+        );
     }
 
     if let Some(key) = env("MISTRAL_API_KEY") {
-        let mut p = MistralProvider::new(key, transport);
+        let mut p = MistralProvider::new(key, client);
         if let Some(url) = env("MISTRAL_BASE_URL") {
             p = p.base_url(url);
         }
@@ -42,7 +44,7 @@ pub fn auto_detect_provider() -> (Arc<dyn LlmProvider>, String) {
     }
 
     if let Some(key) = env("ANTHROPIC_API_KEY") {
-        let mut p = AnthropicProvider::new(key, transport);
+        let mut p = AnthropicProvider::new(key, client);
         if let Some(url) = env("ANTHROPIC_BASE_URL") {
             p = p.base_url(url);
         }
@@ -54,7 +56,9 @@ pub fn auto_detect_provider() -> (Arc<dyn LlmProvider>, String) {
         let key = env_or("LITELLM_API_KEY", "");
         let model = env_or("LITELLM_MODEL", "claude-sonnet-4-20250514");
         return (
-            Arc::new(LiteLlmProvider::new(key, transport).base_url("http://localhost:4000".into())),
+            Arc::new(
+                LiteLlmProvider::new(key, client).base_url("http://localhost:4000".into()),
+            ),
             model,
         );
     }

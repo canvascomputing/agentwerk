@@ -80,6 +80,16 @@ pub struct ModelResponse {
     pub model: String,
 }
 
+/// Incremental event emitted during SSE streaming.
+#[derive(Debug, Clone)]
+pub enum StreamEvent {
+    TextDelta { index: usize, text: String },
+    InputJsonDelta { index: usize, partial_json: String },
+    ContentBlockStop { index: usize },
+    MessageDelta { stop_reason: StopReason, usage: TokenUsage },
+    MessageDone,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

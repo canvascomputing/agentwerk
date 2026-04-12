@@ -10,6 +10,9 @@ use super::r#trait::Agent;
 use super::r#loop::AgentLoop;
 use super::output::OutputSchema;
 
+const DEFAULT_MAX_TOKENS: u32 = 4096;
+const READ_ONLY_MAX_TOKENS: u32 = DEFAULT_MAX_TOKENS / 2;
+
 pub struct AgentBuilder {
     name: Option<String>,
     description: String,
@@ -38,7 +41,7 @@ impl AgentBuilder {
             description: String::new(),
             model: None,
             system_prompt: String::new(),
-            max_tokens: 4096,
+            max_tokens: DEFAULT_MAX_TOKENS,
             max_turns: None,
             max_budget: None,
             output_schema: None,
@@ -129,6 +132,15 @@ impl AgentBuilder {
 
     pub fn sub_agent(mut self, agent: Arc<dyn Agent>) -> Self {
         self.sub_agents.push(agent);
+        self
+    }
+
+    /// Configure for read-only operation with minimal prompt overhead.
+    /// Clears behavior prompts and context, lowers max_tokens.
+    pub fn read_only(mut self) -> Self {
+        self.max_tokens = READ_ONLY_MAX_TOKENS;
+        self.behavior_prompts.clear();
+        self.context_builder = ContextBuilder::new();
         self
     }
 

@@ -9,7 +9,7 @@ use serde_json::Value;
 use crate::error::{AgenticError, Result};
 use crate::persistence::session::{EntryType, TranscriptEntry};
 use crate::provider::cost::CostTracker;
-use crate::provider::types::{ContentBlock, Message, ModelResponse, StopReason, TokenUsage};
+use crate::provider::types::{ContentBlock, Message, ModelResponse, StopReason, StreamEvent, TokenUsage};
 use crate::provider::{CompletionRequest, ToolChoice};
 use crate::tools::{ToolCall, ToolContext, ToolRegistry, execute_tool_calls};
 
@@ -206,14 +206,27 @@ impl AgentLoop {
             tools.definitions()
         };
 
-        ctx.provider.complete(CompletionRequest {
+        let request = CompletionRequest {
             model: self.model.clone(),
             system_prompt: state.system_prompt.clone(),
             messages: state.messages.clone(),
             tools: tool_defs,
             max_tokens: self.max_tokens,
             tool_choice: state.tool_choice.clone(),
-        }).await
+        };
+
+        let event_handler = ctx.event_handler.clone();
+        let agent_name = self.name.clone();
+        let on_event = Arc::new(move |event: StreamEvent| {
+            if let StreamEvent::TextDelta { text, .. } = &event {
+                event_handler(Event::TextChunk {
+                    agent_name: agent_name.clone(),
+                    content: text.clone(),
+                });
+            }
+        });
+
+        ctx.provider.complete_streaming(request, on_event).await
     }
 
     fn record_usage(&self, ctx: &InvocationContext, response: &ModelResponse, state: &mut LoopState) {

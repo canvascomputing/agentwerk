@@ -18,6 +18,7 @@ struct SpawnAgentInput {
     model: Option<String>,
     max_turns: Option<u32>,
     background: Option<bool>,
+    read_only: Option<bool>,
 }
 
 /// Tool that spawns sub-agents in foreground or background mode.
@@ -56,15 +57,20 @@ impl SpawnAgentTool {
     }
 
     async fn execute(&self, input: SpawnAgentInput, ctx: InvocationContext) -> Result<AgentOutput> {
+        let is_read_only = input.read_only.unwrap_or(false);
+
         let agent: Arc<dyn Agent> = if let Some(ref name) = input.agent {
             self.find_agent(name)?
         } else {
-            AgentBuilder::new()
+            let mut builder = AgentBuilder::new()
                 .name(&input.description)
                 .model(input.model.as_deref().unwrap_or(&self.default_model))
                 .system_prompt(&input.prompt)
-                .max_turns(input.max_turns.unwrap_or(10))
-                .build()?
+                .max_turns(input.max_turns.unwrap_or(10));
+            if is_read_only {
+                builder = builder.read_only();
+            }
+            builder.build()?
         };
 
         let child_ctx = ctx.child(&input.description).prompt(&input.prompt);
@@ -160,6 +166,10 @@ impl Tool for SpawnAgentTool {
                 "background": {
                     "type": "boolean",
                     "description": "Run in background (default: false). Returns immediately with agent ID."
+                },
+                "read_only": {
+                    "type": "boolean",
+                    "description": "Optimize for read-only tasks: smaller output budget, minimal system prompt. Use for search/exploration."
                 }
             },
             "required": ["description", "prompt"]
