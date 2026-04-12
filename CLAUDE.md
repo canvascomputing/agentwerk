@@ -32,11 +32,11 @@ crates/agent/src/
 
   agent/
     mod.rs                re-exports
-    agent.rs              Agent trait, AgentLoop struct
+    trait.rs              Agent trait
     builder.rs            AgentBuilder
+    loop.rs               AgentLoop struct, impl Agent, execute(), helpers, tests
     context.rs            InvocationContext, generate_agent_id
     event.rs              Event enum
-    loop.rs               AgentLoop.execute(), extracted helpers, tests
     output.rs             AgentOutput, OutputSchema, StructuredOutputTool, validate_value
     prompts.rs            BehaviorPrompt, ContextBuilder, EnvironmentContext, prompt constants
     queue.rs              CommandQueue, QueuePriority, QueuedCommand

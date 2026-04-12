@@ -1,4 +1,4 @@
-mod agent;
+mod r#trait;
 mod builder;
 mod context;
 mod event;
@@ -7,7 +7,7 @@ mod output;
 pub(crate) mod prompts;
 mod queue;
 
-pub use agent::Agent;
+pub use r#trait::Agent;
 pub use builder::AgentBuilder;
 pub use context::{InvocationContext, generate_agent_name};
 pub use event::Event;

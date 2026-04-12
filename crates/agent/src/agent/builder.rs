@@ -6,7 +6,8 @@ use crate::error::{AgenticError, Result};
 use super::prompts::{BehaviorPrompt, ContextBuilder, EnvironmentContext};
 use crate::tools::{Tool, ToolRegistry};
 
-use super::agent::{Agent, AgentLoop};
+use super::r#trait::Agent;
+use super::r#loop::AgentLoop;
 use super::output::OutputSchema;
 
 pub struct AgentBuilder {

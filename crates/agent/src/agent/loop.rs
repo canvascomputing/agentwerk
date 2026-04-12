@@ -1,4 +1,6 @@
 use std::collections::HashSet;
+use std::future::Future;
+use std::pin::Pin;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
 
@@ -11,12 +13,54 @@ use crate::provider::types::{ContentBlock, Message, ModelResponse, StopReason, T
 use crate::provider::{CompletionRequest, ToolChoice};
 use crate::tools::{ToolCall, ToolContext, ToolRegistry, execute_tool_calls};
 
-use super::agent::AgentLoop;
+use super::r#trait::Agent;
 use super::context::{InvocationContext, now_millis};
 use super::event::Event;
-use super::output::{AgentOutput, Statistics, StructuredOutputTool};
+use super::output::{AgentOutput, OutputSchema, Statistics, StructuredOutputTool};
+use super::prompts::{self as prompts, BehaviorPrompt, ContextBuilder, STRUCTURED_OUTPUT_TOOL_NAME, interpolate};
 use super::queue::QueuePriority;
-use super::prompts::{self as prompts, STRUCTURED_OUTPUT_TOOL_NAME, interpolate};
+
+// ---------------------------------------------------------------------------
+// AgentLoop — the LLM-powered agent implementation
+// ---------------------------------------------------------------------------
+
+/// An LLM-powered agent. Calls an LLM in a loop, executing tools until done.
+/// Created via `AgentBuilder::build()`.
+pub(crate) struct AgentLoop {
+    pub(crate) name: String,
+    pub(crate) description: String,
+    pub(crate) model: String,
+    pub(crate) system_prompt: String,
+    pub(crate) max_tokens: u32,
+    pub(crate) max_turns: Option<u32>,
+    pub(crate) max_budget: Option<f64>,
+    pub(crate) output_schema: Option<OutputSchema>,
+    pub(crate) max_schema_retries: u32,
+    pub(crate) behavior_prompts: Vec<(BehaviorPrompt, String)>,
+    pub(crate) context_builder: ContextBuilder,
+    pub(crate) tools: ToolRegistry,
+    #[allow(dead_code)]
+    pub(crate) sub_agents: Vec<Arc<dyn Agent>>,
+}
+
+impl Agent for AgentLoop {
+    fn name(&self) -> &str {
+        &self.name
+    }
+    fn description(&self) -> &str {
+        &self.description
+    }
+    fn run(
+        &self,
+        ctx: InvocationContext,
+    ) -> Pin<Box<dyn Future<Output = Result<AgentOutput>> + Send + '_>> {
+        Box::pin(async move { self.execute(ctx).await })
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Agent loop execution
+// ---------------------------------------------------------------------------
 
 /// Mutable state carried across turns of the agent loop.
 struct LoopState {
