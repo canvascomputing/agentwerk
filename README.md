@@ -8,8 +8,6 @@
   <strong>A minimal Rust crate that gives any application agentic capabilities.</strong>
 </p>
 
-<p align="center">Every agentic application, like OpenClaw or Claude Code, reimplements the same core functionality. This crate extracts that shared foundation into a minimal, dependency-light library.</p>
-
 <p align="center">
   <a href="#quick-start">Quick Start</a> •
   <a href="#use-cases">Use Cases</a> •
@@ -17,7 +15,16 @@
   <a href="#development">Development</a>
 </p>
 
-<p align="center"><code>Agentic execution loop</code> · <code>Basic tool implementations</code> · <code>Sub-agent orchestration</code> · <code>Anthropic, Mistral, OpenAI integration</code> · <code>Schema-based output</code> · <code>Cost tracking</code></p>
+<p align="center">Every agentic application, like OpenClaw or Claude Code, reimplements the same core functionality. This crate extracts that shared foundation into a minimal, dependency-light library.</p>
+
+<p align="center">
+  <a href="crates/agentcore/src/agent/loop.rs">Agentic execution loop</a> ·
+  <a href="crates/agentcore/src/tools">Built-in tools</a> ·
+  <a href="crates/agentcore/src/tools/spawn_agent.rs">Sub-agent orchestration</a> ·
+  <a href="crates/agentcore/src/provider">Anthropic, Mistral, OpenAI integration</a> ·
+  <a href="crates/agentcore/src/agent/output.rs">Schema-based output</a> ·
+  <a href="crates/agentcore/src/provider/cost.rs">Cost tracking</a>
+</p>
 
 ---
 
