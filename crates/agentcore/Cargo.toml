@@ -1,8 +1,12 @@
 [package]
-name = "agent"
+name = "agentcore"
 version = "0.1.0"
 edition = "2021"
 license = "MIT"
+description = "A minimal Rust crate that gives any application agentic capabilities."
+repository = "https://github.com/canvascomputing/agentcore"
+keywords = ["agent", "llm", "ai", "tools", "agentic"]
+categories = ["api-bindings", "asynchronous"]
 
 [dependencies]
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "fs", "io-util", "process", "time", "signal"] }

@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use agent::{
+use agentcore::{
     AgentBuilder, AgenticError, AnthropicProvider, HttpTransport, InvocationContext,
     LiteLlmProvider, LlmProvider, MistralProvider, ReadFileTool, GrepTool, ListDirectoryTool,
 };

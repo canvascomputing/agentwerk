@@ -5,7 +5,7 @@ edition = "2021"
 license = "MIT"
 
 [dependencies]
-agent = { path = "../agent" }
+agentcore = { path = "../agentcore" }
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "signal"] }
 serde_json = "1"
 reqwest = { version = "0.12", features = ["json"] }

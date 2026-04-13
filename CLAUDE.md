@@ -18,7 +18,7 @@ All code must compile with zero warnings (`RUSTFLAGS="-D warnings"`).
 ## Project structure
 
 ```
-crates/agent/src/
+crates/agentcore/src/
   lib.rs                  public re-exports
   error.rs                AgenticError, Result
 
@@ -55,7 +55,7 @@ crates/agent/src/
     bash.rs               BashTool
     tool_search.rs        ToolSearchTool
     spawn_agent.rs        SpawnAgentTool
-    task_tools.rs         task_create_tool, task_update_tool, task_list_tool, task_get_tool
+    task_tools.rs         TaskTool
 
   persistence/ (internal)
     mod.rs                re-exports
@@ -72,7 +72,7 @@ crates/use-cases/src/
     main.rs                 multi-agent deep research with web search
 ```
 
-Integration tests are in `crates/agent/tests/`. Run with `make test_integration`.
+Integration tests are in `crates/agentcore/tests/`. Run with `make test_integration`.
 Use cases are in `crates/use-cases/src/cli/`. Run with `make use-case name=<name>`.
 
 ## Key conventions

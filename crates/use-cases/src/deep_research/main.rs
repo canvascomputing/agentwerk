@@ -11,7 +11,7 @@
 use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 
-use agent::{
+use agentcore::{
     AgentBuilder, AgenticError, Event, SpawnAgentTool, ToolBuilder, ToolResult,
 };
 

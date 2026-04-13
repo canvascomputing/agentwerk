@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use agent::{AnthropicProvider, LiteLlmProvider, LlmProvider, MistralProvider};
+use agentcore::{AnthropicProvider, LiteLlmProvider, LlmProvider, MistralProvider};
 
 /// Read an environment variable, treating empty strings as unset.
 pub fn env(name: &str) -> Option<String> {

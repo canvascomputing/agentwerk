@@ -2,7 +2,7 @@
   <img src="logo.png" width="200" />
 </p>
 
-<h1 align="center">agent</h1>
+<h1 align="center">agentcore</h1>
 
 <p align="center">
   <strong>A minimal Rust crate that gives any application agentic capabilities.</strong>
@@ -25,7 +25,7 @@
 
 ```rust
 use std::sync::Arc;
-use agent::{AgentBuilder, AnthropicProvider, ReadFileTool, GlobTool};
+use agentcore::{AgentBuilder, AnthropicProvider, ReadFileTool, GlobTool};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -94,7 +94,7 @@ Configure an `AgentBuilder` with a provider, model, tools, and prompt, then call
 Connect to any LLM. Providers own a `reqwest::Client` for connection pooling and SSE streaming.
 
 ```rust
-use agent::{AnthropicProvider, MistralProvider, LiteLlmProvider};
+use agentcore::{AnthropicProvider, MistralProvider, LiteLlmProvider};
 
 let provider = AnthropicProvider::from_api_key(key);
 let provider = MistralProvider::from_api_key(key);
@@ -109,7 +109,7 @@ let provider = AnthropicProvider::new(key, client);
 One builder for everything — agent definition, runtime context, and execution.
 
 ```rust
-use agent::AgentBuilder;
+use agentcore::AgentBuilder;
 
 let output = AgentBuilder::new()
     .identity_prompt("You are a helpful assistant.")
@@ -176,7 +176,7 @@ Agents ship with default behavior prompts appended to the identity prompt. Overr
 | `OutputEfficiency` | Be concise, lead with the answer, skip filler |
 
 ```rust
-use agent::BehaviorPrompt;
+use agentcore::BehaviorPrompt;
 
 AgentBuilder::new()
     .behavior_prompt(BehaviorPrompt::TaskExecution, "Follow instructions exactly.")
@@ -215,7 +215,7 @@ Emitted via `AgentBuilder.event_handler()` during execution.
 Define what the agent can do. Read-only tools run concurrently.
 
 ```rust
-use agent::{ToolBuilder, ToolResult};
+use agentcore::{ToolBuilder, ToolResult};
 
 let tool = ToolBuilder::new("greet", "Say hello")
     .schema(json!({...}))
