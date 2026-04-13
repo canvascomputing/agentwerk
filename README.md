@@ -92,6 +92,34 @@ Output:
 }
 ```
 
+### [Model Pricing Tracker](crates/use-cases/src/model_pricing_tracker/)
+
+Spawns a model checker and pricing researcher in parallel to gather current model pricing from provider websites, then outputs structured JSON.
+
+```bash
+make use-case name=model-pricing-tracker
+```
+
+Output:
+```json
+{
+  "models": [
+    {
+      "input_per_million": 3.0,
+      "model_id": "claude-sonnet-4-20250514",
+      "output_per_million": 15.0,
+      "provider": "anthropic"
+    },
+    {
+      "input_per_million": 1.0,
+      "model_id": "claude-haiku-4-5-20251001",
+      "output_per_million": 5.0,
+      "provider": "anthropic"
+    }
+  ]
+}
+```
+
 ## API
 
 Configure an `AgentBuilder` with a provider, model, tools, and prompt, then call `.run()` to get an `AgentOutput`. Stream `Event`s during execution.

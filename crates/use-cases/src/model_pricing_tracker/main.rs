@@ -1,0 +1,201 @@
+//! Model Pricing Tracker: fetches current model pricing from provider websites.
+//!
+//! Usage: model-pricing-tracker [--output <path>]
+//!
+//! Spawns a pricing researcher agent that fetches live pricing from provider
+//! web pages, then outputs structured JSON with per-model pricing.
+//!
+//! Environment:
+//!   ANTHROPIC_API_KEY   (or other provider env vars)
+
+use std::sync::Arc;
+use std::sync::atomic::AtomicBool;
+
+use agentcore::{AgentBuilder, Event, SpawnAgentTool, WebFetchTool};
+
+// ---------------------------------------------------------------------------
+// Prompts
+// ---------------------------------------------------------------------------
+
+const PRICING_RESEARCHER_PROMPT: &str = "\
+You are a pricing researcher. Fetch current model pricing from provider websites.\n\n\
+Fetch these URLs using the web_fetch tool:\n\
+1. https://platform.claude.com/docs/en/about-claude/pricing\n\
+2. https://mistral.ai/pricing#api\n\n\
+For each model, extract:\n\
+- Model API identifier (e.g. claude-sonnet-4-20250514)\n\
+- Input cost per million tokens (USD)\n\
+- Output cost per million tokens (USD)\n\n\
+If a page doesn't render (JS-only), report that.\n\n\
+Output ONLY a list like:\n\
+  provider: model-id input=$X.XX output=$X.XX\n\
+One line per model. Nothing else.";
+
+const ORCHESTRATOR_PROMPT: &str = "\
+You coordinate pricing research. You MUST use the spawn_agent tool with the 'agent' parameter.\n\n\
+Step 1: Call spawn_agent with {\"agent\": \"pricing_researcher\", \"description\": \"fetch pricing\", \
+\"prompt\": \"Fetch current model pricing from all provider websites\"}.\n\n\
+Step 2: After it returns, produce your structured output listing every model found. \
+Include provider, model_id, input_per_million, output_per_million for each.\n\n\
+CRITICAL: Always set the 'agent' field to 'pricing_researcher'. \
+Do NOT add explanation. Just spawn the agent, then output the structured result.";
+
+// ---------------------------------------------------------------------------
+// Output schema
+// ---------------------------------------------------------------------------
+
+fn output_schema() -> serde_json::Value {
+    serde_json::json!({
+        "type": "object",
+        "properties": {
+            "models": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "provider": { "type": "string", "description": "Provider name (anthropic, mistral)" },
+                        "model_id": { "type": "string", "description": "Model API identifier" },
+                        "input_per_million": { "type": "number", "description": "Input cost per million tokens in USD" },
+                        "output_per_million": { "type": "number", "description": "Output cost per million tokens in USD" }
+                    },
+                    "required": ["provider", "model_id", "input_per_million", "output_per_million"]
+                }
+            }
+        },
+        "required": ["models"]
+    })
+}
+
+// ---------------------------------------------------------------------------
+// Main
+// ---------------------------------------------------------------------------
+
+#[tokio::main]
+async fn main() {
+    let output_path = parse_args();
+    let (provider, model) = use_cases::auto_detect_provider();
+
+    eprintln!("Model Pricing Tracker\n");
+
+    let pricing_researcher = AgentBuilder::new()
+        .name("pricing_researcher")
+        .model(&model)
+        .identity_prompt(PRICING_RESEARCHER_PROMPT)
+        .tool(WebFetchTool)
+        .max_turns(10)
+        .build()
+        .expect("Failed to build pricing_researcher");
+
+    let output = match AgentBuilder::new()
+        .name("pricing_tracker")
+        .model(&model)
+        .identity_prompt(ORCHESTRATOR_PROMPT)
+        .tool(
+            SpawnAgentTool::new()
+                .with_sub_agents(vec![pricing_researcher])
+                .with_default_model(&model),
+        )
+        .output_schema(output_schema())
+        .max_turns(10)
+        .provider(provider)
+        .instruction_prompt("Gather current model pricing from all supported providers.")
+        .event_handler(Arc::new(|event| log_event(&event)))
+        .cancel_signal(setup_cancel_signal())
+        .run()
+        .await
+    {
+        Ok(out) => out,
+        Err(e) => {
+            eprintln!("\nError: {e}");
+            std::process::exit(1);
+        }
+    };
+
+    let json = match &output.response {
+        Some(data) => serde_json::to_string_pretty(data).unwrap_or_default(),
+        None => output.response_raw.clone(),
+    };
+
+    match std::fs::write(&output_path, &json) {
+        Ok(_) => eprintln!("\nWrote {output_path}"),
+        Err(e) => eprintln!("Failed to write {output_path}: {e}"),
+    }
+    println!("{json}");
+    eprintln!("Cost: ${:.4}", output.statistics.estimated_costs);
+}
+
+// ---------------------------------------------------------------------------
+// Event logging
+// ---------------------------------------------------------------------------
+
+fn log_event(event: &Event) {
+    match event {
+        Event::RequestStart { agent_name, model, .. } => {
+            eprintln!("[{agent_name}] requesting {model}...");
+        }
+        Event::ToolCallStart { agent_name, tool_name, input, .. }
+            if tool_name != "StructuredOutput" =>
+        {
+            eprintln!("[{agent_name}] {tool_name}: {}", tool_call_detail(tool_name, input));
+        }
+        Event::ToolCallEnd { tool_name, output, is_error: true, .. } => {
+            eprintln!("[error] {tool_name}: {output}");
+        }
+        Event::AgentError { agent_name, message } => {
+            eprintln!("[error] {agent_name}: {message}");
+        }
+        _ => {}
+    }
+}
+
+fn tool_call_detail(tool_name: &str, input: &serde_json::Value) -> String {
+    let key = match tool_name {
+        "web_fetch" => "url",
+        "spawn_agent" => return input["agent"]
+            .as_str()
+            .or(input["description"].as_str())
+            .unwrap_or("")
+            .into(),
+        _ => return serde_json::to_string(input).unwrap_or_default(),
+    };
+    input[key].as_str().unwrap_or("").into()
+}
+
+// ---------------------------------------------------------------------------
+// CLI
+// ---------------------------------------------------------------------------
+
+fn parse_args() -> String {
+    let args: Vec<String> = std::env::args().collect();
+
+    if args.iter().any(|a| a == "--help" || a == "-h") {
+        eprintln!("Usage: model-pricing-tracker [--output <path>]");
+        eprintln!();
+        eprintln!("Fetches current model pricing from provider websites.");
+        eprintln!();
+        eprintln!("Options:");
+        eprintln!("  --output <path>  Output file (default: pricing.json)");
+        eprintln!();
+        eprintln!("Environment:");
+        eprintln!("  ANTHROPIC_API_KEY   (or other provider env vars)");
+        std::process::exit(0);
+    }
+
+    for i in 0..args.len() {
+        if (args[i] == "--output" || args[i] == "-o") && i + 1 < args.len() {
+            return args[i + 1].clone();
+        }
+    }
+
+    "pricing.json".into()
+}
+
+fn setup_cancel_signal() -> Arc<AtomicBool> {
+    let signal = Arc::new(AtomicBool::new(false));
+    let handle = signal.clone();
+    tokio::spawn(async move {
+        tokio::signal::ctrl_c().await.ok();
+        handle.store(true, std::sync::atomic::Ordering::Relaxed);
+    });
+    signal
+}
