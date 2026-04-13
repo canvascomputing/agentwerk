@@ -17,7 +17,7 @@ pub enum AgenticError {
     Json(serde_json::Error),
     Aborted,
     MaxTurnsExceeded(u32),
-    BudgetExceeded {
+    EstimatedCostsExceeded {
         spent: f64,
         limit: f64,
     },
@@ -56,8 +56,8 @@ impl fmt::Display for AgenticError {
             AgenticError::Json(err) => write!(f, "JSON error: {err}"),
             AgenticError::Aborted => write!(f, "Operation aborted"),
             AgenticError::MaxTurnsExceeded(n) => write!(f, "Maximum turns exceeded: {n}"),
-            AgenticError::BudgetExceeded { spent, limit } => {
-                write!(f, "Budget exceeded: spent ${spent:.4}, limit ${limit:.4}")
+            AgenticError::EstimatedCostsExceeded { spent, limit } => {
+                write!(f, "Estimated costs exceeded: spent ${spent:.4}, limit ${limit:.4}")
             }
             AgenticError::ContextOverflow { token_count, limit } => {
                 write!(
@@ -130,8 +130,8 @@ mod tests {
     }
 
     #[test]
-    fn budget_exceeded_shows_amounts() {
-        let err = AgenticError::BudgetExceeded {
+    fn estimated_costs_exceeded_shows_amounts() {
+        let err = AgenticError::EstimatedCostsExceeded {
             spent: 5.1234,
             limit: 3.0,
         };
@@ -156,7 +156,7 @@ mod tests {
             AgenticError::Json(serde_json::from_str::<()>("bad").unwrap_err()),
             AgenticError::Aborted,
             AgenticError::MaxTurnsExceeded(10),
-            AgenticError::BudgetExceeded {
+            AgenticError::EstimatedCostsExceeded {
                 spent: 1.0,
                 limit: 0.5,
             },

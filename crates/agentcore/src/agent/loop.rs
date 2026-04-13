@@ -8,7 +8,6 @@ use serde_json::Value;
 
 use crate::error::{AgenticError, Result};
 use crate::persistence::session::{EntryType, TranscriptEntry};
-use crate::provider::cost::CostTracker;
 use crate::provider::model::ModelSpec;
 use crate::provider::types::{ContentBlock, Message, ModelResponse, StopReason, StreamEvent, TokenUsage};
 use crate::provider::{CompletionRequest, ToolChoice};
@@ -33,7 +32,7 @@ pub(crate) struct AgentLoop {
     pub(crate) identity_prompt: String,
     pub(crate) max_tokens: u32,
     pub(crate) max_turns: Option<u32>,
-    pub(crate) max_budget: Option<f64>,
+    pub(crate) max_estimated_costs: Option<f64>,
     pub(crate) output_schema: Option<OutputSchema>,
     pub(crate) max_schema_retries: u32,
     pub(crate) behavior_prompts: Vec<(BehaviorPrompt, String)>,
@@ -63,7 +62,7 @@ impl Agent for AgentLoop {
 struct LoopState {
     messages: Vec<Message>,
     total_usage: TokenUsage,
-    cost_tracker: CostTracker,
+    request_count: u64,
     tool_call_count: u64,
     structured_output: Option<Value>,
     schema_retries: u32,
@@ -80,7 +79,7 @@ impl AgentLoop {
         self.emit(&ctx, Event::AgentStart { agent_name: self.name.clone() });
 
         loop {
-            // Guards: cancellation, turn limit, budget
+            // Guards: cancellation, turn limit, estimated costs
             self.check_guards(&ctx, &state)?;
             state.turn += 1;
             self.emit(&ctx, Event::TurnStart { agent_name: self.name.clone(), turn: state.turn });
@@ -139,7 +138,7 @@ impl AgentLoop {
         LoopState {
             messages,
             total_usage: TokenUsage::default(),
-            cost_tracker: CostTracker::new(),
+            request_count: 0,
             tool_call_count: 0,
             structured_output: None,
             schema_retries: 0,
@@ -187,10 +186,10 @@ impl AgentLoop {
         if self.max_turns.is_some_and(|max| state.turn >= max) {
             return Err(AgenticError::MaxTurnsExceeded(self.max_turns.unwrap()));
         }
-        if self.max_budget.is_some_and(|limit| state.cost_tracker.total_cost_usd() >= limit) {
-            return Err(AgenticError::BudgetExceeded {
-                spent: state.cost_tracker.total_cost_usd(),
-                limit: self.max_budget.unwrap(),
+        if self.max_estimated_costs.is_some_and(|limit| self.estimated_costs(&state.total_usage) >= limit) {
+            return Err(AgenticError::EstimatedCostsExceeded {
+                spent: self.estimated_costs(&state.total_usage),
+                limit: self.max_estimated_costs.unwrap(),
             });
         }
         Ok(())
@@ -231,17 +230,21 @@ impl AgentLoop {
 
     fn record_usage(&self, ctx: &InvocationContext, response: &ModelResponse, state: &mut LoopState) {
         state.total_usage.add(&response.usage);
-        state.cost_tracker.record_usage(&response.model, &response.usage);
+        state.request_count += 1;
         self.emit(ctx, Event::TokenUsage {
             agent_name: self.name.clone(),
             model: response.model.clone(),
             usage: response.usage.clone(),
         });
-        self.emit(ctx, Event::BudgetUsage {
+        self.emit(ctx, Event::EstimatedCostsUpdate {
             agent_name: self.name.clone(),
-            spent: state.cost_tracker.total_cost_usd(),
-            limit: self.max_budget,
+            spent: self.estimated_costs(&state.total_usage),
+            limit: self.max_estimated_costs,
         });
+    }
+
+    fn estimated_costs(&self, usage: &TokenUsage) -> f64 {
+        self.model.costs().estimate(usage.input_tokens, usage.output_tokens)
     }
 
     fn parse_response(&self, ctx: &InvocationContext, response: &ModelResponse) -> (String, Vec<ToolCall>) {
@@ -290,12 +293,12 @@ impl AgentLoop {
             response: state.structured_output.take(),
             response_raw: text,
             statistics: Statistics {
-                costs: state.cost_tracker.total_cost_usd(),
+                estimated_costs: self.estimated_costs(&state.total_usage),
                 input_tokens: state.total_usage.input_tokens,
                 output_tokens: state.total_usage.output_tokens,
                 cache_read_tokens: state.total_usage.cache_read_input_tokens,
                 cache_write_tokens: state.total_usage.cache_creation_input_tokens,
-                requests: state.cost_tracker.total_requests(),
+                requests: state.request_count,
                 tool_calls: state.tool_call_count,
                 turns: state.turn,
             },
@@ -497,20 +500,20 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn guard_budget() {
+    async fn guard_estimated_costs() {
         let provider = MockProvider::new(vec![
             tool_response("t", "c1", serde_json::json!({})),
             text_response("done"),
         ]);
         let agent = AgentBuilder::new()
             .name("test").model("mock").identity_prompt("")
-            .max_budget(0.0)
+            .max_estimated_costs(0.0)
             .tool(MockTool::new("t", false, "ok"))
             .build().unwrap();
 
         let harness = TestHarness::new(provider);
         let err = harness.run_agent(agent.as_ref(), "go").await.unwrap_err();
-        assert!(matches!(err, AgenticError::BudgetExceeded { .. }));
+        assert!(matches!(err, AgenticError::EstimatedCostsExceeded { .. }));
     }
 
     #[tokio::test]

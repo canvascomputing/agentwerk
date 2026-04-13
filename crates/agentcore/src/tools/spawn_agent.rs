@@ -43,7 +43,7 @@ impl SpawnAgentTool {
     /// Set the default model for ad-hoc sub-agents.
     /// Accepts an exact model ID string.
     pub fn with_default_model(mut self, model: impl Into<String>) -> Self {
-        self.default_model = ModelSpec::Exact(model.into());
+        self.default_model = ModelSpec::Exact { id: model.into(), costs: None };
         self
     }
 
@@ -64,7 +64,7 @@ impl SpawnAgentTool {
         } else {
             let model = input.model.as_deref().unwrap_or(
                 match &self.default_model {
-                    ModelSpec::Exact(id) => id.as_str(),
+                    ModelSpec::Exact { id, .. } => id.as_str(),
                     ModelSpec::Inherit => "inherit",
                 },
             );

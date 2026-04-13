@@ -32,7 +32,7 @@ crates/agentcore/src/
     anthropic.rs          AnthropicProvider (with SSE streaming)
     openai.rs             OpenAiProvider, LiteLlmProvider, MistralProvider (with SSE streaming)
     sse.rs                SseParser, SseEvent (shared SSE line parser)
-    cost.rs               CostTracker, ModelCosts, ModelUsage
+    costs.rs               ModelCosts (estimated costs rates per million tokens)
 
   agent/
     mod.rs                re-exports
@@ -83,5 +83,5 @@ Use cases are in `crates/use-cases/src/cli/`. Run with `make use-case name=<name
 - **No ad-hoc changes to critical types without a plan.** These types form the public API and are used across the entire codebase: `Agent`, `ToolContext`, `Event`, `Tool` trait, `AgentBuilder`, `CompletionRequest`, `AgentOutput`. Propose changes in a plan first.
 - **Tools capture dependencies at construction time** via closures or struct fields. Do not use type-erased extension bags on context objects.
 - **`tools/tool.rs` vs `tools/`**: `tool.rs` defines the trait and infrastructure (Tool, ToolRegistry, ToolBuilder, execute_tool_calls). Other files in `tools/` are concrete implementations.
-- **`agent/` vs `provider/` vs `persistence/`**: `agent/` contains the agent loop, builder, context, events, output, and prompts. `provider/` contains LLM communication and cost tracking. `persistence/` contains internal disk storage (session transcripts, tasks).
+- **`agent/` vs `provider/` vs `persistence/`**: `agent/` contains the agent loop, builder, context, events, output, and prompts. `provider/` contains LLM communication and estimated costs. `persistence/` contains internal disk storage (session transcripts, tasks).
 - **Tests live inline** in each module as `#[cfg(test)] mod tests`. Use `MockProvider` and `TestHarness` from `testutil.rs`.

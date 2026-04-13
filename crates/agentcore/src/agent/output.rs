@@ -9,7 +9,7 @@ use crate::tools::{Tool, ToolContext, ToolResult};
 
 #[derive(Debug, Clone, Default)]
 pub struct Statistics {
-    pub costs: f64,
+    pub estimated_costs: f64,
     pub input_tokens: u64,
     pub output_tokens: u64,
     pub cache_read_tokens: u64,

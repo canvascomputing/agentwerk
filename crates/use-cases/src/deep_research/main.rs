@@ -66,7 +66,7 @@ async fn main() {
         Some(data) => println!("\n{}\n", format_title_first(data)),
         None => println!("\n{}\n", output.response_raw),
     }
-    eprintln!("Cost: ${:.4}", output.statistics.costs);
+    eprintln!("Cost: ${:.4}", output.statistics.estimated_costs);
 }
 
 // ---------------------------------------------------------------------------
@@ -132,7 +132,7 @@ fn output_schema() -> serde_json::Value {
 // Brave Search tool
 // ---------------------------------------------------------------------------
 
-fn brave_search_tool(api_key: String) -> impl agent::Tool {
+fn brave_search_tool(api_key: String) -> impl agentcore::Tool {
     ToolBuilder::new("brave_search", "Search the web. Returns titles, URLs, and descriptions.")
         .schema(serde_json::json!({
             "type": "object",
@@ -150,7 +150,7 @@ fn brave_search_tool(api_key: String) -> impl agent::Tool {
         .build()
 }
 
-async fn brave_search(api_key: &str, input: &serde_json::Value) -> agent::Result<ToolResult> {
+async fn brave_search(api_key: &str, input: &serde_json::Value) -> agentcore::Result<ToolResult> {
     let query = input["query"].as_str().unwrap_or("").trim();
     let count = input["count"].as_u64().unwrap_or(5).min(20);
 

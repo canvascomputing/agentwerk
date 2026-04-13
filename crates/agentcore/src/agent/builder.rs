@@ -7,7 +7,9 @@ use serde_json::Value;
 
 use crate::error::{AgenticError, Result};
 use crate::provider::LlmProvider;
+use crate::provider::costs::ModelCosts;
 use crate::provider::model::ModelSpec;
+
 use crate::persistence::session::SessionStore;
 use super::context::{InvocationContext, generate_agent_name};
 use super::event::Event;
@@ -28,7 +30,7 @@ pub struct AgentBuilder {
     identity_prompt: String,
     max_tokens: u32,
     max_turns: Option<u32>,
-    max_budget: Option<f64>,
+    max_estimated_costs: Option<f64>,
     output_schema: Option<OutputSchema>,
     max_schema_retries: u32,
     behavior_prompts: Vec<(BehaviorPrompt, String)>,
@@ -59,7 +61,7 @@ impl AgentBuilder {
             identity_prompt: String::new(),
             max_tokens: DEFAULT_MAX_TOKENS,
             max_turns: None,
-            max_budget: None,
+            max_estimated_costs: None,
             output_schema: None,
             max_schema_retries: 3,
             behavior_prompts,
@@ -86,7 +88,13 @@ impl AgentBuilder {
 
     /// Set the model ID. If not called, the agent inherits the parent's model.
     pub fn model(mut self, model: impl Into<String>) -> Self {
-        self.model = ModelSpec::Exact(model.into());
+        self.model = ModelSpec::Exact { id: model.into(), costs: None };
+        self
+    }
+
+    /// Set the model ID with estimated costs rates (USD per million tokens).
+    pub fn model_with_costs(mut self, model: impl Into<String>, costs: ModelCosts) -> Self {
+        self.model = ModelSpec::Exact { id: model.into(), costs: Some(costs) };
         self
     }
 
@@ -106,8 +114,8 @@ impl AgentBuilder {
         self
     }
 
-    pub fn max_budget(mut self, budget: f64) -> Self {
-        self.max_budget = Some(budget);
+    pub fn max_estimated_costs(mut self, limit: f64) -> Self {
+        self.max_estimated_costs = Some(limit);
         self
     }
 
@@ -203,7 +211,7 @@ impl AgentBuilder {
             identity_prompt: self.identity_prompt,
             max_tokens: self.max_tokens,
             max_turns: self.max_turns,
-            max_budget: self.max_budget,
+            max_estimated_costs: self.max_estimated_costs,
             output_schema: self.output_schema,
             max_schema_retries: self.max_schema_retries,
             behavior_prompts: self.behavior_prompts,
