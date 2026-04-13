@@ -56,7 +56,7 @@ async fn test() -> std::result::Result<(), Box<dyn std::error::Error>> {
         .max_turns(5)
         .tool(echo_tool)
         .provider(provider)
-        .prompt("Use the echo tool to echo 'Hello from agent!' and then say goodbye.")
+        .instruction_prompt("Use the echo tool to echo 'Hello from agent!' and then say goodbye.")
         .event_handler(Arc::new(|event| match event {
             Event::TextChunk { content, .. } => print!("{content}"),
             Event::ToolCallStart { tool_name, .. } => eprintln!("\n[tool] {tool_name}"),

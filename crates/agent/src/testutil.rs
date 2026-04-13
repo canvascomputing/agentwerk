@@ -294,7 +294,7 @@ impl TestHarness {
 
     pub fn build_context(&self, input: &str) -> InvocationContext {
         InvocationContext::new(self.provider.clone())
-            .prompt(input)
+            .instruction_prompt(input)
             .template_variables(self.template_variables.clone())
             .working_directory(self.working_directory.clone())
             .event_handler(self.events.callback())

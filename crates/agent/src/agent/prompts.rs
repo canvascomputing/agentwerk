@@ -171,8 +171,8 @@ impl ContextBuilder {
         self
     }
 
-    pub(crate) fn user_context(&mut self, context: String) -> &mut Self {
-        self.user_context_blocks.push(context);
+    pub(crate) fn context_prompt(&mut self, content: String) -> &mut Self {
+        self.user_context_blocks.push(content);
         self
     }
 
@@ -262,7 +262,7 @@ mod tests {
     #[test]
     fn user_context_injected() {
         let mut builder = ContextBuilder::new();
-        builder.user_context("Git status: clean".into());
+        builder.context_prompt("Git status: clean".into());
 
         let text = extract_context_text(&builder);
         assert!(text.contains("Git status: clean"));

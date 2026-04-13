@@ -19,15 +19,13 @@ use super::r#trait::Agent;
 use crate::tools::{Tool, ToolRegistry};
 
 const DEFAULT_MAX_TOKENS: u32 = 4096;
-const READ_ONLY_MAX_TOKENS: u32 = DEFAULT_MAX_TOKENS / 2;
 
 #[derive(Clone)]
 pub struct AgentBuilder {
     // Agent definition
     name: Option<String>,
-    description: String,
     model: ModelSpec,
-    system_prompt: String,
+    identity_prompt: String,
     max_tokens: u32,
     max_turns: Option<u32>,
     max_budget: Option<f64>,
@@ -40,7 +38,7 @@ pub struct AgentBuilder {
 
     // Runtime context
     provider: Option<Arc<dyn LlmProvider>>,
-    prompt: String,
+    instruction_prompt: String,
     template_variables: HashMap<String, Value>,
     working_directory: PathBuf,
     event_handler: Arc<dyn Fn(Event) + Send + Sync>,
@@ -57,9 +55,8 @@ impl AgentBuilder {
 
         Self {
             name: None,
-            description: String::new(),
             model: ModelSpec::Inherit,
-            system_prompt: String::new(),
+            identity_prompt: String::new(),
             max_tokens: DEFAULT_MAX_TOKENS,
             max_turns: None,
             max_budget: None,
@@ -71,7 +68,7 @@ impl AgentBuilder {
             sub_agents: Vec::new(),
 
             provider: None,
-            prompt: String::new(),
+            instruction_prompt: String::new(),
             template_variables: HashMap::new(),
             working_directory: std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")),
             event_handler: Arc::new(|_| {}),
@@ -87,19 +84,15 @@ impl AgentBuilder {
         self
     }
 
-    pub fn description(mut self, desc: impl Into<String>) -> Self {
-        self.description = desc.into();
-        self
-    }
-
     /// Set the model ID. If not called, the agent inherits the parent's model.
     pub fn model(mut self, model: impl Into<String>) -> Self {
         self.model = ModelSpec::Exact(model.into());
         self
     }
 
-    pub fn system_prompt(mut self, prompt: impl Into<String>) -> Self {
-        self.system_prompt = prompt.into();
+    /// The agent's persistent identity — who it is and how it behaves.
+    pub fn identity_prompt(mut self, prompt: impl Into<String>) -> Self {
+        self.identity_prompt = prompt.into();
         self
     }
 
@@ -140,22 +133,14 @@ impl AgentBuilder {
         self
     }
 
-    /// Inject arbitrary context into the agent's first message.
-    pub fn user_context(mut self, context: impl Into<String>) -> Self {
-        self.context_builder.user_context(context.into());
+    /// Inject additional context alongside the instruction prompt.
+    pub fn context_prompt(mut self, content: impl Into<String>) -> Self {
+        self.context_builder.context_prompt(content.into());
         self
     }
 
     pub fn sub_agent(mut self, agent: Arc<dyn Agent>) -> Self {
         self.sub_agents.push(agent);
-        self
-    }
-
-    /// Configure for read-only operation with minimal prompt overhead.
-    pub fn read_only(mut self) -> Self {
-        self.max_tokens = READ_ONLY_MAX_TOKENS;
-        self.behavior_prompts.clear();
-        self.context_builder = ContextBuilder::new();
         self
     }
 
@@ -166,12 +151,13 @@ impl AgentBuilder {
         self
     }
 
-    pub fn prompt(mut self, prompt: impl Into<String>) -> Self {
-        self.prompt = prompt.into();
+    /// The task for this run — what to do right now.
+    pub fn instruction_prompt(mut self, prompt: impl Into<String>) -> Self {
+        self.instruction_prompt = prompt.into();
         self
     }
 
-    pub fn template_var(mut self, key: impl Into<String>, value: Value) -> Self {
+    pub fn template_variable(mut self, key: impl Into<String>, value: Value) -> Self {
         self.template_variables.insert(key.into(), value);
         self
     }
@@ -213,9 +199,8 @@ impl AgentBuilder {
 
         Ok(Arc::new(AgentLoop {
             name,
-            description: self.description,
             model: self.model,
-            system_prompt: self.system_prompt,
+            identity_prompt: self.identity_prompt,
             max_tokens: self.max_tokens,
             max_turns: self.max_turns,
             max_budget: self.max_budget,
@@ -228,14 +213,14 @@ impl AgentBuilder {
         }))
     }
 
-    /// Build the agent and run it. Requires `.provider()` and `.prompt()`.
+    /// Build the agent and run it. Requires `.provider()` and `.instruction_prompt()`.
     pub async fn run(mut self) -> Result<AgentOutput> {
         let provider = self
             .provider
             .clone()
             .ok_or_else(|| AgenticError::Other("AgentBuilder::run() requires a provider".into()))?;
 
-        if self.prompt.is_empty() {
+        if self.instruction_prompt.is_empty() {
             return Err(AgenticError::Other(
                 "AgentBuilder::run() requires a prompt".into(),
             ));
@@ -246,7 +231,7 @@ impl AgentBuilder {
         self.context_builder.environment_context(&env);
 
         let resolved_model = self.model.resolve(&String::new());
-        let prompt = self.prompt.clone();
+        let prompt = self.instruction_prompt.clone();
         let template_variables = self.template_variables.clone();
         let working_directory = self.working_directory.clone();
         let event_handler = self.event_handler.clone();
@@ -256,7 +241,7 @@ impl AgentBuilder {
         let agent = self.build()?;
 
         let mut ctx = InvocationContext::new(provider)
-            .prompt(prompt)
+            .instruction_prompt(prompt)
             .template_variables(template_variables)
             .working_directory(working_directory)
             .event_handler(event_handler)

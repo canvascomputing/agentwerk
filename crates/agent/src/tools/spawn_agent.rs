@@ -19,7 +19,6 @@ struct SpawnAgentInput {
     model: Option<String>,
     max_turns: Option<u32>,
     background: Option<bool>,
-    read_only: Option<bool>,
 }
 
 /// Tool that spawns sub-agents in foreground or background mode.
@@ -60,8 +59,6 @@ impl SpawnAgentTool {
     }
 
     async fn execute(&self, input: SpawnAgentInput, ctx: InvocationContext) -> Result<AgentOutput> {
-        let is_read_only = input.read_only.unwrap_or(false);
-
         let agent: Arc<dyn Agent> = if let Some(ref name) = input.agent {
             self.find_agent(name)?
         } else {
@@ -74,18 +71,15 @@ impl SpawnAgentTool {
 
             let mut builder = AgentBuilder::new()
                 .name(&input.description)
-                .system_prompt(&input.prompt)
+                .identity_prompt(&input.prompt)
                 .max_turns(input.max_turns.unwrap_or(10));
             if model != "inherit" {
                 builder = builder.model(model);
             }
-            if is_read_only {
-                builder = builder.read_only();
-            }
             builder.build()?
         };
 
-        let child_ctx = ctx.child(&input.description).prompt(&input.prompt);
+        let child_ctx = ctx.child(&input.description).instruction_prompt(&input.prompt);
 
         if input.background.unwrap_or(false) {
             let agent_id = child_ctx.agent_name.clone();
@@ -178,10 +172,6 @@ impl Tool for SpawnAgentTool {
                 "background": {
                     "type": "boolean",
                     "description": "Run in background (default: false). Returns immediately with agent ID."
-                },
-                "read_only": {
-                    "type": "boolean",
-                    "description": "Optimize for read-only tasks: smaller output budget, minimal system prompt. Use for search/exploration."
                 }
             },
             "required": ["description", "prompt"]
@@ -230,7 +220,7 @@ mod tests {
         let agent = AgentBuilder::new()
             .name("orchestrator")
             .model("mock")
-            .system_prompt("Coordinate work.")
+            .identity_prompt("Coordinate work.")
             .tool(spawn_tool)
             .build()
             .unwrap();
@@ -260,7 +250,7 @@ mod tests {
         let agent = AgentBuilder::new()
             .name("orchestrator")
             .model("mock")
-            .system_prompt("")
+            .identity_prompt("")
             .tool(spawn_tool)
             .build()
             .unwrap();
@@ -313,7 +303,7 @@ mod tests {
         let sub = AgentBuilder::new()
             .name("specialist")
             .model("mock")
-            .system_prompt("I am a specialist.")
+            .identity_prompt("I am a specialist.")
             .build()
             .unwrap();
 
@@ -324,7 +314,7 @@ mod tests {
         let agent = AgentBuilder::new()
             .name("orchestrator")
             .model("mock")
-            .system_prompt("")
+            .identity_prompt("")
             .tool(spawn_tool)
             .build()
             .unwrap();
@@ -360,7 +350,7 @@ mod tests {
         let agent = AgentBuilder::new()
             .name("orchestrator")
             .model("mock")
-            .system_prompt("")
+            .identity_prompt("")
             .tool(spawn_tool)
             .build()
             .unwrap();

@@ -70,12 +70,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     ));
 
     let output = AgentBuilder::new()
+        .provider(provider)
         .model("claude-sonnet-4-20250514")
-        .system_prompt("You are a helpful assistant that reads and explains code.")
+        .identity_prompt("You are a helpful assistant that reads and explains code.")
+        .instruction_prompt("Find all Rust source files and describe what this project does.")
         .tool(ReadFileTool)
         .tool(GlobTool)
-        .provider(provider)
-        .prompt("Find all Rust source files and describe what this project does.")
         .event_handler(Arc::new(|event| match &event {
             Event::RequestStart { model, .. } => eprintln!("[requesting {model}...]"),
             Event::ToolCallStart { tool_name, .. } => eprintln!("[tool] {tool_name}"),
@@ -117,27 +117,25 @@ One builder for everything — agent definition, runtime context, and execution.
 use agent::AgentBuilder;
 
 let output = AgentBuilder::new()
+    .identity_prompt("You are a helpful assistant.")
+    .instruction_prompt("What does src/main.rs do?")
     .model("claude-sonnet-4-20250514")
-    .system_prompt("You are a helpful assistant.")
     .tool(ReadFileTool)
     .provider(provider)
-    .prompt("What does src/main.rs do?")
     .run()
     .await?;
 ```
 
-`system_prompt` defines who the agent is (same every run). `prompt` is the task (changes per run). Use `{key}` placeholders in the system prompt and fill them with `template_var`:
+#### Prompt types
 
-```rust
-AgentBuilder::new()
-    .name("scanner")                      // agent identity (auto-generated if omitted)
-    .description("Scans projects")        // human-readable description
-    .system_prompt("Analyze {project}")
-    .template_var("project", json!("my-app"))
-    .working_directory(PathBuf::from("./src"))
-    .user_context("Additional context injected into the prompt")
-    .session_dir(PathBuf::from("./sessions"))  // persist transcripts to disk
-```
+| Prompt | Purpose | Sent as |
+|--------|---------|---------|
+| `instruction_prompt` | The task for this run (required for `.run()`) | First user message |
+| `context_prompt` | Additional context alongside the instruction (optional) | User message before instruction |
+| `behavior_prompt` | How the agent behaves — [defaults provided](#behavior-prompts) | Appended to system message |
+| `identity_prompt` | Who the agent is — persistent across runs | System message |
+
+Use `{key}` placeholders in the identity prompt and fill them with `template_variable` (or `template_variables`).
 
 #### Sub-agents
 
@@ -146,9 +144,8 @@ Use `.build()` to get `Arc<dyn Agent>` for registration as a sub-agent. Without 
 ```rust
 let researcher_base = AgentBuilder::new()
     .model("claude-haiku-4-5-20251001")
-    .system_prompt("Research this topic.")
+    .identity_prompt("Research this topic.")
     .tool(brave_search_tool())
-    .read_only()                          // minimal prompts, lower max_tokens
     .max_turns(3);
 
 let r1 = researcher_base.clone().name("researcher_1").build()?;
@@ -156,35 +153,55 @@ let r2 = researcher_base.clone().name("researcher_2").build()?;
 
 let output = AgentBuilder::new()
     .name("orchestrator")
-    .system_prompt("Coordinate research.")
+    .identity_prompt("Coordinate research.")
     .sub_agent(r1)
     .sub_agent(r2)
 ```
 
 #### Guardrails
 
-```rust
-AgentBuilder::new()
-    .max_turns(10)         // stop after N agentic turns
-    .max_budget(1.0)       // USD spend limit
-    .max_tokens(4096)      // max output tokens per request
-    .cancel_signal(cancel) // Arc<AtomicBool> for external abort
-```
+Limit agent execution to prevent runaway cost or duration.
+
+| Method | What it does |
+|--------|-------------|
+| `.max_turns(10)` | Stop after N agentic loop iterations |
+| `.max_budget(1.0)` | Abort when estimated USD cost exceeds limit |
+| `.max_tokens(4096)` | Cap output tokens per LLM request |
+| `.cancel_signal(signal)` | Abort via an external `Arc<AtomicBool>` (e.g., on Ctrl+C) |
 
 #### Behavior prompts
 
-Agents include defaults for task execution, tool usage, action safety, and output efficiency. Override any:
+Agents ship with default behavior prompts appended to the identity prompt. Override any:
+
+| Variant | Default behavior |
+|---------|-----------------|
+| `TaskExecution` | Read before modifying, don't add unrequested features, diagnose failures |
+| `ToolUsage` | Use dedicated tools over bash, parallelize independent calls |
+| `ActionSafety` | Consider reversibility, confirm destructive operations |
+| `OutputEfficiency` | Be concise, lead with the answer, skip filler |
 
 ```rust
 use agent::BehaviorPrompt;
 
 AgentBuilder::new()
     .behavior_prompt(BehaviorPrompt::TaskExecution, "Follow instructions exactly.")
+    .behavior_prompt(BehaviorPrompt::OutputEfficiency, "Always respond in JSON.")
 ```
 
-### Event
+#### Sessions
 
-Emitted via `.event_handler()` during execution.
+Record every message exchanged during a run to disk as JSONL. The agent is not aware of this — recording happens transparently in the framework.
+
+```rust
+AgentBuilder::new()
+    .session_dir(PathBuf::from("./data"))
+```
+
+Each run writes `<dir>/sessions/<id>/transcript.jsonl` — one JSON line per user message, assistant response, and tool result, with timestamps and token usage.
+
+### Events
+
+Emitted via `AgentBuilder.event_handler()` during execution.
 
 | Event | Description |
 |-------|-------------|
@@ -216,12 +233,33 @@ let tool = ToolBuilder::new("greet", "Say hello")
 
 Built-in tools:
 
-- `ReadFileTool`, `WriteFileTool`, `EditFileTool` — file operations
-- `GlobTool`, `GrepTool` — search by pattern or content
-- `ListDirectoryTool` — directory listing with type and size
-- `BashTool` — shell command execution
-- `ToolSearchTool` — discover available tools by keyword
-- `SpawnAgentTool` — delegate work to a sub-agent
+| Tool | Description |
+|------|-------------|
+| `ReadFileTool` | Read a file with line numbers, offset, and limit |
+| `WriteFileTool` | Create or overwrite a file |
+| `EditFileTool` | Find-and-replace in a file |
+| `GlobTool` | Find files by pattern (e.g., `**/*.rs`) |
+| `GrepTool` | Search file contents by substring |
+| `ListDirectoryTool` | List directory entries with type and size |
+| `BashTool` | Execute a shell command |
+| `ToolSearchTool` | Discover available tools by keyword |
+| `SpawnAgentTool` | Delegate work to a sub-agent |
+| `task_create_tool` | Create a persistent task |
+| `task_update_tool` | Update task status or fields |
+| `task_list_tool` | List all tasks |
+| `task_get_tool` | Get a task by ID |
+
+Task tools manage work items on disk via a `TaskStore`. Tasks support status tracking (Pending → InProgress → Completed), ownership, and dependency blocking:
+
+```rust
+let store = Arc::new(Mutex::new(TaskStore::open(&data_dir, "my-project")));
+
+AgentBuilder::new()
+    .tool(task_create_tool(store.clone()))
+    .tool(task_update_tool(store.clone()))
+    .tool(task_list_tool(store.clone()))
+    .tool(task_get_tool(store.clone()))
+```
 
 ### AgentOutput
 
@@ -229,6 +267,7 @@ The result of `.run()`.
 
 ```rust
 output.response_raw            // free-form LLM text
+output.response                // validated JSON if output_schema was set
 output.statistics.costs        // total USD spent
 output.statistics.input_tokens // total input tokens
 output.statistics.output_tokens// total output tokens
@@ -266,16 +305,25 @@ make litellm           # start LiteLLM proxy
 
 ### Environment
 
-Auto-detect the provider from environment variables:
+Use cases and integration tests pick up the LLM provider from these environment variables:
 
+**Anthropic**
 | Variable | Description |
 |----------|-------------|
-| `ANTHROPIC_API_KEY` | Use Anthropic directly |
+| `ANTHROPIC_API_KEY` | API key (required) |
 | `ANTHROPIC_BASE_URL` | API URL (default: `https://api.anthropic.com`) |
 | `ANTHROPIC_MODEL` | Model (default: `claude-sonnet-4-20250514`) |
-| `MISTRAL_API_KEY` | Use Mistral directly |
+
+**Mistral**
+| Variable | Description |
+|----------|-------------|
+| `MISTRAL_API_KEY` | API key (required) |
 | `MISTRAL_BASE_URL` | API URL (default: `https://api.mistral.ai`) |
 | `MISTRAL_MODEL` | Model (default: `mistral-medium-2508`) |
+
+**LiteLLM proxy**
+| Variable | Description |
+|----------|-------------|
+| `LITELLM_API_URL` | Proxy URL (default: `http://localhost:4000`) |
 | `LITELLM_API_KEY` | Auth key (optional) |
-| `LITELLM_API_URL` | Use LiteLLM proxy (default: `http://localhost:4000`) |
 | `LITELLM_MODEL` | Model (default: `claude-sonnet-4-20250514`) |

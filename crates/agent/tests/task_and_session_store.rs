@@ -53,7 +53,7 @@ async fn test() -> std::result::Result<(), Box<dyn std::error::Error>> {
         .tool(task_update_tool(task_store.clone()))
         .tool(task_list_tool(task_store.clone()))
         .provider(provider)
-        .prompt(
+        .instruction_prompt(
             "Create two tasks: 'Design API' and 'Write tests'. \
              Then mark 'Design API' as Completed. \
              Finally list all tasks and summarize their status.",

@@ -21,7 +21,7 @@ pub struct InvocationContext {
     pub cancel_signal: Arc<AtomicBool>,
 
     // What to do
-    pub prompt: String,
+    pub instruction_prompt: String,
     pub template_variables: HashMap<String, Value>,
     pub working_directory: PathBuf,
 
@@ -42,7 +42,7 @@ impl InvocationContext {
             agent_name: generate_agent_name("agent"),
             event_handler: Arc::new(|_| {}),
             cancel_signal: Arc::new(AtomicBool::new(false)),
-            prompt: String::new(),
+            instruction_prompt: String::new(),
             template_variables: HashMap::new(),
             working_directory: std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")),
             provider,
@@ -52,8 +52,8 @@ impl InvocationContext {
         }
     }
 
-    pub fn prompt(mut self, prompt: impl Into<String>) -> Self {
-        self.prompt = prompt.into();
+    pub fn instruction_prompt(mut self, prompt: impl Into<String>) -> Self {
+        self.instruction_prompt = prompt.into();
         self
     }
 
@@ -67,7 +67,7 @@ impl InvocationContext {
         self
     }
 
-    pub fn template_var(mut self, key: impl Into<String>, value: Value) -> Self {
+    pub fn template_variable(mut self, key: impl Into<String>, value: Value) -> Self {
         self.template_variables.insert(key.into(), value);
         self
     }

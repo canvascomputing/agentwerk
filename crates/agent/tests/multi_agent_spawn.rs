@@ -54,7 +54,7 @@ async fn test() -> std::result::Result<(), Box<dyn std::error::Error>> {
         .max_turns(5)
         .tool(spawn_tool)
         .provider(provider)
-        .prompt("What is the capital of France? Use the researcher agent to find out, then tell me.")
+        .instruction_prompt("What is the capital of France? Use the researcher agent to find out, then tell me.")
         .command_queue(Arc::new(CommandQueue::new()))
         .event_handler(Arc::new(|event| match event {
             Event::TextChunk { content, agent_name } => {

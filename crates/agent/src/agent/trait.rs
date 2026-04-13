@@ -10,7 +10,6 @@ use super::context::InvocationContext;
 /// and any user-defined agent.
 pub trait Agent: Send + Sync {
     fn name(&self) -> &str;
-    fn description(&self) -> &str;
     fn run(
         &self,
         ctx: InvocationContext,

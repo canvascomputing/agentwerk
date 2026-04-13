@@ -29,9 +29,8 @@ use super::queue::QueuePriority;
 /// Created via `AgentBuilder::build()`.
 pub(crate) struct AgentLoop {
     pub(crate) name: String,
-    pub(crate) description: String,
     pub(crate) model: ModelSpec,
-    pub(crate) system_prompt: String,
+    pub(crate) identity_prompt: String,
     pub(crate) max_tokens: u32,
     pub(crate) max_turns: Option<u32>,
     pub(crate) max_budget: Option<f64>,
@@ -47,9 +46,6 @@ pub(crate) struct AgentLoop {
 impl Agent for AgentLoop {
     fn name(&self) -> &str {
         &self.name
-    }
-    fn description(&self) -> &str {
-        &self.description
     }
     fn run(
         &self,
@@ -123,7 +119,7 @@ impl AgentLoop {
     }
 
     fn init_state(&self, ctx: &InvocationContext) -> LoopState {
-        let mut system_prompt = interpolate(&self.system_prompt, &ctx.template_variables);
+        let mut system_prompt = interpolate(&self.identity_prompt, &ctx.template_variables);
         for (_, content) in &self.behavior_prompts {
             system_prompt.push_str("\n\n");
             system_prompt.push_str(content);
@@ -137,7 +133,7 @@ impl AgentLoop {
         if let Some(context_msg) = self.context_builder.build_context_message() {
             messages.push(context_msg);
         }
-        messages.push(Message::user(ctx.prompt.clone()));
+        messages.push(Message::user(ctx.instruction_prompt.clone()));
         self.record_initial_message(ctx, &messages);
 
         LoopState {
@@ -445,7 +441,7 @@ mod tests {
         AgentBuilder::new()
             .name("test-agent")
             .model("mock-model")
-            .system_prompt("You are a test assistant.")
+            .identity_prompt("You are a test assistant.")
             .build()
             .unwrap()
     }
@@ -471,7 +467,7 @@ mod tests {
         let agent = AgentBuilder::new()
             .name("test-agent")
             .model("mock-model")
-            .system_prompt("You are helpful.")
+            .identity_prompt("You are helpful.")
             .tool(MockTool::new("echo_tool", false, "pong"))
             .build()
             .unwrap();
@@ -490,7 +486,7 @@ mod tests {
             tool_response("t", "c3", serde_json::json!({})),
         ]);
         let agent = AgentBuilder::new()
-            .name("test").model("mock").system_prompt("")
+            .name("test").model("mock").identity_prompt("")
             .max_turns(2)
             .tool(MockTool::new("t", false, "ok"))
             .build().unwrap();
@@ -507,7 +503,7 @@ mod tests {
             text_response("done"),
         ]);
         let agent = AgentBuilder::new()
-            .name("test").model("mock").system_prompt("")
+            .name("test").model("mock").identity_prompt("")
             .max_budget(0.0)
             .tool(MockTool::new("t", false, "ok"))
             .build().unwrap();
@@ -524,7 +520,7 @@ mod tests {
             text_response("done"),
         ]);
         let agent = AgentBuilder::new()
-            .name("test").model("mock").system_prompt("")
+            .name("test").model("mock").identity_prompt("")
             .tool(MockTool::new("t", false, "ok"))
             .build().unwrap();
 
@@ -539,7 +535,7 @@ mod tests {
         let provider = MockProvider::text("Answer about rust");
         let agent = AgentBuilder::new()
             .name("test").model("mock")
-            .system_prompt("You are an expert on {topic}.")
+            .identity_prompt("You are an expert on {topic}.")
             .build().unwrap();
 
         let harness = TestHarness::new(provider).with_state("topic", serde_json::json!("rust"));
@@ -553,7 +549,7 @@ mod tests {
     async fn events_emitted() {
         let provider = MockProvider::tool_then_text("read", serde_json::json!({}), "Done");
         let agent = AgentBuilder::new()
-            .name("assistant").model("mock").system_prompt("")
+            .name("assistant").model("mock").identity_prompt("")
             .tool(MockTool::new("read", true, "file contents"))
             .build().unwrap();
 
@@ -574,7 +570,7 @@ mod tests {
             text_response("final"),
         ]);
         let agent = AgentBuilder::new()
-            .name("test").model("mock").system_prompt("")
+            .name("test").model("mock").identity_prompt("")
             .tool(MockTool::new("t", false, "ok"))
             .build().unwrap();
 
@@ -612,7 +608,7 @@ mod tests {
             text_response("final"),
         ]);
         let agent = AgentBuilder::new()
-            .name("test").model("mock").system_prompt("")
+            .name("test").model("mock").identity_prompt("")
             .tool(MockTool::new("t", false, "ok"))
             .build().unwrap();
 
@@ -640,7 +636,7 @@ mod tests {
     async fn deferred_tool_filtering() {
         let provider = MockProvider::text("ok");
         let agent = AgentBuilder::new()
-            .name("test").model("mock").system_prompt("")
+            .name("test").model("mock").identity_prompt("")
             .tool(MockTool::new("always", true, "ok"))
             .tool(DeferredMockTool::new("deferred"))
             .build().unwrap();
@@ -657,7 +653,7 @@ mod tests {
     async fn no_filtering_without_deferred() {
         let provider = MockProvider::text("ok");
         let agent = AgentBuilder::new()
-            .name("test").model("mock").system_prompt("")
+            .name("test").model("mock").identity_prompt("")
             .tool(MockTool::new("read", true, "ok"))
             .build().unwrap();
 
@@ -688,7 +684,7 @@ mod tests {
             text_response("done"),
         ]);
         let agent = AgentBuilder::new()
-            .name("classifier").model("mock").system_prompt("Classify.")
+            .name("classifier").model("mock").identity_prompt("Classify.")
             .output_schema(serde_json::json!({
                 "type": "object",
                 "properties": { "category": {"type": "string"}, "priority": {"type": "string"} },
@@ -712,7 +708,7 @@ mod tests {
             text_response("done"),
         ]);
         let agent = AgentBuilder::new()
-            .name("test").model("mock").system_prompt("")
+            .name("test").model("mock").identity_prompt("")
             .output_schema(serde_json::json!({
                 "type": "object",
                 "properties": {"answer": {"type": "string"}},
@@ -735,7 +731,7 @@ mod tests {
             text_response("last nope"),
         ]);
         let agent = AgentBuilder::new()
-            .name("test").model("mock").system_prompt("")
+            .name("test").model("mock").identity_prompt("")
             .output_schema(serde_json::json!({
                 "type": "object",
                 "properties": {"x": {"type": "string"}},
@@ -780,7 +776,7 @@ mod tests {
             // Second call will fail — no more responses
         ]);
         let agent = AgentBuilder::new()
-            .name("test").model("mock").system_prompt("")
+            .name("test").model("mock").identity_prompt("")
             .tool(MockTool::new("t", false, "ok"))
             .build().unwrap();
 
@@ -803,7 +799,7 @@ mod tests {
         let provider = MockProvider::new(vec![response, text_response("done")]);
 
         let agent = AgentBuilder::new()
-            .name("test").model("mock").system_prompt("")
+            .name("test").model("mock").identity_prompt("")
             .tool(MockTool::new("a", true, "result_a"))
             .tool(MockTool::new("b", true, "result_b"))
             .build().unwrap();
@@ -844,7 +840,7 @@ mod tests {
         let provider = MockProvider::new(vec![r1, r2]);
 
         let agent = AgentBuilder::new()
-            .name("test").model("mock").system_prompt("")
+            .name("test").model("mock").identity_prompt("")
             .tool(MockTool::new("t", false, "ok"))
             .build().unwrap();
 
@@ -858,8 +854,8 @@ mod tests {
     async fn user_context_injects_into_messages() {
         let provider = MockProvider::text("ok");
         let agent = AgentBuilder::new()
-            .name("test").model("mock").system_prompt("System.")
-            .user_context("Project context here")
+            .name("test").model("mock").identity_prompt("System.")
+            .context_prompt("Project context here")
             .build().unwrap();
 
         let harness = TestHarness::new(provider);
@@ -887,7 +883,7 @@ mod tests {
             text_response("done"),
         ]);
         let agent = AgentBuilder::new()
-            .name("test").model("mock").system_prompt("")
+            .name("test").model("mock").identity_prompt("")
             .output_schema(serde_json::json!({
                 "type": "object",
                 "properties": {"x": {"type": "string"}},
@@ -918,7 +914,7 @@ mod tests {
         let provider = MockProvider::new(vec![error_response, text_response("recovered")]);
 
         let agent = AgentBuilder::new()
-            .name("test").model("mock").system_prompt("")
+            .name("test").model("mock").identity_prompt("")
             .tool(MockTool::new("failing", false, "error: something broke"))
             .build().unwrap();
 
