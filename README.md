@@ -15,7 +15,7 @@
 
 </div>
 
-<p align="center"><code>Agentic loop</code> · <code>Concurrent tool execution</code> · <code>Sub-agent spawning</code> · <code>SSE streaming</code> · <code>Anthropic, Mistral, OpenAI</code> · <code>Model inheritance</code> · <code>Cost tracking</code> · <code>Budget limits</code> · <code>Structured output</code> · <code>Behavior prompts</code> · <code>Template variables</code> · <code>Session transcripts</code> · <code>Task persistence</code> · <code>File, search, and shell tools</code> · <code>Read-only agent mode</code> · <code>Connection pooling</code> · <code>Connection pre-warming</code></p>
+<p align="center"><code>Agentic execution loop</code> · <code>Basic tool implementations</code> · <code>Sub-agent orchestration</code> · <code>Anthropic, Mistral, OpenAI integration</code> · <code>Schema-based output</code> · <code>Cost tracking</code></p>
 
 ## Use Cases
 
@@ -178,6 +178,7 @@ use agent::Event;
 ctx.event_handler = Arc::new(|event| match &event {
     Event::TextChunk { content, .. } => print!("{content}"),
     Event::RequestStart { agent_name, model } => eprintln!("{agent_name} calling {model}..."),
+    Event::RequestEnd { agent_name, .. } => eprintln!("{agent_name} response received"),
     Event::ToolCallStart { tool_name, input, .. } => eprintln!("[{tool_name}] {input}"),
     Event::ToolCallEnd { tool_name, is_error, .. } if *is_error => eprintln!("[error] {tool_name}"),
     Event::AgentEnd { agent_name, turns } => eprintln!("{agent_name} done in {turns} turns"),
