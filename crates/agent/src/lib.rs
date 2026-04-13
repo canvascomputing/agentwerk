@@ -20,9 +20,8 @@ pub use provider::{
 // Tool infrastructure and built-in tools
 pub use tools::{
     BashTool, BuiltinToolset, EditFileTool, GlobTool, GrepTool, ListDirectoryTool, ReadFileTool,
-    SpawnAgentTool, Tool, ToolBuilder, ToolCall, ToolContext, ToolDefinition, ToolRegistry,
+    SpawnAgentTool, TaskTool, Tool, ToolBuilder, ToolCall, ToolContext, ToolDefinition, ToolRegistry,
     ToolResult, ToolSearchResult, ToolSearchTool, Toolset, WriteFileTool, execute_tool_calls,
-    task_create_tool, task_get_tool, task_list_tool, task_update_tool,
 };
 
 // Agent

@@ -24,7 +24,7 @@ pub use grep::GrepTool;
 pub use list_directory::ListDirectoryTool;
 pub use read_file::ReadFileTool;
 pub use spawn_agent::SpawnAgentTool;
-pub use task_tools::{task_create_tool, task_get_tool, task_list_tool, task_update_tool};
+pub use task_tools::TaskTool;
 pub use tool_search::ToolSearchTool;
 pub use write_file::WriteFileTool;
 

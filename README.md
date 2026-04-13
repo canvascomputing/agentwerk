@@ -244,22 +244,7 @@ Built-in tools:
 | `BashTool` | Execute a shell command |
 | `ToolSearchTool` | Discover available tools by keyword |
 | `SpawnAgentTool` | Delegate work to a sub-agent |
-| `task_create_tool` | Create a persistent task |
-| `task_update_tool` | Update task status or fields |
-| `task_list_tool` | List all tasks |
-| `task_get_tool` | Get a task by ID |
-
-Task tools manage work items on disk via a `TaskStore`. Tasks support status tracking (Pending → InProgress → Completed), ownership, and dependency blocking:
-
-```rust
-let store = Arc::new(Mutex::new(TaskStore::open(&data_dir, "my-project")));
-
-AgentBuilder::new()
-    .tool(task_create_tool(store.clone()))
-    .tool(task_update_tool(store.clone()))
-    .tool(task_list_tool(store.clone()))
-    .tool(task_get_tool(store.clone()))
-```
+| `TaskTool` | Persistent task management (create, update, list, get) |
 
 ### AgentOutput
 
@@ -298,7 +283,7 @@ output.response.unwrap()["category"]  // "billing"
 make                   # build
 make test              # unit tests
 make test_integration  # integration tests (requires LLM provider)
-make fmt               # format
+make fmt               # format code
 make use-case          # list use cases
 make litellm           # start LiteLLM proxy
 ```

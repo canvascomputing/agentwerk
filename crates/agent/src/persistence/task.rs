@@ -422,17 +422,17 @@ mod tests {
     }
 
     #[test]
+    fn get_nonexistent_returns_none() {
+        let (_tmp, store) = test_store();
+        assert!(store.get("999").unwrap().is_none());
+    }
+
+    #[test]
     fn delete_removes_task() {
         let (_tmp, store) = test_store();
         store.create("Task", "desc").unwrap();
         store.delete("1").unwrap();
         assert!(store.get("1").unwrap().is_none());
-    }
-
-    #[test]
-    fn get_nonexistent_returns_none() {
-        let (_tmp, store) = test_store();
-        assert!(store.get("999").unwrap().is_none());
     }
 
     #[test]

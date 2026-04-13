@@ -1,14 +1,12 @@
-//! Integration test: Agent-driven task management with persistence.
+//! Integration test: Agent-driven task management with all TaskTool features.
 //!
-//! Exercises the full stack: agent loop → tool calls → TaskStore/SessionStore → disk.
+//! Exercises: create, update, list, get, delete, claim, add_dependency.
 
 use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
-use std::sync::Mutex;
 
 use agent::{
-    AgentBuilder, AnthropicProvider, Event, LiteLlmProvider, LlmProvider, SessionStore, TaskStore,
-    task_create_tool, task_list_tool, task_update_tool,
+    AgentBuilder, AnthropicProvider, Event, LiteLlmProvider, LlmProvider, TaskTool,
 };
 
 fn build_provider() -> Option<(Arc<dyn LlmProvider>, String)> {
@@ -39,28 +37,32 @@ async fn test() -> std::result::Result<(), Box<dyn std::error::Error>> {
     let Some((provider, model)) = build_provider() else { eprintln!("SKIPPED: no provider"); return Ok(()); };
 
     let tmp = tempfile::tempdir()?;
-    let base = tmp.path();
-
-    let task_store = Arc::new(Mutex::new(TaskStore::open(base, "integration-test")));
-    let session_store = SessionStore::new(base, "test-session");
 
     let output = AgentBuilder::new()
         .name("planner")
         .model(&model)
-        .system_prompt("You are a project planner. Use the task tools to manage work items. Be concise.")
-        .max_turns(10)
-        .tool(task_create_tool(task_store.clone()))
-        .tool(task_update_tool(task_store.clone()))
-        .tool(task_list_tool(task_store.clone()))
+        .identity_prompt(
+            "You are a project planner. Use the task tool to manage work items. \
+             The task tool supports these actions: create, update, list, get, delete, claim, add_dependency. \
+             Be concise. Always use the task tool, never simulate results.",
+        )
+        .max_turns(15)
+        .tool(TaskTool::open(tmp.path()))
         .provider(provider)
         .instruction_prompt(
-            "Create two tasks: 'Design API' and 'Write tests'. \
-             Then mark 'Design API' as Completed. \
-             Finally list all tasks and summarize their status.",
+            "Do the following steps in order:\n\
+             1. Create three tasks: 'Design API', 'Write tests', 'Deploy'\n\
+             2. Add a dependency: 'Design API' blocks 'Write tests'\n\
+             3. Claim 'Design API' as agent 'alice'\n\
+             4. Mark 'Design API' as Completed\n\
+             5. Delete 'Deploy'\n\
+             6. List all remaining tasks\n\
+             7. Get details of 'Write tests' by ID\n\
+             8. Summarize what you did",
         )
-        .session_store(Arc::new(Mutex::new(session_store)))
         .event_handler(Arc::new(|event| match &event {
             Event::TextChunk { content, .. } => print!("{content}"),
+            Event::RequestStart { model, .. } => eprintln!("[requesting {model}...]"),
             Event::ToolCallStart { tool_name, .. } => eprintln!("\n[tool] {tool_name}"),
             Event::ToolCallEnd { tool_name, output, is_error, .. } => {
                 if *is_error {
@@ -69,6 +71,7 @@ async fn test() -> std::result::Result<(), Box<dyn std::error::Error>> {
                     eprintln!("[result] {}", &output[..output.len().min(120)]);
                 }
             }
+            Event::AgentError { message, .. } => eprintln!("[agent error] {message}"),
             Event::AgentEnd { turns, .. } => eprintln!("\n[done in {turns} turn(s)]"),
             _ => {}
         }))
@@ -76,20 +79,11 @@ async fn test() -> std::result::Result<(), Box<dyn std::error::Error>> {
         .run()
         .await?;
 
-    println!("\n\n--- Verification ---");
-
-    let verify_store = TaskStore::open(base, "integration-test");
-    let tasks = verify_store.list()?;
-    println!("Tasks on disk: {}", tasks.len());
-    for task in &tasks {
-        println!("  #{} [{:?}] {}", task.id, task.status, task.subject);
-    }
-
-    let entries = SessionStore::load(base, "test-session")?;
-    println!("Transcript entries: {}", entries.len());
-
-    println!("\n--- Cost ---");
-    println!("Cost: ${:.4}", output.statistics.costs);
+    eprintln!("\n--- Response ---");
+    eprintln!("Raw: {:?}", &output.response_raw[..output.response_raw.len().min(200)]);
+    eprintln!("Turns: {}, Requests: {}, Tool calls: {}, Cost: ${:.4}",
+        output.statistics.turns, output.statistics.requests,
+        output.statistics.tool_calls, output.statistics.costs);
 
     Ok(())
 }
