@@ -25,7 +25,7 @@
 
 ```rust
 use std::sync::Arc;
-use agent::{AgentBuilder, AnthropicProvider, Event, ReadFileTool, GlobTool};
+use agent::{AgentBuilder, AnthropicProvider, ReadFileTool, GlobTool};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -36,20 +36,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let output = AgentBuilder::new()
         .provider(provider)
         .model("claude-sonnet-4-20250514")
-        .identity_prompt("You are a helpful assistant that reads and explains code.")
         .instruction_prompt("Find all Rust source files and describe what this project does.")
         .tool(ReadFileTool)
         .tool(GlobTool)
-        .event_handler(Arc::new(|event| match &event {
-            Event::RequestStart { model, .. } => eprintln!("[requesting {model}...]"),
-            Event::ToolCallStart { tool_name, .. } => eprintln!("[tool] {tool_name}"),
-            Event::AgentEnd { turns, .. } => eprintln!("[done in {turns} turns]"),
-            _ => {}
-        }))
         .run()
         .await?;
 
-    eprintln!("\n\nDone in {} turns, ${:.4}", output.statistics.turns, output.statistics.costs);
+    println!("{}", output.response_raw);
     Ok(())
 }
 ```
