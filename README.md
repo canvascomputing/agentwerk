@@ -261,19 +261,19 @@ let tool = ToolBuilder::new("greet", "Say hello")
 
 Built-in tools:
 
-| Tool | Description |
-|------|-------------|
-| `ReadFileTool` | Read a file with line numbers, offset, and limit |
-| `WriteFileTool` | Create or overwrite a file |
-| `EditFileTool` | Find-and-replace in a file |
-| `GlobTool` | Find files by pattern (e.g., `**/*.rs`) |
-| `GrepTool` | Search file contents by substring |
-| `ListDirectoryTool` | List directory entries with type and size |
-| `BashTool` | Execute a shell command |
-| `ToolSearchTool` | Discover available tools by keyword |
-| `SpawnAgentTool` | Delegate work to a sub-agent |
-| `TaskTool` | Persistent task management (create, update, list, get) |
-| `WebFetchTool` | Fetch a URL and return its content as text |
+| | Tool | Description |
+|-|------|-------------|
+| **File** | `ReadFileTool` | Read a file with line numbers, offset, and limit |
+| | `WriteFileTool` | Create or overwrite a file |
+| | `EditFileTool` | Find-and-replace in a file |
+| **Search** | `GlobTool` | Find files by pattern (e.g., `**/*.rs`) |
+| | `GrepTool` | Search file contents by substring |
+| | `ListDirectoryTool` | List directory entries with type and size |
+| **Shell** | `BashTool` | Execute a shell command |
+| **Web** | `WebFetchTool` | Fetch a URL and return its content as text |
+| **Agent** | `SpawnAgentTool` | Delegate work to a sub-agent |
+| | `TaskTool` | Persistent task management (create, update, list, get) |
+| | `ToolSearchTool` | Discover available tools by keyword |
 
 ### AgentOutput
 
