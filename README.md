@@ -15,7 +15,7 @@
   <a href="#development">Development</a>
 </p>
 
-<p align="center">Every agentic application, like OpenClaw or Claude Code, reimplements the same core functionality. This crate extracts that shared foundation into a minimal, dependency-light library.</p>
+<p align="center">Most agentic applications reimplement the same core: an execution loop, tool dispatch, and provider integration. This crate provides that foundation as a library.</p>
 
 <p align="center">
   <a href="crates/agentcore/src/agent/loop.rs">Agentic execution loop</a> ·
@@ -121,11 +121,11 @@ Output:
 
 ## API
 
-Configure an `AgentBuilder` with a provider, model, tools, and prompt, then call `.run()` to get an `AgentOutput`. Stream `Event`s during execution.
+An agent is configured with a provider, model, tools, and prompt. Running it returns an output with the response and statistics. Events are emitted during execution for streaming and observability.
 
 ### LlmProvider
 
-Connect to any LLM. Providers own a `reqwest::Client` for connection pooling and SSE streaming.
+Providers for Anthropic, OpenAI-compatible, Mistral, and LiteLLM. Each owns a `reqwest::Client` for connection pooling and SSE streaming.
 
 ```rust
 use agentcore::{AnthropicProvider, MistralProvider, LiteLlmProvider, OpenAiProvider};
@@ -141,7 +141,7 @@ let provider = AnthropicProvider::new(key, client);
 
 ### AgentBuilder
 
-One builder for everything — agent definition, runtime context, and execution.
+Configures the agent's identity, tools, provider, and runtime options.
 
 ```rust
 use agentcore::AgentBuilder;
@@ -169,7 +169,7 @@ Use `{key}` placeholders in the identity prompt and fill them with `template_var
 
 #### Sub-agents
 
-Use `.build()` to get `Arc<dyn Agent>` for registration as a sub-agent. Without `.model()`, a sub-agent inherits its parent's model at runtime. Clone the builder to create multiple similar agents:
+Building an agent returns a shareable handle for registration as a sub-agent. Without an explicit model, a sub-agent inherits its parent's model at runtime. Clone the builder to create multiple similar agents:
 
 ```rust
 let researcher_base = AgentBuilder::new()
@@ -246,7 +246,7 @@ Emitted via `AgentBuilder.event_handler()` during execution.
 
 ### Tools
 
-Define what the agent can do. Read-only tools run concurrently.
+Tools are functions the agent can call. Implement the `Tool` trait or use `ToolBuilder` for closures. Read-only tools run concurrently.
 
 ```rust
 use agentcore::{ToolBuilder, ToolResult};
@@ -279,7 +279,7 @@ Built-in tools:
 
 ### AgentOutput
 
-The result of `.run()`.
+The result of running an agent.
 
 ```rust
 output.response_raw            // free-form LLM text
@@ -292,7 +292,7 @@ output.statistics.tool_calls   // number of tool executions
 output.statistics.turns        // number of agentic turns
 ```
 
-With `.output_schema()`, the agent returns validated JSON in `output.response`:
+With an output schema, the agent returns validated JSON:
 
 ```rust
 let output = AgentBuilder::new()
