@@ -66,7 +66,7 @@ async fn main() {
         Some(data) => println!("\n{}\n", format_title_first(data)),
         None => println!("\n{}\n", output.response_raw),
     }
-    eprintln!("Cost: ${:.4}", output.statistics.estimated_costs);
+    eprintln!("Tokens: {} in, {} out", output.statistics.input_tokens, output.statistics.output_tokens);
 }
 
 // ---------------------------------------------------------------------------

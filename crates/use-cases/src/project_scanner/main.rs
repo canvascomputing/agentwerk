@@ -74,7 +74,6 @@ async fn main() {
         .tool(ListDirectoryTool)
         .tool(GlobTool)
         .output_schema(output_schema())
-        .max_estimated_costs(config.max_estimated_costs)
         .provider(provider)
         .instruction_prompt("Scan this project and identify what it does and what languages it uses.")
         .template_variable("folder_path", serde_json::Value::String(config.folder.display().to_string()))
@@ -126,7 +125,6 @@ struct CliConfig {
     folder: PathBuf,
     model: String,
     output: String,
-    max_estimated_costs: f64,
 }
 
 fn parse_args() -> CliConfig {
@@ -134,21 +132,18 @@ fn parse_args() -> CliConfig {
     let mut folder = ".".to_string();
     let mut model = String::new();
     let mut output = "project.json".to_string();
-    let mut max_estimated_costs = 1.00;
 
     let mut i = 1;
     while i < args.len() {
         match args[i].as_str() {
             "--model" => { i += 1; model = args[i].clone(); }
             "-o" | "--output" => { i += 1; output = args[i].clone(); }
-            "--max-estimated-costs" => { i += 1; max_estimated_costs = args[i].parse().expect("Invalid --max-estimated-costs"); }
             "-h" | "--help" => {
                 eprintln!("Scan a project and output a JSON summary.\n");
                 eprintln!("Usage: project-scanner [OPTIONS] [FOLDER]\n");
                 eprintln!("Options:");
                 eprintln!("  --model <MODEL>      Model override");
                 eprintln!("  -o, --output <PATH>  Output file (default: project.json)");
-                eprintln!("  --max-estimated-costs <USD>     Cost limit (default: 1.00)");
                 std::process::exit(0);
             }
             arg if !arg.starts_with('-') && folder == "." => folder = arg.into(),
@@ -161,6 +156,6 @@ fn parse_args() -> CliConfig {
     }
 
     let folder = std::fs::canonicalize(&folder).unwrap_or_else(|_| PathBuf::from(&folder));
-    CliConfig { folder, model, output, max_estimated_costs }
+    CliConfig { folder, model, output }
 }
 

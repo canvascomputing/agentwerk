@@ -73,7 +73,7 @@ async fn test() -> std::result::Result<(), Box<dyn std::error::Error>> {
     println!("\n\n--- Output ---");
     println!("{}", output.response_raw);
     println!("\n--- Cost ---");
-    println!("Cost: ${:.4}", output.statistics.estimated_costs);
+    println!("Tokens: {} in, {} out", output.statistics.input_tokens, output.statistics.output_tokens);
 
     Ok(())
 }

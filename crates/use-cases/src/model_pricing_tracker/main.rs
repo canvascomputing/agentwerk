@@ -121,7 +121,7 @@ async fn main() {
         Err(e) => eprintln!("Failed to write {output_path}: {e}"),
     }
     println!("{json}");
-    eprintln!("Cost: ${:.4}", output.statistics.estimated_costs);
+    eprintln!("Tokens: {} in, {} out", output.statistics.input_tokens, output.statistics.output_tokens);
 }
 
 // ---------------------------------------------------------------------------

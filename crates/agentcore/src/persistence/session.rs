@@ -29,7 +29,6 @@ pub struct SessionMetadata {
     pub created_at: u64,
     pub last_active_at: u64,
     pub message_count: u64,
-    pub total_estimated_costs_usd: f64,
 }
 
 /// Append-only JSONL transcript store.
@@ -153,7 +152,7 @@ impl SessionStore {
             created_at: entries.first().map(|e| e.recorded_at).unwrap_or(0),
             last_active_at: entries.last().map(|e| e.recorded_at).unwrap_or(0),
             message_count: entries.len() as u64,
-            total_estimated_costs_usd: 0.0,
+
             session_id,
         })
     }

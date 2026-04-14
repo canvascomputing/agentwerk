@@ -81,9 +81,9 @@ async fn test() -> std::result::Result<(), Box<dyn std::error::Error>> {
 
     eprintln!("\n--- Response ---");
     eprintln!("Raw: {:?}", &output.response_raw[..output.response_raw.len().min(200)]);
-    eprintln!("Turns: {}, Requests: {}, Tool calls: {}, Cost: ${:.4}",
+    eprintln!("Turns: {}, Requests: {}, Tool calls: {}, Tokens: {} in / {} out",
         output.statistics.turns, output.statistics.requests,
-        output.statistics.tool_calls, output.statistics.estimated_costs);
+        output.statistics.tool_calls, output.statistics.input_tokens, output.statistics.output_tokens);
 
     Ok(())
 }

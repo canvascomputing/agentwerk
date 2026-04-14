@@ -22,8 +22,7 @@
   <a href="crates/agentcore/src/tools">Built-in tools</a> ·
   <a href="crates/agentcore/src/tools/spawn_agent.rs">Sub-agent orchestration</a> ·
   <a href="crates/agentcore/src/provider">Anthropic, Mistral, OpenAI integration</a> ·
-  <a href="crates/agentcore/src/agent/output.rs">Schema-based output</a> ·
-  <a href="crates/agentcore/src/provider/costs.rs">Cost Estimations</a>
+  <a href="crates/agentcore/src/agent/output.rs">Schema-based output</a>
 </p>
 
 ---
@@ -196,21 +195,7 @@ Limit agent execution to prevent runaway estimated costs or duration.
 |--------|-------------|
 | `.max_turns(10)` | Stop after N agentic loop iterations |
 | `.max_tokens(4096)` | Cap output tokens per LLM request |
-| `.max_estimated_costs(5.0)` | Abort when estimated costs exceed budget |
 | `.cancel_signal(signal)` | Abort via an external `Arc<AtomicBool>` (e.g., on Ctrl+C) |
-
-Estimated costs require `.model_with_costs()` to provide token rates:
-
-```rust
-AgentBuilder::new()
-    .model_with_costs(
-        "claude-sonnet-4-20250514",
-        ModelCosts::new(3.0, 15.0),  // $3/M input tokens, $15/M output tokens
-    )
-    .max_estimated_costs(5.0)
-```
-
-Costs are estimated as `(input_tokens × input_rate + output_tokens × output_rate) / 1,000,000`. Cache tokens are not included. Actual provider billing may differ.
 
 #### Behavior prompts
 
@@ -256,7 +241,7 @@ Emitted via `AgentBuilder.event_handler()` during execution.
 | `TextChunk` | Streamed text token |
 | `ToolCallStart` / `ToolCallEnd` | Tool execution lifecycle |
 | `TokenUsage` | Token counts for a request |
-| `EstimatedCostsUpdate` | Estimated costs update |
+
 
 ### Tools
 
@@ -297,7 +282,7 @@ The result of `.run()`.
 ```rust
 output.response_raw            // free-form LLM text
 output.response                // validated JSON if output_schema was set
-output.statistics.estimated_costs // estimated USD (requires .model_with_costs())
+
 output.statistics.input_tokens // total input tokens
 output.statistics.output_tokens// total output tokens
 output.statistics.requests     // number of LLM calls

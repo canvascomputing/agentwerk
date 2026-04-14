@@ -32,7 +32,6 @@ pub(crate) struct AgentLoop {
     pub(crate) identity_prompt: String,
     pub(crate) max_tokens: u32,
     pub(crate) max_turns: Option<u32>,
-    pub(crate) max_estimated_costs: Option<f64>,
     pub(crate) output_schema: Option<OutputSchema>,
     pub(crate) max_schema_retries: u32,
     pub(crate) behavior_prompts: Vec<(BehaviorPrompt, String)>,
@@ -186,12 +185,6 @@ impl AgentLoop {
         if self.max_turns.is_some_and(|max| state.turn >= max) {
             return Err(AgenticError::MaxTurnsExceeded(self.max_turns.unwrap()));
         }
-        if self.max_estimated_costs.is_some_and(|limit| self.estimated_costs(&state.total_usage) >= limit) {
-            return Err(AgenticError::EstimatedCostsExceeded {
-                spent: self.estimated_costs(&state.total_usage),
-                limit: self.max_estimated_costs.unwrap(),
-            });
-        }
         Ok(())
     }
 
@@ -236,15 +229,6 @@ impl AgentLoop {
             model: response.model.clone(),
             usage: response.usage.clone(),
         });
-        self.emit(ctx, Event::EstimatedCostsUpdate {
-            agent_name: self.name.clone(),
-            spent: self.estimated_costs(&state.total_usage),
-            limit: self.max_estimated_costs,
-        });
-    }
-
-    fn estimated_costs(&self, usage: &TokenUsage) -> f64 {
-        self.model.costs().estimate(usage.input_tokens, usage.output_tokens)
     }
 
     fn parse_response(&self, ctx: &InvocationContext, response: &ModelResponse) -> (String, Vec<ToolCall>) {
@@ -293,7 +277,6 @@ impl AgentLoop {
             response: state.structured_output.take(),
             response_raw: text,
             statistics: Statistics {
-                estimated_costs: self.estimated_costs(&state.total_usage),
                 input_tokens: state.total_usage.input_tokens,
                 output_tokens: state.total_usage.output_tokens,
                 cache_read_tokens: state.total_usage.cache_read_input_tokens,
@@ -497,23 +480,6 @@ mod tests {
         let harness = TestHarness::new(provider);
         let err = harness.run_agent(agent.as_ref(), "go").await.unwrap_err();
         assert!(matches!(err, AgenticError::MaxTurnsExceeded(2)));
-    }
-
-    #[tokio::test]
-    async fn guard_estimated_costs() {
-        let provider = MockProvider::new(vec![
-            tool_response("t", "c1", serde_json::json!({})),
-            text_response("done"),
-        ]);
-        let agent = AgentBuilder::new()
-            .name("test").model("mock").identity_prompt("")
-            .max_estimated_costs(0.0)
-            .tool(MockTool::new("t", false, "ok"))
-            .build().unwrap();
-
-        let harness = TestHarness::new(provider);
-        let err = harness.run_agent(agent.as_ref(), "go").await.unwrap_err();
-        assert!(matches!(err, AgenticError::EstimatedCostsExceeded { .. }));
     }
 
     #[tokio::test]

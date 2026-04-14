@@ -32,7 +32,6 @@ crates/agentcore/src/
     anthropic.rs          AnthropicProvider (with SSE streaming)
     openai.rs             OpenAiProvider, LiteLlmProvider, MistralProvider (with SSE streaming)
     sse.rs                SseParser, SseEvent (shared SSE line parser)
-    costs.rs               ModelCosts (estimated costs rates per million tokens)
 
   agent/
     mod.rs                re-exports
