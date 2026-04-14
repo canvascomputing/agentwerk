@@ -19,7 +19,7 @@ pub use provider::{
 
 // Tool infrastructure and built-in tools
 pub use tools::{
-    BashSingleTool, BashTool, BuiltinToolset, EditFileTool, GlobTool, GrepTool, ListDirectoryTool, ReadFileTool,
+    BashGlobTool, BashTool, BuiltinToolset, EditFileTool, GlobTool, GrepTool, ListDirectoryTool, ReadFileTool,
     SpawnAgentTool, TaskTool, Tool, ToolBuilder, ToolCall, ToolContext, ToolDefinition, ToolRegistry,
     ToolResult, ToolSearchResult, ToolSearchTool, Toolset, WebFetchTool, WriteFileTool, execute_tool_calls,
 };

@@ -53,8 +53,7 @@ crates/agentcore/src/
     glob.rs               GlobTool
     grep.rs               GrepTool
     list_directory.rs     ListDirectoryTool
-    bash.rs               BashTool
-    bash_single.rs        BashSingleTool (pattern-restricted bash)
+    bash.rs               BashGlobTool (pattern-restricted), BashTool() (unrestricted)
     util.rs               glob_match, run_shell_command, DEFAULT_TIMEOUT_MS, MAX_TIMEOUT_MS
     tool_search.rs        ToolSearchTool
     spawn_agent.rs        SpawnAgentTool

@@ -1,6 +1,5 @@
 pub mod tool;
 mod bash;
-mod bash_single;
 mod edit_file;
 mod glob;
 mod grep;
@@ -20,8 +19,7 @@ pub use tool::{
 };
 
 // Re-export built-in tools
-pub use bash::BashTool;
-pub use bash_single::BashSingleTool;
+pub use bash::{BashGlobTool, BashTool};
 pub use edit_file::EditFileTool;
 pub use glob::GlobTool;
 pub use grep::GrepTool;
@@ -46,7 +44,7 @@ impl Toolset for BuiltinToolset {
             Box::new(GlobTool),
             Box::new(GrepTool),
             Box::new(ListDirectoryTool),
-            Box::new(BashTool),
+            Box::new(BashTool()),
             Box::new(ToolSearchTool),
             Box::new(WebFetchTool),
         ]
