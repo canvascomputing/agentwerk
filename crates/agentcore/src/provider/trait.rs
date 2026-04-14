@@ -45,11 +45,23 @@ pub trait LlmProvider: Send + Sync {
             Ok(response)
         })
     }
+
+    /// Warm the TCP+TLS connection pool before the first API request.
+    ///
+    /// Sends a fire-and-forget HEAD request to the provider's base URL.
+    /// This overlaps the TLS handshake (~100-200ms) with agent startup,
+    /// so the first real LLM call reuses the already-established connection.
+    ///
+    /// Called automatically by the agent loop before the first turn.
+    /// Default implementation is a no-op — override in providers that
+    /// own a `reqwest::Client`.
+    fn prewarm(&self) -> Pin<Box<dyn Future<Output = ()> + Send + '_>> {
+        Box::pin(async {})
+    }
 }
 
 /// Fire-and-forget HEAD request to warm the TCP+TLS connection pool.
-/// Call via `tokio::spawn` at startup before the first real API request.
-pub async fn prewarm_connection(client: &reqwest::Client, base_url: &str) {
+pub(crate) async fn prewarm_connection(client: &reqwest::Client, base_url: &str) {
     let _ = tokio::time::timeout(
         std::time::Duration::from_secs(10),
         client.head(base_url).send(),

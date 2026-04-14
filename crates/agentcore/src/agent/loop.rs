@@ -74,6 +74,7 @@ struct LoopState {
 
 impl AgentLoop {
     pub(crate) async fn execute(&self, ctx: InvocationContext) -> Result<AgentOutput> {
+        ctx.provider.prewarm().await;
         let mut state = self.init_state(&ctx);
         self.emit(&ctx, Event::AgentStart { agent_name: self.name.clone() });
 

@@ -86,6 +86,10 @@ impl AnthropicProvider {
 }
 
 impl LlmProvider for AnthropicProvider {
+    fn prewarm(&self) -> Pin<Box<dyn Future<Output = ()> + Send + '_>> {
+        Box::pin(async { super::r#trait::prewarm_connection(&self.client, &self.base_url).await })
+    }
+
     fn complete(
         &self,
         request: CompletionRequest,

@@ -14,8 +14,7 @@ pub fn env_or(name: &str, default: &str) -> String {
 
 /// Auto-detect an LLM provider from environment variables.
 ///
-/// Returns a shared reqwest client alongside the provider so callers
-/// can reuse the same connection pool (e.g., for prewarm_connection).
+/// Returns a shared reqwest client alongside the provider.
 ///
 /// Detection order:
 ///   1. `LITELLM_API_URL` → LiteLLM proxy

@@ -128,11 +128,12 @@ Configure an `AgentBuilder` with a provider, model, tools, and prompt, then call
 Connect to any LLM. Providers own a `reqwest::Client` for connection pooling and SSE streaming.
 
 ```rust
-use agentcore::{AnthropicProvider, MistralProvider, LiteLlmProvider};
+use agentcore::{AnthropicProvider, MistralProvider, LiteLlmProvider, OpenAiProvider};
 
 let provider = AnthropicProvider::from_api_key(key);
 let provider = MistralProvider::from_api_key(key);
 let provider = LiteLlmProvider::from_api_key(key);
+let provider = OpenAiProvider::from_api_key(key);
 
 let client = reqwest::Client::new();                        // share a connection pool
 let provider = AnthropicProvider::new(key, client);
@@ -269,7 +270,8 @@ Built-in tools:
 | **Search** | `GlobTool` | Find files by pattern (e.g., `**/*.rs`) |
 | | `GrepTool` | Search file contents by substring |
 | | `ListDirectoryTool` | List directory entries with type and size |
-| **Shell** | `BashTool` | Execute a shell command |
+| **Shell** | `BashTool` | Execute a shell command (unrestricted) |
+| | `BashGlobTool` | Execute shell commands matching a glob pattern |
 | **Web** | `WebFetchTool` | Fetch a URL and return its content as text |
 | **Agent** | `SpawnAgentTool` | Delegate work to a sub-agent |
 | | `TaskTool` | Persistent task management (create, update, list, get) |

@@ -13,7 +13,7 @@ pub use error::{AgenticError, Result};
 // Provider and message types
 pub use provider::{
     AnthropicProvider, ContentBlock, LiteLlmProvider, LlmProvider, Message, MistralProvider,
-    OpenAiProvider, TokenUsage, prewarm_connection,
+    OpenAiProvider, TokenUsage,
 };
 
 // Tool infrastructure and built-in tools
