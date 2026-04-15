@@ -894,4 +894,53 @@ mod tests {
         assert_eq!(output.response_raw, "recovered");
         assert_eq!(harness.provider().request_count(), 2);
     }
+
+    #[tokio::test]
+    async fn event_sequence_complete() {
+        let provider = MockProvider::tool_then_text("read", serde_json::json!({}), "done");
+        let agent = AgentBuilder::new()
+            .name("test").model("mock").identity_prompt("")
+            .tool(MockTool::new("read", true, "file contents"))
+            .build().unwrap();
+
+        let harness = TestHarness::new(provider);
+        harness.run_agent(agent.as_ref(), "go").await.unwrap();
+
+        let events = harness.events().all();
+        let names: Vec<&str> = events.iter().map(event_name).collect();
+
+        assert_eq!(names, vec![
+            "AgentStart",
+            "TurnStart",
+            "RequestStart",
+            "RequestEnd",
+            "TokenUsage",
+            "ToolCallStart",
+            "ToolCallEnd",
+            "TurnEnd",
+            "TurnStart",
+            "RequestStart",
+            "RequestEnd",
+            "TokenUsage",
+            "ResponseTextChunk",
+            "TurnEnd",
+            "AgentEnd",
+        ]);
+    }
+
+    fn event_name(event: &Event) -> &'static str {
+        match event {
+            Event::AgentStart { .. } => "AgentStart",
+            Event::AgentEnd { .. } => "AgentEnd",
+            Event::AgentError { .. } => "AgentError",
+            Event::TurnStart { .. } => "TurnStart",
+            Event::TurnEnd { .. } => "TurnEnd",
+            Event::RequestStart { .. } => "RequestStart",
+            Event::RequestEnd { .. } => "RequestEnd",
+            Event::ResponseTextChunk { .. } => "ResponseTextChunk",
+            Event::ToolCallStart { .. } => "ToolCallStart",
+            Event::ToolCallEnd { .. } => "ToolCallEnd",
+            Event::TokenUsage { .. } => "TokenUsage",
+        }
+    }
 }

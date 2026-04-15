@@ -251,6 +251,10 @@ impl EventCollector {
             .collect()
     }
 
+    pub fn all(&self) -> Vec<Event> {
+        self.events.lock().unwrap().clone()
+    }
+
     pub fn agent_ends(&self) -> Vec<(String, u32)> {
         self.events
             .lock()

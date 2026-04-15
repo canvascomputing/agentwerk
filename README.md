@@ -198,7 +198,7 @@ let output = AgentBuilder::new()
 
 #### Guardrails
 
-Limit agent execution. Pass `UNLIMITED` (0) to disable a limit.
+Set limits for agentic execution. You can set `UNLIMITED` to disable a limit.
 
 | Method | Default | What it does |
 |--------|---------|-------------|
