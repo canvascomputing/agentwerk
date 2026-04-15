@@ -23,7 +23,8 @@ use agentcore::{
 async fn main() {
     let question = parse_question();
     let brave_key = check_required_env();
-    let (provider, model) = use_cases::auto_detect_provider();
+    let env = use_cases::Environment::detect_provider();
+    let (provider, model) = (env.provider, env.model);
 
     eprintln!("Question: {question}\n");
 

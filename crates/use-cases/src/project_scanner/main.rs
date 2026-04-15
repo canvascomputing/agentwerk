@@ -54,7 +54,8 @@ fn output_schema() -> serde_json::Value {
 #[tokio::main]
 async fn main() {
     let config = parse_args();
-    let (provider, default_model) = use_cases::auto_detect_provider();
+    let env = use_cases::Environment::detect_provider();
+    let (provider, default_model) = (env.provider, env.model);
     let model = if config.model.is_empty() { default_model } else { config.model };
 
     eprintln!("Scanning: {}\n", config.folder.display());

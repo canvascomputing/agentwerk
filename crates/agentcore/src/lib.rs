@@ -18,6 +18,7 @@ pub use provider::{
     AnthropicProvider, ContentBlock, LiteLlmProvider, LlmProvider, Message, MistralProvider,
     OpenAiProvider, TokenUsage,
 };
+pub use provider::environment::Environment;
 
 // Tool infrastructure and built-in tools
 pub use tools::{

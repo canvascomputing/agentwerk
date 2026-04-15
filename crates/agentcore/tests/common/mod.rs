@@ -2,50 +2,11 @@
 
 use std::sync::Arc;
 
-use agentcore::{
-    AgentOutput, AnthropicProvider, LiteLlmProvider, LlmProvider, MistralProvider, OpenAiProvider,
-};
+use agentcore::{AgentOutput, Environment, LlmProvider};
 
 pub fn build_provider() -> (Arc<dyn LlmProvider>, String) {
-    let client = reqwest::Client::new();
-
-    if let Ok(url) = std::env::var("LITELLM_API_URL") {
-        let key = std::env::var("LITELLM_API_KEY").unwrap_or_else(|_| "unused".into());
-        let model = std::env::var("LITELLM_MODEL").unwrap_or_else(|_| "claude-sonnet-4-20250514".into());
-        return (Arc::new(LiteLlmProvider::new(key, client).base_url(url)), model);
-    }
-
-    if let Some(key) = std::env::var("OPENAI_API_KEY").ok().filter(|k| !k.is_empty()) {
-        let base_url = std::env::var("OPENAI_BASE_URL").unwrap_or_else(|_| "https://api.openai.com".into());
-        let model = std::env::var("OPENAI_MODEL").unwrap_or_else(|_| "gpt-4o".into());
-        return (Arc::new(OpenAiProvider::new(key, client).base_url(base_url)), model);
-    }
-
-    if let Some(key) = std::env::var("MISTRAL_API_KEY").ok().filter(|k| !k.is_empty()) {
-        let model = std::env::var("MISTRAL_MODEL").unwrap_or_else(|_| "mistral-medium-2508".into());
-        return (Arc::new(MistralProvider::new(key, client)), model);
-    }
-
-    if let Ok(key) = std::env::var("ANTHROPIC_API_KEY") {
-        let mut p = AnthropicProvider::new(key, client);
-        if let Ok(url) = std::env::var("ANTHROPIC_BASE_URL") {
-            p = p.base_url(url);
-        }
-        let model = std::env::var("ANTHROPIC_MODEL").unwrap_or_else(|_| "claude-sonnet-4-20250514".into());
-        return (Arc::new(p), model);
-    }
-
-    if std::net::TcpStream::connect("127.0.0.1:4000").is_ok() {
-        let key = std::env::var("LITELLM_API_KEY").unwrap_or_else(|_| "unused".into());
-        let model = std::env::var("LITELLM_MODEL")
-            .expect("LITELLM_MODEL must be set when using localhost:4000 proxy");
-        return (
-            Arc::new(LiteLlmProvider::new(key, client).base_url("http://localhost:4000".into())),
-            model,
-        );
-    }
-
-    panic!("No LLM provider configured. Set ANTHROPIC_API_KEY, OPENAI_API_KEY, MISTRAL_API_KEY, or LITELLM_API_URL.");
+    let env = Environment::detect_provider();
+    (env.provider, env.model)
 }
 
 pub fn print_result(output: &AgentOutput) {

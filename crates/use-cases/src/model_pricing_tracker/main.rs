@@ -73,7 +73,8 @@ fn output_schema() -> serde_json::Value {
 #[tokio::main]
 async fn main() {
     let output_path = parse_args();
-    let (provider, model) = use_cases::auto_detect_provider();
+    let env = use_cases::Environment::detect_provider();
+    let (provider, model) = (env.provider, env.model);
 
     eprintln!("Model Pricing Tracker\n");
 

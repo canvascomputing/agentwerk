@@ -1,4 +1,5 @@
 mod anthropic;
+pub mod environment;
 pub mod model;
 mod openai;
 pub(crate) mod stream;
