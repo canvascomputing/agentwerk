@@ -126,9 +126,9 @@ async fn stream_response(
     on_event: &Arc<dyn Fn(StreamEvent) + Send + Sync>,
 ) -> Result<ModelResponse> {
     use futures_util::StreamExt;
-    use super::sse::{SseEvent, SseParser};
+    use super::stream::{SseEvent, StreamParser};
 
-    let mut parser = SseParser::new();
+    let mut parser = StreamParser::new();
     let mut model = String::from("unknown");
     let mut usage = TokenUsage::default();
     let mut stop_reason = StopReason::EndTurn;

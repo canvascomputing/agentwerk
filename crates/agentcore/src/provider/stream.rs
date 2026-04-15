@@ -1,17 +1,29 @@
+//! Line-buffered parser for LLM streaming responses.
+//!
+//! LLM providers stream responses using the Server-Sent Events (SSE) protocol
+//! (<https://html.spec.whatwg.org/multipage/server-sent-events.html>).
+//! Each event is a `data: {json}\n` line, with `data: [DONE]\n` signaling the end.
+//!
+//! The parser buffers incoming byte chunks (which may arrive at arbitrary boundaries),
+//! extracts complete lines, and yields parsed JSON events. Non-data lines (comments,
+//! event types) and malformed JSON are silently skipped.
+//!
+//! Used by `AnthropicProvider` and `OpenAiProvider` in their streaming implementations.
+
 use serde_json::Value;
 
-/// A parsed SSE event.
+/// A parsed stream event.
 pub(crate) enum SseEvent {
     Data(Value),
     Done,
 }
 
 /// Line-buffered SSE parser. Feed raw bytes via `push()`, get parsed events back.
-pub(crate) struct SseParser {
+pub(crate) struct StreamParser {
     buffer: String,
 }
 
-impl SseParser {
+impl StreamParser {
     pub(crate) fn new() -> Self {
         Self {
             buffer: String::new(),
@@ -51,7 +63,7 @@ mod tests {
 
     #[test]
     fn parse_data_line() {
-        let mut parser = SseParser::new();
+        let mut parser = StreamParser::new();
         let events = parser.push(b"data: {\"type\":\"ping\"}\n\n");
         assert_eq!(events.len(), 1);
         match &events[0] {
@@ -62,7 +74,7 @@ mod tests {
 
     #[test]
     fn parse_done_sentinel() {
-        let mut parser = SseParser::new();
+        let mut parser = StreamParser::new();
         let events = parser.push(b"data: [DONE]\n\n");
         assert_eq!(events.len(), 1);
         assert!(matches!(events[0], SseEvent::Done));
@@ -70,14 +82,14 @@ mod tests {
 
     #[test]
     fn ignore_non_data_lines() {
-        let mut parser = SseParser::new();
+        let mut parser = StreamParser::new();
         let events = parser.push(b"event: message_start\n: comment\n\n");
         assert!(events.is_empty());
     }
 
     #[test]
     fn buffer_split_lines() {
-        let mut parser = SseParser::new();
+        let mut parser = StreamParser::new();
 
         let events = parser.push(b"data: {\"type\":\"pi");
         assert!(events.is_empty());
@@ -92,7 +104,7 @@ mod tests {
 
     #[test]
     fn burst_events() {
-        let mut parser = SseParser::new();
+        let mut parser = StreamParser::new();
         let chunk = b"data: {\"a\":1}\n\ndata: {\"a\":2}\n\ndata: [DONE]\n\n";
         let events = parser.push(chunk);
         assert_eq!(events.len(), 3);
@@ -103,7 +115,7 @@ mod tests {
 
     #[test]
     fn skip_malformed_json() {
-        let mut parser = SseParser::new();
+        let mut parser = StreamParser::new();
         let events = parser.push(b"data: not-json\ndata: {\"ok\":true}\n\n");
         assert_eq!(events.len(), 1);
         match &events[0] {

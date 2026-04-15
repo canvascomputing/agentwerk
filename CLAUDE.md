@@ -31,7 +31,7 @@ crates/agentcore/src/
     model.rs              ModelSpec (Exact, Inherit)
     anthropic.rs          AnthropicProvider (with SSE streaming)
     openai.rs             OpenAiProvider, LiteLlmProvider, MistralProvider (with SSE streaming)
-    sse.rs                SseParser, SseEvent (shared SSE line parser)
+    stream.rs             StreamParser, SseEvent (streaming response parser)
 
   agent/
     mod.rs                re-exports

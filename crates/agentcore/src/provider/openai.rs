@@ -11,7 +11,7 @@ use serde_json::Value;
 use crate::error::{AgenticError, Result};
 
 use super::r#trait::{CompletionRequest, LlmProvider, ToolChoice};
-use super::sse::{SseEvent, SseParser};
+use super::stream::{SseEvent, StreamParser};
 use super::types::{ContentBlock, Message, ModelResponse, StopReason, StreamEvent, TokenUsage};
 
 /// OpenAI-compatible LLM provider.
@@ -136,7 +136,7 @@ async fn stream_response(
 ) -> Result<ModelResponse> {
     use futures_util::StreamExt;
 
-    let mut parser = SseParser::new();
+    let mut parser = StreamParser::new();
     let mut text = String::new();
     let mut tool_calls: HashMap<usize, ToolCallAccumulator> = HashMap::new();
     let mut stop_reason = StopReason::EndTurn;

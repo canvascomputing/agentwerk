@@ -1,7 +1,7 @@
 mod anthropic;
 pub mod model;
 mod openai;
-pub(crate) mod sse;
+pub(crate) mod stream;
 mod r#trait;
 pub mod types;
 
