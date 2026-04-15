@@ -91,7 +91,7 @@ LITELLM_MODEL_VAL := $(or $($(LITELLM_MODEL_ENV)),$(LITELLM_DEFAULT_MDL))
 
 litellm:
 ifndef LITELLM_KEY_ENV
-	$(error Unsupported provider "$(provider)". Supported: anthropic, openai)
+	$(error Unsupported provider "$(provider)". Supported: anthropic, mistral, openai)
 endif
 	@printf '%s\n' \
 		'model_list:' \

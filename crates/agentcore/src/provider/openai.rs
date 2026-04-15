@@ -23,6 +23,14 @@ pub struct OpenAiProvider {
 }
 
 impl OpenAiProvider {
+    pub fn from_api_key(api_key: impl Into<String>) -> Self {
+        Self::new_with(api_key, "https://api.openai.com", reqwest::Client::new(), false)
+    }
+
+    pub fn new(api_key: impl Into<String>, client: reqwest::Client) -> Self {
+        Self::new_with(api_key, "https://api.openai.com", client, false)
+    }
+
     fn new_with(api_key: impl Into<String>, base_url: &str, client: reqwest::Client, cache_tokens: bool) -> Self {
         Self {
             api_key: api_key.into(),

@@ -337,6 +337,13 @@ Use cases and integration tests pick up the LLM provider from these environment 
 | `MISTRAL_BASE_URL` | API URL (default: `https://api.mistral.ai`) |
 | `MISTRAL_MODEL` | Model (default: `mistral-medium-2508`) |
 
+**OpenAI**
+| Variable | Description |
+|----------|-------------|
+| `OPENAI_API_KEY` | API key (required) |
+| `OPENAI_BASE_URL` | API URL (default: `https://api.openai.com`) |
+| `OPENAI_MODEL` | Model (default: `gpt-4o`) |
+
 **LiteLLM proxy**
 | Variable | Description |
 |----------|-------------|

@@ -3,7 +3,7 @@
 use std::sync::Arc;
 
 use agentcore::{
-    AgentOutput, AnthropicProvider, LiteLlmProvider, LlmProvider, MistralProvider,
+    AgentOutput, AnthropicProvider, LiteLlmProvider, LlmProvider, MistralProvider, OpenAiProvider,
 };
 
 pub fn build_provider() -> (Arc<dyn LlmProvider>, String) {
@@ -13,6 +13,12 @@ pub fn build_provider() -> (Arc<dyn LlmProvider>, String) {
         let key = std::env::var("LITELLM_API_KEY").unwrap_or_else(|_| "unused".into());
         let model = std::env::var("LITELLM_MODEL").unwrap_or_else(|_| "claude-sonnet-4-20250514".into());
         return (Arc::new(LiteLlmProvider::new(key, client).base_url(url)), model);
+    }
+
+    if let Some(key) = std::env::var("OPENAI_API_KEY").ok().filter(|k| !k.is_empty()) {
+        let base_url = std::env::var("OPENAI_BASE_URL").unwrap_or_else(|_| "https://api.openai.com".into());
+        let model = std::env::var("OPENAI_MODEL").unwrap_or_else(|_| "gpt-4o".into());
+        return (Arc::new(OpenAiProvider::new(key, client).base_url(base_url)), model);
     }
 
     if let Some(key) = std::env::var("MISTRAL_API_KEY").ok().filter(|k| !k.is_empty()) {
@@ -39,7 +45,7 @@ pub fn build_provider() -> (Arc<dyn LlmProvider>, String) {
         );
     }
 
-    panic!("No LLM provider configured. Set LITELLM_API_URL, MISTRAL_API_KEY, or ANTHROPIC_API_KEY.");
+    panic!("No LLM provider configured. Set ANTHROPIC_API_KEY, OPENAI_API_KEY, MISTRAL_API_KEY, or LITELLM_API_URL.");
 }
 
 pub fn print_result(output: &AgentOutput) {

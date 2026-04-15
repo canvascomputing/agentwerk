@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use agentcore::{AnthropicProvider, LiteLlmProvider, LlmProvider, MistralProvider};
+use agentcore::{AnthropicProvider, LiteLlmProvider, LlmProvider, MistralProvider, OpenAiProvider};
 
 /// Read an environment variable, treating empty strings as unset.
 pub fn env(name: &str) -> Option<String> {
@@ -18,9 +18,10 @@ pub fn env_or(name: &str, default: &str) -> String {
 ///
 /// Detection order:
 ///   1. `LITELLM_API_URL` → LiteLLM proxy
-///   2. `MISTRAL_API_KEY` → Mistral API
-///   3. `ANTHROPIC_API_KEY` → Anthropic API
-///   4. localhost:4000 reachable → LiteLLM proxy (no key needed)
+///   2. `OPENAI_API_KEY` → OpenAI API
+///   3. `MISTRAL_API_KEY` → Mistral API
+///   4. `ANTHROPIC_API_KEY` → Anthropic API
+///   5. localhost:4000 reachable → LiteLLM proxy (no key needed)
 pub fn auto_detect_provider() -> (Arc<dyn LlmProvider>, String) {
     let client = reqwest::Client::new();
 
@@ -31,6 +32,15 @@ pub fn auto_detect_provider() -> (Arc<dyn LlmProvider>, String) {
             Arc::new(LiteLlmProvider::new(key, client).base_url(url)),
             model,
         );
+    }
+
+    if let Some(key) = env("OPENAI_API_KEY") {
+        let mut p = OpenAiProvider::new(key, client.clone());
+        if let Some(url) = env("OPENAI_BASE_URL") {
+            p = p.base_url(url);
+        }
+        let model = env_or("OPENAI_MODEL", "gpt-4o");
+        return (Arc::new(p), model);
     }
 
     if let Some(key) = env("MISTRAL_API_KEY") {
@@ -63,7 +73,7 @@ pub fn auto_detect_provider() -> (Arc<dyn LlmProvider>, String) {
     }
 
     eprintln!("Error: No LLM provider found.");
-    eprintln!("Set one of: ANTHROPIC_API_KEY, MISTRAL_API_KEY, LITELLM_API_URL");
+    eprintln!("Set one of: ANTHROPIC_API_KEY, OPENAI_API_KEY, MISTRAL_API_KEY, LITELLM_API_URL");
     eprintln!("Or start a LiteLLM proxy on localhost:4000");
     std::process::exit(1);
 }
