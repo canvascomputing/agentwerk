@@ -64,7 +64,7 @@ Example applications built with this project.
 Scans a directory and outputs a JSON summary with project description and languages used.
 
 ```bash
-make use-case name=project-scanner -- ./
+make use_case name=project-scanner -- ./
 ```
 
 Output:
@@ -80,7 +80,7 @@ Output:
 Spawns three researcher sub-agents in parallel, then aggregates their findings into a structured decision. Requires `BRAVE_API_KEY` for web search.
 
 ```bash
-make use-case name=deep-research args="What constitutes a good life?"
+make use_case name=deep-research args="What constitutes a good life?"
 ```
 
 Output:
@@ -96,7 +96,7 @@ Output:
 Spawns a model checker and pricing researcher in parallel to gather current model pricing from provider websites, then outputs structured JSON.
 
 ```bash
-make use-case name=model-pricing-tracker
+make use_case name=model-pricing-tracker
 ```
 
 Output:
@@ -230,16 +230,16 @@ AgentBuilder::new()
 
 Emitted via `AgentBuilder.event_handler()` during execution.
 
-| Event | Description |
-|-------|-------------|
-| `AgentStart` | Agent begins execution |
-| `AgentEnd` | Agent finishes with turn count |
-| `AgentError` | Agent encountered an error |
-| `TurnStart` / `TurnEnd` | Turn boundaries |
-| `RequestStart` / `RequestEnd` | LLM request lifecycle |
-| `ResponseTextChunk` | Streamed text token |
-| `ToolCallStart` / `ToolCallEnd` | Tool execution lifecycle |
-| `TokenUsage` | Token counts for a request |
+| | Event | Description |
+|-|-------|-------------|
+| **Agent** | `AgentStart` | Agent begins execution |
+| | `AgentEnd` | Agent finishes with turn count |
+| | `AgentError` | Agent encountered an error |
+| | `TurnStart` / `TurnEnd` | Turn boundaries |
+| **LLM Provider** | `RequestStart` / `RequestEnd` | LLM request lifecycle |
+| | `ResponseTextChunk` | Streamed text token |
+| | `TokenUsage` | Token counts for a request |
+| **Tool Usage** | `ToolCallStart` / `ToolCallEnd` | Tool execution lifecycle |
 
 
 ### Tools
@@ -308,15 +308,49 @@ output.response.unwrap()["category"]  // "billing"
 
 ## Development
 
+### Building and testing
+
 ```bash
-make                   # build
-make test              # unit tests
-make test_integration  # integration tests (requires LLM provider)
-make fmt               # format code
-make use-case          # list use cases
-make bump              # bump patch version (part=minor or part=major)
-make publish           # publish to crates.io (runs tests first)
-make litellm           # start LiteLLM proxy
+make                # build (warnings are errors)
+make test           # unit tests
+make fmt            # format code
+make clean          # remove build artifacts
+make update         # update dependencies
+```
+
+### Integration tests
+
+> Consider configuring your LLM provider (see [Environment](#environment)).
+
+```bash
+make test_integration                     # run all
+make test_integration name=bash_usage     # run one
+```
+
+### Use cases
+
+```bash
+make use_case                                              # list available
+make use_case name=project-scanner -- ./                   # run one
+make use_case name=deep-research args="What is a good life?"  # with arguments
+```
+
+### Publishing
+
+```bash
+make bump                  # bump patch version
+make bump part=minor       # bump minor version
+make publish               # publish to crates.io (runs tests first)
+```
+
+### LiteLLM proxy
+
+Start a local LiteLLM proxy on port 4000 that forwards to a provider. Requires Docker.
+
+```bash
+make litellm                       # default: anthropic
+make litellm provider=openai       # use OpenAI
+make litellm provider=mistral      # use Mistral
 ```
 
 ### Environment

@@ -1,4 +1,4 @@
-.PHONY: build test test_integration fmt clean update use-case litellm bump publish
+.PHONY: build test test_integration fmt clean update use_case litellm bump publish
 
 # Build the project (warnings are errors)
 build:
@@ -30,17 +30,17 @@ clean:
 update:
 	cargo update
 
-# Run a use-case binary
-# Usage: make use-case name=deep-research args="Should we use Rust or Go?"
+# Run a use_case binary
+# Usage: make use_case name=deep-research args="Should we use Rust or Go?"
 # Note: use args= not -- to pass arguments
-use-case:
+use_case:
 ifdef name
-	cargo run -p use-cases --bin $(name) -- $(args)
+	cargo run -p use_cases --bin $(name) -- $(args)
 else
 	@echo "Available use cases:"
-	@grep -A1 '^\[\[bin\]\]' crates/use-cases/Cargo.toml | grep 'name' | sed 's/.*"\(.*\)"/  \1/'
+	@grep -A1 '^\[\[bin\]\]' crates/use_cases/Cargo.toml | grep 'name' | sed 's/.*"\(.*\)"/  \1/'
 	@echo ""
-	@echo "Run with: make use-case name=<name> args=\"...\""
+	@echo "Run with: make use_case name=<name> args=\"...\""
 endif
 
 # Bump version: make bump part=patch (default), minor, or major

@@ -75,7 +75,7 @@ crates/use-cases/src/
 ```
 
 Integration tests are in `crates/agentcore/tests/`. Shared helpers (provider setup, event handler, JSON output) are in `tests/common/mod.rs`. Run with `make test_integration`.
-Use cases are in `crates/use-cases/src/cli/`. Run with `make use-case name=<name>`.
+Use cases are in `crates/use-cases/src/cli/`. Run with `make use_case name=<name>`.
 
 ## Key conventions
 
