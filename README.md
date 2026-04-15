@@ -39,19 +39,16 @@ cargo add agentcore
 
 ```rust
 use std::sync::Arc;
-use agentcore::{AgentBuilder, AnthropicProvider, ReadFileTool, GlobTool};
+use agentcore::{AgentBuilder, AnthropicProvider, GlobTool};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let provider = Arc::new(AnthropicProvider::from_api_key(
-        std::env::var("ANTHROPIC_API_KEY")?,
-    ));
+    let (provider, model) = AnthropicProvider::from_env()?;
 
     let output = AgentBuilder::new()
-        .provider(provider)
-        .model("claude-sonnet-4-20250514")
-        .instruction_prompt("Find all Rust source files and describe what this project does.")
-        .tool(ReadFileTool)
+        .provider(Arc::new(provider))
+        .model(model)
+        .instruction_prompt("Find all Rust source files.")
         .tool(GlobTool)
         .run()
         .await?;
@@ -254,7 +251,7 @@ AgentBuilder::new()
     .behavior_prompt(BehaviorPrompt::Communication, "Always respond in JSON.")
 ```
 
-#### Pipelines
+### Pipelines
 
 Execute multiple agents with controlled parallelism. Each agent is fully configured with its own provider, prompts, and tools. Results are returned in push order. Individual failures do not abort the pipeline.
 
@@ -263,7 +260,7 @@ use agentcore::{Pipeline, AgentBuilder, ReadFileTool};
 
 let mut pipeline = Pipeline::new()
     .batch_size(10)
-    .max_request_retries(5);          // default for all agents in pipeline
+    .max_request_retries(5);
 
 pipeline.push(
     AgentBuilder::new()
