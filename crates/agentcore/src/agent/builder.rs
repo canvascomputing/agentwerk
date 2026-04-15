@@ -37,6 +37,7 @@ pub struct AgentBuilder {
     pub(crate) request_retry_backoff_ms: u64,
     pub(crate) retries_customized: bool,
     sub_agents: Vec<Arc<dyn Agent>>,
+    prompt_errors: Vec<String>,
 
     // Runtime context
     provider: Option<Arc<dyn LlmProvider>>,
@@ -70,6 +71,7 @@ impl AgentBuilder {
             request_retry_backoff_ms: DEFAULT_BACKOFF_MS,
             retries_customized: false,
             sub_agents: Vec::new(),
+            prompt_errors: Vec::new(),
 
             provider: None,
             instruction_prompt: String::new(),
@@ -97,6 +99,12 @@ impl AgentBuilder {
     /// The agent's persistent identity — who it is and how it behaves.
     pub fn identity_prompt(mut self, prompt: impl Into<String>) -> Self {
         self.identity_prompt = prompt.into();
+        self
+    }
+
+    /// Load the identity prompt from a file.
+    pub fn identity_prompt_file(mut self, path: impl Into<PathBuf>) -> Self {
+        self.identity_prompt = self.read_file(path.into());
         self
     }
 
@@ -149,9 +157,25 @@ impl AgentBuilder {
         self
     }
 
+    /// Load a behavior prompt override from a file.
+    pub fn behavior_prompt_file(mut self, kind: BehaviorPrompt, path: impl Into<PathBuf>) -> Self {
+        let content = self.read_file(path.into());
+        if let Some(entry) = self.behavior_prompts.iter_mut().find(|(k, _)| *k == kind) {
+            entry.1 = content;
+        }
+        self
+    }
+
     /// Inject additional context alongside the instruction prompt.
     pub fn context_prompt(mut self, content: impl Into<String>) -> Self {
         self.context_builder.context_prompt(content.into());
+        self
+    }
+
+    /// Load additional context from a file.
+    pub fn context_prompt_file(mut self, path: impl Into<PathBuf>) -> Self {
+        let content = self.read_file(path.into());
+        self.context_builder.context_prompt(content);
         self
     }
 
@@ -170,6 +194,12 @@ impl AgentBuilder {
     /// The task for this run — what to do right now.
     pub fn instruction_prompt(mut self, prompt: impl Into<String>) -> Self {
         self.instruction_prompt = prompt.into();
+        self
+    }
+
+    /// Load the instruction prompt from a file.
+    pub fn instruction_prompt_file(mut self, path: impl Into<PathBuf>) -> Self {
+        self.instruction_prompt = self.read_file(path.into());
         self
     }
 
@@ -204,11 +234,37 @@ impl AgentBuilder {
         self
     }
 
+    // --- Internal helpers ---
+
+    /// Read a file's contents, collecting errors for deferred reporting.
+    fn read_file(&mut self, path: PathBuf) -> String {
+        match std::fs::read_to_string(&path) {
+            Ok(s) => s,
+            Err(err) => {
+                self.prompt_errors.push(format!(
+                    "Failed to read prompt from {}: {}",
+                    path.display(),
+                    err
+                ));
+                String::new()
+            }
+        }
+    }
+
+    fn check_prompt_errors(&self) -> Result<()> {
+        if self.prompt_errors.is_empty() {
+            return Ok(());
+        }
+        Err(AgenticError::Other(self.prompt_errors.join("; ")))
+    }
+
     // --- Build & Run ---
 
     /// Build the agent without running it. Use when you need `Arc<dyn Agent>`
     /// (e.g., to register as a sub-agent).
     pub fn build(self) -> Result<Arc<dyn Agent>> {
+        self.check_prompt_errors()?;
+
         let name = self
             .name
             .unwrap_or_else(|| generate_agent_name("agent"));
@@ -232,6 +288,8 @@ impl AgentBuilder {
 
     /// Build the agent and run it. Requires `.provider()` and `.instruction_prompt()`.
     pub async fn run(mut self) -> Result<AgentOutput> {
+        self.check_prompt_errors()?;
+
         let provider = self
             .provider
             .clone()
@@ -272,5 +330,94 @@ impl AgentBuilder {
         }
 
         agent.run(ctx).await
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn identity_prompt_file_loads_content() {
+        let dir = std::env::temp_dir().join("agentcore_test_builder");
+        let path = dir.join("identity.txt");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(&path, "You are a test agent").unwrap();
+
+        let builder = AgentBuilder::new().identity_prompt_file(&path);
+        assert_eq!(builder.identity_prompt, "You are a test agent");
+        assert!(builder.prompt_errors.is_empty());
+
+        std::fs::remove_file(&path).ok();
+        std::fs::remove_dir(&dir).ok();
+    }
+
+    #[test]
+    fn instruction_prompt_file_loads_content() {
+        let dir = std::env::temp_dir().join("agentcore_test_builder_instr");
+        let path = dir.join("instruction.txt");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(&path, "Do the thing").unwrap();
+
+        let builder = AgentBuilder::new().instruction_prompt_file(&path);
+        assert_eq!(builder.instruction_prompt, "Do the thing");
+        assert!(builder.prompt_errors.is_empty());
+
+        std::fs::remove_file(&path).ok();
+        std::fs::remove_dir(&dir).ok();
+    }
+
+    #[test]
+    fn file_prompt_missing_file_collects_error() {
+        let builder = AgentBuilder::new()
+            .identity_prompt_file("/nonexistent/prompt.txt");
+        assert_eq!(builder.prompt_errors.len(), 1);
+        assert!(builder.prompt_errors[0].contains("/nonexistent/prompt.txt"));
+    }
+
+    #[test]
+    fn build_fails_on_prompt_file_error() {
+        let result = AgentBuilder::new()
+            .identity_prompt_file("/nonexistent/prompt.txt")
+            .build();
+        match result {
+            Err(e) => assert!(e.to_string().contains("/nonexistent/prompt.txt")),
+            Ok(_) => panic!("expected error"),
+        }
+    }
+
+    #[test]
+    fn context_prompt_file_loads_content() {
+        let dir = std::env::temp_dir().join("agentcore_test_builder_ctx");
+        let path = dir.join("context.txt");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(&path, "Extra context here").unwrap();
+
+        let builder = AgentBuilder::new().context_prompt_file(&path);
+        assert!(builder.prompt_errors.is_empty());
+
+        std::fs::remove_file(&path).ok();
+        std::fs::remove_dir(&dir).ok();
+    }
+
+    #[test]
+    fn behavior_prompt_file_loads_content() {
+        let dir = std::env::temp_dir().join("agentcore_test_builder_bhv");
+        let path = dir.join("task_exec.txt");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(&path, "Custom task execution rules").unwrap();
+
+        let builder = AgentBuilder::new()
+            .behavior_prompt_file(BehaviorPrompt::TaskExecution, &path);
+        let entry = builder
+            .behavior_prompts
+            .iter()
+            .find(|(k, _)| *k == BehaviorPrompt::TaskExecution)
+            .unwrap();
+        assert_eq!(entry.1, "Custom task execution rules");
+        assert!(builder.prompt_errors.is_empty());
+
+        std::fs::remove_file(&path).ok();
+        std::fs::remove_dir(&dir).ok();
     }
 }

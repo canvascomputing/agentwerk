@@ -86,6 +86,7 @@ Use cases are in `crates/use-cases/src/cli/`. Run with `make use_case name=<name
 - **Tools capture dependencies at construction time** via closures or struct fields. Do not use type-erased extension bags on context objects.
 - **`tools/tool.rs` vs `tools/`**: `tool.rs` defines the trait and infrastructure (Tool, ToolRegistry, ToolBuilder, execute_tool_calls). Other files in `tools/` are concrete implementations.
 - **`agent/` vs `provider/` vs `persistence/`**: `agent/` contains the agent loop, builder, context, events, output, and prompts. `provider/` contains LLM communication and estimated costs. `persistence/` contains internal disk storage (session transcripts, tasks).
+- **Prompt `_file` variants**: All prompt builder methods (`identity_prompt`, `instruction_prompt`, `behavior_prompt`, `context_prompt`) have `_file` counterparts (e.g. `identity_prompt_file(path)`) that load the prompt from disk. File-read errors are collected and surfaced at `build()`/`run()` time.
 - **Tests live inline** in each module as `#[cfg(test)] mod tests`. Use `MockProvider` and `TestHarness` from `testutil.rs`.
 
 ## Naming conventions

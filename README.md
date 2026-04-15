@@ -9,6 +9,7 @@
 </p>
 
 <p align="center">
+  <a href="#installation">Installation</a> •
   <a href="#quick-start">Quick Start</a> •
   <a href="#use-cases">Use Cases</a> •
   <a href="#api">API</a> •
@@ -27,6 +28,12 @@
 </p>
 
 ---
+
+## Installation
+
+```bash
+cargo add agentcore
+```
 
 ## Quick Start
 
@@ -171,12 +178,19 @@ let output = AgentBuilder::new()
 
 #### Prompting
 
-| Prompt | Purpose |
-|--------|---------|
-| `instruction_prompt` | The task for this run |
-| `context_prompt` | Additional context alongside the instruction |
-| `behavior_prompt` | How the agent behaves — [defaults provided](#behavior-prompts) |
-| `identity_prompt` | Who the agent is — persistent across runs |
+| Method | File variant | Purpose |
+|--------|-------------|---------|
+| `identity_prompt` | `identity_prompt_file` | Persistent identity of the agent |
+| `instruction_prompt` | `instruction_prompt_file` | Task for the current run |
+| `context_prompt` | `context_prompt_file` | Additional context alongside the instruction |
+| `behavior_prompt` | `behavior_prompt_file` | Behavioral directives appended to the system prompt |
+
+```rust
+AgentBuilder::new()
+    .identity_prompt_file("prompts/identity.md")
+    .instruction_prompt("Summarize the project.")
+    .behavior_prompt_file(BehaviorPrompt::Communication, "prompts/style.md")
+```
 
 Use `{key}` placeholders in the identity prompt and fill them with `template_variable`:
 

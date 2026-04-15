@@ -284,4 +284,5 @@ mod tests {
             _ => panic!("Expected user message"),
         }
     }
+
 }
