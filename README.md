@@ -203,8 +203,8 @@ Limit agent execution. Pass `UNLIMITED` (0) to disable a limit.
 | Method | Default | What it does |
 |--------|---------|-------------|
 | `.max_turns(10)` | `UNLIMITED` | Stop after N agentic loop iterations |
-| `.max_tokens(4096)` | 4096 | Cap output tokens per LLM request |
-| `.max_schema_retries(3)` | 3 | Retry structured output compliance |
+| `.max_tokens(4096)` | `UNLIMITED` | Cap output tokens per LLM request |
+| `.max_schema_retries(3)` | 10 | Retry structured output compliance |
 | `.cancel_signal(signal)` | — | Abort execution from outside the agent |
 
 #### Behavior prompts

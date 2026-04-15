@@ -19,8 +19,6 @@ use super::r#loop::AgentLoop;
 use super::r#trait::Agent;
 use crate::tools::{Tool, ToolRegistry};
 
-const DEFAULT_MAX_TOKENS: u32 = 4096;
-
 #[derive(Clone)]
 pub struct AgentBuilder {
     // Agent definition
@@ -57,10 +55,10 @@ impl AgentBuilder {
             name: None,
             model: ModelSpec::Inherit,
             identity_prompt: String::new(),
-            max_tokens: DEFAULT_MAX_TOKENS,
+            max_tokens: crate::UNLIMITED,
             max_turns: crate::UNLIMITED,
             output_schema: None,
-            max_schema_retries: 3,
+            max_schema_retries: 10,
             behavior_prompts,
             context_builder: ContextBuilder::new(),
             tools: ToolRegistry::new(),

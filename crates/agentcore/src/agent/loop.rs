@@ -707,6 +707,7 @@ mod tests {
                 "properties": {"x": {"type": "string"}},
                 "required": ["x"]
             }))
+            .max_schema_retries(3)
             .build().unwrap();
 
         let harness = TestHarness::new(provider);
