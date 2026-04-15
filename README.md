@@ -62,7 +62,7 @@ Example applications built with this project.
 
 ### [Project Scanner](crates/use-cases/src/project_scanner/)
 
-Scans a directory and outputs a JSON summary with project description and languages used.
+Two-phase pipeline: a discovery agent finds files worth reading, then a pipeline of agents summarizes each file in parallel.
 
 ```bash
 make use_case name=project-scanner -- ./
@@ -71,8 +71,19 @@ make use_case name=project-scanner -- ./
 Output:
 ```json
 {
-  "summary": "A minimal Rust framework for building agentic LLM applications with tool use",
-  "languages": ["Rust"]
+  "languages": ["config", "docs", "rust"],
+  "files": [
+    {
+      "file": "README.md",
+      "summary": "Project documentation for agentcore, a Rust crate for building agentic LLM applications.",
+      "language": "docs"
+    },
+    {
+      "file": "crates/agentcore/src/agent/loop.rs",
+      "summary": "Implements the main agent loop that calls an LLM iteratively and executes tool calls.",
+      "language": "rust"
+    }
+  ]
 }
 ```
 

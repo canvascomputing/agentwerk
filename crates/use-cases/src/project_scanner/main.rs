@@ -1,49 +1,64 @@
-//! Scans a project directory and outputs a JSON summary with description and languages.
+//! Scans a project directory using a two-phase pipeline:
+//! 1. Discovery agent finds files worth reading
+//! 2. Pipeline of agents summarizes each file in parallel
 //!
 //! Usage: project-scanner [OPTIONS] [FOLDER]
 
+use std::collections::BTreeSet;
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Arc;
 
 use agentcore::{
-    AgentBuilder, Event, GlobTool, ListDirectoryTool,
-    ReadFileTool,
+    AgentBuilder, Event, GlobTool, ListDirectoryTool, Pipeline, ReadFileTool,
 };
+use serde_json::{json, Value};
 
 // ---------------------------------------------------------------------------
-// Prompt & Schema — the core of what this use case does
+// Prompts & Schemas
 // ---------------------------------------------------------------------------
 
-const SYSTEM_PROMPT: &str = "\
-You are a project scanner. Analyze the repository at {folder_path}.
+const DISCOVERY_PROMPT: &str = "\
+You are a file discovery agent. Analyze the repository at {folder_path}.
 
-Steps:
-1. Use list_directory to understand the top-level structure
-2. Use glob to find files by extension and identify languages used
-3. Read key files (README, Cargo.toml, package.json, etc.) to understand the project purpose
+1. Use list_directory to see the top-level structure
+2. Use glob to find source files, config files, and documentation
 
-Then produce structured output with:
-- summary: A concise description of what the project is about (max 200 characters)
-- languages: An array of programming languages used in the project
+Return a list of files worth reading to understand the project.
+Only include text files (source code, config, docs). Skip binaries, lock files, and generated files.
+Limit to at most 6 files. Prioritize the most important ones.";
 
-Respond ONLY with structured output matching the required schema.";
+fn discovery_schema() -> Value {
+    json!({
+        "type": "object",
+        "properties": {
+            "files": {
+                "type": "array",
+                "items": { "type": "string" },
+                "description": "File paths relative to project root"
+            }
+        },
+        "required": ["files"]
+    })
+}
 
-fn output_schema() -> serde_json::Value {
-    serde_json::json!({
+const SUMMARIZE_PROMPT: &str = "\
+Read the file and describe what it does.";
+
+fn summarize_schema() -> Value {
+    json!({
         "type": "object",
         "properties": {
             "summary": {
                 "type": "string",
-                "description": "What the project is about, max 200 characters"
+                "description": "One-sentence description of the file's purpose"
             },
-            "languages": {
-                "type": "array",
-                "items": { "type": "string" },
-                "description": "Programming languages used in the project"
+            "language": {
+                "type": "string",
+                "description": "Programming language, or 'config' / 'docs' for non-code files"
             }
         },
-        "required": ["summary", "languages"]
+        "required": ["summary", "language"]
     })
 }
 
@@ -58,8 +73,6 @@ async fn main() {
     let (provider, default_model) = (env.provider, env.model);
     let model = if config.model.is_empty() { default_model } else { config.model };
 
-    eprintln!("Scanning: {}\n", config.folder.display());
-
     let cancel = Arc::new(AtomicBool::new(false));
     let cancel_handle = cancel.clone();
     tokio::spawn(async move {
@@ -67,55 +80,133 @@ async fn main() {
         cancel_handle.store(true, Ordering::Relaxed);
     });
 
-    let output = match AgentBuilder::new()
-        .name("project-scanner")
+    // Phase 1: Discover files
+    eprintln!("[discover] scanning {}", config.folder.display());
+
+    let discovery = AgentBuilder::new()
+        .provider(provider.clone())
         .model(&model)
-        .identity_prompt(SYSTEM_PROMPT)
-        .tool(ReadFileTool)
+        .identity_prompt(DISCOVERY_PROMPT)
+        .instruction_prompt("Find all files worth reading to understand this project.")
         .tool(ListDirectoryTool)
         .tool(GlobTool)
-        .output_schema(output_schema())
-        .provider(provider)
-        .instruction_prompt("Scan this project and identify what it does and what languages it uses.")
-        .template_variable("folder_path", serde_json::Value::String(config.folder.display().to_string()))
-        .working_directory(config.folder)
-        .event_handler(Arc::new(log_event))
-        .cancel_signal(cancel)
+        .output_schema(discovery_schema())
+        .template_variable("folder_path", json!(config.folder.display().to_string()))
+        .working_directory(config.folder.clone())
+        .cancel_signal(cancel.clone())
+        .max_turns(20)
+        .event_handler(Arc::new(|event| match &event {
+            Event::ToolCallStart { tool_name, input, .. } => {
+                let detail = input["path"].as_str()
+                    .or(input["pattern"].as_str())
+                    .unwrap_or("");
+                if detail.is_empty() {
+                    eprintln!("[discover] {tool_name}");
+                } else {
+                    eprintln!("[discover] {tool_name}({detail})");
+                }
+            }
+            Event::ToolCallEnd { is_error: true, tool_name, output, .. } => {
+                eprintln!("[discover] error in {tool_name}: {output}");
+            }
+            _ => {}
+        }))
         .run()
-        .await
-    {
-        Ok(output) => output,
+        .await;
+
+    let files: Vec<String> = match discovery {
+        Ok(output) => match output.response {
+            Some(data) => data["files"]
+                .as_array()
+                .map(|a| a.iter().filter_map(|v| v.as_str().map(String::from)).collect())
+                .unwrap_or_default(),
+            None => {
+                eprintln!("Error: discovery agent returned no structured output");
+                std::process::exit(1);
+            }
+        },
         Err(e) => {
-            eprintln!("\nError: {e}");
+            eprintln!("Error in discovery: {e}");
             std::process::exit(1);
         }
     };
 
-    let json = match output.response {
-        Some(data) => serde_json::to_string_pretty(&data).unwrap(),
-        None => serde_json::to_string_pretty(
-            &serde_json::json!({"summary": output.response_raw, "languages": []}),
-        ).unwrap(),
-    };
-    std::fs::write(&config.output, &json).expect("Failed to write output file");
-    eprintln!("\nResult written to {}", config.output);
+    eprintln!("[discover] found {} files\n", files.len());
+
+    if files.is_empty() {
+        write_output(&config.output, &json!({ "files": [], "languages": [] }));
+        return;
+    }
+
+    // Phase 2: Summarize each file in parallel
+    let mut pipeline = Pipeline::new().batch_size(config.batch_size);
+    let total = files.len();
+    let progress = Arc::new(AtomicUsize::new(0));
+
+    for file in &files {
+        let file_name = file.clone();
+        let progress = progress.clone();
+
+        pipeline.push(
+            AgentBuilder::new()
+                .provider(provider.clone())
+                .model(&model)
+                .identity_prompt(SUMMARIZE_PROMPT)
+                .instruction_prompt(format!("Read and summarize: {file}"))
+                .tool(ReadFileTool)
+                .output_schema(summarize_schema())
+                .working_directory(config.folder.clone())
+                .cancel_signal(cancel.clone())
+                .max_turns(5)
+                .event_handler(Arc::new(move |event| match &event {
+                    Event::ToolCallEnd { is_error: true, output, .. } => {
+                        eprintln!("[summarize] {file_name} — error: {output}");
+                    }
+                    Event::AgentEnd { .. } => {
+                        let done = progress.fetch_add(1, Ordering::Relaxed) + 1;
+                        eprintln!("[summarize] {done}/{total} {file_name}");
+                    }
+                    _ => {}
+                }))
+        );
+    }
+
+    let results = pipeline.run().await;
+
+    // Phase 3: Aggregate
+    let mut languages = BTreeSet::new();
+    let mut file_summaries = Vec::new();
+
+    for (i, result) in results.iter().enumerate() {
+        match result {
+            Ok(output) => {
+                if let Some(ref data) = output.response {
+                    let lang = data["language"].as_str().unwrap_or("unknown");
+                    let summary = data["summary"].as_str().unwrap_or("");
+                    languages.insert(lang.to_string());
+                    file_summaries.push(json!({
+                        "file": files[i],
+                        "summary": summary,
+                        "language": lang,
+                    }));
+                }
+            }
+            Err(e) => eprintln!("[error] {} — {e}", files[i]),
+        }
+    }
+
+    let output = json!({
+        "languages": languages.into_iter().collect::<Vec<_>>(),
+        "files": file_summaries,
+    });
+
+    write_output(&config.output, &output);
 }
 
-fn log_event(event: Event) {
-    match &event {
-        Event::ToolCallStart { tool_name, input, .. } => {
-            let detail = input["path"].as_str()
-                .or(input["pattern"].as_str())
-                .unwrap_or("");
-            if detail.is_empty() {
-                eprintln!("[tool] {tool_name}");
-            } else {
-                eprintln!("[tool] {tool_name}: {detail}");
-            }
-        }
-        Event::AgentEnd { turns, .. } => eprintln!("[done] {turns} turns"),
-        _ => {}
-    }
+fn write_output(path: &str, json: &Value) {
+    let pretty = serde_json::to_string_pretty(json).unwrap();
+    std::fs::write(path, &pretty).expect("Failed to write output file");
+    eprintln!("\nResult written to {path}");
 }
 
 // ---------------------------------------------------------------------------
@@ -126,6 +217,7 @@ struct CliConfig {
     folder: PathBuf,
     model: String,
     output: String,
+    batch_size: usize,
 }
 
 fn parse_args() -> CliConfig {
@@ -133,18 +225,21 @@ fn parse_args() -> CliConfig {
     let mut folder = ".".to_string();
     let mut model = String::new();
     let mut output = "project.json".to_string();
+    let mut batch_size = 5;
 
     let mut i = 1;
     while i < args.len() {
         match args[i].as_str() {
             "--model" => { i += 1; model = args[i].clone(); }
             "-o" | "--output" => { i += 1; output = args[i].clone(); }
+            "--batch-size" => { i += 1; batch_size = args[i].parse().expect("batch-size must be a number"); }
             "-h" | "--help" => {
                 eprintln!("Scan a project and output a JSON summary.\n");
                 eprintln!("Usage: project-scanner [OPTIONS] [FOLDER]\n");
                 eprintln!("Options:");
-                eprintln!("  --model <MODEL>      Model override");
-                eprintln!("  -o, --output <PATH>  Output file (default: project.json)");
+                eprintln!("  --model <MODEL>        Model override");
+                eprintln!("  --batch-size <N>       Parallel summarizations (default: 5)");
+                eprintln!("  -o, --output <PATH>    Output file (default: project.json)");
                 std::process::exit(0);
             }
             arg if !arg.starts_with('-') && folder == "." => folder = arg.into(),
@@ -157,6 +252,5 @@ fn parse_args() -> CliConfig {
     }
 
     let folder = std::fs::canonicalize(&folder).unwrap_or_else(|_| PathBuf::from(&folder));
-    CliConfig { folder, model, output }
+    CliConfig { folder, model, output, batch_size }
 }
-

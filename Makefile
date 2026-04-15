@@ -35,10 +35,10 @@ update:
 # Note: use args= not -- to pass arguments
 use_case:
 ifdef name
-	cargo run -p use_cases --bin $(name) -- $(args)
+	cargo run -p use-cases --bin $(name) -- $(args)
 else
 	@echo "Available use cases:"
-	@grep -A1 '^\[\[bin\]\]' crates/use_cases/Cargo.toml | grep 'name' | sed 's/.*"\(.*\)"/  \1/'
+	@grep -A1 '^\[\[bin\]\]' crates/use-cases/Cargo.toml | grep 'name' | sed 's/.*"\(.*\)"/  \1/'
 	@echo ""
 	@echo "Run with: make use_case name=<name> args=\"...\""
 endif
