@@ -1036,4 +1036,56 @@ mod tests {
         assert!(matches!(err, AgenticError::Api { status: Some(401), .. }));
         assert_eq!(harness.provider().request_count(), 1);
     }
+
+    #[tokio::test]
+    async fn request_assembly() {
+        let provider = MockProvider::text("ok");
+        let agent = AgentBuilder::new()
+            .name("demo")
+            .model("test-model")
+            .identity_prompt("You are {role}.")
+            .behavior_prompt(BehaviorPrompt::TaskExecution, "Read files first.")
+            .behavior_prompt(BehaviorPrompt::ToolUsage, "Use grep over bash.")
+            .behavior_prompt(BehaviorPrompt::SafetyConcerns, "Ask before deleting.")
+            .behavior_prompt(BehaviorPrompt::Communication, "Be brief.")
+            .context_prompt("Project uses Rust.")
+            .tool(MockTool::new("search", true, "found"))
+            .max_tokens(2048)
+            .build()
+            .unwrap();
+
+        let harness = TestHarness::new(provider)
+            .with_state("role", serde_json::json!("a code reviewer"));
+        harness.run_agent(agent.as_ref(), "Review main.rs").await.unwrap();
+
+        let req = harness.provider().last_request().unwrap();
+
+        assert_eq!(serde_json::to_value(&req).unwrap(), serde_json::json!({
+            "model": "test-model",
+            "max_tokens": 2048,
+            "tool_choice": null,
+            "system_prompt": "You are a code reviewer.\n\nRead files first.\n\nUse grep over bash.\n\nAsk before deleting.\n\nBe brief.",
+            "messages": [
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": "<context>\nProject uses Rust.\n</context>"}
+                    ]
+                },
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": "Review main.rs"}
+                    ]
+                }
+            ],
+            "tools": [
+                {
+                    "name": "search",
+                    "description": "A mock tool for testing",
+                    "input_schema": {"type": "object", "properties": {}}
+                }
+            ]
+        }));
+    }
 }

@@ -62,7 +62,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 Example applications built with this project.
 
-> Consider setting your LLM provider's environment variables for key, model or base URL.
+> Consider configuring your LLM provider (see [Environment](#environment)).
 
 ### [Project Scanner](crates/use-cases/src/project_scanner/)
 
@@ -357,6 +357,26 @@ let output = AgentBuilder::new()
 
 output.response.unwrap()["category"]  // "billing"
 ```
+
+### Request Assembly
+
+Each LLM request is assembled from:
+
+- **general**:
+  - `model`: from `.model()` or inherited from parent
+  - `max_tokens`: from `.max_tokens()` or provider default
+  - `tool_choice`: forced to `StructuredOutput` when schema set with no other tools, otherwise auto
+- **system_prompt**: constant across turns
+  - `identity_prompt`: agent persona, `{key}` placeholders interpolated
+  - `TaskExecution`: how the agent approaches work, overridable
+  - `ToolUsage`: when to use which tool, overridable
+  - `SafetyConcerns`: awareness of consequences, overridable
+  - `Communication`: how to structure output, overridable
+- **messages**: full conversation, all prior messages included in every request
+  - `context_prompt`: additional context, if set
+  - `instruction_prompt`: the task for this run
+- **tools**: function definitions the LLM can call
+  - `.tool()`: registered tool definitions
 
 ## Development
 
