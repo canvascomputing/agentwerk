@@ -5,7 +5,7 @@ use std::sync::Arc;
 use serde::Deserialize;
 use serde_json::Value;
 
-use crate::agent::{Agent, AgentBuilder, AgentOutput, InvocationContext};
+use crate::agent::{Agent, AgentBuilder, AgentOutput, RuntimeContext};
 use crate::error::{AgenticError, Result};
 use crate::provider::model::ModelSpec;
 
@@ -35,8 +35,8 @@ impl SpawnAgentTool {
         }
     }
 
-    pub fn sub_agents(mut self, agents: Vec<Arc<dyn Agent>>) -> Self {
-        self.sub_agents = agents;
+    pub fn sub_agent(mut self, agent: Arc<dyn Agent>) -> Self {
+        self.sub_agents.push(agent);
         self
     }
 
@@ -58,7 +58,7 @@ impl SpawnAgentTool {
             })
     }
 
-    async fn execute(&self, input: SpawnAgentInput, ctx: InvocationContext) -> Result<AgentOutput> {
+    async fn execute(&self, input: SpawnAgentInput, ctx: RuntimeContext) -> Result<AgentOutput> {
         let agent: Arc<dyn Agent> = if let Some(ref name) = input.agent {
             self.find_agent(name)?
         } else {
@@ -191,10 +191,10 @@ impl Tool for SpawnAgentTool {
                 })?;
 
             let invocation_ctx = ctx
-                .get_extension::<InvocationContext>()
+                .get_extension::<RuntimeContext>()
                 .ok_or_else(|| AgenticError::Tool {
                     tool_name: "spawn_agent".into(),
-                    message: "InvocationContext not available in ToolContext".into(),
+                    message: "RuntimeContext not available in ToolContext".into(),
                 })?
                 .clone();
 
@@ -308,7 +308,7 @@ mod tests {
             .unwrap();
 
         let spawn_tool = SpawnAgentTool::new()
-            .sub_agents(vec![sub])
+            .sub_agent(sub)
             .default_model("mock");
 
         let agent = AgentBuilder::new()

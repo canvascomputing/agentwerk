@@ -23,11 +23,11 @@ pub struct OpenAiProvider {
 }
 
 impl OpenAiProvider {
-    pub fn from_api_key(api_key: impl Into<String>) -> Self {
+    pub fn new(api_key: impl Into<String>) -> Self {
         Self::new_with(api_key, "https://api.openai.com", reqwest::Client::new(), false)
     }
 
-    pub fn new(api_key: impl Into<String>, client: reqwest::Client) -> Self {
+    pub fn with_client(api_key: impl Into<String>, client: reqwest::Client) -> Self {
         Self::new_with(api_key, "https://api.openai.com", client, false)
     }
 
@@ -47,49 +47,33 @@ impl OpenAiProvider {
 
     pub(crate) fn from_env() -> Result<(Self, String)> {
         use super::environment::{env_or, env_required};
-        let provider = Self::from_api_key(env_required("OPENAI_API_KEY")?)
+        let provider = Self::new(env_required("OPENAI_API_KEY")?)
             .base_url(env_or("OPENAI_BASE_URL", "https://api.openai.com"));
         let model = env_or("OPENAI_MODEL", "gpt-4o");
         Ok((provider, model))
     }
-}
 
-/// Convenience constructors for LiteLLM proxy.
-pub struct LiteLlmProvider;
-
-impl LiteLlmProvider {
-    pub fn from_api_key(api_key: impl Into<String>) -> OpenAiProvider {
-        OpenAiProvider::new_with(api_key, "http://localhost:4000", reqwest::Client::new(), true)
+    /// Create a provider for LiteLLM proxy.
+    pub fn litellm(api_key: impl Into<String>) -> Self {
+        Self::new_with(api_key, "http://localhost:4000", reqwest::Client::new(), true)
     }
 
-    pub fn new(api_key: impl Into<String>, client: reqwest::Client) -> OpenAiProvider {
-        OpenAiProvider::new_with(api_key, "http://localhost:4000", client, true)
+    /// Create a provider for Mistral API.
+    pub fn mistral(api_key: impl Into<String>) -> Self {
+        Self::new_with(api_key, "https://api.mistral.ai", reqwest::Client::new(), false)
     }
 
-    pub(crate) fn from_env() -> Result<(OpenAiProvider, String)> {
+    pub(crate) fn litellm_from_env() -> Result<(Self, String)> {
         use super::environment::env_or;
-        let provider = Self::from_api_key(env_or("LITELLM_API_KEY", ""))
+        let provider = Self::litellm(env_or("LITELLM_API_KEY", ""))
             .base_url(env_or("LITELLM_BASE_URL", "http://localhost:4000"));
         let model = env_or("LITELLM_MODEL", "claude-sonnet-4-20250514");
         Ok((provider, model))
     }
-}
 
-/// Convenience constructors for Mistral API.
-pub struct MistralProvider;
-
-impl MistralProvider {
-    pub fn from_api_key(api_key: impl Into<String>) -> OpenAiProvider {
-        OpenAiProvider::new_with(api_key, "https://api.mistral.ai", reqwest::Client::new(), false)
-    }
-
-    pub fn new(api_key: impl Into<String>, client: reqwest::Client) -> OpenAiProvider {
-        OpenAiProvider::new_with(api_key, "https://api.mistral.ai", client, false)
-    }
-
-    pub(crate) fn from_env() -> Result<(OpenAiProvider, String)> {
+    pub(crate) fn mistral_from_env() -> Result<(Self, String)> {
         use super::environment::{env_or, env_required};
-        let provider = Self::from_api_key(env_required("MISTRAL_API_KEY")?)
+        let provider = Self::mistral(env_required("MISTRAL_API_KEY")?)
             .base_url(env_or("MISTRAL_BASE_URL", "https://api.mistral.ai"));
         let model = env_or("MISTRAL_MODEL", "mistral-medium-2508");
         Ok((provider, model))

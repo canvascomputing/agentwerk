@@ -93,7 +93,7 @@ async fn main() {
         .identity_prompt(ORCHESTRATOR_PROMPT)
         .tool(
             SpawnAgentTool::new()
-                .sub_agents(vec![pricing_researcher])
+                .sub_agent(pricing_researcher)
                 .default_model(&model),
         )
         .output_schema(output_schema())

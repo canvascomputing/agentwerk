@@ -2,18 +2,20 @@ use std::collections::VecDeque;
 use std::sync::{Arc, Mutex};
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
-pub enum QueuePriority {
+#[allow(dead_code)] // All variants are part of the priority API; some used only in tests today.
+pub(crate) enum QueuePriority {
     Now = 0,
     Next = 1,
     Later = 2,
 }
 
 #[derive(Debug, Clone)]
-pub struct QueuedCommand {
-    pub content: String,
-    pub priority: QueuePriority,
-    pub source: CommandSource,
-    pub agent_name: Option<String>,
+#[allow(dead_code)] // Fields read during dequeue; `source` reserved for future routing.
+pub(crate) struct QueuedCommand {
+    pub(crate) content: String,
+    pub(crate) priority: QueuePriority,
+    pub(crate) source: CommandSource,
+    pub(crate) agent_name: Option<String>,
 }
 
 impl QueuedCommand {
@@ -29,29 +31,27 @@ impl QueuedCommand {
 }
 
 #[derive(Debug, Clone)]
-pub enum CommandSource {
+#[allow(dead_code)] // Variants used in tests and by enqueue_notification; full set kept for future routing.
+pub(crate) enum CommandSource {
     UserInput,
     TaskNotification { task_id: String },
     System,
 }
 
 /// Thread-safe priority queue for commands.
-pub struct CommandQueue {
+pub(crate) struct CommandQueue {
     inner: Arc<Mutex<VecDeque<QueuedCommand>>>,
-    notify: Arc<tokio::sync::Notify>,
 }
 
 impl CommandQueue {
     pub fn new() -> Self {
         Self {
             inner: Arc::new(Mutex::new(VecDeque::new())),
-            notify: Arc::new(tokio::sync::Notify::new()),
         }
     }
 
     pub fn enqueue(&self, command: QueuedCommand) {
         self.inner.lock().unwrap().push_back(command);
-        self.notify.notify_one();
     }
 
     pub fn enqueue_notification(&self, task_id: &str, summary: &str) {
@@ -84,14 +84,5 @@ impl CommandQueue {
         }
 
         best.and_then(|(i, _)| queue.remove(i))
-    }
-
-    pub async fn wait_and_dequeue(&self, agent_name: Option<&str>) -> QueuedCommand {
-        loop {
-            if let Some(cmd) = self.dequeue(agent_name) {
-                return cmd;
-            }
-            self.notify.notified().await;
-        }
     }
 }

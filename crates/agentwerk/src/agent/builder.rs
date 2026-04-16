@@ -11,7 +11,7 @@ use crate::provider::model::ModelSpec;
 use crate::provider::retry::{DEFAULT_MAX_REQUEST_RETRIES, DEFAULT_BACKOFF_MS};
 
 use crate::persistence::session::SessionStore;
-use super::context::{InvocationContext, generate_agent_name};
+use super::context::{RuntimeContext, generate_agent_name};
 use super::event::Event;
 use super::output::{AgentOutput, OutputSchema};
 use super::prompts::{BehaviorPrompt, EnvironmentContext};
@@ -34,9 +34,8 @@ pub struct AgentBuilder {
     user_context_blocks: Vec<String>,
     environment_prompt: Option<String>,
     tools: ToolRegistry,
-    pub(crate) max_request_retries: u32,
-    pub(crate) request_retry_backoff_ms: u64,
-    pub(crate) retries_customized: bool,
+    max_request_retries: u32,
+    request_retry_backoff_ms: u64,
     sub_agents: Vec<Arc<dyn Agent>>,
     prompt_errors: Vec<String>,
 
@@ -71,7 +70,6 @@ impl AgentBuilder {
             tools: ToolRegistry::new(),
             max_request_retries: DEFAULT_MAX_REQUEST_RETRIES,
             request_retry_backoff_ms: DEFAULT_BACKOFF_MS,
-            retries_customized: false,
             sub_agents: Vec::new(),
             prompt_errors: Vec::new(),
 
@@ -141,14 +139,12 @@ impl AgentBuilder {
     /// Maximum retries for transient API errors (429, 529, network failures).
     pub fn max_request_retries(mut self, n: u32) -> Self {
         self.max_request_retries = n;
-        self.retries_customized = true;
         self
     }
 
     /// Base delay in ms for exponential backoff on request retries (`backoff * 2^attempt`).
     pub fn request_retry_backoff_ms(mut self, ms: u64) -> Self {
         self.request_retry_backoff_ms = ms;
-        self.retries_customized = true;
         self
     }
 
@@ -222,11 +218,6 @@ impl AgentBuilder {
         self
     }
 
-    pub fn template_variables(mut self, vars: HashMap<String, Value>) -> Self {
-        self.template_variables = vars;
-        self
-    }
-
     pub fn working_directory(mut self, dir: PathBuf) -> Self {
         self.working_directory = dir;
         self
@@ -284,7 +275,11 @@ impl AgentBuilder {
             .unwrap_or_else(|| generate_agent_name("agent"));
 
         if !self.sub_agents.is_empty() && self.tools.get("spawn_agent").is_none() {
-            self.tools.register(SpawnAgentTool::new().sub_agents(self.sub_agents));
+            let mut spawn = SpawnAgentTool::new();
+            for agent in self.sub_agents {
+                spawn = spawn.sub_agent(agent);
+            }
+            self.tools.register(spawn);
         }
 
         let output_schema = self.output_schema.map(OutputSchema::new).transpose()?;
@@ -338,15 +333,15 @@ impl AgentBuilder {
 
         let agent = self.build()?;
 
-        let mut ctx = InvocationContext::new(provider)
+        let mut ctx = RuntimeContext::new(provider)
             .instruction_prompt(prompt)
-            .template_variables(template_variables)
             .working_directory(working_directory)
             .event_handler(event_handler)
             .cancel_signal(cancel_signal)
             .model(resolved_model)
             .environment_context(env_context)
             .command_queue(Arc::new(CommandQueue::new()));
+        ctx.template_variables = template_variables;
 
         if let Some(dir) = session_dir {
             let store = SessionStore::new(&dir, &generate_agent_name("session"));
@@ -499,6 +494,28 @@ mod tests {
         let spawn_tools: Vec<_> = req.tools.iter().filter(|t| t.name == "spawn_agent").collect();
         assert_eq!(spawn_tools.len(), 1,
             "should not duplicate spawn_agent when user already registered one");
+    }
+
+    #[test]
+    fn environment_prompt_overrides_default() {
+        let builder = AgentBuilder::new()
+            .environment_prompt("Custom environment info");
+        assert_eq!(builder.environment_prompt.as_deref(), Some("Custom environment info"));
+    }
+
+    #[test]
+    fn environment_prompt_file_loads_content() {
+        let dir = std::env::temp_dir().join("agentwerk_test_builder_env");
+        let path = dir.join("env.txt");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(&path, "Custom env from file").unwrap();
+
+        let builder = AgentBuilder::new().environment_prompt_file(&path);
+        assert_eq!(builder.environment_prompt.as_deref(), Some("Custom env from file"));
+        assert!(builder.prompt_errors.is_empty());
+
+        std::fs::remove_file(&path).ok();
+        std::fs::remove_dir(&dir).ok();
     }
 
     #[test]

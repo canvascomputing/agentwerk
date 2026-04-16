@@ -23,6 +23,12 @@ impl Message {
             content: text.into(),
         }
     }
+
+    pub fn assistant(text: impl Into<String>) -> Self {
+        Self::Assistant {
+            content: vec![ContentBlock::Text { text: text.into() }],
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -63,8 +69,8 @@ pub struct TokenUsage {
     pub cache_creation_input_tokens: u64,
 }
 
-impl TokenUsage {
-    pub fn add(&mut self, other: &TokenUsage) {
+impl std::ops::AddAssign<&TokenUsage> for TokenUsage {
+    fn add_assign(&mut self, other: &TokenUsage) {
         self.input_tokens += other.input_tokens;
         self.output_tokens += other.output_tokens;
         self.cache_read_input_tokens += other.cache_read_input_tokens;
@@ -161,7 +167,7 @@ mod tests {
             cache_read_input_tokens: 20,
             cache_creation_input_tokens: 10,
         };
-        usage.add(&other);
+        usage += &other;
         assert_eq!(usage.input_tokens, 300);
         assert_eq!(usage.output_tokens, 150);
         assert_eq!(usage.cache_read_input_tokens, 30);

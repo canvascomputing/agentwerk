@@ -24,6 +24,7 @@ pub struct TranscriptEntry {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
+#[allow(dead_code)] // Used by list_sessions; tested but no production caller yet.
 pub struct SessionMetadata {
     pub session_id: String,
     pub created_at: u64,
@@ -40,6 +41,7 @@ pub struct SessionStore {
     writer: Option<BufWriter<File>>,
 }
 
+#[allow(dead_code)] // Session resumption API — tested but not yet wired to CLI.
 impl SessionStore {
     pub fn new(base_dir: &Path, session_id: &str) -> Self {
         Self {

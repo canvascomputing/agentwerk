@@ -19,8 +19,6 @@ const DEFAULT_BATCH_SIZE: usize = 10;
 pub struct Pipeline {
     batch_size: usize,
     agents: Vec<AgentBuilder>,
-    max_request_retries: Option<u32>,
-    request_retry_backoff_ms: Option<u64>,
 }
 
 impl Pipeline {
@@ -28,8 +26,6 @@ impl Pipeline {
         Self {
             batch_size: DEFAULT_BATCH_SIZE,
             agents: Vec::new(),
-            max_request_retries: None,
-            request_retry_backoff_ms: None,
         }
     }
 
@@ -39,21 +35,10 @@ impl Pipeline {
         self
     }
 
-    /// Default max retries for transient API errors across all agents.
-    pub fn max_request_retries(mut self, n: u32) -> Self {
-        self.max_request_retries = Some(n);
-        self
-    }
-
-    /// Default base delay in ms for exponential backoff across all agents.
-    pub fn request_retry_backoff_ms(mut self, ms: u64) -> Self {
-        self.request_retry_backoff_ms = Some(ms);
-        self
-    }
-
     /// Add a configured agent to the pipeline.
-    pub fn push(&mut self, agent: AgentBuilder) {
+    pub fn push(mut self, agent: AgentBuilder) -> Self {
         self.agents.push(agent);
+        self
     }
 
     /// Execute all queued agents and return results in push order.
@@ -66,16 +51,7 @@ impl Pipeline {
         let semaphore = Arc::new(Semaphore::new(self.batch_size));
         let mut set = JoinSet::new();
 
-        for (index, mut builder) in self.agents.into_iter().enumerate() {
-            if !builder.retries_customized {
-                if let Some(n) = self.max_request_retries {
-                    builder = builder.max_request_retries(n);
-                }
-                if let Some(ms) = self.request_retry_backoff_ms {
-                    builder = builder.request_retry_backoff_ms(ms);
-                }
-                builder.retries_customized = false;
-            }
+        for (index, builder) in self.agents.into_iter().enumerate() {
             let permit = semaphore.clone().acquire_owned().await.unwrap();
 
             set.spawn(async move {
@@ -115,10 +91,11 @@ mod tests {
 
     #[tokio::test]
     async fn pipeline_executes_in_order() {
-        let mut pipeline = Pipeline::new().batch_size(2);
-        pipeline.push(agent_with_response("first"));
-        pipeline.push(agent_with_response("second"));
-        pipeline.push(agent_with_response("third"));
+        let pipeline = Pipeline::new()
+            .batch_size(2)
+            .push(agent_with_response("first"))
+            .push(agent_with_response("second"))
+            .push(agent_with_response("third"));
 
         let results = pipeline.run().await;
 
@@ -130,18 +107,19 @@ mod tests {
 
     #[tokio::test]
     async fn pipeline_individual_failures() {
-        let mut pipeline = Pipeline::new().batch_size(2);
-        pipeline.push(agent_with_response("ok"));
-        pipeline.push({
-            let provider = Arc::new(MockProvider::new(vec![]));
-            AgentBuilder::new()
-                .name("fail")
-                .model("mock")
-                .identity_prompt("")
-                .instruction_prompt("go")
-                .provider(provider)
-        });
-        pipeline.push(agent_with_response("also ok"));
+        let pipeline = Pipeline::new()
+            .batch_size(2)
+            .push(agent_with_response("ok"))
+            .push({
+                let provider = Arc::new(MockProvider::new(vec![]));
+                AgentBuilder::new()
+                    .name("fail")
+                    .model("mock")
+                    .identity_prompt("")
+                    .instruction_prompt("go")
+                    .provider(provider)
+            })
+            .push(agent_with_response("also ok"));
 
         let results = pipeline.run().await;
 
@@ -189,7 +167,7 @@ mod tests {
                 text_response("finished"),
             ]));
 
-            pipeline.push(
+            pipeline = pipeline.push(
                 AgentBuilder::new()
                     .name("worker")
                     .model("mock")

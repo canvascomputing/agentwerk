@@ -16,7 +16,7 @@ pub struct AnthropicProvider {
 }
 
 impl AnthropicProvider {
-    pub fn from_api_key(api_key: impl Into<String>) -> Self {
+    pub fn new(api_key: impl Into<String>) -> Self {
         Self {
             api_key: api_key.into(),
             base_url: "https://api.anthropic.com".into(),
@@ -26,13 +26,13 @@ impl AnthropicProvider {
 
     pub(crate) fn from_env() -> Result<(Self, String)> {
         use super::environment::{env_or, env_required};
-        let provider = Self::from_api_key(env_required("ANTHROPIC_API_KEY")?)
+        let provider = Self::new(env_required("ANTHROPIC_API_KEY")?)
             .base_url(env_or("ANTHROPIC_BASE_URL", "https://api.anthropic.com"));
         let model = env_or("ANTHROPIC_MODEL", "claude-sonnet-4-20250514");
         Ok((provider, model))
     }
 
-    pub fn new(api_key: impl Into<String>, client: reqwest::Client) -> Self {
+    pub fn with_client(api_key: impl Into<String>, client: reqwest::Client) -> Self {
         Self {
             api_key: api_key.into(),
             base_url: "https://api.anthropic.com".into(),
@@ -401,7 +401,7 @@ mod tests {
     }
 
     fn provider() -> AnthropicProvider {
-        AnthropicProvider::from_api_key("test-key")
+        AnthropicProvider::new("test-key")
     }
 
     #[test]

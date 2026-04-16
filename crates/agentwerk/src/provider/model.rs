@@ -8,13 +8,6 @@ pub enum ModelSpec {
 }
 
 impl ModelSpec {
-    pub fn parse(s: &str) -> Self {
-        match s {
-            "inherit" => Self::Inherit,
-            other => Self::Exact(other.to_string()),
-        }
-    }
-
     pub fn resolve(&self, parent_model: &str) -> String {
         match self {
             Self::Exact(id) => id.clone(),
@@ -37,16 +30,4 @@ mod tests {
         assert_eq!(ModelSpec::Inherit.resolve("my-parent-model"), "my-parent-model");
     }
 
-    #[test]
-    fn parse_inherit() {
-        assert!(matches!(ModelSpec::parse("inherit"), ModelSpec::Inherit));
-    }
-
-    #[test]
-    fn parse_exact_model_id() {
-        match ModelSpec::parse("claude-sonnet-4-20250514") {
-            ModelSpec::Exact(id) => assert_eq!(id, "claude-sonnet-4-20250514"),
-            other => panic!("Expected Exact, got {other:?}"),
-        }
-    }
 }

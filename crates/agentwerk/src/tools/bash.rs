@@ -8,15 +8,15 @@ use crate::tools::tool::{Tool, ToolContext, ToolResult};
 use crate::tools::util::{glob_match, run_shell_command, DEFAULT_TIMEOUT_MS, MAX_TIMEOUT_MS};
 
 /// Shell command execution tool restricted to commands matching a glob pattern.
-pub struct BashGlobTool {
+pub struct BashTool {
     pattern: String,
     tool_name: String,
     description: String,
     read_only: bool,
 }
 
-impl BashGlobTool {
-    /// Create a new `BashGlobTool` with the given `name` that only permits
+impl BashTool {
+    /// Create a new `BashTool` with the given `name` that only permits
     /// commands matching `pattern`.
     pub fn new(name: &str, pattern: &str) -> Self {
         let pattern = pattern.trim().to_string();
@@ -50,7 +50,7 @@ impl BashGlobTool {
     }
 }
 
-impl Tool for BashGlobTool {
+impl Tool for BashTool {
     fn name(&self) -> &str {
         &self.tool_name
     }
@@ -108,10 +108,10 @@ impl Tool for BashGlobTool {
     }
 }
 
-/// Create an unrestricted bash tool with the standard description.
-#[allow(non_snake_case)]
-pub fn BashTool() -> BashGlobTool {
-    BashGlobTool::new("bash", "*").with_description(&format!(
+impl BashTool {
+    /// Create an unrestricted bash tool with the standard description.
+    pub fn unrestricted() -> Self {
+        Self::new("bash", "*").with_description(&format!(
         "\
 Executes a bash command in the working directory and returns its output.
 
@@ -136,7 +136,8 @@ When issuing multiple commands:
 - Do not sleep between commands that can run immediately.
 - Do not retry failing commands in a sleep loop — diagnose the root cause.
 - Do not use interactive flags (-i) as they require input which is not supported."
-    ))
+        ))
+    }
 }
 
 #[cfg(test)]
@@ -146,14 +147,14 @@ mod tests {
 
     #[test]
     fn bash_tool_defaults() {
-        let tool = BashTool();
+        let tool = BashTool::unrestricted();
         assert_eq!(tool.name(), "bash");
         assert!(!tool.is_read_only());
     }
 
     #[test]
     fn glob_tool_sets_name() {
-        let tool = BashGlobTool::new("echo", "echo *");
+        let tool = BashTool::new("echo", "echo *");
         assert_eq!(tool.name(), "echo");
         assert!(!tool.is_read_only());
     }
@@ -161,24 +162,24 @@ mod tests {
     #[test]
     #[should_panic(expected = "Pattern must not be empty")]
     fn glob_tool_empty_pattern_panics() {
-        BashGlobTool::new("empty", "");
+        BashTool::new("empty", "");
     }
 
     #[test]
     fn glob_tool_read_only() {
-        let tool = BashGlobTool::new("echo", "echo *").read_only(true);
+        let tool = BashTool::new("echo", "echo *").read_only(true);
         assert!(tool.is_read_only());
     }
 
     #[test]
     fn glob_tool_custom_description() {
-        let tool = BashGlobTool::new("git", "git *").with_description("Run git commands.");
+        let tool = BashTool::new("git", "git *").with_description("Run git commands.");
         assert_eq!(tool.description(), "Run git commands.");
     }
 
     #[tokio::test]
     async fn bash_echo() {
-        let tool = BashTool();
+        let tool = BashTool::unrestricted();
         let ctx = test_tool_context();
         let input = serde_json::json!({ "command": "echo hello" });
         let result = tool.call(input, &ctx).await.unwrap();
@@ -188,7 +189,7 @@ mod tests {
 
     #[tokio::test]
     async fn bash_timeout() {
-        let tool = BashTool();
+        let tool = BashTool::unrestricted();
         let ctx = test_tool_context();
         let input = serde_json::json!({ "command": "sleep 10", "timeout_ms": 100 });
         let result = tool.call(input, &ctx).await.unwrap();
@@ -198,7 +199,7 @@ mod tests {
 
     #[tokio::test]
     async fn bash_bad_command() {
-        let tool = BashTool();
+        let tool = BashTool::unrestricted();
         let ctx = test_tool_context();
         let input = serde_json::json!({ "command": "nonexistent_command_xyz" });
         let result = tool.call(input, &ctx).await.unwrap();
@@ -207,7 +208,7 @@ mod tests {
 
     #[tokio::test]
     async fn glob_rejects_non_matching() {
-        let tool = BashGlobTool::new("echo", "echo *");
+        let tool = BashTool::new("echo", "echo *");
         let ctx = test_tool_context();
         let input = serde_json::json!({ "command": "rm -rf /" });
         let result = tool.call(input, &ctx).await.unwrap();
@@ -217,7 +218,7 @@ mod tests {
 
     #[tokio::test]
     async fn glob_accepts_matching() {
-        let tool = BashGlobTool::new("echo", "echo *");
+        let tool = BashTool::new("echo", "echo *");
         let ctx = test_tool_context();
         let input = serde_json::json!({ "command": "echo hello" });
         let result = tool.call(input, &ctx).await.unwrap();
@@ -227,7 +228,7 @@ mod tests {
 
     #[tokio::test]
     async fn glob_bare_command_rejects_args() {
-        let tool = BashGlobTool::new("echo", "echo");
+        let tool = BashTool::new("echo", "echo");
         let ctx = test_tool_context();
         let input = serde_json::json!({ "command": "echo hello" });
         let result = tool.call(input, &ctx).await.unwrap();

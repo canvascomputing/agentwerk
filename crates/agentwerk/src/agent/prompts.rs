@@ -30,7 +30,7 @@ pub enum BehaviorPrompt {
 }
 
 impl BehaviorPrompt {
-    pub fn default_content(&self) -> &'static str {
+    pub(crate) fn default_content(&self) -> &'static str {
         match self {
             Self::TaskExecution => DEFAULT_TASK_EXECUTION,
             Self::ToolUsage => DEFAULT_TOOL_USAGE,
@@ -54,26 +54,26 @@ impl BehaviorPrompt {
 // Default behavior content
 // ---------------------------------------------------------------------------
 
-pub const DEFAULT_TASK_EXECUTION: &str = "\
+pub(crate) const DEFAULT_TASK_EXECUTION: &str = "\
 # Task execution
 - Do not propose changes to files you have not read. Read first, then modify.
 - Do not add features or improvements beyond what was asked.
 - Do not create files unless absolutely necessary. Prefer editing existing files.
 - If an approach fails, diagnose why before switching tactics.";
 
-pub const DEFAULT_TOOL_USAGE: &str = "\
+pub(crate) const DEFAULT_TOOL_USAGE: &str = "\
 # Tool usage
 - Do NOT use bash when a dedicated tool exists (read_file over cat, edit_file over sed, grep over rg, glob over find).
 - Call multiple tools in a single response. Make independent calls in parallel.
 - If tool calls depend on previous results, call them sequentially — do not guess parameters.";
 
-pub const DEFAULT_SAFETY_CONCERNS: &str = "\
+pub(crate) const DEFAULT_SAFETY_CONCERNS: &str = "\
 # Safety concerns
 - Consider the reversibility and impact of actions before executing them.
 - Prefer reversible operations over destructive ones when both achieve the goal.
 - If an approach fails, diagnose the root cause before retrying or switching tactics.";
 
-pub const DEFAULT_COMMUNICATION_STYLE: &str = "\
+pub(crate) const DEFAULT_COMMUNICATION_STYLE: &str = "\
 # Communication
 - Be direct. Lead with the answer or action, not the reasoning.
 - Keep output concise — omit filler, preamble, and unnecessary transitions.
@@ -121,15 +121,15 @@ pub(crate) fn interpolate(template: &str, state: &HashMap<String, Value>) -> Str
 
 /// Environment information collected once per session.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct EnvironmentContext {
-    pub working_directory: String,
-    pub platform: String,
-    pub os_version: String,
-    pub date: String,
+pub(crate) struct EnvironmentContext {
+    pub(crate) working_directory: String,
+    pub(crate) platform: String,
+    pub(crate) os_version: String,
+    pub(crate) date: String,
 }
 
 impl EnvironmentContext {
-    pub fn collect(cwd: &Path) -> Self {
+    pub(crate) fn collect(cwd: &Path) -> Self {
         let os_version = std::process::Command::new("uname")
             .arg("-r")
             .output()

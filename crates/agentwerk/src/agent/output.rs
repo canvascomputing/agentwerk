@@ -11,8 +11,6 @@ use crate::tools::{Tool, ToolContext, ToolResult};
 pub struct Statistics {
     pub input_tokens: u64,
     pub output_tokens: u64,
-    pub cache_read_tokens: u64,
-    pub cache_write_tokens: u64,
     pub requests: u64,
     pub tool_calls: u64,
     pub turns: u32,

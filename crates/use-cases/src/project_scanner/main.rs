@@ -147,7 +147,7 @@ async fn main() {
         let file_name = file.clone();
         let progress = progress.clone();
 
-        pipeline.push(
+        pipeline = pipeline.push(
             AgentBuilder::new()
                 .provider(provider.clone())
                 .model(&model)

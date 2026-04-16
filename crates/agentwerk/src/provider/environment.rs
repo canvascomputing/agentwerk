@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use crate::error::{AgenticError, Result};
 
-use super::{AnthropicProvider, LiteLlmProvider, LlmProvider, MistralProvider, OpenAiProvider};
+use super::{AnthropicProvider, LlmProvider, OpenAiProvider};
 
 /// Provider and model detected from environment variables.
 pub struct Environment {
@@ -53,9 +53,9 @@ impl Environment {
 
         let (provider, model): (Arc<dyn LlmProvider>, String) = match detected {
             DetectedProvider::Anthropic => { let (p, m) = AnthropicProvider::from_env()?; (Arc::new(p), m) }
-            DetectedProvider::Mistral   => { let (p, m) = MistralProvider::from_env()?;   (Arc::new(p), m) }
-            DetectedProvider::OpenAi    => { let (p, m) = OpenAiProvider::from_env()?;    (Arc::new(p), m) }
-            DetectedProvider::LiteLlm   => { let (p, m) = LiteLlmProvider::from_env()?;   (Arc::new(p), m) }
+            DetectedProvider::Mistral   => { let (p, m) = OpenAiProvider::mistral_from_env()?;  (Arc::new(p), m) }
+            DetectedProvider::OpenAi    => { let (p, m) = OpenAiProvider::from_env()?;     (Arc::new(p), m) }
+            DetectedProvider::LiteLlm   => { let (p, m) = OpenAiProvider::litellm_from_env()?; (Arc::new(p), m) }
         };
         Ok(Self { provider, model })
     }

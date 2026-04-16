@@ -15,14 +15,13 @@ pub const UNLIMITED: u32 = 0;
 
 // Provider and message types
 pub use provider::{
-    AnthropicProvider, ContentBlock, LiteLlmProvider, LlmProvider, Message, MistralProvider,
-    OpenAiProvider, TokenUsage,
+    AnthropicProvider, ContentBlock, LlmProvider, Message, OpenAiProvider, TokenUsage,
 };
 pub use provider::environment::Environment;
 
 // Tool infrastructure and built-in tools
 pub use tools::{
-    BashGlobTool, BashTool, EditFileTool, GlobTool, GrepTool, ListDirectoryTool, ReadFileTool,
+    BashTool, EditFileTool, GlobTool, GrepTool, ListDirectoryTool, ReadFileTool,
     SpawnAgentTool, TaskTool, Tool, ToolBuilder, ToolContext, ToolRegistry,
     ToolResult, ToolSearchTool, WebFetchTool, WriteFileTool,
 };
@@ -30,5 +29,4 @@ pub use tools::{
 // Agent
 pub use agent::{
     Agent, AgentBuilder, AgentOutput, BehaviorPrompt, Event, OutputSchema, Pipeline, Statistics,
-    DEFAULT_TASK_EXECUTION, DEFAULT_TOOL_USAGE, DEFAULT_SAFETY_CONCERNS, DEFAULT_COMMUNICATION_STYLE,
 };

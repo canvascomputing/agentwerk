@@ -17,7 +17,7 @@ pub use tool::{Tool, ToolBuilder, ToolContext, ToolRegistry, ToolResult};
 pub(crate) use tool::{ToolCall, execute_tool_calls};
 
 // Re-export built-in tools
-pub use bash::{BashGlobTool, BashTool};
+pub use bash::BashTool;
 pub use edit_file::EditFileTool;
 pub use glob::GlobTool;
 pub use grep::GrepTool;

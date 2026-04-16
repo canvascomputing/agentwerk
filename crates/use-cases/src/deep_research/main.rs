@@ -45,7 +45,11 @@ async fn main() {
         .name("report_writer")
         .model(&model)
         .identity_prompt(REPORT_WRITER_PROMPT)
-        .tool(SpawnAgentTool::new().sub_agents(researchers).default_model(&model))
+        .tool({
+            let mut spawn = SpawnAgentTool::new();
+            for r in researchers { spawn = spawn.sub_agent(r); }
+            spawn.default_model(&model)
+        })
         .output_schema(output_schema())
         .max_turns(10)
         .provider(provider)

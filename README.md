@@ -144,16 +144,16 @@ An agent is configured with a provider, model, tools, and prompt. Running it ret
 Providers for Anthropic, OpenAI-compatible, Mistral, and LiteLLM. Each owns a `reqwest::Client` for connection pooling and SSE streaming.
 
 ```rust
-use agentwerk::{AnthropicProvider, MistralProvider, OpenAiProvider, LiteLlmProvider};
+use agentwerk::{AnthropicProvider, OpenAiProvider};
 
-let provider = AnthropicProvider::from_api_key(key);
-let provider = MistralProvider::from_api_key(key);
-let provider = OpenAiProvider::from_api_key(key);
-let provider = LiteLlmProvider::from_api_key(key);
+let provider = AnthropicProvider::new(key);
+let provider = OpenAiProvider::new(key);
+let provider = OpenAiProvider::mistral(key);
+let provider = OpenAiProvider::litellm(key);
 
 // share a connection pool
 let client = reqwest::Client::new();
-let provider = AnthropicProvider::new(key, client);
+let provider = AnthropicProvider::with_client(key, client);
 ```
 
 ### AgentBuilder
@@ -320,8 +320,8 @@ Built-in tools:
 | **Search** | `GlobTool` | Find files by pattern (e.g., `**/*.rs`) |
 | | `GrepTool` | Search file contents by substring |
 | | `ListDirectoryTool` | List directory entries with type and size |
-| **Shell** | `BashTool` | Execute a shell command (unrestricted) |
-| | `BashGlobTool` | Execute shell commands matching a glob pattern |
+| **Shell** | `BashTool::unrestricted()` | Execute any shell command |
+| | `BashTool::new(name, pattern)` | Execute shell commands matching a glob pattern |
 | **Web** | `WebFetchTool` | Fetch a URL and return its content as text |
 | **Utility** | `SpawnAgentTool` | Delegate work to a sub-agent |
 | | `TaskTool` | Persistent task management (create, update, list, get) |

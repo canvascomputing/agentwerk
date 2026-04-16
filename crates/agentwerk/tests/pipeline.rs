@@ -20,7 +20,7 @@ async fn test() -> std::result::Result<(), Box<dyn std::error::Error>> {
     let mut pipeline = Pipeline::new().batch_size(2);
 
     for file in &["Cargo.toml", "README.md", "CLAUDE.md"] {
-        pipeline.push(
+        pipeline = pipeline.push(
             AgentBuilder::new()
                 .provider(provider.clone())
                 .model(&model)

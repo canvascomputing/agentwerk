@@ -6,7 +6,7 @@ use std::pin::Pin;
 use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, Mutex};
 
-use crate::agent::{Agent, AgentOutput, Event, InvocationContext};
+use crate::agent::{Agent, AgentOutput, Event, RuntimeContext};
 use crate::error::{AgenticError, Result};
 use crate::provider::types::{ContentBlock, ModelResponse, StopReason, TokenUsage};
 use crate::provider::{CompletionRequest, LlmProvider};
@@ -301,14 +301,15 @@ impl TestHarness {
         self
     }
 
-    pub fn build_context(&self, input: &str) -> InvocationContext {
-        InvocationContext::new(self.provider.clone())
+    pub fn build_context(&self, input: &str) -> RuntimeContext {
+        let mut ctx = RuntimeContext::new(self.provider.clone())
             .instruction_prompt(input)
-            .template_variables(self.template_variables.clone())
             .working_directory(self.working_directory.clone())
             .event_handler(self.events.callback())
             .cancel_signal(self.cancel_signal.clone())
-            .agent_name("test")
+            .agent_name("test");
+        ctx.template_variables = self.template_variables.clone();
+        ctx
     }
 
     pub async fn run_agent(&self, agent: &dyn Agent, input: &str) -> Result<AgentOutput> {

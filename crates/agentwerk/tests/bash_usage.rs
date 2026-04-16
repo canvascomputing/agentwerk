@@ -2,7 +2,7 @@ mod common;
 
 use std::sync::Arc;
 
-use agentwerk::{AgentBuilder, BashGlobTool, Event};
+use agentwerk::{AgentBuilder, BashTool, Event};
 
 #[tokio::test]
 async fn test() -> std::result::Result<(), Box<dyn std::error::Error>> {
@@ -32,9 +32,9 @@ async fn test() -> std::result::Result<(), Box<dyn std::error::Error>> {
         _ => {}
     });
 
-    let ls = BashGlobTool::new("ls", "ls*").read_only(true);
-    let cat = BashGlobTool::new("cat", "cat *").read_only(true);
-    let wc = BashGlobTool::new("wc", "wc *").read_only(true);
+    let ls = BashTool::new("ls", "ls*").read_only(true);
+    let cat = BashTool::new("cat", "cat *").read_only(true);
+    let wc = BashTool::new("wc", "wc *").read_only(true);
 
     let output = AgentBuilder::new()
         .provider(provider)

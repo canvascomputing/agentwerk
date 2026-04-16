@@ -4,14 +4,16 @@ use std::pin::Pin;
 use crate::error::Result;
 
 use super::output::AgentOutput;
-use super::context::InvocationContext;
+use super::context::RuntimeContext;
 
-/// The single agent interface. Implemented by AgentLoop (via AgentBuilder)
-/// and any user-defined agent.
+/// The agent interface. Obtain instances via [`AgentBuilder::build()`].
+///
+/// This trait is **sealed** — it cannot be implemented outside this crate
+/// because [`RuntimeContext`] is crate-private.
 pub trait Agent: Send + Sync {
     fn name(&self) -> &str;
     fn run(
         &self,
-        ctx: InvocationContext,
+        ctx: RuntimeContext,
     ) -> Pin<Box<dyn Future<Output = Result<AgentOutput>> + Send + '_>>;
 }

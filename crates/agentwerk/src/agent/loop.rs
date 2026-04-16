@@ -15,7 +15,7 @@ use crate::provider::{CompletionRequest, ToolChoice};
 use crate::tools::{ToolCall, ToolContext, ToolRegistry, execute_tool_calls};
 
 use super::r#trait::Agent;
-use super::context::{InvocationContext, now_millis};
+use super::context::{RuntimeContext, now_millis};
 use super::event::Event;
 use super::output::{AgentOutput, OutputSchema, Statistics, StructuredOutputTool};
 use super::prompts::{self as prompts, BehaviorPrompt, STRUCTURED_OUTPUT_TOOL_NAME, interpolate};
@@ -48,7 +48,7 @@ impl Agent for AgentLoop {
     }
     fn run(
         &self,
-        ctx: InvocationContext,
+        ctx: RuntimeContext,
     ) -> Pin<Box<dyn Future<Output = Result<AgentOutput>> + Send + '_>> {
         Box::pin(async move { self.execute(ctx).await })
     }
@@ -74,7 +74,7 @@ struct LoopState {
 }
 
 impl AgentLoop {
-    pub(crate) async fn execute(&self, ctx: InvocationContext) -> Result<AgentOutput> {
+    pub(crate) async fn execute(&self, ctx: RuntimeContext) -> Result<AgentOutput> {
         ctx.provider.prewarm().await;
         let mut state = self.init_state(&ctx);
         self.emit(&ctx, Event::AgentStart { agent_name: self.name.clone() });
@@ -118,7 +118,7 @@ impl AgentLoop {
         }
     }
 
-    fn init_state(&self, ctx: &InvocationContext) -> LoopState {
+    fn init_state(&self, ctx: &RuntimeContext) -> LoopState {
         let mut system_prompt = interpolate(&self.identity_prompt, &ctx.template_variables);
         for (_, content) in &self.behavior_prompts {
             system_prompt.push_str("\n\n");
@@ -159,7 +159,7 @@ impl AgentLoop {
         }
     }
 
-    fn record_initial_message(&self, ctx: &InvocationContext, messages: &[Message]) {
+    fn record_initial_message(&self, ctx: &RuntimeContext, messages: &[Message]) {
         let Some(ref store) = ctx.session_store else { return };
         let Some(message) = messages.last() else { return };
         store.lock().unwrap().record(TranscriptEntry {
@@ -188,7 +188,7 @@ impl AgentLoop {
         (tools, tool_choice)
     }
 
-    fn check_guards(&self, ctx: &InvocationContext, state: &LoopState) -> Result<()> {
+    fn check_guards(&self, ctx: &RuntimeContext, state: &LoopState) -> Result<()> {
         if ctx.cancel_signal.load(Ordering::Relaxed) {
             return Err(AgenticError::Aborted);
         }
@@ -198,7 +198,7 @@ impl AgentLoop {
         Ok(())
     }
 
-    async fn call_llm(&self, ctx: &InvocationContext, state: &LoopState) -> Result<ModelResponse> {
+    async fn call_llm(&self, ctx: &RuntimeContext, state: &LoopState) -> Result<ModelResponse> {
         let tools = &state.tools;
         let tool_defs = if tools.has_deferred_tools() {
             tools.definitions_filtered(&state.discovered_tools)
@@ -233,7 +233,7 @@ impl AgentLoop {
 
     async fn call_llm_with_retry(
         &self,
-        ctx: &InvocationContext,
+        ctx: &RuntimeContext,
         state: &LoopState,
     ) -> Result<ModelResponse> {
         let mut last_err = None;
@@ -253,8 +253,8 @@ impl AgentLoop {
         Err(last_err.unwrap_or_else(|| AgenticError::Other("retry loop ended unexpectedly".into())))
     }
 
-    fn record_usage(&self, ctx: &InvocationContext, response: &ModelResponse, state: &mut LoopState) {
-        state.total_usage.add(&response.usage);
+    fn record_usage(&self, ctx: &RuntimeContext, response: &ModelResponse, state: &mut LoopState) {
+        state.total_usage += &response.usage;
         state.request_count += 1;
         self.emit(ctx, Event::TokenUsage {
             agent_name: self.name.clone(),
@@ -263,7 +263,7 @@ impl AgentLoop {
         });
     }
 
-    fn parse_response(&self, ctx: &InvocationContext, response: &ModelResponse) -> (String, Vec<ToolCall>) {
+    fn parse_response(&self, ctx: &RuntimeContext, response: &ModelResponse) -> (String, Vec<ToolCall>) {
         let mut text = String::new();
         let mut tool_calls = Vec::new();
 
@@ -289,7 +289,7 @@ impl AgentLoop {
 
     fn try_finish(
         &self,
-        ctx: &InvocationContext,
+        ctx: &RuntimeContext,
         state: &mut LoopState,
         text: String,
     ) -> Result<Option<AgentOutput>> {
@@ -311,8 +311,6 @@ impl AgentLoop {
             statistics: Statistics {
                 input_tokens: state.total_usage.input_tokens,
                 output_tokens: state.total_usage.output_tokens,
-                cache_read_tokens: state.total_usage.cache_read_input_tokens,
-                cache_write_tokens: state.total_usage.cache_creation_input_tokens,
                 requests: state.request_count,
                 tool_calls: state.tool_call_count,
                 turns: state.turn,
@@ -322,7 +320,7 @@ impl AgentLoop {
 
     async fn execute_tools(
         &self,
-        ctx: &InvocationContext,
+        ctx: &RuntimeContext,
         state: &mut LoopState,
         tool_calls: &[ToolCall],
     ) -> Vec<ContentBlock> {
@@ -345,7 +343,7 @@ impl AgentLoop {
         results
     }
 
-    fn emit_tool_results(&self, ctx: &InvocationContext, tool_calls: &[ToolCall], results: &[ContentBlock]) {
+    fn emit_tool_results(&self, ctx: &RuntimeContext, tool_calls: &[ToolCall], results: &[ContentBlock]) {
         for block in results {
             let ContentBlock::ToolResult { tool_use_id, content, is_error } = block else {
                 continue;
@@ -389,7 +387,7 @@ impl AgentLoop {
 
     fn record_transcript(
         &self,
-        ctx: &InvocationContext,
+        ctx: &RuntimeContext,
         entry_type: EntryType,
         state: &LoopState,
         response: Option<&ModelResponse>,
@@ -405,7 +403,7 @@ impl AgentLoop {
         }).ok();
     }
 
-    fn drain_command_queue(&self, ctx: &InvocationContext, state: &mut LoopState) {
+    fn drain_command_queue(&self, ctx: &RuntimeContext, state: &mut LoopState) {
         let Some(ref queue) = ctx.command_queue else { return };
         while let Some(cmd) = queue.dequeue(Some(&ctx.agent_name)) {
             match cmd.priority {
@@ -420,7 +418,7 @@ impl AgentLoop {
         }
     }
 
-    fn emit(&self, ctx: &InvocationContext, event: Event) {
+    fn emit(&self, ctx: &RuntimeContext, event: Event) {
         (ctx.event_handler)(event);
     }
 }
