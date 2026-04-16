@@ -1,11 +1,38 @@
 use std::sync::Arc;
 
+use crate::error::{AgenticError, Result};
+
 use super::{AnthropicProvider, LiteLlmProvider, LlmProvider, MistralProvider, OpenAiProvider};
 
 /// Provider and model detected from environment variables.
 pub struct Environment {
     pub provider: Arc<dyn LlmProvider>,
     pub model: String,
+}
+
+/// Detected provider name, before constructing the actual provider.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum DetectedProvider {
+    Anthropic,
+    Mistral,
+    OpenAi,
+    LiteLlm,
+}
+
+/// Read an env var, treating empty values as unset. Returns `default` if missing or empty.
+pub(crate) fn env_or(name: &str, default: &str) -> String {
+    std::env::var(name)
+        .ok()
+        .filter(|v| !v.is_empty())
+        .unwrap_or_else(|| default.into())
+}
+
+/// Read a required env var. Returns `Err` if missing or empty.
+pub(crate) fn env_required(name: &str) -> Result<String> {
+    std::env::var(name)
+        .ok()
+        .filter(|v| !v.is_empty())
+        .ok_or_else(|| AgenticError::Other(format!("{name} environment variable not set")))
 }
 
 impl Environment {
@@ -17,69 +44,202 @@ impl Environment {
     ///   2. `MISTRAL_API_KEY`  → Mistral
     ///   3. `ANTHROPIC_API_KEY` → Anthropic
     ///   4. `OPENAI_API_KEY`   → OpenAI
-    ///   5. localhost:4000 reachable → LiteLLM fallback (no auth)
     ///
-    /// Empty env vars are treated as unset. Panics if no provider can be detected.
-    pub fn detect_provider() -> Self {
-        if let Some(name) = env("LITELLM_PROVIDER") {
-            return match name.as_str() {
-                "anthropic" => {
-                    let (p, m) = AnthropicProvider::from_env()
-                        .expect("LITELLM_PROVIDER=anthropic requires ANTHROPIC_API_KEY");
-                    Self { provider: Arc::new(p), model: m }
-                }
-                "mistral" => {
-                    let (p, m) = MistralProvider::from_env()
-                        .expect("LITELLM_PROVIDER=mistral requires MISTRAL_API_KEY");
-                    Self { provider: Arc::new(p), model: m }
-                }
-                "openai" => {
-                    let (p, m) = OpenAiProvider::from_env()
-                        .expect("LITELLM_PROVIDER=openai requires OPENAI_API_KEY");
-                    Self { provider: Arc::new(p), model: m }
-                }
-                "litellm" => {
-                    let (p, m) = LiteLlmProvider::from_env();
-                    Self { provider: Arc::new(p), model: m }
-                }
-                other => panic!(
-                    "Unknown LITELLM_PROVIDER \"{other}\". Supported: anthropic, mistral, openai, litellm"
-                ),
-            };
-        }
+    /// Empty env vars are treated as unset.
+    pub fn from_env() -> Result<Self> {
+        let detected = detect_provider_name(|name| {
+            std::env::var(name).ok().filter(|v| !v.is_empty())
+        })?;
 
-        if env("LITELLM_API_KEY").is_some() {
-            let (provider, model) = LiteLlmProvider::from_env();
-            return Self { provider: Arc::new(provider), model };
-        }
-
-        if let Ok((provider, model)) = MistralProvider::from_env() {
-            return Self { provider: Arc::new(provider), model };
-        }
-
-        if let Ok((provider, model)) = AnthropicProvider::from_env() {
-            return Self { provider: Arc::new(provider), model };
-        }
-
-        if let Ok((provider, model)) = OpenAiProvider::from_env() {
-            return Self { provider: Arc::new(provider), model };
-        }
-
-        if std::net::TcpStream::connect("127.0.0.1:4000").is_ok() {
-            let (provider, model) = LiteLlmProvider::from_env();
-            return Self { provider: Arc::new(provider), model };
-        }
-
-        panic!(
-            "No LLM provider found.\n\
-             Set one of: LITELLM_API_KEY, MISTRAL_API_KEY, ANTHROPIC_API_KEY, OPENAI_API_KEY\n\
-             Or start a LiteLLM proxy on localhost:4000"
-        );
+        let (provider, model): (Arc<dyn LlmProvider>, String) = match detected {
+            DetectedProvider::Anthropic => { let (p, m) = AnthropicProvider::from_env()?; (Arc::new(p), m) }
+            DetectedProvider::Mistral   => { let (p, m) = MistralProvider::from_env()?;   (Arc::new(p), m) }
+            DetectedProvider::OpenAi    => { let (p, m) = OpenAiProvider::from_env()?;    (Arc::new(p), m) }
+            DetectedProvider::LiteLlm   => { let (p, m) = LiteLlmProvider::from_env()?;   (Arc::new(p), m) }
+        };
+        Ok(Self { provider, model })
     }
 }
 
-/// Read an environment variable, treating empty strings as unset.
-fn env(name: &str) -> Option<String> {
-    std::env::var(name).ok().filter(|v| !v.is_empty())
+/// Pure detection logic. Determines which provider to use based on env var values.
+pub(crate) fn detect_provider_name<F>(get_env: F) -> Result<DetectedProvider>
+where
+    F: Fn(&str) -> Option<String>,
+{
+    if let Some(name) = get_env("LITELLM_PROVIDER") {
+        return match name.as_str() {
+            "anthropic" => Ok(DetectedProvider::Anthropic),
+            "mistral" => Ok(DetectedProvider::Mistral),
+            "openai" => Ok(DetectedProvider::OpenAi),
+            "litellm" => Ok(DetectedProvider::LiteLlm),
+            other => Err(AgenticError::Other(format!(
+                "Unknown LITELLM_PROVIDER \"{other}\". Supported: anthropic, mistral, openai, litellm"
+            ))),
+        };
+    }
+
+    if get_env("LITELLM_API_KEY").is_some() {
+        return Ok(DetectedProvider::LiteLlm);
+    }
+
+    if get_env("MISTRAL_API_KEY").is_some() {
+        return Ok(DetectedProvider::Mistral);
+    }
+
+    if get_env("ANTHROPIC_API_KEY").is_some() {
+        return Ok(DetectedProvider::Anthropic);
+    }
+
+    if get_env("OPENAI_API_KEY").is_some() {
+        return Ok(DetectedProvider::OpenAi);
+    }
+
+    Err(AgenticError::Other(
+        "No LLM provider found. \
+         Set one of: LITELLM_PROVIDER, LITELLM_API_KEY, MISTRAL_API_KEY, ANTHROPIC_API_KEY, OPENAI_API_KEY"
+            .into(),
+    ))
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn env_map<'a>(vars: &'a [(&'a str, &'a str)]) -> impl Fn(&str) -> Option<String> + 'a {
+        move |name| {
+            vars.iter()
+                .find(|(k, _)| *k == name)
+                .map(|(_, v)| v.to_string())
+                .filter(|v| !v.is_empty())
+        }
+    }
+
+    // --- LITELLM_PROVIDER explicit selection ---
+
+    #[test]
+    fn explicit_anthropic() {
+        let result = detect_provider_name(env_map(&[
+            ("LITELLM_PROVIDER", "anthropic"),
+            ("ANTHROPIC_API_KEY", "key"),
+        ])).unwrap();
+        assert_eq!(result, DetectedProvider::Anthropic);
+    }
+
+    #[test]
+    fn explicit_mistral() {
+        let result = detect_provider_name(env_map(&[
+            ("LITELLM_PROVIDER", "mistral"),
+            ("MISTRAL_API_KEY", "key"),
+        ])).unwrap();
+        assert_eq!(result, DetectedProvider::Mistral);
+    }
+
+    #[test]
+    fn explicit_openai() {
+        let result = detect_provider_name(env_map(&[
+            ("LITELLM_PROVIDER", "openai"),
+            ("OPENAI_API_KEY", "key"),
+        ])).unwrap();
+        assert_eq!(result, DetectedProvider::OpenAi);
+    }
+
+    #[test]
+    fn explicit_litellm() {
+        let result = detect_provider_name(env_map(&[
+            ("LITELLM_PROVIDER", "litellm"),
+        ])).unwrap();
+        assert_eq!(result, DetectedProvider::LiteLlm);
+    }
+
+    #[test]
+    fn explicit_overrides_auto_detection() {
+        let result = detect_provider_name(env_map(&[
+            ("LITELLM_PROVIDER", "anthropic"),
+            ("ANTHROPIC_API_KEY", "key"),
+            ("OPENAI_API_KEY", "key"),
+        ])).unwrap();
+        assert_eq!(result, DetectedProvider::Anthropic);
+    }
+
+    // --- Auto-detection order ---
+
+    #[test]
+    fn auto_litellm_api_key() {
+        let result = detect_provider_name(env_map(&[
+            ("LITELLM_API_KEY", "key"),
+        ])).unwrap();
+        assert_eq!(result, DetectedProvider::LiteLlm);
+    }
+
+    #[test]
+    fn auto_mistral() {
+        let result = detect_provider_name(env_map(&[
+            ("MISTRAL_API_KEY", "key"),
+        ])).unwrap();
+        assert_eq!(result, DetectedProvider::Mistral);
+    }
+
+    #[test]
+    fn auto_anthropic() {
+        let result = detect_provider_name(env_map(&[
+            ("ANTHROPIC_API_KEY", "key"),
+        ])).unwrap();
+        assert_eq!(result, DetectedProvider::Anthropic);
+    }
+
+    #[test]
+    fn auto_openai() {
+        let result = detect_provider_name(env_map(&[
+            ("OPENAI_API_KEY", "key"),
+        ])).unwrap();
+        assert_eq!(result, DetectedProvider::OpenAi);
+    }
+
+    // --- Priority within auto-detection ---
+
+    #[test]
+    fn litellm_key_wins_over_others() {
+        let result = detect_provider_name(env_map(&[
+            ("LITELLM_API_KEY", "key"),
+            ("MISTRAL_API_KEY", "key"),
+            ("ANTHROPIC_API_KEY", "key"),
+        ])).unwrap();
+        assert_eq!(result, DetectedProvider::LiteLlm);
+    }
+
+    #[test]
+    fn mistral_wins_over_anthropic() {
+        let result = detect_provider_name(env_map(&[
+            ("MISTRAL_API_KEY", "key"),
+            ("ANTHROPIC_API_KEY", "key"),
+        ])).unwrap();
+        assert_eq!(result, DetectedProvider::Mistral);
+    }
+
+    // --- Error cases ---
+
+    #[test]
+    fn invalid_provider_returns_error() {
+        let err = detect_provider_name(env_map(&[
+            ("LITELLM_PROVIDER", "invalid"),
+            ("ANTHROPIC_API_KEY", "key"),
+        ])).unwrap_err();
+        assert!(err.to_string().contains("Unknown LITELLM_PROVIDER"));
+    }
+
+    #[test]
+    fn no_provider_returns_error() {
+        let err = detect_provider_name(env_map(&[])).unwrap_err();
+        assert!(err.to_string().contains("No LLM provider found"));
+    }
+
+    // --- Empty values treated as unset ---
+
+    #[test]
+    fn empty_values_treated_as_unset() {
+        let err = detect_provider_name(env_map(&[
+            ("ANTHROPIC_API_KEY", ""),
+        ])).unwrap_err();
+        assert!(err.to_string().contains("No LLM provider found"));
+    }
+}

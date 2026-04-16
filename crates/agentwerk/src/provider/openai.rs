@@ -45,17 +45,11 @@ impl OpenAiProvider {
         self
     }
 
-    pub fn from_env() -> Result<(Self, String)> {
-        let key = std::env::var("OPENAI_API_KEY")
-            .map_err(|_| AgenticError::Other("OPENAI_API_KEY environment variable not set".into()))?;
-        let mut provider = Self::from_api_key(key);
-        if let Ok(url) = std::env::var("OPENAI_BASE_URL") {
-            if !url.is_empty() {
-                provider = provider.base_url(url);
-            }
-        }
-        let model = std::env::var("OPENAI_MODEL")
-            .unwrap_or_else(|_| "gpt-4o".into());
+    pub(crate) fn from_env() -> Result<(Self, String)> {
+        use super::environment::{env_or, env_required};
+        let provider = Self::from_api_key(env_required("OPENAI_API_KEY")?)
+            .base_url(env_or("OPENAI_BASE_URL", "https://api.openai.com"));
+        let model = env_or("OPENAI_MODEL", "gpt-4o");
         Ok((provider, model))
     }
 }
@@ -72,14 +66,12 @@ impl LiteLlmProvider {
         OpenAiProvider::new_with(api_key, "http://localhost:4000", client, true)
     }
 
-    pub fn from_env() -> (OpenAiProvider, String) {
-        let key = std::env::var("LITELLM_API_KEY").unwrap_or_default();
-        let url = std::env::var("LITELLM_BASE_URL")
-            .unwrap_or_else(|_| "http://localhost:4000".into());
-        let model = std::env::var("LITELLM_MODEL")
-            .unwrap_or_else(|_| "claude-sonnet-4-20250514".into());
-        let provider = Self::from_api_key(key).base_url(url);
-        (provider, model)
+    pub(crate) fn from_env() -> Result<(OpenAiProvider, String)> {
+        use super::environment::env_or;
+        let provider = Self::from_api_key(env_or("LITELLM_API_KEY", ""))
+            .base_url(env_or("LITELLM_BASE_URL", "http://localhost:4000"));
+        let model = env_or("LITELLM_MODEL", "claude-sonnet-4-20250514");
+        Ok((provider, model))
     }
 }
 
@@ -95,17 +87,11 @@ impl MistralProvider {
         OpenAiProvider::new_with(api_key, "https://api.mistral.ai", client, false)
     }
 
-    pub fn from_env() -> Result<(OpenAiProvider, String)> {
-        let key = std::env::var("MISTRAL_API_KEY")
-            .map_err(|_| AgenticError::Other("MISTRAL_API_KEY environment variable not set".into()))?;
-        let mut provider = Self::from_api_key(key);
-        if let Ok(url) = std::env::var("MISTRAL_BASE_URL") {
-            if !url.is_empty() {
-                provider = provider.base_url(url);
-            }
-        }
-        let model = std::env::var("MISTRAL_MODEL")
-            .unwrap_or_else(|_| "mistral-medium-2508".into());
+    pub(crate) fn from_env() -> Result<(OpenAiProvider, String)> {
+        use super::environment::{env_or, env_required};
+        let provider = Self::from_api_key(env_required("MISTRAL_API_KEY")?)
+            .base_url(env_or("MISTRAL_BASE_URL", "https://api.mistral.ai"));
+        let model = env_or("MISTRAL_MODEL", "mistral-medium-2508");
         Ok((provider, model))
     }
 }

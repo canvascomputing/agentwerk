@@ -24,17 +24,11 @@ impl AnthropicProvider {
         }
     }
 
-    pub fn from_env() -> Result<(Self, String)> {
-        let key = std::env::var("ANTHROPIC_API_KEY")
-            .map_err(|_| AgenticError::Other("ANTHROPIC_API_KEY environment variable not set".into()))?;
-        let mut provider = Self::from_api_key(key);
-        if let Ok(url) = std::env::var("ANTHROPIC_BASE_URL") {
-            if !url.is_empty() {
-                provider = provider.base_url(url);
-            }
-        }
-        let model = std::env::var("ANTHROPIC_MODEL")
-            .unwrap_or_else(|_| "claude-sonnet-4-20250514".into());
+    pub(crate) fn from_env() -> Result<(Self, String)> {
+        use super::environment::{env_or, env_required};
+        let provider = Self::from_api_key(env_required("ANTHROPIC_API_KEY")?)
+            .base_url(env_or("ANTHROPIC_BASE_URL", "https://api.anthropic.com"));
+        let model = env_or("ANTHROPIC_MODEL", "claude-sonnet-4-20250514");
         Ok((provider, model))
     }
 

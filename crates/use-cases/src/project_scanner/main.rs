@@ -69,7 +69,7 @@ fn summarize_schema() -> Value {
 #[tokio::main]
 async fn main() {
     let config = parse_args();
-    let env = use_cases::Environment::detect_provider();
+    let env = use_cases::Environment::from_env().expect("LLM provider required");
     let (provider, default_model) = (env.provider, env.model);
     let model = if config.model.is_empty() { default_model } else { config.model };
 

@@ -73,7 +73,7 @@ fn output_schema() -> serde_json::Value {
 #[tokio::main]
 async fn main() {
     let output_path = parse_args();
-    let env = use_cases::Environment::detect_provider();
+    let env = use_cases::Environment::from_env().expect("LLM provider required");
     let (provider, model) = (env.provider, env.model);
 
     eprintln!("Model Pricing Tracker\n");

@@ -23,7 +23,7 @@ use agentwerk::{
 async fn main() {
     let question = parse_question();
     let brave_key = check_required_env();
-    let env = use_cases::Environment::detect_provider();
+    let env = use_cases::Environment::from_env().expect("LLM provider required");
     let (provider, model) = (env.provider, env.model);
 
     eprintln!("Question: {question}\n");
