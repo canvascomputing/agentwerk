@@ -74,7 +74,7 @@ impl LiteLlmProvider {
 
     pub fn from_env() -> (OpenAiProvider, String) {
         let key = std::env::var("LITELLM_API_KEY").unwrap_or_default();
-        let url = std::env::var("LITELLM_API_URL")
+        let url = std::env::var("LITELLM_BASE_URL")
             .unwrap_or_else(|_| "http://localhost:4000".into());
         let model = std::env::var("LITELLM_MODEL")
             .unwrap_or_else(|_| "claude-sonnet-4-20250514".into());

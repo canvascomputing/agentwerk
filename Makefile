@@ -8,7 +8,7 @@ build:
 test:
 	RUSTFLAGS="-D warnings" cargo test --lib
 
-# Run integration tests (requires a live LLM LITELLM_PROVIDER)
+# Run integration tests (requires a live LLM provider)
 # Usage: make test_integration              (run all)
 #        make test_integration name=bash_usage  (run one)
 test_integration:

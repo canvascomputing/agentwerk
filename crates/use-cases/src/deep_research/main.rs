@@ -264,31 +264,12 @@ fn parse_question() -> String {
 }
 
 fn check_required_env() -> String {
-    let mut missing = Vec::new();
-
     let brave_key = std::env::var("BRAVE_API_KEY").unwrap_or_default();
     if brave_key.is_empty() {
-        missing.push("BRAVE_API_KEY");
+        eprintln!("Error: missing environment variable: BRAVE_API_KEY");
+        std::process::exit(1);
     }
-
-    let has_provider = !std::env::var("ANTHROPIC_API_KEY").unwrap_or_default().is_empty()
-        || !std::env::var("MISTRAL_API_KEY").unwrap_or_default().is_empty()
-        || !std::env::var("LITELLM_API_URL").unwrap_or_default().is_empty()
-        || std::net::TcpStream::connect("127.0.0.1:4000").is_ok();
-
-    if !has_provider {
-        missing.push("ANTHROPIC_API_KEY (or MISTRAL_API_KEY or LITELLM_API_URL)");
-    }
-
-    if missing.is_empty() {
-        return brave_key;
-    }
-
-    eprintln!("Error: missing environment variables:");
-    for var in &missing {
-        eprintln!("  {var}");
-    }
-    std::process::exit(1);
+    brave_key
 }
 
 fn setup_cancel_signal() -> Arc<AtomicBool> {
