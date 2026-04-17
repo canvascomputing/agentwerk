@@ -1,5 +1,5 @@
 use std::future::Future;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::pin::Pin;
 use std::sync::{Arc, Mutex};
 
@@ -19,11 +19,6 @@ impl TaskTool {
         Self {
             store: Arc::new(Mutex::new(TaskStore::new(data_dir, "tasks"))),
         }
-    }
-
-    pub fn ephemeral() -> Self {
-        let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
-        Self::new(&cwd)
     }
 }
 

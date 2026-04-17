@@ -293,8 +293,8 @@ fn serialize_request(request: &CompletionRequest) -> Value {
         "messages": messages,
     });
 
-    if request.max_tokens != crate::UNLIMITED {
-        body["max_tokens"] = Value::from(request.max_tokens);
+    if let Some(n) = request.max_tokens {
+        body["max_tokens"] = Value::from(n);
     }
 
     if !tools.is_empty() {
@@ -493,7 +493,7 @@ mod tests {
                 content: vec![ContentBlock::Text { text: "Hello".into() }],
             }],
             tools: vec![],
-            max_tokens: 1024,
+            max_tokens: Some(1024),
             tool_choice: None,
         }
     }
@@ -527,7 +527,7 @@ mod tests {
                 description: "Get weather".into(),
                 input_schema: serde_json::json!({"type": "object", "properties": {"city": {"type": "string"}}}),
             }],
-            max_tokens: 1024,
+            max_tokens: Some(1024),
             tool_choice: Some(ToolChoice::Auto),
         };
         let body = serialize_request(&request);
@@ -544,7 +544,7 @@ mod tests {
             system_prompt: String::new(),
             messages: vec![],
             tools: vec![],
-            max_tokens: 1024,
+            max_tokens: Some(1024),
             tool_choice: Some(ToolChoice::Specific { name: "read_file".into() }),
         };
         let body = serialize_request(&request);

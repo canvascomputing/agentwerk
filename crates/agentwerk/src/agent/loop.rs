@@ -14,10 +14,9 @@ use crate::provider::types::{ContentBlock, Message, ModelResponse, StopReason, S
 use crate::provider::{CompletionRequest, ToolChoice};
 use crate::tools::{ToolCall, ToolContext, ToolRegistry, execute_tool_calls};
 
-use super::r#trait::Agent;
 use super::context::RuntimeContext;
 use crate::util::now_millis;
-use super::event::Event;
+use super::event::{Event, EventKind};
 use super::output::{AgentOutput, OutputSchema, Statistics, StructuredOutputTool};
 use super::prompts::{self as prompts, BehaviorPrompt, STRUCTURED_OUTPUT_TOOL_NAME, interpolate};
 use super::queue::QueuePriority;
@@ -26,16 +25,15 @@ use super::queue::QueuePriority;
 // AgentLoop — the LLM-powered agent implementation
 // ---------------------------------------------------------------------------
 
-/// An LLM-powered agent. Calls an LLM in a loop, executing tools until done.
-/// Created via `AgentBuilder::build()`.
+/// The internal agent loop. Calls an LLM in a loop, executing tools until done.
 pub(crate) struct AgentLoop {
     pub(crate) name: String,
     pub(crate) model: ModelSpec,
     pub(crate) identity_prompt: String,
-    pub(crate) max_tokens: u32,
-    pub(crate) max_turns: u32,
+    pub(crate) max_tokens: Option<u32>,
+    pub(crate) max_turns: Option<u32>,
     pub(crate) output_schema: Option<OutputSchema>,
-    pub(crate) max_schema_retries: u32,
+    pub(crate) max_schema_retries: Option<u32>,
     pub(crate) behavior_prompts: Vec<(BehaviorPrompt, String)>,
     pub(crate) user_context_blocks: Vec<String>,
     pub(crate) tools: ToolRegistry,
@@ -43,15 +41,21 @@ pub(crate) struct AgentLoop {
     pub(crate) request_retry_backoff_ms: u64,
 }
 
-impl Agent for AgentLoop {
-    fn name(&self) -> &str {
-        &self.name
+/// An LLM-powered agent. Obtain one via [`AgentBuilder::build()`].
+///
+/// Cheap to clone: internally wraps an `Arc`.
+#[derive(Clone)]
+pub struct Agent {
+    pub(crate) inner: Arc<AgentLoop>,
+}
+
+impl Agent {
+    pub fn name(&self) -> &str {
+        &self.inner.name
     }
-    fn run(
-        &self,
-        ctx: RuntimeContext,
-    ) -> Pin<Box<dyn Future<Output = Result<AgentOutput>> + Send + '_>> {
-        Box::pin(async move { self.execute(ctx).await })
+
+    pub(crate) fn execute(&self, ctx: RuntimeContext) -> Pin<Box<dyn Future<Output = Result<AgentOutput>> + Send + '_>> {
+        Box::pin(async move { self.inner.execute(ctx).await })
     }
 }
 
@@ -82,19 +86,19 @@ impl AgentLoop {
     pub(crate) async fn execute(&self, ctx: RuntimeContext) -> Result<AgentOutput> {
         ctx.provider.prewarm().await;
         let (config, mut state) = self.init_state(&ctx);
-        emit(&ctx, Event::AgentStart { agent_name: self.name.clone() });
+        emit_for(&ctx, &self.name, EventKind::AgentStart);
 
         loop {
             // Guards: cancellation, turn limit, estimated costs
             self.check_guards(&ctx, &state)?;
             state.turn += 1;
-            emit(&ctx, Event::TurnStart { agent_name: self.name.clone(), turn: state.turn });
+            emit_for(&ctx, &self.name, EventKind::TurnStart { turn: state.turn });
 
             // LLM call (with retry on transient errors)
             let resolved_model = self.model.resolve(&ctx.model);
-            emit(&ctx, Event::RequestStart { agent_name: self.name.clone(), model: resolved_model.clone() });
+            emit_for(&ctx, &self.name, EventKind::RequestStart { model: resolved_model.clone() });
             let response = self.call_llm_with_retry(&ctx, &config, &state, &resolved_model).await?;
-            emit(&ctx, Event::RequestEnd { agent_name: self.name.clone(), model: resolved_model });
+            emit_for(&ctx, &self.name, EventKind::RequestEnd { model: resolved_model });
             self.record_usage(&ctx, &response, &mut state);
 
             // Parse response into text and tool calls
@@ -105,7 +109,7 @@ impl AgentLoop {
             // Done? Return or retry structured output
             if response.stop_reason != StopReason::ToolUse || tool_calls.is_empty() {
                 if let Some(output) = self.try_finish(&ctx, &mut state, text)? {
-                    emit(&ctx, Event::TurnEnd { agent_name: self.name.clone(), turn: state.turn });
+                    emit_for(&ctx, &self.name, EventKind::TurnEnd { turn: state.turn });
                     return Ok(output);
                 }
             } else {
@@ -120,7 +124,7 @@ impl AgentLoop {
                 drain_command_queue(&ctx, &mut state);
             }
 
-            emit(&ctx, Event::TurnEnd { agent_name: self.name.clone(), turn: state.turn });
+            emit_for(&ctx, &self.name, EventKind::TurnEnd { turn: state.turn });
         }
     }
 
@@ -191,8 +195,10 @@ impl AgentLoop {
         if ctx.cancel_signal.load(Ordering::Relaxed) {
             return Err(AgenticError::Aborted);
         }
-        if self.max_turns != crate::UNLIMITED && state.turn >= self.max_turns {
-            return Err(AgenticError::MaxTurnsExceeded(self.max_turns));
+        if let Some(limit) = self.max_turns {
+            if state.turn >= limit {
+                return Err(AgenticError::MaxTurnsExceeded(limit));
+            }
         }
         Ok(())
     }
@@ -213,10 +219,10 @@ impl AgentLoop {
         let agent_name = self.name.clone();
         let on_event = Arc::new(move |event: StreamEvent| {
             if let StreamEvent::TextDelta { text, .. } = &event {
-                event_handler(Event::ResponseTextChunk {
-                    agent_name: agent_name.clone(),
-                    content: text.clone(),
-                });
+                event_handler(Event::new(
+                    agent_name.clone(),
+                    EventKind::ResponseTextChunk { content: text.clone() },
+                ));
             }
         });
 
@@ -250,8 +256,7 @@ impl AgentLoop {
     fn record_usage(&self, ctx: &RuntimeContext, response: &ModelResponse, state: &mut LoopState) {
         state.total_usage += &response.usage;
         state.request_count += 1;
-        emit(ctx, Event::TokenUsage {
-            agent_name: self.name.clone(),
+        emit_for(ctx, &self.name, EventKind::TokenUsage {
             model: response.model.clone(),
             usage: response.usage.clone(),
         });
@@ -289,14 +294,16 @@ impl AgentLoop {
         // Structured output retry
         if self.output_schema.is_some() && state.structured_output.is_none() {
             state.schema_retries += 1;
-            if self.max_schema_retries != crate::UNLIMITED && state.schema_retries > self.max_schema_retries {
-                return Err(AgenticError::SchemaRetryExhausted { retries: self.max_schema_retries });
+            if let Some(limit) = self.max_schema_retries {
+                if state.schema_retries > limit {
+                    return Err(AgenticError::SchemaRetryExhausted { retries: limit });
+                }
             }
             state.messages.push(Message::user(prompts::STRUCTURED_OUTPUT_RETRY));
             return Ok(None); // continue loop
         }
 
-        emit(ctx, Event::AgentEnd { agent_name: self.name.clone(), turns: state.turn });
+        emit_for(ctx, &self.name, EventKind::AgentEnd { turns: state.turn });
         Ok(Some(AgentOutput {
             response: state.structured_output.take(),
             response_raw: text,
@@ -319,8 +326,7 @@ impl AgentLoop {
     ) -> Vec<ContentBlock> {
         state.tool_call_count += tool_calls.len() as u64;
         for call in tool_calls {
-            emit(ctx, Event::ToolCallStart {
-                agent_name: self.name.clone(),
+            emit_for(ctx, &self.name, EventKind::ToolCallStart {
                 tool_name: call.name.clone(),
                 call_id: call.id.clone(),
                 input: call.input.clone(),
@@ -341,8 +347,7 @@ impl AgentLoop {
                 .find(|c| c.id == *tool_use_id)
                 .map(|c| c.name.clone())
                 .unwrap_or_default();
-            emit(ctx, Event::ToolCallEnd {
-                agent_name: self.name.clone(),
+            emit_for(ctx, &self.name, EventKind::ToolCallEnd {
                 tool_name,
                 call_id: tool_use_id.clone(),
                 output: content.clone(),
@@ -355,8 +360,8 @@ impl AgentLoop {
 
 }
 
-fn emit(ctx: &RuntimeContext, event: Event) {
-    (ctx.event_handler)(event);
+fn emit_for(ctx: &RuntimeContext, agent_name: &str, kind: EventKind) {
+    (ctx.event_handler)(Event::new(agent_name, kind));
 }
 
 fn record_transcript(
@@ -439,7 +444,7 @@ mod tests {
     use crate::testutil::*;
     use std::sync::Arc;
 
-    fn build_simple_agent() -> Arc<dyn Agent> {
+    fn build_simple_agent() -> Agent {
         AgentBuilder::new()
             .name("test-agent")
             .model("mock-model")
@@ -453,7 +458,7 @@ mod tests {
         let harness = TestHarness::new(MockProvider::text("Hello, world!"));
         let agent = build_simple_agent();
 
-        let output = harness.run_agent(agent.as_ref(), "Hi").await.unwrap();
+        let output = harness.run_agent(&agent, "Hi").await.unwrap();
         assert_eq!(output.response_raw, "Hello, world!");
         assert!(output.response.is_none());
         assert_eq!(harness.provider().request_count(), 1);
@@ -475,7 +480,7 @@ mod tests {
             .unwrap();
 
         let harness = TestHarness::new(provider);
-        let output = harness.run_agent(agent.as_ref(), "Echo test").await.unwrap();
+        let output = harness.run_agent(&agent, "Echo test").await.unwrap();
         assert_eq!(output.response_raw, "Done!");
         assert_eq!(harness.provider().request_count(), 2);
     }
@@ -494,7 +499,7 @@ mod tests {
             .build().unwrap();
 
         let harness = TestHarness::new(provider);
-        let err = harness.run_agent(agent.as_ref(), "go").await.unwrap_err();
+        let err = harness.run_agent(&agent, "go").await.unwrap_err();
         assert!(matches!(err, AgenticError::MaxTurnsExceeded(2)));
     }
 
@@ -511,7 +516,7 @@ mod tests {
 
         let harness = TestHarness::new(provider);
         harness.cancel();
-        let err = harness.run_agent(agent.as_ref(), "go").await.unwrap_err();
+        let err = harness.run_agent(&agent, "go").await.unwrap_err();
         assert!(matches!(err, AgenticError::Aborted));
     }
 
@@ -524,7 +529,7 @@ mod tests {
             .build().unwrap();
 
         let harness = TestHarness::new(provider).with_state("topic", serde_json::json!("rust"));
-        harness.run_agent(agent.as_ref(), "Tell me").await.unwrap();
+        harness.run_agent(&agent, "Tell me").await.unwrap();
 
         let prompts = harness.provider().system_prompts();
         assert!(prompts[0].contains("expert on rust"));
@@ -539,7 +544,7 @@ mod tests {
             .build().unwrap();
 
         let harness = TestHarness::new(provider);
-        harness.run_agent(agent.as_ref(), "read it").await.unwrap();
+        harness.run_agent(&agent, "read it").await.unwrap();
 
         let events = harness.events();
         assert_eq!(events.agent_starts(), vec!["assistant"]);
@@ -572,7 +577,7 @@ mod tests {
         ctx.command_queue = Some(queue);
         ctx.agent_name = "test".into();
 
-        let output = agent.run(ctx).await.unwrap();
+        let output = agent.execute(ctx).await.unwrap();
         assert_eq!(output.response_raw, "final");
 
         let requests = harness.provider().requests.lock().unwrap();
@@ -610,7 +615,7 @@ mod tests {
         ctx.command_queue = Some(queue.clone());
         ctx.agent_name = "test".into();
 
-        agent.run(ctx).await.unwrap();
+        agent.execute(ctx).await.unwrap();
 
         let cmd = queue.dequeue(Some("test"));
         assert!(cmd.is_some());
@@ -627,7 +632,7 @@ mod tests {
             .build().unwrap();
 
         let harness = TestHarness::new(provider);
-        harness.run_agent(agent.as_ref(), "go").await.unwrap();
+        harness.run_agent(&agent, "go").await.unwrap();
 
         let req = harness.provider().last_request().unwrap();
         let deferred_def = req.tools.iter().find(|t| t.name == "deferred").unwrap();
@@ -643,7 +648,7 @@ mod tests {
             .build().unwrap();
 
         let harness = TestHarness::new(provider);
-        harness.run_agent(agent.as_ref(), "go").await.unwrap();
+        harness.run_agent(&agent, "go").await.unwrap();
 
         let req = harness.provider().last_request().unwrap();
         let def = req.tools.iter().find(|t| t.name == "read").unwrap();
@@ -678,7 +683,7 @@ mod tests {
             .build().unwrap();
 
         let harness = TestHarness::new(provider);
-        let output = harness.run_agent(agent.as_ref(), "ticket").await.unwrap();
+        let output = harness.run_agent(&agent, "ticket").await.unwrap();
         let so = output.response.unwrap();
         assert_eq!(so["category"], "billing");
         assert_eq!(so["priority"], "high");
@@ -702,7 +707,7 @@ mod tests {
             .build().unwrap();
 
         let harness = TestHarness::new(provider);
-        let output = harness.run_agent(agent.as_ref(), "question").await.unwrap();
+        let output = harness.run_agent(&agent, "question").await.unwrap();
         assert!(output.response.is_some());
         assert!(harness.provider().request_count() >= 3);
     }
@@ -726,7 +731,7 @@ mod tests {
             .build().unwrap();
 
         let harness = TestHarness::new(provider);
-        let err = harness.run_agent(agent.as_ref(), "go").await.unwrap_err();
+        let err = harness.run_agent(&agent, "go").await.unwrap_err();
         assert!(matches!(err, AgenticError::SchemaRetryExhausted { retries: 3 }));
     }
 
@@ -767,7 +772,7 @@ mod tests {
             .build().unwrap();
 
         let harness = TestHarness::new(provider);
-        let err = harness.run_agent(agent.as_ref(), "go").await.unwrap_err();
+        let err = harness.run_agent(&agent, "go").await.unwrap_err();
         assert!(format!("{err}").contains("no more mock responses"));
     }
 
@@ -791,7 +796,7 @@ mod tests {
             .build().unwrap();
 
         let harness = TestHarness::new(provider);
-        let output = harness.run_agent(agent.as_ref(), "go").await.unwrap();
+        let output = harness.run_agent(&agent, "go").await.unwrap();
         assert_eq!(output.response_raw, "done");
 
         // Both tools should have produced results in the second request
@@ -831,7 +836,7 @@ mod tests {
             .build().unwrap();
 
         let harness = TestHarness::new(provider);
-        let output = harness.run_agent(agent.as_ref(), "go").await.unwrap();
+        let output = harness.run_agent(&agent, "go").await.unwrap();
         assert_eq!(output.statistics.input_tokens, 300);
         assert_eq!(output.statistics.output_tokens, 130);
     }
@@ -845,7 +850,7 @@ mod tests {
             .build().unwrap();
 
         let harness = TestHarness::new(provider);
-        harness.run_agent(agent.as_ref(), "go").await.unwrap();
+        harness.run_agent(&agent, "go").await.unwrap();
 
         let req = harness.provider().last_request().unwrap();
         // First message should be the context message from ContextBuilder
@@ -878,7 +883,7 @@ mod tests {
             .build().unwrap();
 
         let harness = TestHarness::new(provider);
-        harness.run_agent(agent.as_ref(), "go").await.unwrap();
+        harness.run_agent(&agent, "go").await.unwrap();
 
         let req = harness.provider().requests.lock().unwrap();
         match &req[0].tool_choice {
@@ -905,7 +910,7 @@ mod tests {
             .build().unwrap();
 
         let harness = TestHarness::new(provider);
-        let output = harness.run_agent(agent.as_ref(), "go").await.unwrap();
+        let output = harness.run_agent(&agent, "go").await.unwrap();
         assert_eq!(output.response_raw, "recovered");
         assert_eq!(harness.provider().request_count(), 2);
     }
@@ -919,7 +924,7 @@ mod tests {
             .build().unwrap();
 
         let harness = TestHarness::new(provider);
-        harness.run_agent(agent.as_ref(), "go").await.unwrap();
+        harness.run_agent(&agent, "go").await.unwrap();
 
         let events = harness.events().all();
         let names: Vec<&str> = events.iter().map(event_name).collect();
@@ -944,17 +949,17 @@ mod tests {
     }
 
     fn event_name(event: &Event) -> &'static str {
-        match event {
-            Event::AgentStart { .. } => "AgentStart",
-            Event::AgentEnd { .. } => "AgentEnd",
-            Event::TurnStart { .. } => "TurnStart",
-            Event::TurnEnd { .. } => "TurnEnd",
-            Event::RequestStart { .. } => "RequestStart",
-            Event::RequestEnd { .. } => "RequestEnd",
-            Event::ResponseTextChunk { .. } => "ResponseTextChunk",
-            Event::ToolCallStart { .. } => "ToolCallStart",
-            Event::ToolCallEnd { .. } => "ToolCallEnd",
-            Event::TokenUsage { .. } => "TokenUsage",
+        match &event.kind {
+            EventKind::AgentStart => "AgentStart",
+            EventKind::AgentEnd { .. } => "AgentEnd",
+            EventKind::TurnStart { .. } => "TurnStart",
+            EventKind::TurnEnd { .. } => "TurnEnd",
+            EventKind::RequestStart { .. } => "RequestStart",
+            EventKind::RequestEnd { .. } => "RequestEnd",
+            EventKind::ResponseTextChunk { .. } => "ResponseTextChunk",
+            EventKind::ToolCallStart { .. } => "ToolCallStart",
+            EventKind::ToolCallEnd { .. } => "ToolCallEnd",
+            EventKind::TokenUsage { .. } => "TokenUsage",
         }
     }
 
@@ -982,7 +987,7 @@ mod tests {
             .build().unwrap();
 
         let harness = TestHarness::new(provider);
-        let output = harness.run_agent(agent.as_ref(), "go").await.unwrap();
+        let output = harness.run_agent(&agent, "go").await.unwrap();
         assert_eq!(output.response_raw, "hello");
         assert_eq!(harness.provider().request_count(), 3);
     }
@@ -1001,7 +1006,7 @@ mod tests {
             .build().unwrap();
 
         let harness = TestHarness::new(provider);
-        let err = harness.run_agent(agent.as_ref(), "go").await.unwrap_err();
+        let err = harness.run_agent(&agent, "go").await.unwrap_err();
         assert!(matches!(err, AgenticError::Api { status: Some(429), .. }));
     }
 
@@ -1021,7 +1026,7 @@ mod tests {
             .build().unwrap();
 
         let harness = TestHarness::new(provider);
-        let err = harness.run_agent(agent.as_ref(), "go").await.unwrap_err();
+        let err = harness.run_agent(&agent, "go").await.unwrap_err();
         assert!(matches!(err, AgenticError::Api { status: Some(401), .. }));
         assert_eq!(harness.provider().request_count(), 1);
     }
@@ -1045,7 +1050,7 @@ mod tests {
 
         let harness = TestHarness::new(provider)
             .with_state("role", serde_json::json!("a code reviewer"));
-        harness.run_agent(agent.as_ref(), "Review main.rs").await.unwrap();
+        harness.run_agent(&agent, "Review main.rs").await.unwrap();
 
         let req = harness.provider().last_request().unwrap();
 

@@ -1,6 +1,5 @@
 use std::future::Future;
 use std::pin::Pin;
-use std::sync::Arc;
 
 use serde::Deserialize;
 use serde_json::Value;
@@ -23,7 +22,7 @@ struct SpawnAgentInput {
 
 /// Tool that spawns sub-agents in foreground or background mode.
 pub struct SpawnAgentTool {
-    sub_agents: Vec<Arc<dyn Agent>>,
+    sub_agents: Vec<Agent>,
     default_model: ModelSpec,
 }
 
@@ -35,7 +34,7 @@ impl SpawnAgentTool {
         }
     }
 
-    pub fn sub_agent(mut self, agent: Arc<dyn Agent>) -> Self {
+    pub fn sub_agent(mut self, agent: Agent) -> Self {
         self.sub_agents.push(agent);
         self
     }
@@ -47,7 +46,7 @@ impl SpawnAgentTool {
         self
     }
 
-    fn find_agent(&self, name: &str) -> Result<Arc<dyn Agent>> {
+    fn find_agent(&self, name: &str) -> Result<Agent> {
         self.sub_agents
             .iter()
             .find(|a| a.name() == name)
@@ -59,23 +58,20 @@ impl SpawnAgentTool {
     }
 
     async fn execute(&self, input: SpawnAgentInput, ctx: RuntimeContext) -> Result<AgentOutput> {
-        let agent: Arc<dyn Agent> = if let Some(ref name) = input.agent {
+        let agent: Agent = if let Some(ref name) = input.agent {
             self.find_agent(name)?
         } else {
-            let model = input.model.as_deref().unwrap_or(
-                match &self.default_model {
-                    ModelSpec::Exact(id) => id.as_str(),
-                    ModelSpec::Inherit => "inherit",
-                },
-            );
-
             let mut builder = AgentBuilder::new()
                 .name(&input.description)
                 .identity_prompt(&input.prompt)
                 .max_turns(input.max_turns.unwrap_or(10));
-            if model != "inherit" {
-                builder = builder.model(model);
+
+            if let Some(id) = input.model.as_deref() {
+                builder = builder.model(id);
+            } else if let ModelSpec::Exact(id) = &self.default_model {
+                builder = builder.model(id);
             }
+
             builder.build()?
         };
 
@@ -88,7 +84,7 @@ impl SpawnAgentTool {
             let description = input.description.clone();
 
             tokio::spawn(async move {
-                let result = agent.run(child_ctx).await;
+                let result = agent.execute(child_ctx).await;
                 if let Some(q) = queue {
                     match result {
                         Ok(output) => q.enqueue_notification(&agent_id, &output.response_raw),
@@ -105,7 +101,7 @@ impl SpawnAgentTool {
                 ..AgentOutput::empty()
             })
         } else {
-            agent.run(child_ctx).await
+            agent.execute(child_ctx).await
         }
     }
 }
@@ -240,7 +236,7 @@ mod tests {
             text_response("Summary: research findings"),
         ]));
 
-        let output = harness.run_agent(agent.as_ref(), "Do research").await.unwrap();
+        let output = harness.run_agent(&agent, "Do research").await.unwrap();
         assert_eq!(output.response_raw, "Summary: research findings");
     }
 
@@ -283,7 +279,7 @@ mod tests {
         ctx.provider = provider;
         ctx.command_queue = Some(queue.clone());
 
-        let output = agent.run(ctx).await.unwrap();
+        let output = agent.execute(ctx).await.unwrap();
         // Parent got one of the text responses
         assert!(!output.response_raw.is_empty());
 
@@ -340,7 +336,7 @@ mod tests {
         let mut ctx = harness.build_context("Use the specialist");
         ctx.provider = provider;
 
-        let output = agent.run(ctx).await.unwrap();
+        let output = agent.execute(ctx).await.unwrap();
         assert_eq!(output.response_raw, "Got specialized result");
     }
 
@@ -374,7 +370,7 @@ mod tests {
         let mut ctx = harness.build_context("Use nonexistent agent");
         ctx.provider = provider;
 
-        let output = agent.run(ctx).await.unwrap();
+        let output = agent.execute(ctx).await.unwrap();
         assert_eq!(output.response_raw, "Could not find agent");
     }
 }

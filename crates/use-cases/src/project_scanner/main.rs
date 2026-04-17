@@ -10,7 +10,7 @@ use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Arc;
 
 use agentwerk::{
-    AgentBuilder, Event, GlobTool, ListDirectoryTool, Pipeline, ReadFileTool,
+    AgentBuilder, EventKind, GlobTool, ListDirectoryTool, Pipeline, ReadFileTool,
 };
 use serde_json::{json, Value};
 
@@ -69,8 +69,7 @@ fn summarize_schema() -> Value {
 #[tokio::main]
 async fn main() {
     let config = parse_args();
-    let env = use_cases::Environment::from_env().expect("LLM provider required");
-    let (provider, default_model) = (env.provider, env.model);
+    let (provider, default_model) = use_cases::provider_from_env().expect("LLM provider required");
     let model = if config.model.is_empty() { default_model } else { config.model };
 
     let cancel = Arc::new(AtomicBool::new(false));
@@ -95,8 +94,8 @@ async fn main() {
         .working_directory(config.folder.clone())
         .cancel_signal(cancel.clone())
         .max_turns(20)
-        .event_handler(Arc::new(|event| match &event {
-            Event::ToolCallStart { tool_name, input, .. } => {
+        .event_handler(Arc::new(|event| match &event.kind {
+            EventKind::ToolCallStart { tool_name, input, .. } => {
                 let detail = input["path"].as_str()
                     .or(input["pattern"].as_str())
                     .unwrap_or("");
@@ -106,7 +105,7 @@ async fn main() {
                     eprintln!("[discover] {tool_name}({detail})");
                 }
             }
-            Event::ToolCallEnd { is_error: true, tool_name, output, .. } => {
+            EventKind::ToolCallEnd { is_error: true, tool_name, output, .. } => {
                 eprintln!("[discover] error in {tool_name}: {output}");
             }
             _ => {}
@@ -158,11 +157,11 @@ async fn main() {
                 .working_directory(config.folder.clone())
                 .cancel_signal(cancel.clone())
                 .max_turns(5)
-                .event_handler(Arc::new(move |event| match &event {
-                    Event::ToolCallEnd { is_error: true, output, .. } => {
+                .event_handler(Arc::new(move |event| match &event.kind {
+                    EventKind::ToolCallEnd { is_error: true, output, .. } => {
                         eprintln!("[summarize] {file_name} — error: {output}");
                     }
-                    Event::AgentEnd { .. } => {
+                    EventKind::AgentEnd { .. } => {
                         let done = progress.fetch_add(1, Ordering::Relaxed) + 1;
                         eprintln!("[summarize] {done}/{total} {file_name}");
                     }

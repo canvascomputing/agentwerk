@@ -12,7 +12,7 @@ use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 
 use agentwerk::{
-    AgentBuilder, AgenticError, Event, SpawnAgentTool, ToolBuilder, ToolResult,
+    AgentBuilder, AgenticError, Event, EventKind, SpawnAgentTool, ToolBuilder, ToolResult,
 };
 
 // ---------------------------------------------------------------------------
@@ -23,8 +23,7 @@ use agentwerk::{
 async fn main() {
     let question = parse_question();
     let brave_key = check_required_env();
-    let env = use_cases::Environment::from_env().expect("LLM provider required");
-    let (provider, model) = (env.provider, env.model);
+    let (provider, model) = use_cases::provider_from_env().expect("LLM provider required");
 
     eprintln!("Question: {question}\n");
 
@@ -178,7 +177,7 @@ async fn brave_search(api_key: &str, input: &serde_json::Value) -> agentwerk::Re
         .map_err(|e| AgenticError::Other(format!("Failed to parse response: {e}")))?;
 
     let Some(results) = json["web"]["results"].as_array() else {
-        return Ok(ToolResult { content: "No results found.".into(), is_error: false });
+        return Ok(ToolResult::success("No results found."));
     };
 
     let text = results
@@ -194,7 +193,7 @@ async fn brave_search(api_key: &str, input: &serde_json::Value) -> agentwerk::Re
         .collect::<Vec<_>>()
         .join("\n");
 
-    Ok(ToolResult { content: text, is_error: false })
+    Ok(ToolResult::success(text))
 }
 
 fn urlencode(s: &str) -> String {
@@ -217,15 +216,15 @@ fn urlencode(s: &str) -> String {
 // ---------------------------------------------------------------------------
 
 fn log_event(event: &Event) {
-    match event {
-        Event::RequestStart { agent_name, model } => {
-            eprintln!("[{agent_name}] requesting {model}...");
+    match &event.kind {
+        EventKind::RequestStart { model } => {
+            eprintln!("[{}] requesting {model}...", event.agent_name);
         }
-        Event::ToolCallStart { agent_name, tool_name, input, .. } if tool_name != "StructuredOutput" => {
+        EventKind::ToolCallStart { tool_name, input, .. } if tool_name != "StructuredOutput" => {
             let detail = tool_call_summary(tool_name, input);
-            eprintln!("[{agent_name}] {tool_name}: {detail}");
+            eprintln!("[{}] {tool_name}: {detail}", event.agent_name);
         }
-        Event::ToolCallEnd { tool_name, output, is_error: true, .. } => {
+        EventKind::ToolCallEnd { tool_name, output, is_error: true, .. } => {
             eprintln!("[error] {tool_name}: {output}");
         }
         _ => {}

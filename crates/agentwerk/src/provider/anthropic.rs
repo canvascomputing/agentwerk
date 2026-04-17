@@ -63,8 +63,8 @@ impl AnthropicProvider {
             "messages": messages,
         });
 
-        if request.max_tokens != crate::UNLIMITED {
-            body["max_tokens"] = Value::from(request.max_tokens);
+        if let Some(n) = request.max_tokens {
+            body["max_tokens"] = Value::from(n);
         }
 
         if !tools.is_empty() {
@@ -395,7 +395,7 @@ mod tests {
                 content: vec![ContentBlock::Text { text: "Hi".into() }],
             }],
             tools: vec![],
-            max_tokens: 1024,
+            max_tokens: Some(1024),
             tool_choice: None,
         }
     }

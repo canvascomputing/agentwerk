@@ -61,8 +61,8 @@ impl RuntimeContext {
         self
     }
 
-    pub(crate) fn working_directory(mut self, dir: PathBuf) -> Self {
-        self.working_directory = dir;
+    pub(crate) fn working_directory(mut self, dir: impl Into<PathBuf>) -> Self {
+        self.working_directory = dir.into();
         self
     }
 

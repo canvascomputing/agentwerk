@@ -11,14 +11,11 @@ pub(crate) mod testutil;
 // Errors
 pub use error::{AgenticError, Result};
 
-/// Pass to any `max_` builder method to disable the limit.
-pub const UNLIMITED: u32 = 0;
-
 // Provider and message types
 pub use provider::{
     AnthropicProvider, ContentBlock, LlmProvider, Message, OpenAiProvider, TokenUsage,
+    provider_from_env,
 };
-pub use provider::environment::Environment;
 
 // Tool infrastructure and built-in tools
 pub use tools::{
@@ -29,5 +26,5 @@ pub use tools::{
 
 // Agent
 pub use agent::{
-    Agent, AgentBuilder, AgentOutput, BehaviorPrompt, Event, Pipeline, Statistics,
+    Agent, AgentBuilder, AgentOutput, BehaviorPrompt, Event, EventKind, Pipeline, Statistics,
 };

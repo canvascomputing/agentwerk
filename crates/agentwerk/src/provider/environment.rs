@@ -4,12 +4,6 @@ use crate::error::{AgenticError, Result};
 
 use super::{AnthropicProvider, LlmProvider, OpenAiProvider};
 
-/// Provider and model detected from environment variables.
-pub struct Environment {
-    pub provider: Arc<dyn LlmProvider>,
-    pub model: String,
-}
-
 /// Detected provider name, before constructing the actual provider.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum DetectedProvider {
@@ -35,30 +29,28 @@ pub(crate) fn env_required(name: &str) -> Result<String> {
         .ok_or_else(|| AgenticError::Other(format!("{name} environment variable not set")))
 }
 
-impl Environment {
-    /// Detect an LLM provider from environment variables.
-    ///
-    /// Detection order:
-    ///   0. `LITELLM_PROVIDER` → explicit selection (`anthropic`, `mistral`, `openai`, `litellm`)
-    ///   1. `LITELLM_API_KEY`  → LiteLLM proxy (URL from `LITELLM_BASE_URL`, default `http://localhost:4000`)
-    ///   2. `MISTRAL_API_KEY`  → Mistral
-    ///   3. `ANTHROPIC_API_KEY` → Anthropic
-    ///   4. `OPENAI_API_KEY`   → OpenAI
-    ///
-    /// Empty env vars are treated as unset.
-    pub fn from_env() -> Result<Self> {
-        let detected = detect_provider_name(|name| {
-            std::env::var(name).ok().filter(|v| !v.is_empty())
-        })?;
+/// Detect an LLM provider from environment variables and return `(provider, model)`.
+///
+/// Detection order:
+///   0. `LITELLM_PROVIDER` → explicit selection (`anthropic`, `mistral`, `openai`, `litellm`)
+///   1. `LITELLM_API_KEY`  → LiteLLM proxy (URL from `LITELLM_BASE_URL`, default `http://localhost:4000`)
+///   2. `MISTRAL_API_KEY`  → Mistral
+///   3. `ANTHROPIC_API_KEY` → Anthropic
+///   4. `OPENAI_API_KEY`   → OpenAI
+///
+/// Empty env vars are treated as unset.
+pub fn provider_from_env() -> Result<(Arc<dyn LlmProvider>, String)> {
+    let detected = detect_provider_name(|name| {
+        std::env::var(name).ok().filter(|v| !v.is_empty())
+    })?;
 
-        let (provider, model): (Arc<dyn LlmProvider>, String) = match detected {
-            DetectedProvider::Anthropic => { let (p, m) = AnthropicProvider::from_env()?; (Arc::new(p), m) }
-            DetectedProvider::Mistral   => { let (p, m) = OpenAiProvider::mistral_from_env()?;  (Arc::new(p), m) }
-            DetectedProvider::OpenAi    => { let (p, m) = OpenAiProvider::from_env()?;     (Arc::new(p), m) }
-            DetectedProvider::LiteLlm   => { let (p, m) = OpenAiProvider::litellm_from_env()?; (Arc::new(p), m) }
-        };
-        Ok(Self { provider, model })
-    }
+    let (provider, model): (Arc<dyn LlmProvider>, String) = match detected {
+        DetectedProvider::Anthropic => { let (p, m) = AnthropicProvider::from_env()?; (Arc::new(p), m) }
+        DetectedProvider::Mistral   => { let (p, m) = OpenAiProvider::mistral_from_env()?;  (Arc::new(p), m) }
+        DetectedProvider::OpenAi    => { let (p, m) = OpenAiProvider::from_env()?;     (Arc::new(p), m) }
+        DetectedProvider::LiteLlm   => { let (p, m) = OpenAiProvider::litellm_from_env()?; (Arc::new(p), m) }
+    };
+    Ok((provider, model))
 }
 
 /// Pure detection logic. Determines which provider to use based on env var values.

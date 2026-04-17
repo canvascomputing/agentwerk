@@ -17,9 +17,8 @@ use super::event::Event;
 use super::output::{AgentOutput, OutputSchema};
 use super::prompts::BehaviorPrompt;
 use super::queue::CommandQueue;
-use super::r#loop::AgentLoop;
-use super::r#trait::Agent;
-use crate::tools::{Tool, ToolRegistry, SpawnAgentTool};
+use super::r#loop::{Agent, AgentLoop};
+use crate::tools::{SpawnAgentTool, Tool, ToolRegistry};
 
 #[derive(Clone)]
 pub struct AgentBuilder {
@@ -27,17 +26,17 @@ pub struct AgentBuilder {
     name: Option<String>,
     model: ModelSpec,
     identity_prompt: String,
-    max_tokens: u32,
-    max_turns: u32,
+    max_tokens: Option<u32>,
+    max_turns: Option<u32>,
     output_schema: Option<Value>,
-    max_schema_retries: u32,
+    max_schema_retries: Option<u32>,
     behavior_prompts: Vec<(BehaviorPrompt, String)>,
     user_context_blocks: Vec<String>,
     environment_prompt: Option<String>,
     tools: ToolRegistry,
     max_request_retries: u32,
     request_retry_backoff_ms: u64,
-    sub_agents: Vec<Arc<dyn Agent>>,
+    sub_agents: Vec<Agent>,
     prompt_errors: Vec<String>,
 
     // Runtime context
@@ -61,10 +60,10 @@ impl AgentBuilder {
             name: None,
             model: ModelSpec::Inherit,
             identity_prompt: String::new(),
-            max_tokens: crate::UNLIMITED,
-            max_turns: crate::UNLIMITED,
+            max_tokens: None,
+            max_turns: None,
             output_schema: None,
-            max_schema_retries: 10,
+            max_schema_retries: Some(10),
             behavior_prompts,
             user_context_blocks: Vec::new(),
             environment_prompt: None,
@@ -109,15 +108,15 @@ impl AgentBuilder {
         self
     }
 
-    /// Maximum output tokens per LLM request. `UNLIMITED` (0) uses the provider default.
+    /// Maximum output tokens per LLM request. Omit to use the provider default.
     pub fn max_tokens(mut self, max: u32) -> Self {
-        self.max_tokens = max;
+        self.max_tokens = Some(max);
         self
     }
 
-    /// Maximum agentic loop iterations. `UNLIMITED` (0) means no limit.
+    /// Maximum agentic loop iterations. Omit for no limit.
     pub fn max_turns(mut self, max: u32) -> Self {
-        self.max_turns = max;
+        self.max_turns = Some(max);
         self
     }
 
@@ -131,9 +130,9 @@ impl AgentBuilder {
         self
     }
 
-    /// Maximum retries for structured output compliance. `UNLIMITED` (0) retries indefinitely.
+    /// Maximum retries for structured output compliance. Default is 10.
     pub fn max_schema_retries(mut self, retries: u32) -> Self {
-        self.max_schema_retries = retries;
+        self.max_schema_retries = Some(retries);
         self
     }
 
@@ -190,7 +189,11 @@ impl AgentBuilder {
         self
     }
 
-    pub fn sub_agent(mut self, agent: Arc<dyn Agent>) -> Self {
+    /// Register a pre-built agent as a sub-agent. Auto-wires a default
+    /// `SpawnAgentTool` at `build()` time unless one is already registered.
+    /// For custom spawn-tool configuration (e.g., `default_model` for ad-hoc agents),
+    /// register the tool explicitly via `.tool(SpawnAgentTool::new().sub_agent(a))`.
+    pub fn sub_agent(mut self, agent: Agent) -> Self {
         self.sub_agents.push(agent);
         self
     }
@@ -219,8 +222,8 @@ impl AgentBuilder {
         self
     }
 
-    pub fn working_directory(mut self, dir: PathBuf) -> Self {
-        self.working_directory = dir;
+    pub fn working_directory(mut self, dir: impl Into<PathBuf>) -> Self {
+        self.working_directory = dir.into();
         self
     }
 
@@ -235,8 +238,8 @@ impl AgentBuilder {
     }
 
     /// Enable session transcript persistence to the given directory.
-    pub fn session_dir(mut self, dir: PathBuf) -> Self {
-        self.session_dir = Some(dir);
+    pub fn session_dir(mut self, dir: impl Into<PathBuf>) -> Self {
+        self.session_dir = Some(dir.into());
         self
     }
 
@@ -266,9 +269,9 @@ impl AgentBuilder {
 
     // --- Build & Run ---
 
-    /// Build the agent without running it. Use when you need `Arc<dyn Agent>`
-    /// (e.g., to register as a sub-agent).
-    pub fn build(mut self) -> Result<Arc<dyn Agent>> {
+    /// Build the agent without running it. Use when you need an [`Agent`]
+    /// (e.g., to register as a sub-agent on a [`SpawnAgentTool`]).
+    pub fn build(mut self) -> Result<Agent> {
         self.check_prompt_errors()?;
 
         let name = self
@@ -285,20 +288,22 @@ impl AgentBuilder {
 
         let output_schema = self.output_schema.map(OutputSchema::new).transpose()?;
 
-        Ok(Arc::new(AgentLoop {
-            name,
-            model: self.model,
-            identity_prompt: self.identity_prompt,
-            max_tokens: self.max_tokens,
-            max_turns: self.max_turns,
-            output_schema,
-            max_schema_retries: self.max_schema_retries,
-            behavior_prompts: self.behavior_prompts,
-            user_context_blocks: self.user_context_blocks,
-            tools: self.tools,
-            max_request_retries: self.max_request_retries,
-            request_retry_backoff_ms: self.request_retry_backoff_ms,
-        }))
+        Ok(Agent {
+            inner: Arc::new(AgentLoop {
+                name,
+                model: self.model,
+                identity_prompt: self.identity_prompt,
+                max_tokens: self.max_tokens,
+                max_turns: self.max_turns,
+                output_schema,
+                max_schema_retries: self.max_schema_retries,
+                behavior_prompts: self.behavior_prompts,
+                user_context_blocks: self.user_context_blocks,
+                tools: self.tools,
+                max_request_retries: self.max_request_retries,
+                request_retry_backoff_ms: self.request_retry_backoff_ms,
+            }),
+        })
     }
 
     /// Build the agent and run it. Requires `.provider()` and `.instruction_prompt()`.
@@ -348,7 +353,7 @@ impl AgentBuilder {
             ctx = ctx.session_store(Arc::new(Mutex::new(store)));
         }
 
-        agent.run(ctx).await
+        agent.execute(ctx).await
     }
 }
 
@@ -459,7 +464,7 @@ mod tests {
             .unwrap();
 
         let harness = TestHarness::new(provider);
-        harness.run_agent(agent.as_ref(), "go").await.unwrap();
+        harness.run_agent(&agent, "go").await.unwrap();
 
         let req = harness.provider().last_request().unwrap();
         assert!(req.tools.iter().any(|t| t.name == "spawn_agent"),
@@ -488,7 +493,7 @@ mod tests {
             .unwrap();
 
         let harness = TestHarness::new(provider);
-        harness.run_agent(agent.as_ref(), "go").await.unwrap();
+        harness.run_agent(&agent, "go").await.unwrap();
 
         let req = harness.provider().last_request().unwrap();
         let spawn_tools: Vec<_> = req.tools.iter().filter(|t| t.name == "spawn_agent").collect();

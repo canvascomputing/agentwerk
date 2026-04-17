@@ -72,8 +72,8 @@ pub struct ToolCall {
 /// Result returned by a tool execution.
 #[derive(Debug, Clone)]
 pub struct ToolResult {
-    pub content: String,
-    pub is_error: bool,
+    pub(crate) content: String,
+    pub(crate) is_error: bool,
 }
 
 impl ToolResult {
@@ -83,6 +83,14 @@ impl ToolResult {
 
     pub fn error(content: impl Into<String>) -> Self {
         Self { content: content.into(), is_error: true }
+    }
+
+    pub fn content(&self) -> &str {
+        &self.content
+    }
+
+    pub fn is_error(&self) -> bool {
+        self.is_error
     }
 }
 
@@ -309,7 +317,7 @@ impl ToolBuilder {
         self
     }
 
-    pub fn should_defer(mut self, defer: bool) -> Self {
+    pub fn defer(mut self, defer: bool) -> Self {
         self.defer = defer;
         self
     }
@@ -634,7 +642,7 @@ mod tests {
     #[test]
     fn tool_builder_defer_and_hints() {
         let tool = ToolBuilder::new("advanced", "Advanced tool")
-            .should_defer(true)
+            .defer(true)
             .search_hints(vec!["analyze".into(), "inspect".into()])
             .handler(|_input, _ctx| {
                 Box::pin(async { Ok(ToolResult::success("ok")) })

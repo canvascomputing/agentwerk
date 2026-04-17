@@ -2,7 +2,7 @@ mod common;
 
 use std::sync::Arc;
 
-use agentwerk::{AgentBuilder, BashTool, Event};
+use agentwerk::{AgentBuilder, BashTool, Event, EventKind};
 
 #[tokio::test]
 async fn test() -> std::result::Result<(), Box<dyn std::error::Error>> {
@@ -24,11 +24,11 @@ async fn test() -> std::result::Result<(), Box<dyn std::error::Error>> {
         "required": ["files", "line_count"]
     });
 
-    let event_handler = Arc::new(|event: Event| match event {
-        Event::ToolCallStart { tool_name, input, .. } => {
+    let event_handler = Arc::new(|event: Event| match &event.kind {
+        EventKind::ToolCallStart { tool_name, input, .. } => {
             eprintln!("[tool] {tool_name}({input})")
         }
-        Event::AgentEnd { turns, .. } => eprintln!("[done in {turns} turn(s)]"),
+        EventKind::AgentEnd { turns } => eprintln!("[done in {turns} turn(s)]"),
         _ => {}
     });
 

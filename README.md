@@ -38,15 +38,14 @@ cargo add agentwerk
 ## Quick Start
 
 ```rust
-use std::sync::Arc;
-use agentwerk::{AgentBuilder, AnthropicProvider, GlobTool};
+use agentwerk::{AgentBuilder, GlobTool, provider_from_env};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let (provider, model) = AnthropicProvider::from_env()?;
+    let (provider, model) = provider_from_env()?;
 
     let output = AgentBuilder::new()
-        .provider(Arc::new(provider))
+        .provider(provider)
         .model(model)
         .instruction_prompt("Find all Rust source files.")
         .tool(GlobTool)
@@ -199,7 +198,7 @@ AgentBuilder::new()
 
 #### Sub-agents
 
-Building an agent returns a shareable handle for registration as a sub-agent. Without an explicit model, a sub-agent inherits its parent's model at runtime. Clone the builder to create multiple similar agents:
+`AgentBuilder::build()` returns an `Agent` — a cheap, cloneable handle that can be registered as a sub-agent. Without an explicit model, a sub-agent inherits its parent's model at runtime. Clone the builder to create multiple similar agents:
 
 ```rust
 let researcher_base = AgentBuilder::new()
@@ -218,14 +217,16 @@ let output = AgentBuilder::new()
     .sub_agent(r2)
 ```
 
+`.sub_agent()` auto-wires a default `SpawnAgentTool` at `build()` time. If you need to configure the spawn tool (e.g., `default_model` for ad-hoc agents the LLM spawns by description alone), register it explicitly instead: `.tool(SpawnAgentTool::new().sub_agent(r1).default_model(m))`.
+
 #### Guardrails
 
-Set limits for agentic execution. You can set `UNLIMITED` to disable a limit.
+Set limits for agentic execution. Omit a setter to use the default (most default to "no limit").
 
 | Method | Default | What it does |
 |--------|---------|-------------|
-| `.max_turns(10)` | `UNLIMITED` | Stop after N agentic loop iterations |
-| `.max_tokens(4096)` | `UNLIMITED` | Cap output tokens per LLM request |
+| `.max_turns(10)` | no limit | Stop after N agentic loop iterations |
+| `.max_tokens(4096)` | provider default | Cap output tokens per LLM request |
 | `.max_schema_retries(3)` | 10 | Retry structured output compliance |
 | `.max_request_retries(5)` | 3 | Retry on transient API errors (429, 529, 5xx) |
 | `.request_retry_backoff_ms(2000)` | 10,000 | Base delay for exponential backoff (`ms * 2^attempt`) |
@@ -279,12 +280,22 @@ let results = pipeline.run().await;
 
 ### Events
 
-Emitted via `AgentBuilder.event_handler()` during execution.
+Emitted via `AgentBuilder.event_handler()` during execution. Each `Event` carries an `agent_name: String` plus an `EventKind` variant.
 
-| | Event | Description |
+```rust
+use agentwerk::{Event, EventKind};
+
+let handler = Arc::new(|event: Event| match &event.kind {
+    EventKind::ToolCallStart { tool_name, .. } => eprintln!("[{}] {}", event.agent_name, tool_name),
+    EventKind::AgentEnd { turns } => eprintln!("[{}] done in {} turns", event.agent_name, turns),
+    _ => {}
+});
+```
+
+| | Kind | Description |
 |-|-------|-------------|
 | **Agent** | `AgentStart` | Agent begins execution |
-| | `AgentEnd` | Agent finishes with turn count |
+| | `AgentEnd { turns }` | Agent finishes with turn count |
 | | `TurnStart` / `TurnEnd` | Turn boundaries |
 | **LLM Provider** | `RequestStart` / `RequestEnd` | LLM request lifecycle |
 | | `ResponseTextChunk` | Streamed text token |

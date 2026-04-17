@@ -6,7 +6,7 @@ use std::pin::Pin;
 use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, Mutex};
 
-use crate::agent::{Agent, AgentOutput, Event, RuntimeContext};
+use crate::agent::{Agent, AgentOutput, Event, EventKind, RuntimeContext};
 use crate::error::{AgenticError, Result};
 use crate::provider::types::{ContentBlock, ModelResponse, StopReason, StreamEvent, TokenUsage};
 use crate::provider::{CompletionRequest, LlmProvider};
@@ -242,8 +242,8 @@ impl EventCollector {
             .lock()
             .unwrap()
             .iter()
-            .filter_map(|e| match e {
-                Event::ResponseTextChunk { content, .. } => Some(content.clone()),
+            .filter_map(|e| match &e.kind {
+                EventKind::ResponseTextChunk { content } => Some(content.clone()),
                 _ => None,
             })
             .collect()
@@ -254,8 +254,8 @@ impl EventCollector {
             .lock()
             .unwrap()
             .iter()
-            .filter_map(|e| match e {
-                Event::ToolCallStart { tool_name, .. } => Some(tool_name.clone()),
+            .filter_map(|e| match &e.kind {
+                EventKind::ToolCallStart { tool_name, .. } => Some(tool_name.clone()),
                 _ => None,
             })
             .collect()
@@ -266,8 +266,8 @@ impl EventCollector {
             .lock()
             .unwrap()
             .iter()
-            .filter_map(|e| match e {
-                Event::AgentStart { agent_name } => Some(agent_name.clone()),
+            .filter_map(|e| match &e.kind {
+                EventKind::AgentStart => Some(e.agent_name.clone()),
                 _ => None,
             })
             .collect()
@@ -282,8 +282,8 @@ impl EventCollector {
             .lock()
             .unwrap()
             .iter()
-            .filter_map(|e| match e {
-                Event::AgentEnd { agent_name, turns } => Some((agent_name.clone(), *turns)),
+            .filter_map(|e| match &e.kind {
+                EventKind::AgentEnd { turns } => Some((e.agent_name.clone(), *turns)),
                 _ => None,
             })
             .collect()
@@ -329,9 +329,9 @@ impl TestHarness {
         ctx
     }
 
-    pub async fn run_agent(&self, agent: &dyn Agent, input: &str) -> Result<AgentOutput> {
+    pub async fn run_agent(&self, agent: &Agent, input: &str) -> Result<AgentOutput> {
         let ctx = self.build_context(input);
-        agent.run(ctx).await
+        agent.execute(ctx).await
     }
 
     pub fn events(&self) -> &EventCollector {

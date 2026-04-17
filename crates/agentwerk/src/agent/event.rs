@@ -1,15 +1,27 @@
 use crate::provider::types::TokenUsage;
 
 #[derive(Debug, Clone)]
-pub enum Event {
-    AgentStart { agent_name: String },
-    AgentEnd { agent_name: String, turns: u32 },
-    TurnStart { agent_name: String, turn: u32 },
-    TurnEnd { agent_name: String, turn: u32 },
-    ToolCallStart { agent_name: String, tool_name: String, call_id: String, input: serde_json::Value },
-    ToolCallEnd { agent_name: String, tool_name: String, call_id: String, output: String, is_error: bool },
-    TokenUsage { agent_name: String, model: String, usage: TokenUsage },
-    ResponseTextChunk { agent_name: String, content: String },
-    RequestStart { agent_name: String, model: String },
-    RequestEnd { agent_name: String, model: String },
+pub struct Event {
+    pub agent_name: String,
+    pub kind: EventKind,
+}
+
+impl Event {
+    pub(crate) fn new(agent_name: impl Into<String>, kind: EventKind) -> Self {
+        Self { agent_name: agent_name.into(), kind }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub enum EventKind {
+    AgentStart,
+    AgentEnd { turns: u32 },
+    TurnStart { turn: u32 },
+    TurnEnd { turn: u32 },
+    ToolCallStart { tool_name: String, call_id: String, input: serde_json::Value },
+    ToolCallEnd { tool_name: String, call_id: String, output: String, is_error: bool },
+    TokenUsage { model: String, usage: TokenUsage },
+    ResponseTextChunk { content: String },
+    RequestStart { model: String },
+    RequestEnd { model: String },
 }

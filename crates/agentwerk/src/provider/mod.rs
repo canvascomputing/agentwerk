@@ -8,6 +8,7 @@ mod r#trait;
 pub mod types;
 
 pub use anthropic::AnthropicProvider;
+pub use environment::provider_from_env;
 pub use openai::OpenAiProvider;
 pub use r#trait::LlmProvider;
 pub(crate) use r#trait::{CompletionRequest, ToolChoice};
