@@ -170,9 +170,8 @@ let output = Agent::new()
     .await?;
 ```
 
-`Agent` is cheap to clone. Configure a template once, then clone it for each
-task and change only the fields that vary per run (provider, instruction
-prompt, working directory). The `AgentPool` example below shows this.
+Configure a template once, clone it for each task, and override the fields
+that vary per run. The `AgentPool` example below shows this.
 
 #### Prompting
 
@@ -231,12 +230,10 @@ Three rules are specific to running as a sub-agent:
 
 | Behavior | Fields |
 |---|---|
-| Falls back to the parent's value if unset | `provider`, `model`, `working_directory`, `event_handler`, `cancel_signal` |
-| Always the parent's (setting it on the sub-agent has no effect) | `environment_prompt`, `command_queue`, `session_store` |
-| Passed in at each spawn call (not configured on the sub-agent) | `instruction_prompt` (required); plus optional `model`, `identity_prompt`, `max_turns`, `max_tokens`, `max_schema_retries`, `max_request_retries`, `request_retry_backoff_ms` — these override the sub-agent's config for that call only |
-
-Everything else (prompts, tools, limits, output schema) behaves like on a
-standalone Agent.
+| Inherited | `provider`, `model`, `working_directory`, `event_handler`, `cancel_signal` |
+| Shared | `environment_prompt`, `command_queue`, `session_store` |
+| Own | `behavior_prompt`, `context_prompt`, `tools`, `output_schema` |
+| Per-spawn | `instruction_prompt` (required), `model`, `identity_prompt`, `max_turns`, `max_tokens`, `max_schema_retries`, `max_request_retries`, `request_retry_backoff_ms` |
 
 #### Guardrails
 
@@ -257,7 +254,7 @@ To abort from outside the agent, use `.cancel_signal(signal)` — see
 
 #### Behavior prompts
 
-Agents ship with default behavior prompts appended to the identity prompt. Override any:
+Default behavior prompts are appended to the identity prompt. Override any:
 
 | Variant | Default | Description |
 |---------|---------|-------------|
@@ -276,12 +273,11 @@ Agent::new()
 
 ### AgentPool
 
-Run many agents in parallel with a cap on how many run at once. Each agent
-is a fully configured job with its own provider, prompts, and tools. Submit
-work with `spawn()` and read results with `next()` (one at a time) or
-`drain()` (all of them).
+Executes agents concurrently with a configurable concurrency limit. Each
+agent is configured independently with its own provider, prompts, and tools.
+Submit work with `spawn()` and collect results with `next()` or `drain()`.
 
-Pick the order results come back in:
+Result ordering:
 
 - `Completion` (default) — results come back as each agent finishes.
 - `Submission` — results come back in the order you submitted them.
@@ -310,8 +306,8 @@ for doc in ["document A", "document B"] {
 let results = pool.drain().await; // Vec<(JobId, Result<AgentOutput>)>
 ```
 
-You can add more work after the pool has already started — `spawn()` is
-always safe to call. If the pool is at capacity, it waits for a free slot.
+`spawn()` can be called after the pool has started processing. If the pool
+is at capacity, it waits for a free slot.
 
 ### Events
 
