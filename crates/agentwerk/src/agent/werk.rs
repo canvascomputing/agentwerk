@@ -68,7 +68,6 @@ pub(crate) struct AgentConfig {
     pub max_output_tokens: Option<u32>,
     pub max_input_tokens: Option<u64>,
     pub max_turns: Option<u32>,
-    pub max_continuations: Option<u32>,
     pub max_schema_retries: Option<u32>,
     pub max_request_retries: u32,
     pub request_retry_backoff_ms: u64,
@@ -88,7 +87,6 @@ impl Default for AgentConfig {
             max_output_tokens: None,
             max_input_tokens: None,
             max_turns: None,
-            max_continuations: Some(5),
             max_schema_retries: Some(10),
             max_request_retries: DEFAULT_MAX_REQUEST_RETRIES,
             request_retry_backoff_ms: DEFAULT_BACKOFF_MS,
@@ -110,7 +108,6 @@ impl Clone for AgentConfig {
             max_output_tokens: self.max_output_tokens,
             max_input_tokens: self.max_input_tokens,
             max_turns: self.max_turns,
-            max_continuations: self.max_continuations,
             max_schema_retries: self.max_schema_retries,
             max_request_retries: self.max_request_retries,
             request_retry_backoff_ms: self.request_retry_backoff_ms,
@@ -203,11 +200,6 @@ impl Agent {
     /// Maximum agentic loop iterations. Omit for no limit.
     pub fn max_turns(self, n: u32) -> Self {
         self.with_config(|c| c.max_turns = Some(n))
-    }
-
-    /// Maximum auto-continuations when the model output is truncated. Default: 5.
-    pub fn max_continuations(self, n: u32) -> Self {
-        self.with_config(|c| c.max_continuations = Some(n))
     }
 
     /// Maximum cumulative input tokens before the agent stops.
@@ -524,7 +516,6 @@ pub(crate) struct AgentSpec {
     pub max_output_tokens: Option<u32>,
     pub max_input_tokens: Option<u64>,
     pub max_turns: Option<u32>,
-    pub max_continuations: Option<u32>,
     pub max_schema_retries: Option<u32>,
     pub max_request_retries: u32,
     pub request_retry_backoff_ms: u64,
@@ -572,7 +563,6 @@ impl AgentSpec {
             max_output_tokens: agent.config.max_output_tokens,
             max_input_tokens: agent.config.max_input_tokens,
             max_turns: agent.config.max_turns,
-            max_continuations: agent.config.max_continuations,
             max_schema_retries: agent.config.max_schema_retries,
             max_request_retries: agent.config.max_request_retries,
             request_retry_backoff_ms: agent.config.request_retry_backoff_ms,
@@ -649,8 +639,6 @@ pub(crate) struct LoopState {
     pub tool_call_count: u64,
     pub turn: u32,
     pub schema_retries: u32,
-    pub continuations: u32,
-    pub paused: bool,
     pub discovered_tools: HashSet<String>,
     pub structured_output: Option<Value>,
 }
@@ -695,7 +683,6 @@ impl LoopState {
 ///     //    ├─ ResponseStatus::OutputTruncated + no tool calls
 ///     //    │   → Model was CUT OFF mid-response (did NOT decide to stop)
 ///     //    │   → Send continuation message, CONTINUE loop
-///     //    │   → Give up after max_continuations
 ///     //    │
 ///     //    ├─ ResponseStatus::ContextWindowExceeded
 ///     //    │   → Input too large — EXIT with error
@@ -763,15 +750,7 @@ pub(crate) fn run_loop(
                 record_transcript(&runtime, EntryType::ToolResult, state.messages.last().unwrap(), None);
                 drain_command_queue(&runtime, &spec, &mut state);
             } else if is_truncated {
-                emit(&runtime, &spec.name, EventKind::TurnPaused { turn });
-                state.paused = true;
-                state.continuations += 1;
-                if spec.max_continuations.is_some_and(|limit| state.continuations > limit) {
-                    return Ok(finish_early(&runtime, &spec, &mut state, Status::OutputLimitReached));
-                }
-                debug_assert!(state.paused, "TurnResumed without preceding TurnPaused");
-                state.paused = false;
-                emit(&runtime, &spec.name, EventKind::TurnResumed { turn, continuation: state.continuations });
+                emit(&runtime, &spec.name, EventKind::OutputTruncated { turn });
                 state.messages.push(Message::user(prompts::MAX_TOKENS_CONTINUATION));
             } else if let Some(output) = try_finish(&runtime, &spec, &mut state, text)? {
                 emit(&runtime, &spec.name, EventKind::TurnEnd { turn });
@@ -1057,6 +1036,29 @@ mod tests {
             .identity_prompt("You are a test assistant.")
     }
 
+    fn assert_lifecycle_events(harness: &TestHarness, output: &AgentOutput) {
+        let events = harness.events().all();
+
+        let agent_end_status = events.iter().find_map(|e| match &e.kind {
+            EventKind::AgentEnd { status, .. } => Some(status.clone()),
+            _ => None,
+        });
+        assert_eq!(agent_end_status.as_ref(), Some(&output.status),
+            "AgentEnd status must match output.status");
+
+        let last_significant = events.iter().rev()
+            .find(|e| !matches!(e.kind, EventKind::TurnEnd { .. }));
+        assert!(matches!(last_significant.map(|e| &e.kind), Some(EventKind::AgentEnd { .. })),
+            "AgentEnd must be the last significant event");
+
+        for (i, event) in events.iter().enumerate() {
+            if matches!(event.kind, EventKind::OutputTruncated { .. }) {
+                let after_agent_end = events[..i].iter().any(|e| matches!(e.kind, EventKind::AgentEnd { .. }));
+                assert!(!after_agent_end, "OutputTruncated at {i} after AgentEnd");
+            }
+        }
+    }
+
     #[tokio::test]
     async fn simple_text_response() {
         let harness = TestHarness::new(MockProvider::text("Hello, world!"));
@@ -1101,6 +1103,7 @@ mod tests {
         let output = harness.run_agent(&agent, "go").await.unwrap();
         assert_eq!(output.status, Status::TurnLimitReached { limit: 2 });
         assert_eq!(output.statistics.turns, 2);
+        assert_lifecycle_events(&harness, &output);
     }
 
     #[tokio::test]
@@ -1117,6 +1120,7 @@ mod tests {
         harness.cancel();
         let output = harness.run_agent(&agent, "go").await.unwrap();
         assert_eq!(output.status, Status::Cancelled);
+        assert_lifecycle_events(&harness, &output);
     }
 
     #[tokio::test]
@@ -1393,6 +1397,7 @@ mod tests {
         let harness = TestHarness::new(MockProvider::text("Hello!"));
         let output = harness.run_agent(&simple_agent(), "Hi").await.unwrap();
         assert_eq!(output.status, Status::Completed);
+        assert_lifecycle_events(&harness, &output);
     }
 
     #[tokio::test]
@@ -1407,8 +1412,8 @@ mod tests {
         assert_eq!(output.status, Status::Completed);
         assert_eq!(output.response_raw, "...completed response");
         assert_eq!(harness.provider().request_count(), 2);
+        assert_lifecycle_events(&harness, &output);
 
-        // Verify continuation message was injected
         let req = &harness.provider().requests.lock().unwrap()[1];
         let has_continuation = req.messages.iter().any(|m| match m {
             Message::User { content } => content.iter().any(|b| match b {
@@ -1421,41 +1426,20 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn max_tokens_continuation_exhausted() {
-        let provider = MockProvider::new(vec![
-            truncated_response("part 1"),
-            truncated_response("part 2"),
-            truncated_response("part 3"),
-        ]);
-        let agent = Agent::new()
-            .name("test").model("mock").identity_prompt("")
-            .max_continuations(2);
-        let harness = TestHarness::new(provider);
-        let output = harness.run_agent(&agent, "go").await.unwrap();
-
-        assert_eq!(output.status, Status::OutputLimitReached);
-    }
-
-    #[tokio::test]
     async fn max_tokens_continuation_events() {
         let provider = MockProvider::new(vec![
             truncated_response("partial"),
             text_response("done"),
         ]);
         let harness = TestHarness::new(provider);
-        harness.run_agent(&simple_agent(), "go").await.unwrap();
+        let output = harness.run_agent(&simple_agent(), "go").await.unwrap();
+        assert_lifecycle_events(&harness, &output);
 
-        let events = harness.events().all();
-        let paused: Vec<u32> = events.iter().filter_map(|e| match &e.kind {
-            EventKind::TurnPaused { turn } => Some(*turn),
+        let truncated: Vec<u32> = harness.events().all().iter().filter_map(|e| match &e.kind {
+            EventKind::OutputTruncated { turn } => Some(*turn),
             _ => None,
         }).collect();
-        let resumed: Vec<(u32, u32)> = events.iter().filter_map(|e| match &e.kind {
-            EventKind::TurnResumed { turn, continuation } => Some((*turn, *continuation)),
-            _ => None,
-        }).collect();
-        assert_eq!(paused, vec![1]);
-        assert_eq!(resumed, vec![(1, 1)]);
+        assert_eq!(truncated, vec![1]);
     }
 
     #[tokio::test]
@@ -1472,38 +1456,7 @@ mod tests {
         let harness = TestHarness::new(provider);
         let output = harness.run_agent(&agent, "go").await.unwrap();
         assert_eq!(output.status, Status::BudgetExhausted { usage: 5000, limit: 4000 });
-    }
-
-    #[tokio::test]
-    async fn agent_end_event_carries_status() {
-        let provider = MockProvider::text("done");
-        let harness = TestHarness::new(provider);
-        harness.run_agent(&simple_agent(), "go").await.unwrap();
-
-        let ends = harness.events().agent_ends();
-        assert_eq!(ends.len(), 1);
-        assert_eq!(ends[0].2, Status::Completed);
-    }
-
-    #[tokio::test]
-    async fn turn_resumed_always_follows_turn_paused() {
-        let provider = MockProvider::new(vec![
-            truncated_response("p1"),
-            truncated_response("p2"),
-            text_response("done"),
-        ]);
-        let harness = TestHarness::new(provider);
-        harness.run_agent(&simple_agent(), "go").await.unwrap();
-
-        let events = harness.events().all();
-        for (i, event) in events.iter().enumerate() {
-            if matches!(event.kind, EventKind::TurnResumed { .. }) {
-                assert!(
-                    i > 0 && matches!(events[i - 1].kind, EventKind::TurnPaused { .. }),
-                    "TurnResumed at index {i} not preceded by TurnPaused"
-                );
-            }
-        }
+        assert_lifecycle_events(&harness, &output);
     }
 
     #[test]
@@ -1635,8 +1588,7 @@ mod retry_and_events_tests {
             EventKind::ToolCallStart { .. } => "ToolCallStart",
             EventKind::ToolCallEnd { .. } => "ToolCallEnd",
             EventKind::TokenUsage { .. } => "TokenUsage",
-            EventKind::TurnPaused { .. } => "TurnPaused",
-            EventKind::TurnResumed { .. } => "TurnResumed",
+            EventKind::OutputTruncated { .. } => "OutputTruncated",
         }
     }
 }

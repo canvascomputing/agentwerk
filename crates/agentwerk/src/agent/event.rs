@@ -27,6 +27,5 @@ pub enum EventKind {
     ResponseTextChunk { content: String },
     RequestStart { model: String },
     RequestEnd { model: String },
-    TurnPaused { turn: u32 },
-    TurnResumed { turn: u32, continuation: u32 },
+    OutputTruncated { turn: u32 },
 }

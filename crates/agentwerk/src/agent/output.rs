@@ -15,8 +15,6 @@ use crate::tools::{Tool, ToolContext, ToolResult};
 pub enum Status {
     /// Model chose to stop — responded without tool calls (`EndTurn`).
     Completed,
-    /// MaxTokens continuations exhausted — output remains incomplete.
-    OutputLimitReached,
     /// External cancel signal was set.
     Cancelled,
     /// Configured `max_turns` limit reached.
