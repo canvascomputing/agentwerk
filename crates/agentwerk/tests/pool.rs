@@ -1,6 +1,6 @@
 mod common;
 
-use agentwerk::{Agent, AgentPool, PoolOrdering, ReadFileTool};
+use agentwerk::{Agent, AgentPool, PoolStrategy, ReadFileTool};
 
 #[tokio::test]
 async fn test() -> std::result::Result<(), Box<dyn std::error::Error>> {
@@ -25,7 +25,7 @@ async fn test() -> std::result::Result<(), Box<dyn std::error::Error>> {
 
     let pool = AgentPool::new()
         .batch_size(2)
-        .ordering(PoolOrdering::Submission);
+        .ordering(PoolStrategy::SpawnOrder);
 
     for file in &["Cargo.toml", "README.md", "CLAUDE.md"] {
         pool.spawn(

@@ -2,7 +2,7 @@
 //!
 //! `AgentPool` takes already-configured `Agent`s. Jobs can be pushed while the
 //! pool is running; results are consumed via `next()` (streaming) or `drain()`
-//! (collect all). Ordering of results is controlled by `PoolOrdering`.
+//! (collect all). Ordering of results is controlled by `PoolStrategy`.
 
 use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -20,19 +20,21 @@ const DEFAULT_BATCH_SIZE: usize = 10;
 
 pub type JobId = u64;
 
-/// Order in which `next()` / `drain()` yields completed jobs.
+/// Controls the order in which `next()` / `drain()` yield results.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum PoolOrdering {
-    /// Yield as jobs complete — fully dynamic streaming. Default.
-    Completion,
-    /// Yield in the order jobs were `spawn`ed. Jobs that finish out-of-order
-    /// are buffered until their predecessor has been yielded.
-    Submission,
+pub enum PoolStrategy {
+    /// Results are yielded as agents finish. An agent that completes
+    /// earlier is returned before one spawned earlier. Default.
+    CompletionOrder,
+    /// Results are yielded in the order agents were spawned. Agents
+    /// that finish out of order are buffered until their predecessor
+    /// has been returned.
+    SpawnOrder,
 }
 
-impl Default for PoolOrdering {
+impl Default for PoolStrategy {
     fn default() -> Self {
-        Self::Completion
+        Self::CompletionOrder
     }
 }
 
@@ -41,7 +43,7 @@ impl Default for PoolOrdering {
 /// different code paths concurrently.
 pub struct AgentPool {
     batch_size: usize,
-    ordering: PoolOrdering,
+    ordering: PoolStrategy,
     semaphore: Arc<Semaphore>,
     state: Mutex<PoolState>,
     next_id: AtomicU64,
@@ -49,10 +51,10 @@ pub struct AgentPool {
 
 struct PoolState {
     join_set: JoinSet<(JobId, Result<AgentOutput>)>,
-    /// Used only when `ordering == Submission` — buffers completed jobs that
+    /// Used only when `ordering == SpawnOrder` — buffers completed jobs that
     /// arrived before their predecessor.
     buffer: BTreeMap<JobId, Result<AgentOutput>>,
-    /// Next JobId expected by `Submission` ordering.
+    /// Next JobId expected by `SpawnOrder` ordering.
     next_expected: JobId,
 }
 
@@ -60,7 +62,7 @@ impl AgentPool {
     pub fn new() -> Self {
         Self {
             batch_size: DEFAULT_BATCH_SIZE,
-            ordering: PoolOrdering::default(),
+            ordering: PoolStrategy::default(),
             semaphore: Arc::new(Semaphore::new(DEFAULT_BATCH_SIZE)),
             state: Mutex::new(PoolState {
                 join_set: JoinSet::new(),
@@ -79,7 +81,7 @@ impl AgentPool {
     }
 
     /// Select how `next()` / `drain()` order results.
-    pub fn ordering(mut self, o: PoolOrdering) -> Self {
+    pub fn ordering(mut self, o: PoolStrategy) -> Self {
         self.ordering = o;
         self
     }
@@ -106,8 +108,8 @@ impl AgentPool {
     /// no jobs are pending and no buffered entries remain.
     pub async fn next(&self) -> Option<(JobId, Result<AgentOutput>)> {
         match self.ordering {
-            PoolOrdering::Completion => self.next_completion().await,
-            PoolOrdering::Submission => self.next_submission().await,
+            PoolStrategy::CompletionOrder => self.next_by_completion().await,
+            PoolStrategy::SpawnOrder => self.next_by_spawn_order().await,
         }
     }
 
@@ -120,7 +122,7 @@ impl AgentPool {
         out
     }
 
-    async fn next_completion(&self) -> Option<(JobId, Result<AgentOutput>)> {
+    async fn next_by_completion(&self) -> Option<(JobId, Result<AgentOutput>)> {
         let mut st = self.state.lock().await;
         if st.join_set.is_empty() {
             return None;
@@ -135,7 +137,7 @@ impl AgentPool {
         }
     }
 
-    async fn next_submission(&self) -> Option<(JobId, Result<AgentOutput>)> {
+    async fn next_by_spawn_order(&self) -> Option<(JobId, Result<AgentOutput>)> {
         loop {
             let mut st = self.state.lock().await;
             let next_id = st.next_expected;
@@ -185,10 +187,10 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn pool_drain_submission_order() {
+    async fn pool_drain_spawn_order() {
         let pool = AgentPool::new()
             .batch_size(2)
-            .ordering(PoolOrdering::Submission);
+            .ordering(PoolStrategy::SpawnOrder);
         pool.spawn(agent_with_response("first")).await;
         pool.spawn(agent_with_response("second")).await;
         pool.spawn(agent_with_response("third")).await;
@@ -208,7 +210,7 @@ mod tests {
     async fn pool_individual_failures() {
         let pool = AgentPool::new()
             .batch_size(2)
-            .ordering(PoolOrdering::Submission);
+            .ordering(PoolStrategy::SpawnOrder);
         pool.spawn(agent_with_response("ok")).await;
         pool.spawn({
             let provider = Arc::new(MockProvider::new(vec![]));
@@ -292,9 +294,9 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn pool_submission_ordering_buffers_fast_finishers() {
-        // Agent A is slow (sleeps), Agent B is fast. Submit A then B.
-        // Submission ordering should yield A first despite B completing first.
+    async fn pool_spawn_order_buffers_fast_finishers() {
+        // Agent A is slow (sleeps), Agent B is fast. Spawn A then B.
+        // SpawnOrder should yield A first despite B completing first.
         let slow_tool = ToolBuilder::new("slow", "slow tool")
             .schema(serde_json::json!({"type": "object", "properties": {}}))
             .handler(|_, _| {
@@ -325,7 +327,7 @@ mod tests {
 
         let pool = AgentPool::new()
             .batch_size(2)
-            .ordering(PoolOrdering::Submission);
+            .ordering(PoolStrategy::SpawnOrder);
         pool.spawn(a).await;
         pool.spawn(b).await;
 
@@ -335,6 +337,75 @@ mod tests {
         assert_eq!(results[0].1.as_ref().unwrap().response_raw, "A-done");
         assert_eq!(results[1].0, 1);
         assert_eq!(results[1].1.as_ref().unwrap().response_raw, "B-done");
+    }
+
+    #[tokio::test]
+    async fn pool_completion_order_yields_fast_first() {
+        // Agent A is slow (sleeps), Agent B is fast. Spawn A then B.
+        // CompletionOrder should yield B first because it finishes first.
+        let slow_tool = ToolBuilder::new("slow", "slow tool")
+            .schema(serde_json::json!({"type": "object", "properties": {}}))
+            .handler(|_, _| {
+                Box::pin(async move {
+                    tokio::time::sleep(Duration::from_millis(80)).await;
+                    Ok(ToolResult::success("slow done"))
+                })
+            })
+            .build();
+
+        let a = Agent::new()
+            .name("A")
+            .model("mock")
+            .identity_prompt("")
+            .instruction_prompt("go")
+            .tool(slow_tool)
+            .provider(Arc::new(MockProvider::new(vec![
+                tool_response("slow", "c1", serde_json::json!({})),
+                text_response("A-done"),
+            ])));
+
+        let b = Agent::new()
+            .name("B")
+            .model("mock")
+            .identity_prompt("")
+            .instruction_prompt("go")
+            .provider(Arc::new(MockProvider::text("B-done")));
+
+        let pool = AgentPool::new()
+            .batch_size(2)
+            .ordering(PoolStrategy::CompletionOrder);
+        pool.spawn(a).await;
+        pool.spawn(b).await;
+
+        let results = pool.drain().await;
+        assert_eq!(results.len(), 2);
+        assert_eq!(results[0].1.as_ref().unwrap().response_raw, "B-done");
+        assert_eq!(results[1].1.as_ref().unwrap().response_raw, "A-done");
+    }
+
+    #[tokio::test]
+    async fn pool_completion_order_failure_does_not_block() {
+        let pool = AgentPool::new()
+            .batch_size(2)
+            .ordering(PoolStrategy::CompletionOrder);
+        pool.spawn({
+            let provider = Arc::new(MockProvider::new(vec![]));
+            Agent::new()
+                .name("fail")
+                .model("mock")
+                .identity_prompt("")
+                .instruction_prompt("go")
+                .provider(provider)
+        })
+        .await;
+        pool.spawn(agent_with_response("ok")).await;
+
+        let results = pool.drain().await;
+        assert_eq!(results.len(), 2);
+        let ok_count = results.iter().filter(|r| r.1.is_ok()).count();
+        let err_count = results.iter().filter(|r| r.1.is_err()).count();
+        assert_eq!(ok_count, 1);
+        assert_eq!(err_count, 1);
     }
 
     #[tokio::test]

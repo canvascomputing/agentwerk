@@ -52,8 +52,8 @@ crates/agentwerk/src/
     werk.rs               Agent (config+runtime split), Runtime, AgentSpec, LoopState, run_loop
     event.rs              Event enum (AgentStart carries description for spawned children)
     output.rs             AgentOutput, OutputSchema, StructuredOutputTool, validate_value
-    prompts.rs            BehaviorPrompt (TaskExecution, ToolUsage, SafetyConcerns, Communication), interpolate, environment context helper
-    pool.rs               AgentPool, PoolOrdering, JobId (dynamic execution with concurrency control)
+    prompts.rs            DEFAULT_BEHAVIOR_PROMPT, interpolate, environment context helper
+    pool.rs               AgentPool, PoolStrategy, JobId (dynamic execution with concurrency control)
     queue.rs              CommandQueue, QueuePriority, QueuedCommand (internal)
 
   tools/

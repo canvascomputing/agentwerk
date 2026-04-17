@@ -10,7 +10,7 @@ use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Arc;
 
 use agentwerk::{
-    Agent, AgentPool, EventKind, GlobTool, ListDirectoryTool, PoolOrdering, ReadFileTool,
+    Agent, AgentPool, EventKind, GlobTool, ListDirectoryTool, PoolStrategy, ReadFileTool,
 };
 use serde_json::{json, Value};
 
@@ -151,7 +151,7 @@ async fn main() {
 
     let pool = AgentPool::new()
         .batch_size(config.batch_size)
-        .ordering(PoolOrdering::Submission);
+        .ordering(PoolStrategy::SpawnOrder);
     let total = files.len();
     let progress = Arc::new(AtomicUsize::new(0));
 

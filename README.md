@@ -181,13 +181,13 @@ that vary per run. The `AgentPool` example below shows this.
 | `instruction_prompt` | `instruction_prompt_file` | Task for the current run |
 | `context_prompt` | `context_prompt_file` | Additional context alongside the instruction |
 | `environment_prompt` | `environment_prompt_file` | Working directory, platform, date |
-| `behavior_prompt` | `behavior_prompt_file` | Behavioral directives appended to the system prompt |
+| `behavior_prompt` | `behavior_prompt_file` | Behavioral directives appended to the system prompt (see [Behavior prompt](#behavior-prompt)) |
 
 ```rust
 Agent::new()
     .identity_prompt_file("prompts/identity.md")
     .instruction_prompt("Summarize the project.")
-    .behavior_prompt_file(BehaviorPrompt::Communication, "prompts/style.md")
+    .behavior_prompt_file("prompts/behavior.md")
 ```
 
 Use `{key}` placeholders in the identity prompt and fill them with `template_variable`:
@@ -252,23 +252,13 @@ can override any of these for a single spawn.
 To abort from outside the agent, use `.cancel_signal(signal)` — see
 [Inheritance](#inheritance) for how it propagates across sub-agents.
 
-#### Behavior prompts
+#### Behavior prompt
 
-Default behavior prompts are appended to the identity prompt. Override any:
-
-| Variant | Default | Description |
-|---------|---------|-------------|
-| `TaskExecution` | `DEFAULT_TASK_EXECUTION` | Read before modifying, don't add unrequested features, diagnose failures |
-| `ToolUsage` | `DEFAULT_TOOL_USAGE` | Use dedicated tools over bash, parallelize independent calls |
-| `SafetyConcerns` | `DEFAULT_SAFETY_CONCERNS` | Consider reversibility and impact, prefer reversible operations |
-| `Communication` | `DEFAULT_COMMUNICATION_STYLE` | Be direct, concise, lead with the answer |
+A default behavior prompt (`DEFAULT_BEHAVIOR_PROMPT`) is appended to the identity prompt. It covers task execution, tool usage, safety, and communication style. Override it to change how the agent behaves:
 
 ```rust
-use agentwerk::BehaviorPrompt;
-
 Agent::new()
-    .behavior_prompt(BehaviorPrompt::TaskExecution, "Follow instructions exactly.")
-    .behavior_prompt(BehaviorPrompt::Communication, "Always respond in JSON.")
+    .behavior_prompt("Follow instructions exactly. Always respond in JSON.")
 ```
 
 ### AgentPool
@@ -277,13 +267,13 @@ Executes agents concurrently with a configurable concurrency limit. Each
 agent is configured independently with its own provider, prompts, and tools.
 Submit work with `spawn()` and collect results with `next()` or `drain()`.
 
-Result ordering:
+Result strategy:
 
-- `Completion` (default) — results come back as each agent finishes.
-- `Submission` — results come back in the order you submitted them.
+- `CompletionOrder` (default) — results are returned as each agent finishes.
+- `SpawnOrder` — results are returned in the order agents were spawned.
 
 ```rust
-use agentwerk::{Agent, AgentPool, PoolOrdering, ReadFileTool};
+use agentwerk::{Agent, AgentPool, PoolStrategy, ReadFileTool};
 
 let template = Agent::new()
     .model("claude-haiku-4-5-20251001")
@@ -291,7 +281,7 @@ let template = Agent::new()
 
 let pool = AgentPool::new()
     .batch_size(10)
-    .ordering(PoolOrdering::Submission);
+    .ordering(PoolStrategy::SpawnOrder);
 
 for doc in ["document A", "document B"] {
     pool.spawn(
@@ -407,7 +397,7 @@ Each LLM request is assembled from four parts. Fields are listed in the order th
 | **model** | `String` | `model()` | The LLM model that processes the request |
 | **max_tokens** | `Number` | `max_tokens()` | The maximum number of tokens the model can output |
 | **tool_choice** | `ToolChoice` | `output_schema()` | A constraint that forces the model to call a specific tool |
-| **system_prompt** | `String` | `identity_prompt()`<br>`behavior_prompt(TaskExecution)`<br>`behavior_prompt(ToolUsage)`<br>`behavior_prompt(SafetyConcerns)`<br>`behavior_prompt(Communication)` | Persistent instructions that define who the agent is and how it behaves |
+| **system_prompt** | `String` | `identity_prompt()`<br>`behavior_prompt()` | Persistent instructions that define who the agent is and how it behaves |
 | **message** | `Message[]` | `environment_prompt()`<br>`context_prompt()`<br>`instruction_prompt()` | The conversation history between user and assistant, starting with environment, context, and the task |
 | **tools** | `ToolDefinition[]` | `tool()` | The functions the model can call during execution |
 
