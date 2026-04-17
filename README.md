@@ -52,16 +52,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 ## Use Cases
 
-Example applications built with this project.
+Here you find example applications built with this project.
 
 > Consider configuring your LLM provider (see [Environment](#environment)).
 
 ### [Project Scanner](crates/use-cases/src/project_scanner/)
 
-Two phases: a discovery agent finds files worth reading, then a pool of agents summarizes each file in parallel.
+A scanner project for scanning and analyzing local files.
 
 ```bash
-make use_case name=project-scanner -- ./
+make use_case name=project-scanner -- ./path
 ```
 
 Output:
@@ -85,7 +85,7 @@ Output:
 
 ### [Deep Research](crates/use-cases/src/deep_research/)
 
-Spawns three researcher sub-agents in parallel, then aggregates their findings into a structured decision. Requires `BRAVE_API_KEY` for web search.
+A simple deep research application. Requires `BRAVE_API_KEY` for web search.
 
 ```bash
 make use_case name=deep-research args="What constitutes a good life?"
@@ -101,7 +101,7 @@ Output:
 
 ### [Model Pricing Tracker](crates/use-cases/src/model_pricing_tracker/)
 
-Spawns a model checker and pricing researcher in parallel to gather current model pricing from provider websites, then outputs structured JSON.
+A model price checker.
 
 ```bash
 make use_case name=model-pricing-tracker
@@ -131,24 +131,22 @@ Output:
 
 An agent is configured with a provider, model, tools, and prompt. Running it returns an output with the response and statistics. Events are emitted during execution for streaming and observability.
 
-### LlmProvider
+### Supported Providers
 
-Providers for Anthropic, OpenAI-compatible, Mistral, and LiteLLM. Each owns a `reqwest::Client` for connection pooling and SSE streaming.
+You can integrate your agentic application with the following providers:
 
 ```rust
-use agentwerk::{AnthropicProvider, OpenAiProvider};
+use agentwerk::{MistralProvider, AnthropicProvider, OpenAiProvider, LiteLLMProvider};
 
+let provider = MistralProvider::new(key);
 let provider = AnthropicProvider::new(key);
 let provider = OpenAiProvider::new(key);
-
-// share a connection pool
-let client = reqwest::Client::new();
-let provider = AnthropicProvider::with_client(key, client);
+let provider = LiteLLMProvider::new(key);
 ```
 
 ### Agent
 
-Configures the agent's identity, tools, provider, and runtime options.
+The main interface for launching an agent:
 
 ```rust
 use agentwerk::Agent;
@@ -163,10 +161,9 @@ let output = Agent::new()
     .await?;
 ```
 
-Configure a template once, clone it for each task, and override the fields
-that vary per run. The `AgentPool` example below shows this.
-
 #### Prompting
+
+Prompts are the core piece of every agentic application.
 
 | Method | File variant | Purpose |
 |--------|-------------|---------|
@@ -193,8 +190,8 @@ Agent::new()
 
 #### Sub-agents
 
-An agent can register other agents as sub-agents. The LLM can then call them
-by name.
+Sub-agents allow orchestrator agents to launch her own workers. 
+Orchestrator agents automatically have access to the `SpawnAgentTool`.
 
 ```rust
 let researcher_base = Agent::new()
@@ -212,26 +209,20 @@ let output = Agent::new()
     .sub_agents([r1, r2])
 ```
 
-Registered sub-agents are available to the LLM by name. The LLM can also
-spawn ad-hoc agents at call time, supplying the prompt for that spawn.
-
 ##### Inheritance
 
-A sub-agent is just an `Agent`; configure it with the normal builder methods.
-Three rules are specific to running as a sub-agent:
+The following fields are inherited, shared or owned by the sub-agents:
 
 | Behavior | Fields |
 |---|---|
 | Inherited | `provider`, `model`, `working_directory`, `event_handler`, `cancel_signal` |
 | Shared | `command_queue`, `session_store` |
-| Per-agent | `identity_prompt`, `behavior_prompt`, `context_prompt`, `tools`, `output_schema`, `max_turns`, `max_tokens`, `max_schema_retries`, `max_request_retries`, `request_retry_backoff_ms` |
-| Per-invocation | `instruction_prompt` |
+| Per sub-agent | `identity_prompt`, `behavior_prompt`, `context_prompt`, `tools`, `output_schema`, `max_turns`, `max_tokens`, `max_schema_retries`, `max_request_retries`, `request_retry_backoff_ms` |
+| Per sub-agent invocation | `instruction_prompt` |
 
 #### Guardrails
 
-Per-agent limits for agentic execution. Omit a setter to use the default
-(most default to "no limit"). When the parent's LLM spawns a sub-agent, it
-can override any of these for a single spawn.
+For protecting your budget or data, you can define clear execution rules for typical LLM failures:
 
 | Method | Default | What it does |
 |--------|---------|-------------|
@@ -246,14 +237,10 @@ To abort from outside the agent, use `.cancel_signal(signal)` — see
 
 ### AgentPool
 
-Executes agents concurrently with a configurable concurrency limit. Each
-agent is configured independently with its own provider, prompts, and tools.
-Submit work with `spawn()` and collect results with `next()` or `drain()`.
+Orchestrate complex workflows in parallel. Use different execution strategies:
 
-Result strategy:
-
-- `CompletionOrder` (default) — results are returned as each agent finishes.
-- `SpawnOrder` — results are returned in the order agents were spawned.
+- `CompletionOrder`: results are returned as each agent finishes (default).
+- `SpawnOrder`: results are returned in the order agents were spawned.
 
 ```rust
 use agentwerk::{Agent, AgentPool, PoolStrategy, ReadFileTool};
@@ -284,7 +271,7 @@ is at capacity, it waits for a free slot.
 
 ### Events
 
-Emitted via `Agent.event_handler()` during execution. Each `Event` carries an `agent_name: String` plus an `EventKind` variant.
+You can inspect what your agent is doing and how the LLM provider API is used:
 
 ```rust
 use agentwerk::{Event, EventKind};
@@ -298,18 +285,18 @@ let handler = Arc::new(|event: Event| match &event.kind {
 
 | | Kind | Description |
 |-|-------|-------------|
-| **Agent** | `AgentStart { description }` | Agent begins execution. `description` is set when the LLM spawned this agent as a sub-agent (the label it gave), and `None` for the top-level run. |
-| | `AgentEnd { turns }` | Agent finishes with turn count |
+| **Agent** | `AgentStart` | Agent begins execution |
+| | `AgentEnd` | Agent finishes execution |
 | | `TurnStart` / `TurnEnd` | Turn boundaries |
 | **LLM Provider** | `RequestStart` / `RequestEnd` | LLM request lifecycle |
-| | `ResponseTextChunk` | Streamed text token |
-| | `TokenUsage` | Token counts for a request |
+| | `ResponseTextChunk` | Streamed text token arrived |
+| | `TokenUsage` | Token counts for a request changed |
 | **Tool Usage** | `ToolCallStart` / `ToolCallEnd` | Tool execution lifecycle |
 
 
 ### Tools
 
-Tools are functions the agent can call. Implement the `Tool` trait or use `ToolBuilder` for closures.
+Give your agent access to simple tools for driving tasks:
 
 ```rust
 use agentwerk::{ToolBuilder, ToolResult};
@@ -323,9 +310,8 @@ let tool = ToolBuilder::new("greet", "Say hello")
     .build();
 ```
 
-> Mark a tool as `.read_only(true)` when it has no side effects. When the LLM
-> calls several tools in a single response, read-only calls run in parallel;
-> everything else runs serially in order. Default is `false`.
+> Use `.read_only(true)` when a tool has no side effects. 
+> If set, the the execution loop will run tools in parallel.
 
 Built-in tools:
 
@@ -344,19 +330,29 @@ Built-in tools:
 | | `TaskTool` | Persistent task management (create, update, list, get) |
 | | `ToolSearchTool` | Discover available tools by keyword |
 
+```rust
+use agentwerk::{ReadFileTool, BashTool, TaskTool};
+
+let agent = Agent::new()
+    .tool(ReadFileTool)
+    .tool(BashTool::new("git", "git *"))
+    .tool(TaskTool::new(Path::new("/tmp/tasks")))
+    .run().await?;
+```
+
 ### AgentOutput
 
 The result of running an agent.
 
 ```rust
-output.response_raw            // free-form LLM text
-output.response                // validated JSON if output_schema was set
+output.response_raw            // Raw LLM output
+output.response                // validated with schema
 
 output.statistics.input_tokens // total input tokens
 output.statistics.output_tokens// total output tokens
-output.statistics.requests     // number of LLM calls
-output.statistics.tool_calls   // number of tool executions
-output.statistics.turns        // number of agentic turns
+output.statistics.requests     // number of LLM requests
+output.statistics.tool_calls   // number of tool calls
+output.statistics.turns        // number of loop turns
 ```
 
 With an output schema, the agent returns validated JSON:
@@ -385,7 +381,7 @@ let output = Agent::new()
 
 ### LLM Request Composition
 
-Each LLM request is assembled from four parts. Fields are listed in the order they appear in the request.
+Each LLM request is assembled from the following parts:
 
 | Part | Type | Parameters | Description |
 |------|------|--------|-------------|
@@ -445,7 +441,7 @@ make litellm LITELLM_PROVIDER=mistral      # use Mistral
 
 ### Environment
 
-Use cases and integration tests pick up the LLM provider from these environment variables:
+Use cases and integration tests use the following environment variables:
 
 | Variable | Description |
 |----------|-------------|

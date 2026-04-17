@@ -109,3 +109,19 @@ Use cases are in `crates/use-cases/src/cli/`. Run with `make use_case name=<name
   Example: `set_extension()`, `get_extension()`.
 - **Free functions**: snake_case. Example: `execute_tool_calls()`, `prewarm_connection()`.
 - **Tool structs**: `{Name}Tool`. Example: `ReadFileTool`, `BashTool`, `SpawnAgentTool`.
+
+## README conventions
+
+The README is the public face of the library. Keep it terse, example-driven, and scannable.
+
+- **Section order is fixed**: Installation → Quick Start → Use Cases → API → Development. Each top-level section maps to a TOC link in the centered header.
+- **Code before prose.** Lead every subsection with a minimal working example, then explain. A one-sentence intro is enough — don't over-narrate.
+- **Tables for enumerations.** Use tables to list methods, events, built-in tools, guardrails, env variables, and inheritance rules. Prefer a table over a bulleted list whenever items share the same shape (name + description, or method + default + effect).
+- **Shape tables with grouping columns.** When entries cluster (Agent / LLM Provider / Tool Usage for events; File / Search / Shell / Web / Utility for tools), use a leading empty-header column with bold group labels spanning multiple rows.
+- **Use `>` blockquotes for callouts** — tips, prerequisites, cross-references. Example: `> Consider configuring your LLM provider (see [Environment](#environment)).`
+- **Use cases show real output.** Every entry in Use Cases includes the invocation (`make use_case ...`) and a realistic JSON output block. No placeholder results.
+- **Cross-link, don't repeat.** Reference the Environment section from anywhere that mentions provider setup; reference Inheritance when discussing sub-agents. Keep each fact in one place.
+- **Headers**: `#` title, `##` top-level (Installation, API, Development), `###` features (Agent, AgentPool, Tools), `####` sub-features (Prompting, Sub-agents, Guardrails), `#####` nested topics (Inheritance).
+- **Voice**: direct, imperative, no marketing. "Give your agent access to simple tools" — not "empower your application with…". Keep the one-sentence tagline style ("A minimal Rust crate that…").
+- **Keep examples minimal.** Show the smallest snippet that demonstrates the feature. Elide unrelated setup with `...` or obvious imports. Use `claude-haiku-4-5-20251001` / `claude-sonnet-4-20250514` as example models to stay consistent.
+- **Update triggers**: a new builder method, a new tool, a new event kind, a new env variable, or a changed default all require a README edit in the matching table. Structural/internal changes do not.
