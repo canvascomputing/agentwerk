@@ -10,68 +10,25 @@ use serde_json::Value;
 // Behavior prompts
 // ---------------------------------------------------------------------------
 
-/// Behavioral directives injected into the system prompt of every LLM request.
-///
-/// All four variants are always present. Each has a sensible default that can be
-/// replaced via [`Agent::behavior_prompt()`]. They appear in the system
-/// prompt after the identity prompt, in the order listed here.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum BehaviorPrompt {
-    /// How the agent approaches work.
-    TaskExecution,
-    /// When to use which tool.
-    ToolUsage,
-    /// Awareness of consequences before acting.
-    SafetyConcerns,
-    /// How the agent structures its output.
-    Communication,
-}
-
-impl BehaviorPrompt {
-    pub(crate) fn default_content(&self) -> &'static str {
-        match self {
-            Self::TaskExecution => DEFAULT_TASK_EXECUTION,
-            Self::ToolUsage => DEFAULT_TOOL_USAGE,
-            Self::SafetyConcerns => DEFAULT_SAFETY_CONCERNS,
-            Self::Communication => DEFAULT_COMMUNICATION_STYLE,
-        }
-    }
-
-    /// All variants in the order they should appear in the system prompt.
-    pub(crate) fn all() -> &'static [BehaviorPrompt] {
-        &[
-            Self::TaskExecution,
-            Self::ToolUsage,
-            Self::SafetyConcerns,
-            Self::Communication,
-        ]
-    }
-}
-
-// ---------------------------------------------------------------------------
-// Default behavior content
-// ---------------------------------------------------------------------------
-
-pub(crate) const DEFAULT_TASK_EXECUTION: &str = "\
+/// Default behavioral directives appended to the system prompt after the
+/// identity prompt. Override with [`Agent::behavior_prompt()`].
+pub const DEFAULT_BEHAVIOR_PROMPT: &str = "\
 # Task execution
 - Do not propose changes to files you have not read. Read first, then modify.
 - Do not add features or improvements beyond what was asked.
 - Do not create files unless absolutely necessary. Prefer editing existing files.
-- If an approach fails, diagnose why before switching tactics.";
+- If an approach fails, diagnose why before switching tactics.
 
-pub(crate) const DEFAULT_TOOL_USAGE: &str = "\
 # Tool usage
 - Do NOT use bash when a dedicated tool exists (read_file over cat, edit_file over sed, grep over rg, glob over find).
 - Call multiple tools in a single response. Make independent calls in parallel.
-- If tool calls depend on previous results, call them sequentially — do not guess parameters.";
+- If tool calls depend on previous results, call them sequentially — do not guess parameters.
 
-pub(crate) const DEFAULT_SAFETY_CONCERNS: &str = "\
 # Safety concerns
 - Consider the reversibility and impact of actions before executing them.
 - Prefer reversible operations over destructive ones when both achieve the goal.
-- If an approach fails, diagnose the root cause before retrying or switching tactics.";
+- If an approach fails, diagnose the root cause before retrying or switching tactics.
 
-pub(crate) const DEFAULT_COMMUNICATION_STYLE: &str = "\
 # Communication
 - Be direct. Lead with the answer or action, not the reasoning.
 - Keep output concise — omit filler, preamble, and unnecessary transitions.
@@ -164,13 +121,6 @@ fn format_current_date() -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn behavior_prompt_defaults_non_empty() {
-        for kind in BehaviorPrompt::all() {
-            assert!(!kind.default_content().is_empty());
-        }
-    }
 
     #[test]
     fn environment_prompt_includes_path() {

@@ -8,6 +8,6 @@ mod werk;
 pub use event::{Event, EventKind};
 pub use output::{AgentOutput, Statistics};
 pub use pool::{AgentPool, JobId, PoolOrdering};
-pub use prompts::BehaviorPrompt;
+pub use prompts::DEFAULT_BEHAVIOR_PROMPT;
 pub use werk::Agent;
 pub(crate) use werk::{AgentSpec, Runtime};

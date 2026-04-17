@@ -33,7 +33,7 @@ use crate::util::{generate_agent_name, now_millis};
 use super::event::{Event, EventKind};
 use super::output::{AgentOutput, OutputSchema, Statistics, StructuredOutputTool};
 use super::prompts::{
-    self as prompts, interpolate, BehaviorPrompt, STRUCTURED_OUTPUT_TOOL_NAME,
+    self as prompts, interpolate, DEFAULT_BEHAVIOR_PROMPT, STRUCTURED_OUTPUT_TOOL_NAME,
 };
 use super::queue::{CommandQueue, QueuePriority};
 
@@ -64,7 +64,7 @@ pub(crate) struct AgentConfig {
     pub max_turns: Option<u32>,
     pub output_schema: Option<OutputSchema>,
     pub max_schema_retries: Option<u32>,
-    pub behavior_prompts: Vec<(BehaviorPrompt, String)>,
+    pub behavior_prompt: String,
     pub context_prompts: Vec<String>,
     pub environment_prompt: Option<String>,
     pub tools: ToolRegistry,
@@ -75,10 +75,6 @@ pub(crate) struct AgentConfig {
 
 impl Default for AgentConfig {
     fn default() -> Self {
-        let behavior_prompts = BehaviorPrompt::all()
-            .iter()
-            .map(|k| (*k, k.default_content().to_string()))
-            .collect();
         Self {
             name: None,
             model: ModelSpec::Inherit,
@@ -87,7 +83,7 @@ impl Default for AgentConfig {
             max_turns: None,
             output_schema: None,
             max_schema_retries: Some(10),
-            behavior_prompts,
+            behavior_prompt: DEFAULT_BEHAVIOR_PROMPT.to_string(),
             context_prompts: Vec::new(),
             environment_prompt: None,
             tools: ToolRegistry::new(),
@@ -108,7 +104,7 @@ impl Clone for AgentConfig {
             max_turns: self.max_turns,
             output_schema: self.output_schema.clone(),
             max_schema_retries: self.max_schema_retries,
-            behavior_prompts: self.behavior_prompts.clone(),
+            behavior_prompt: self.behavior_prompt.clone(),
             context_prompts: self.context_prompts.clone(),
             environment_prompt: self.environment_prompt.clone(),
             tools: self.tools.clone(),
@@ -224,24 +220,16 @@ impl Agent {
         self.with_config(|c| c.request_retry_backoff_ms = ms)
     }
 
-    /// Override a default behavior prompt.
-    pub fn behavior_prompt(self, kind: BehaviorPrompt, content: impl Into<String>) -> Self {
+    /// Override the default behavior prompt.
+    pub fn behavior_prompt(self, content: impl Into<String>) -> Self {
         let content = content.into();
-        self.with_config(|c| {
-            if let Some(entry) = c.behavior_prompts.iter_mut().find(|(k, _)| *k == kind) {
-                entry.1 = content;
-            }
-        })
+        self.with_config(|c| c.behavior_prompt = content)
     }
 
     /// Load a behavior prompt override from a file.
-    pub fn behavior_prompt_file(mut self, kind: BehaviorPrompt, path: impl Into<PathBuf>) -> Self {
+    pub fn behavior_prompt_file(mut self, path: impl Into<PathBuf>) -> Self {
         let content = self.read_file(path.into());
-        self.with_config(|c| {
-            if let Some(entry) = c.behavior_prompts.iter_mut().find(|(k, _)| *k == kind) {
-                entry.1 = content;
-            }
-        })
+        self.with_config(|c| c.behavior_prompt = content)
     }
 
     /// Append additional context alongside the instruction prompt.
@@ -599,9 +587,9 @@ fn compile_tools(agent: &Agent) -> (Arc<ToolRegistry>, Option<ToolChoice>) {
 
 fn compile_system_prompt(agent: &Agent) -> String {
     let mut s = interpolate(&agent.config.identity_prompt, &agent.runtime.template_variables);
-    for (_, content) in &agent.config.behavior_prompts {
+    if !agent.config.behavior_prompt.is_empty() {
         s.push_str("\n\n");
-        s.push_str(content);
+        s.push_str(&agent.config.behavior_prompt);
     }
     if agent.config.output_schema.is_some() {
         s.push_str(prompts::STRUCTURED_OUTPUT_INSTRUCTION);
