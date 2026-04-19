@@ -9,6 +9,7 @@ mod common;
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use agentwerk::{Agent, Event, EventKind, SendMessageTool};
 
@@ -16,6 +17,15 @@ use agentwerk::{Agent, Event, EventKind, SendMessageTool};
 async fn orchestrator_sends_message_to_backgrounded_worker(
 ) -> std::result::Result<(), Box<dyn std::error::Error>> {
     let (provider, model) = common::build_provider();
+
+    // Fresh secret per run — a hardcoded value can match by coincidence
+    // even when peer messaging is broken.
+    let secret: u32 = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .subsec_nanos()
+        % 90_000
+        + 10_000;
 
     let events: Arc<Mutex<Vec<Event>>> = Arc::new(Mutex::new(Vec::new()));
     let collected = events.clone();
@@ -42,18 +52,21 @@ async fn orchestrator_sends_message_to_backgrounded_worker(
         .keep_alive_unlimited()
         .max_turns(3);
 
+    let orchestrator_identity = format!(
+        "You coordinate work. Do exactly these two steps in order:\n\
+         1. Call spawn_agent with agent=\"worker\", background=true, \
+            description=\"worker\", instruction=\"wait for a message\".\n\
+         2. Call send_message with to=\"worker\", message=\"the secret is {secret}\".\n\
+         Then end your turn with a short confirmation."
+    );
+    let orchestrator_instruction = format!("Start the worker and send it the secret {secret}.");
+
     let output = Agent::new()
         .provider(provider)
         .model(&model)
         .name("orchestrator")
-        .identity_prompt(
-            "You coordinate work. Do exactly these two steps in order:\n\
-             1. Call spawn_agent with agent=\"worker\", background=true, \
-                description=\"worker\", instruction=\"wait for a message\".\n\
-             2. Call send_message with to=\"worker\", message=\"the secret is 42\".\n\
-             Then end your turn with a short confirmation.",
-        )
-        .instruction_prompt("Start the worker and send it the secret 42.")
+        .identity_prompt(orchestrator_identity)
+        .instruction_prompt(orchestrator_instruction)
         .sub_agents([worker])
         .tool(SendMessageTool)
         .cancel_signal(cancel.clone())
@@ -98,8 +111,8 @@ async fn orchestrator_sends_message_to_backgrounded_worker(
     assert!(send_ok, "orchestrator's send_message must succeed");
     assert!(worker_ended, "worker must complete");
     assert!(
-        worker_text.contains("42"),
-        "worker must echo the secret received via peer message; got {worker_text:?}"
+        worker_text.contains(&secret.to_string()),
+        "worker must echo the secret {secret} received via peer message; got {worker_text:?}"
     );
     assert!(
         output.statistics.tool_calls >= 2,

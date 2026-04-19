@@ -1,5 +1,5 @@
 //! Context-window compaction seam. Two triggers are wired into the agent
-//! loop: [`trigger_proactive`] (estimate ≥ threshold) and
+//! loop: [`trigger_if_over_threshold`] (estimate ≥ threshold) and
 //! [`trigger_reactive`] (provider-reported overflow). Both emit a
 //! [`EventKind::CompactTriggered`] event and call [`run`], which is a stub
 //! today.
@@ -69,7 +69,7 @@ fn text_bytes_in_content_block(block: &ContentBlock) -> usize {
 /// Proactive seam: emit [`EventKind::CompactTriggered`] and invoke [`run`]
 /// when the estimated next-request size crosses the threshold. No-op when
 /// the agent's model has no known context window size.
-pub(crate) async fn trigger_proactive(
+pub(crate) async fn trigger_if_over_threshold(
     runtime: &Runtime,
     spec: &AgentSpec,
     state: &mut LoopState,

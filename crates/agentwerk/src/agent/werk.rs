@@ -324,6 +324,14 @@ impl Agent {
         self.with_runtime(|r| r.provider = Some(p))
     }
 
+    /// Resolve the provider + default model from environment variables and
+    /// apply both in one call. See the free [`crate::provider_from_env`]
+    /// function for the detection order.
+    pub fn provider_from_env(self) -> Result<Self> {
+        let (provider, model) = crate::provider::provider_from_env()?;
+        Ok(self.provider(provider).model(model))
+    }
+
     /// The task for this run — what to do right now.
     pub fn instruction_prompt(self, p: impl Into<String>) -> Self {
         self.with_runtime(|r| r.instruction_prompt = p.into())
@@ -707,42 +715,28 @@ impl LoopState {
 // compaction seams, tool execution, completion, transcript, events)
 // ---------------------------------------------------------------------------
 
-/// The agent execution loop. Each iteration is one "turn":
+/// The agent execution loop — one turn per iteration.
 ///
-/// ```text
-/// loop {
-///     // 1. GUARDS — cancel_signal / max_turns / max_input_tokens
-///     //    any guard fires → finish_early → EXIT
+/// Each turn sends the conversation to the model and processes the reply.
+/// The loop **continues** when more work is needed and **exits** when the
+/// agent has nothing left to do.
 ///
-///     // 2. CALL PROVIDER — retry on transient errors; pre-flight
-///     //    ContextWindowExceeded fires compact::trigger_reactive then
-///     //    surfaces the error as Err(ContextWindowExceeded)
+/// Continues when:
+/// - the model called tools (run them and feed results back)
+/// - the reply was truncated (ask the model to keep going)
+/// - a peer agent or background task queued a message
+/// - the agent was parked idle and a message woke it
+/// - a required output schema wasn't met (retry)
 ///
-///     // 3. RECORD — usage + assistant message + transcript
+/// Exits when:
+/// - the model stopped and any required schema validates — return the
+///   final answer
+/// - a guard fired (cancel, turn limit, input-token budget) — return a
+///   partial output with the reason attached
 ///
-///     // 4. COMPACTION SEAMS
-///     //    mid-gen ContextWindowExceeded → trigger_reactive
-///     //    estimate ≥ threshold          → trigger_proactive
-///
-///     // 5. DECIDE — see branch matrix in-code:
-///     //
-///     //    ┌─ ToolUse + non-empty calls         → run tools,         CONTINUE
-///     //    ├─ OutputTruncated + empty calls     → send continuation, CONTINUE
-///     //    └─ everything else                   → Path B
-///     //         ┌─ queue drained new msgs?      → CONTINUE
-///     //         ├─ keep_alive_ms set?           → idle+poll,
-///     //         │    woken by message?          → CONTINUE
-///     //         │    cancel or deadline?        → fall through
-///     //         └─ try_finish → Some(output)    → EXIT
-///     //                       → None (schema retry) → CONTINUE
-/// }
-/// ```
-///
-/// The only terminal completion signal is `EndTurn` (or `StopSequence`) with
-/// no tool calls: the model has chosen to stop. `ToolUse` and
-/// `OutputTruncated` both continue the loop; everything else falls through to
-/// `try_finish`, which builds the final output or (under an output schema)
-/// requests another turn.
+/// Context-window overflow is handled transparently: compaction is
+/// triggered proactively when the estimated next request would overflow,
+/// and reactively when the provider reports overflow mid-turn.
 pub(crate) fn run_loop(
     runtime: Arc<Runtime>,
     spec: Arc<AgentSpec>,
@@ -793,23 +787,8 @@ pub(crate) fn run_loop(
                 compact::trigger_reactive(&runtime, &spec, &mut state, turn).await?;
             }
 
-            compact::trigger_proactive(&runtime, &spec, &mut state).await?;
+            compact::trigger_if_over_threshold(&runtime, &spec, &mut state).await?;
 
-            // ─ Post-response states ──────────────────────────────────
-            // Five named states route this turn. The first two come from
-            // the response itself; the rest emerge inside Path B as its
-            // side-effectful steps run. The first matching state short-
-            // circuits via `continue` or `return`; if none fires, the
-            // loop emits `TurnEnd` at the bottom and iterates.
-            //
-            //   tool_use_ready          model returned parseable tool calls
-            //   response_truncated      model hit max_tokens with no calls
-            //   ── Path B ───────────────────────────────────────────────
-            //   drain_found_messages    drain surfaced peer/tool messages
-            //   keep_alive_enabled      spec configured the agent to idle+poll
-            //   idle_found_message      idle wait ended because a message arrived
-            //                             (only checked when keep_alive is enabled)
-            //   finished_output         try_finish produced a terminal output
             let tool_use_ready =
                 response.status == ResponseStatus::ToolUse && !tool_calls.is_empty();
             let response_truncated =
@@ -825,35 +804,42 @@ pub(crate) fn run_loop(
                     None,
                 );
                 drain_command_queue(&runtime, &spec, &mut state);
-            } else if response_truncated {
+                emit_turn_end(&runtime, &spec, turn);
+                continue;
+            }
+
+            if response_truncated {
                 emit_output_truncated(&runtime, &spec, turn);
                 state
                     .messages
                     .push(Message::user(prompts::MAX_TOKENS_CONTINUATION));
-            } else {
-                let drain_found_messages = drain_pending_messages(&runtime, &spec, &mut state);
-                if drain_found_messages {
-                    emit_turn_end(&runtime, &spec, turn);
-                    continue;
-                }
-
-                let keep_alive_enabled = spec.keep_alive_ms.is_some();
-                if keep_alive_enabled {
-                    let idle_found_message =
-                        idle_until_message(&runtime, &spec, &mut state).await;
-                    if idle_found_message {
-                        emit_turn_end(&runtime, &spec, turn);
-                        continue;
-                    }
-                }
-
-                let finished_output = try_finish(&runtime, &spec, &mut state, text)?;
-                if let Some(output) = finished_output {
-                    emit_turn_end(&runtime, &spec, turn);
-                    return Ok(output);
-                }
+                emit_turn_end(&runtime, &spec, turn);
+                continue;
             }
 
+            let drain_found_messages = drain_pending_messages(&runtime, &spec, &mut state);
+            if drain_found_messages {
+                emit_turn_end(&runtime, &spec, turn);
+                continue;
+            }
+
+            // Short-circuit: idle_until_message only runs when keep_alive is
+            // enabled, preserving its side effects (emit Idle/Resumed).
+            let keep_alive_enabled = spec.keep_alive_ms.is_some();
+            let idle_found_message = keep_alive_enabled
+                && idle_until_message(&runtime, &spec, &mut state).await;
+            if idle_found_message {
+                emit_turn_end(&runtime, &spec, turn);
+                continue;
+            }
+
+            let finished_output = try_finish(&runtime, &spec, &mut state, text)?;
+            if let Some(output) = finished_output {
+                emit_turn_end(&runtime, &spec, turn);
+                return Ok(output);
+            }
+
+            // try_finish returned None → schema-retry prompt queued; loop.
             emit_turn_end(&runtime, &spec, turn);
         }
     })
@@ -1107,8 +1093,8 @@ fn drain_command_queue(runtime: &Runtime, spec: &AgentSpec, state: &mut LoopStat
 }
 
 /// Drain the command queue into `state.messages` and report whether anything
-/// arrived. Used by Path B to decide whether to continue the loop without a
-/// new LLM request.
+/// arrived. Used by `run_loop` to decide whether to continue the loop without
+/// a new LLM request when the model gave no actionable output.
 fn drain_pending_messages(
     runtime: &Runtime,
     spec: &AgentSpec,
@@ -1139,7 +1125,7 @@ async fn idle_until_message(
 /// visible to `spec.name`. Returns `true` if a message arrived (agent should
 /// resume), `false` on timeout or cancel (agent should finalize).
 ///
-/// Only called from Path B in `run_loop` when `spec.keep_alive_ms.is_some()` —
+/// Only called via `idle_until_message` when `spec.keep_alive_ms.is_some()` —
 /// `None` is handled as an early return for defensive coding.
 async fn wait_for_message(runtime: &Runtime, spec: &AgentSpec, state: &mut LoopState) -> bool {
     const POLL_INTERVAL: Duration = Duration::from_millis(100);

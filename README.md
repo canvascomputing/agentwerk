@@ -31,15 +31,12 @@ cargo add agentwerk
 ## Quick Start
 
 ```rust
-use agentwerk::{Agent, GlobTool, provider_from_env};
+use agentwerk::{Agent, GlobTool};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let (provider, model) = provider_from_env()?;
-
     let output = Agent::new()
-        .provider(provider)
-        .model(model)
+        .provider_from_env()?
         .instruction_prompt("Find all Rust source files.")
         .tool(GlobTool)
         .run()
