@@ -32,7 +32,7 @@ use crate::provider::{CompletionRequest, Provider, ProviderError, ToolChoice};
 use crate::tools::{execute_tool_calls, SpawnAgentTool, Tool, ToolCall, ToolContext, ToolRegistry};
 use crate::util::{generate_agent_name, now_millis};
 
-use super::compact::{self, CompactReason};
+use super::compact;
 use super::event::{Event, EventKind};
 use super::output::{AgentOutput, OutputSchema, Statistics, Status, StructuredOutputTool};
 use super::prompts::{
@@ -738,7 +738,7 @@ pub(crate) fn run_loop(
             state.messages.last().unwrap(),
             None,
         );
-        emit(&runtime, &spec.name, EventKind::AgentStart { description });
+        emit_agent_start(&runtime, &spec, description);
 
         loop {
             if let Some(status) = check_guards(&runtime, &spec, &state) {
@@ -747,24 +747,13 @@ pub(crate) fn run_loop(
 
             state.turn += 1;
             let turn = state.turn;
-            let model_id = spec.model.id.clone();
 
-            emit(&runtime, &spec.name, EventKind::TurnStart { turn });
-            emit(
-                &runtime,
-                &spec.name,
-                EventKind::RequestStart {
-                    model: model_id.clone(),
-                },
-            );
+            emit_turn_start(&runtime, &spec, turn);
+            emit_request_start(&runtime, &spec);
 
-            let response = request_turn_response(&runtime, &spec, &mut state, turn).await?;
+            let response = call_provider_with_retry(&runtime, &spec, &mut state, turn).await?;
 
-            emit(
-                &runtime,
-                &spec.name,
-                EventKind::RequestEnd { model: model_id },
-            );
+            emit_request_end(&runtime, &spec);
             record_usage(&runtime, &spec, &mut state, &response);
 
             let (text, tool_calls) = parse_response(&response);
@@ -784,17 +773,18 @@ pub(crate) fn run_loop(
             if response.status == ResponseStatus::ContextWindowExceeded
                 && spec.model.context_window_size.is_some()
             {
-                fire_reactive_compact_trigger(&runtime, &spec, &mut state, turn).await?;
+                compact::trigger_reactive(&runtime, &spec, &mut state, turn).await?;
             }
 
-            compact::run_if_over_threshold(&runtime, &spec, &mut state).await?;
+            compact::trigger_proactive(&runtime, &spec, &mut state).await?;
 
-            let has_tool_calls =
+            let tool_use_ready =
                 response.status == ResponseStatus::ToolUse && !tool_calls.is_empty();
-            let is_truncated =
+            let response_truncated =
                 response.status == ResponseStatus::OutputTruncated && tool_calls.is_empty();
 
-            if has_tool_calls {
+            if tool_use_ready {
+                // `ToolUse` with parseable calls: run them and loop.
                 let results = execute_tools(&runtime, &spec, &mut state, &tool_calls).await;
                 state.messages.push(Message::User { content: results });
                 record_transcript(
@@ -804,68 +794,25 @@ pub(crate) fn run_loop(
                     None,
                 );
                 drain_command_queue(&runtime, &spec, &mut state);
-            } else if is_truncated {
-                emit(&runtime, &spec.name, EventKind::OutputTruncated { turn });
+            } else if response_truncated {
+                // `OutputTruncated` with no tool call in flight: ask the
+                // model to continue the text.
+                emit_output_truncated(&runtime, &spec, turn);
                 state
                     .messages
                     .push(Message::user(prompts::MAX_TOKENS_CONTINUATION));
             } else if let Some(output) = try_finish(&runtime, &spec, &mut state, text)? {
-                emit(&runtime, &spec.name, EventKind::TurnEnd { turn });
+                // Everything else finalizes: natural `EndTurn`/`StopSequence`,
+                // `Refused`, `ToolUse` without parseable calls (malformed), or
+                // `OutputTruncated` mid-tool-call (can't safely resume a
+                // partial invocation). `try_finish` picks success vs. error.
+                emit_turn_end(&runtime, &spec, turn);
                 return Ok(output);
             }
 
-            emit(&runtime, &spec.name, EventKind::TurnEnd { turn });
+            emit_turn_end(&runtime, &spec, turn);
         }
     })
-}
-
-/// Fetch the LLM response for `turn`. Wraps [`call_llm_with_retry`] with
-/// the pre-flight reactive compaction seam: a provider-reported
-/// `ContextWindowExceeded` fires [`fire_reactive_compact_trigger`] before
-/// the error surfaces unchanged.
-async fn request_turn_response(
-    runtime: &Runtime,
-    spec: &AgentSpec,
-    state: &mut LoopState,
-    turn: u32,
-) -> Result<ModelResponse> {
-    match call_llm_with_retry(runtime, spec, state).await {
-        Ok(response) => Ok(response),
-        Err(AgenticError::Provider(ProviderError::ContextWindowExceeded { provider_message }))
-            if spec.model.context_window_size.is_some() =>
-        {
-            fire_reactive_compact_trigger(runtime, spec, state, turn).await?;
-            // compact::run currently returns `NotImplemented` and exits
-            // via `?` above; once implemented, this branch will retry the
-            // turn instead of surfacing the error.
-            Err(AgenticError::Provider(
-                ProviderError::ContextWindowExceeded { provider_message },
-            ))
-        }
-        Err(e) => Err(e),
-    }
-}
-
-/// Emit a reactive [`EventKind::CompactTriggered`] (sentinel token/threshold
-/// of `0`) and invoke [`compact::run`]. Shared between the two reactive
-/// seams: provider-reported pre-flight error and mid-generation overflow.
-async fn fire_reactive_compact_trigger(
-    runtime: &Runtime,
-    spec: &AgentSpec,
-    state: &mut LoopState,
-    turn: u32,
-) -> Result<()> {
-    emit(
-        runtime,
-        &spec.name,
-        EventKind::CompactTriggered {
-            turn,
-            token_count: 0,
-            threshold: 0,
-            reason: CompactReason::Reactive,
-        },
-    );
-    compact::run(runtime, spec, state, CompactReason::Reactive).await
 }
 
 fn finish_early(
@@ -877,7 +824,7 @@ fn finish_early(
     let text = last_assistant_text(&state.messages);
     emit(
         runtime,
-        &spec.name,
+        spec,
         EventKind::AgentEnd {
             turns: state.turn,
             status: status.clone(),
@@ -906,7 +853,11 @@ fn check_guards(runtime: &Runtime, spec: &AgentSpec, state: &LoopState) -> Optio
     None
 }
 
-async fn call_llm(runtime: &Runtime, spec: &AgentSpec, state: &LoopState) -> Result<ModelResponse> {
+async fn call_provider(
+    runtime: &Runtime,
+    spec: &AgentSpec,
+    state: &LoopState,
+) -> Result<ModelResponse> {
     let tool_defs = spec.tools.definitions(&state.discovered_tools);
     let request = CompletionRequest {
         model: spec.model.id.clone(),
@@ -937,15 +888,31 @@ async fn call_llm(runtime: &Runtime, spec: &AgentSpec, state: &LoopState) -> Res
         .map_err(AgenticError::from)
 }
 
-async fn call_llm_with_retry(
+/// One turn's provider call with two built-in resilience seams:
+/// - transient errors (429, 529, 5xx) retry up to `spec.max_request_retries`
+/// - a provider-reported `ContextWindowExceeded` fires
+///   [`compact::trigger_reactive`] before propagating the original error
+async fn call_provider_with_retry(
     runtime: &Runtime,
     spec: &AgentSpec,
-    state: &LoopState,
+    state: &mut LoopState,
+    turn: u32,
 ) -> Result<ModelResponse> {
     let mut last_err = None;
     for attempt in 0..=spec.max_request_retries {
-        match call_llm(runtime, spec, state).await {
+        match call_provider(runtime, spec, state).await {
             Ok(response) => return Ok(response),
+            Err(AgenticError::Provider(ProviderError::ContextWindowExceeded {
+                provider_message,
+            })) if spec.model.context_window_size.is_some() => {
+                compact::trigger_reactive(runtime, spec, state, turn).await?;
+                // compact::run returns NotImplemented today; once
+                // implemented this branch will retry the turn instead of
+                // surfacing the error.
+                return Err(AgenticError::Provider(
+                    ProviderError::ContextWindowExceeded { provider_message },
+                ));
+            }
             Err(e) if e.is_retryable() && attempt < spec.max_request_retries => {
                 let delay_ms =
                     compute_delay(spec.request_retry_backoff_ms, attempt, e.retry_after_ms());
@@ -968,7 +935,7 @@ fn record_usage(
     state.request_count += 1;
     emit(
         runtime,
-        &spec.name,
+        spec,
         EventKind::TokenUsage {
             model: response.model.clone(),
             usage: response.usage.clone(),
@@ -1014,7 +981,7 @@ fn try_finish(
 
     emit(
         runtime,
-        &spec.name,
+        spec,
         EventKind::AgentEnd {
             turns: state.turn,
             status: Status::Completed,
@@ -1033,7 +1000,7 @@ async fn execute_tools(
     for call in calls {
         emit(
             runtime,
-            &spec.name,
+            spec,
             EventKind::ToolCallStart {
                 tool_name: call.name.clone(),
                 call_id: call.id.clone(),
@@ -1070,7 +1037,7 @@ async fn execute_tools(
                 .unwrap_or_default();
             emit(
                 runtime,
-                &spec.name,
+                spec,
                 EventKind::ToolCallEnd {
                     tool_name,
                     call_id: tool_use_id.clone(),
@@ -1095,8 +1062,44 @@ fn drain_command_queue(runtime: &Runtime, spec: &AgentSpec, state: &mut LoopStat
     }
 }
 
-fn emit(runtime: &Runtime, agent_name: &str, kind: EventKind) {
-    (runtime.event_handler)(Event::new(agent_name, kind));
+fn emit(runtime: &Runtime, spec: &AgentSpec, kind: EventKind) {
+    (runtime.event_handler)(Event::new(spec.name.clone(), kind));
+}
+
+fn emit_agent_start(runtime: &Runtime, spec: &AgentSpec, description: Option<String>) {
+    emit(runtime, spec, EventKind::AgentStart { description });
+}
+
+fn emit_turn_start(runtime: &Runtime, spec: &AgentSpec, turn: u32) {
+    emit(runtime, spec, EventKind::TurnStart { turn });
+}
+
+fn emit_turn_end(runtime: &Runtime, spec: &AgentSpec, turn: u32) {
+    emit(runtime, spec, EventKind::TurnEnd { turn });
+}
+
+fn emit_request_start(runtime: &Runtime, spec: &AgentSpec) {
+    emit(
+        runtime,
+        spec,
+        EventKind::RequestStart {
+            model: spec.model.id.clone(),
+        },
+    );
+}
+
+fn emit_request_end(runtime: &Runtime, spec: &AgentSpec) {
+    emit(
+        runtime,
+        spec,
+        EventKind::RequestEnd {
+            model: spec.model.id.clone(),
+        },
+    );
+}
+
+fn emit_output_truncated(runtime: &Runtime, spec: &AgentSpec, turn: u32) {
+    emit(runtime, spec, EventKind::OutputTruncated { turn });
 }
 
 fn record_transcript(

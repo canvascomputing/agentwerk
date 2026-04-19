@@ -1,5 +1,8 @@
-//! Context-window compaction seam. `run()` is a stub;
-//! `run_if_over_threshold()` is the live trigger wired into the agent loop.
+//! Context-window compaction seam. Two triggers are wired into the agent
+//! loop: [`trigger_proactive`] (estimate ≥ threshold) and
+//! [`trigger_reactive`] (provider-reported overflow). Both emit a
+//! [`EventKind::CompactTriggered`] event and call [`run`], which is a stub
+//! today.
 
 use crate::agent::event::{Event, EventKind};
 use crate::agent::werk::{AgentSpec, LoopState, Runtime};
@@ -63,9 +66,10 @@ fn text_bytes_in_content_block(block: &ContentBlock) -> usize {
     }
 }
 
-/// Invoke [`run`] when the estimated next-request size crosses the
-/// threshold. No-op when the agent's model has no known context window size.
-pub(crate) async fn run_if_over_threshold(
+/// Proactive seam: emit [`EventKind::CompactTriggered`] and invoke [`run`]
+/// when the estimated next-request size crosses the threshold. No-op when
+/// the agent's model has no known context window size.
+pub(crate) async fn trigger_proactive(
     runtime: &Runtime,
     spec: &AgentSpec,
     state: &mut LoopState,
@@ -88,6 +92,28 @@ pub(crate) async fn run_if_over_threshold(
         },
     ));
     run(runtime, spec, state, CompactReason::Proactive).await
+}
+
+/// Reactive seam: emit [`EventKind::CompactTriggered`] (sentinel token
+/// count / threshold of `0`) and invoke [`run`]. Fired when the provider
+/// itself reports a context-window overflow — either pre-flight or
+/// mid-generation.
+pub(crate) async fn trigger_reactive(
+    runtime: &Runtime,
+    spec: &AgentSpec,
+    state: &mut LoopState,
+    turn: u32,
+) -> Result<()> {
+    (runtime.event_handler)(Event::new(
+        spec.name.clone(),
+        EventKind::CompactTriggered {
+            turn,
+            token_count: 0,
+            threshold: 0,
+            reason: CompactReason::Reactive,
+        },
+    ));
+    run(runtime, spec, state, CompactReason::Reactive).await
 }
 
 /// Compact `state.messages` in place. Not yet implemented — returns
