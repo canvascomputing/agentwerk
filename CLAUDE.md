@@ -69,6 +69,7 @@ crates/agentwerk/src/
     util.rs               glob_match, run_shell_command, DEFAULT_TIMEOUT_MS, MAX_TIMEOUT_MS
     tool_search.rs        ToolSearchTool
     spawn_agent.rs        SpawnAgentTool
+    send_message.rs       SendMessageTool (peer agent messaging via CommandQueue)
     task_tools.rs         TaskTool
 
   persistence/ (internal)

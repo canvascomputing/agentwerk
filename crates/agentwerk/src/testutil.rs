@@ -1,5 +1,4 @@
-use std::collections::HashMap;
-use std::collections::VecDeque;
+use std::collections::{HashMap, VecDeque};
 use std::future::Future;
 use std::path::PathBuf;
 use std::pin::Pin;
@@ -394,5 +393,12 @@ impl TestHarness {
     pub fn cancel(&self) {
         self.cancel_signal
             .store(true, std::sync::atomic::Ordering::Relaxed);
+    }
+
+    /// Clone of the cancel signal — useful when a test needs to flip it from
+    /// a spawned task while the harness is blocked on `run_agent`.
+    #[cfg(test)]
+    pub(crate) fn cancel_signal_for_test(&self) -> Arc<AtomicBool> {
+        self.cancel_signal.clone()
     }
 }

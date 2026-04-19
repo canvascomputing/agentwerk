@@ -18,6 +18,7 @@ use std::path::PathBuf;
 use std::pin::Pin;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 
 use serde_json::Value;
 
@@ -74,7 +75,13 @@ pub(crate) struct AgentConfig {
     pub max_schema_retries: Option<u32>,
     pub max_request_retries: u32,
     pub request_retry_backoff_ms: u64,
+    pub keep_alive_ms: Option<u64>,
 }
+
+/// Sentinel value for "keep_alive with no timeout". ~584 million years in ms
+/// — effectively unbounded. Exposed only via `Agent::keep_alive_unlimited()`,
+/// never a user-facing magic number.
+pub const KEEP_ALIVE_UNLIMITED: u64 = u64::MAX;
 
 impl Default for AgentConfig {
     fn default() -> Self {
@@ -93,6 +100,7 @@ impl Default for AgentConfig {
             max_schema_retries: Some(10),
             max_request_retries: DEFAULT_MAX_REQUEST_RETRIES,
             request_retry_backoff_ms: DEFAULT_BACKOFF_MS,
+            keep_alive_ms: None,
         }
     }
 }
@@ -114,6 +122,7 @@ impl Clone for AgentConfig {
             max_schema_retries: self.max_schema_retries,
             max_request_retries: self.max_request_retries,
             request_retry_backoff_ms: self.request_retry_backoff_ms,
+            keep_alive_ms: self.keep_alive_ms,
         }
     }
 }
@@ -263,6 +272,19 @@ impl Agent {
     /// Base delay in ms for exponential backoff on request retries.
     pub fn request_retry_backoff_ms(self, ms: u64) -> Self {
         self.with_config(|c| c.request_retry_backoff_ms = ms)
+    }
+
+    /// Keep the agent alive after a benign text-only response for up to `ms`
+    /// milliseconds, listening for peer messages. Wakes on any message visible
+    /// to this agent, or on `cancel_signal`. Default: unset (one-shot).
+    pub fn keep_alive_ms(self, ms: u64) -> Self {
+        self.with_config(|c| c.keep_alive_ms = Some(ms))
+    }
+
+    /// Keep the agent alive indefinitely after a benign text-only response.
+    /// Only the `cancel_signal` (or process exit) will stop the wait.
+    pub fn keep_alive_unlimited(self) -> Self {
+        self.with_config(|c| c.keep_alive_ms = Some(KEEP_ALIVE_UNLIMITED))
     }
 
     /// Override the default behavior prompt.
@@ -538,6 +560,7 @@ pub(crate) struct AgentSpec {
     pub max_schema_retries: Option<u32>,
     pub max_request_retries: u32,
     pub request_retry_backoff_ms: u64,
+    pub keep_alive_ms: Option<u64>,
 }
 
 impl AgentSpec {
@@ -586,6 +609,7 @@ impl AgentSpec {
             max_schema_retries: agent.config.max_schema_retries,
             max_request_retries: agent.config.max_request_retries,
             request_retry_backoff_ms: agent.config.request_retry_backoff_ms,
+            keep_alive_ms: agent.config.keep_alive_ms,
         })
     }
 }
@@ -661,6 +685,7 @@ pub(crate) struct LoopState {
     pub schema_retries: u32,
     pub discovered_tools: HashSet<String>,
     pub structured_output: Option<Value>,
+    pub is_idle: bool,
 }
 
 impl LoopState {
@@ -678,52 +703,46 @@ impl LoopState {
 }
 
 // ---------------------------------------------------------------------------
-// run_loop — the execution loop itself
+// Execution loop — run_loop + its per-turn helpers (guards, provider call,
+// compaction seams, tool execution, completion, transcript, events)
 // ---------------------------------------------------------------------------
 
-/// The agent execution loop.
-///
-/// Each iteration is one "turn": call the LLM, process its response, decide
-/// whether to continue.
+/// The agent execution loop. Each iteration is one "turn":
 ///
 /// ```text
 /// loop {
-///     // 1. GUARD CHECK — can we even start this turn?
-///     //    Check: cancel_signal, max_turns, token_budget
-///     //    If any guard fires → exit with partial output + reason
+///     // 1. GUARDS — cancel_signal / max_turns / max_input_tokens
+///     //    any guard fires → finish_early → EXIT
 ///
-///     // 2. CALL LLM — get the model's response
-///     //    The model returns: text content, tool_use blocks, and a status
+///     // 2. CALL PROVIDER — retry on transient errors; pre-flight
+///     //    ContextWindowExceeded fires compact::trigger_reactive then
+///     //    surfaces the error as Err(ContextWindowExceeded)
 ///
-///     // 3. COMPLETION DECISION — based on what the model returned:
+///     // 3. RECORD — usage + assistant message + transcript
+///
+///     // 4. COMPACTION SEAMS
+///     //    mid-gen ContextWindowExceeded → trigger_reactive
+///     //    estimate ≥ threshold          → trigger_proactive
+///
+///     // 5. DECIDE — see branch matrix in-code:
 ///     //
-///     //    ┌─ ResponseStatus::ToolUse + non-empty tool calls
-///     //    │   → Execute tools, push results to messages, CONTINUE loop
-///     //    │
-///     //    ├─ ResponseStatus::OutputTruncated + no tool calls
-///     //    │   → Model was CUT OFF mid-response (did NOT decide to stop)
-///     //    │   → Send continuation message, CONTINUE loop
-///     //    │
-///     //    ├─ ResponseStatus::ContextWindowExceeded
-///     //    │   → Input too large — EXIT with error
-///     //    │
-///     //    ├─ ResponseStatus::Refused
-///     //    │   → Model declined on safety grounds — EXIT with error
-///     //    │
-///     //    └─ ResponseStatus::EndTurn / StopSequence + no tool calls
-///     //        → Model DECIDED it is finished → EXIT with output
+///     //    ┌─ ToolUse + non-empty calls         → run tools,         CONTINUE
+///     //    ├─ OutputTruncated + empty calls     → send continuation, CONTINUE
+///     //    └─ everything else                   → Path B
+///     //         ┌─ queue drained new msgs?      → CONTINUE
+///     //         ├─ keep_alive_ms set?           → idle+poll,
+///     //         │    woken by message?          → CONTINUE
+///     //         │    cancel or deadline?        → fall through
+///     //         └─ try_finish → Some(output)    → EXIT
+///     //                       → None (schema retry) → CONTINUE
 /// }
 /// ```
 ///
-/// **The fundamental signal is: the model responds without making tool calls
-/// and status is `EndTurn`.** This means the model has nothing left to do —
-/// no files to read, no commands to run, no sub-agents to spawn. It has
-/// completed its task (or believes it has).
-///
-/// `OutputTruncated` is NOT a completion signal — it means the model ran out
-/// of output space. `ToolUse` is NOT a completion signal — it means the model
-/// needs tools to make progress. Only `EndTurn` (with no tool calls) means
-/// the model chose to stop.
+/// The only terminal completion signal is `EndTurn` (or `StopSequence`) with
+/// no tool calls: the model has chosen to stop. `ToolUse` and
+/// `OutputTruncated` both continue the loop; everything else falls through to
+/// `try_finish`, which builds the final output or (under an output schema)
+/// requests another turn.
 pub(crate) fn run_loop(
     runtime: Arc<Runtime>,
     spec: Arc<AgentSpec>,
@@ -767,9 +786,7 @@ pub(crate) fn run_loop(
                 Some((&response.usage, &response.model)),
             );
 
-            // Rare path: model signalled mid-generation overflow via
-            // `model_context_window_exceeded` stop_reason. Route through the
-            // same reactive seam as the pre-flight error.
+            // Mid-generation overflow: same reactive seam as the pre-flight error.
             if response.status == ResponseStatus::ContextWindowExceeded
                 && spec.model.context_window_size.is_some()
             {
@@ -778,13 +795,27 @@ pub(crate) fn run_loop(
 
             compact::trigger_proactive(&runtime, &spec, &mut state).await?;
 
+            // ─ Post-response states ──────────────────────────────────
+            // Five named states route this turn. The first two come from
+            // the response itself; the rest emerge inside Path B as its
+            // side-effectful steps run. The first matching state short-
+            // circuits via `continue` or `return`; if none fires, the
+            // loop emits `TurnEnd` at the bottom and iterates.
+            //
+            //   tool_use_ready          model returned parseable tool calls
+            //   response_truncated      model hit max_tokens with no calls
+            //   ── Path B ───────────────────────────────────────────────
+            //   drain_found_messages    drain surfaced peer/tool messages
+            //   keep_alive_enabled      spec configured the agent to idle+poll
+            //   idle_found_message      idle wait ended because a message arrived
+            //                             (only checked when keep_alive is enabled)
+            //   finished_output         try_finish produced a terminal output
             let tool_use_ready =
                 response.status == ResponseStatus::ToolUse && !tool_calls.is_empty();
             let response_truncated =
                 response.status == ResponseStatus::OutputTruncated && tool_calls.is_empty();
 
             if tool_use_ready {
-                // `ToolUse` with parseable calls: run them and loop.
                 let results = execute_tools(&runtime, &spec, &mut state, &tool_calls).await;
                 state.messages.push(Message::User { content: results });
                 record_transcript(
@@ -795,19 +826,32 @@ pub(crate) fn run_loop(
                 );
                 drain_command_queue(&runtime, &spec, &mut state);
             } else if response_truncated {
-                // `OutputTruncated` with no tool call in flight: ask the
-                // model to continue the text.
                 emit_output_truncated(&runtime, &spec, turn);
                 state
                     .messages
                     .push(Message::user(prompts::MAX_TOKENS_CONTINUATION));
-            } else if let Some(output) = try_finish(&runtime, &spec, &mut state, text)? {
-                // Everything else finalizes: natural `EndTurn`/`StopSequence`,
-                // `Refused`, `ToolUse` without parseable calls (malformed), or
-                // `OutputTruncated` mid-tool-call (can't safely resume a
-                // partial invocation). `try_finish` picks success vs. error.
-                emit_turn_end(&runtime, &spec, turn);
-                return Ok(output);
+            } else {
+                let drain_found_messages = drain_pending_messages(&runtime, &spec, &mut state);
+                if drain_found_messages {
+                    emit_turn_end(&runtime, &spec, turn);
+                    continue;
+                }
+
+                let keep_alive_enabled = spec.keep_alive_ms.is_some();
+                if keep_alive_enabled {
+                    let idle_found_message =
+                        idle_until_message(&runtime, &spec, &mut state).await;
+                    if idle_found_message {
+                        emit_turn_end(&runtime, &spec, turn);
+                        continue;
+                    }
+                }
+
+                let finished_output = try_finish(&runtime, &spec, &mut state, text)?;
+                if let Some(output) = finished_output {
+                    emit_turn_end(&runtime, &spec, turn);
+                    return Ok(output);
+                }
             }
 
             emit_turn_end(&runtime, &spec, turn);
@@ -1058,7 +1102,69 @@ fn drain_command_queue(runtime: &Runtime, spec: &AgentSpec, state: &mut LoopStat
     };
     while let Some(cmd) = queue.dequeue_if(Some(&spec.name), |c| c.priority != QueuePriority::Later)
     {
-        state.messages.push(Message::user(cmd.content));
+        state.messages.push(Message::user(cmd.as_user_message()));
+    }
+}
+
+/// Drain the command queue into `state.messages` and report whether anything
+/// arrived. Used by Path B to decide whether to continue the loop without a
+/// new LLM request.
+fn drain_pending_messages(
+    runtime: &Runtime,
+    spec: &AgentSpec,
+    state: &mut LoopState,
+) -> bool {
+    let before = state.messages.len();
+    drain_command_queue(runtime, spec, state);
+    state.messages.len() > before
+}
+
+/// Park the agent as idle, poll for incoming messages, then emit the resume
+/// event. Returns `true` if a message arrived (loop should continue),
+/// `false` on timeout or cancel (loop should finalize).
+async fn idle_until_message(
+    runtime: &Runtime,
+    spec: &AgentSpec,
+    state: &mut LoopState,
+) -> bool {
+    state.is_idle = true;
+    emit_agent_idle(runtime, spec);
+    let woken = wait_for_message(runtime, spec, state).await;
+    state.is_idle = false;
+    emit_agent_resumed(runtime, spec);
+    woken
+}
+
+/// Park the agent between turn chains, polling the command queue for messages
+/// visible to `spec.name`. Returns `true` if a message arrived (agent should
+/// resume), `false` on timeout or cancel (agent should finalize).
+///
+/// Only called from Path B in `run_loop` when `spec.keep_alive_ms.is_some()` —
+/// `None` is handled as an early return for defensive coding.
+async fn wait_for_message(runtime: &Runtime, spec: &AgentSpec, state: &mut LoopState) -> bool {
+    const POLL_INTERVAL: Duration = Duration::from_millis(100);
+    let deadline = match spec.keep_alive_ms {
+        Some(KEEP_ALIVE_UNLIMITED) => None,
+        Some(ms) => Some(Instant::now() + Duration::from_millis(ms)),
+        None => return false,
+    };
+    loop {
+        if runtime.cancel_signal.load(Ordering::Relaxed) {
+            return false;
+        }
+        let before = state.messages.len();
+        drain_command_queue(runtime, spec, state);
+        if state.messages.len() > before {
+            return true;
+        }
+        match deadline {
+            Some(d) if Instant::now() >= d => return false,
+            Some(d) => {
+                let remaining = d - Instant::now();
+                tokio::time::sleep(POLL_INTERVAL.min(remaining)).await;
+            }
+            None => tokio::time::sleep(POLL_INTERVAL).await,
+        }
     }
 }
 
@@ -1100,6 +1206,14 @@ fn emit_request_end(runtime: &Runtime, spec: &AgentSpec) {
 
 fn emit_output_truncated(runtime: &Runtime, spec: &AgentSpec, turn: u32) {
     emit(runtime, spec, EventKind::OutputTruncated { turn });
+}
+
+fn emit_agent_idle(runtime: &Runtime, spec: &AgentSpec) {
+    emit(runtime, spec, EventKind::AgentIdle);
+}
+
+fn emit_agent_resumed(runtime: &Runtime, spec: &AgentSpec) {
+    emit(runtime, spec, EventKind::AgentResumed);
 }
 
 fn record_transcript(
@@ -1696,6 +1810,273 @@ mod tests {
             "first context before second context"
         );
     }
+
+    // ──────────────────────────────────────────────────────────────────────
+    // keep_alive / idle wait — matrix-driven test suite
+    //
+    // Wake sources (W1-W6):   does a queue item wake an idle listener?
+    // Lifecycle (L1-L6):      do one-shot / timeout / cancel / events behave?
+    // ──────────────────────────────────────────────────────────────────────
+
+    use crate::agent::queue::CommandQueue;
+
+    const AGENT_NAME: &str = "test-agent";
+
+    fn peer_msg(target: Option<&str>, from: &str, content: &str) -> QueuedCommand {
+        QueuedCommand {
+            content: content.into(),
+            priority: QueuePriority::Next,
+            source: CommandSource::PeerMessage {
+                from: from.into(),
+                summary: None,
+            },
+            agent_name: target.map(|s| s.into()),
+        }
+    }
+
+    fn task_notification(target: Option<&str>, content: &str) -> QueuedCommand {
+        QueuedCommand {
+            content: content.into(),
+            priority: QueuePriority::Next,
+            source: CommandSource::TaskNotification {
+                task_id: "task-1".into(),
+            },
+            agent_name: target.map(|s| s.into()),
+        }
+    }
+
+    fn user_input(target: Option<&str>, content: &str) -> QueuedCommand {
+        QueuedCommand {
+            content: content.into(),
+            priority: QueuePriority::Next,
+            source: CommandSource::UserInput,
+            agent_name: target.map(|s| s.into()),
+        }
+    }
+
+    /// Build a harness whose agent name is `AGENT_NAME` and which shares a
+    /// fresh queue we return to the test for direct manipulation.
+    fn listener_harness(provider: Arc<MockProvider>) -> (TestHarness, Arc<CommandQueue>) {
+        let queue = Arc::new(CommandQueue::new());
+        let harness = TestHarness::with_provider_and_queue(provider, queue.clone());
+        (harness, queue)
+    }
+
+    /// Enqueue `cmd` after `delay_ms`. Used to drive wake-during-wait tests.
+    fn enqueue_after(queue: &Arc<CommandQueue>, delay_ms: u64, cmd: QueuedCommand) {
+        let q = queue.clone();
+        tokio::spawn(async move {
+            tokio::time::sleep(std::time::Duration::from_millis(delay_ms)).await;
+            q.enqueue(cmd);
+        });
+    }
+
+    fn two_text_responses() -> Arc<MockProvider> {
+        Arc::new(MockProvider::new(vec![
+            text_response("first"),
+            text_response("second"),
+        ]))
+    }
+
+    // ----- Wake-source matrix -----
+
+    #[tokio::test]
+    async fn wake_on_peer_message_targeted_at_me() {
+        let (harness, queue) = listener_harness(two_text_responses());
+        enqueue_after(&queue, 120, peer_msg(Some(AGENT_NAME), "peer", "hi"));
+
+        let agent = simple_agent().keep_alive_ms(5_000);
+        let output = harness.run_agent(&agent, "hi").await.unwrap();
+
+        assert_eq!(output.statistics.turns, 2, "peer message should wake the listener");
+    }
+
+    #[tokio::test]
+    async fn wake_on_task_notification_broadcast() {
+        let (harness, queue) = listener_harness(two_text_responses());
+        enqueue_after(&queue, 120, task_notification(None, "Task foo completed"));
+
+        let agent = simple_agent().keep_alive_ms(5_000);
+        let output = harness.run_agent(&agent, "hi").await.unwrap();
+
+        assert_eq!(
+            output.statistics.turns, 2,
+            "broadcast task notification should wake the listener"
+        );
+    }
+
+    #[tokio::test]
+    async fn wake_on_user_input_targeted_at_me() {
+        let (harness, queue) = listener_harness(two_text_responses());
+        enqueue_after(&queue, 120, user_input(Some(AGENT_NAME), "hello"));
+
+        let agent = simple_agent().keep_alive_ms(5_000);
+        let output = harness.run_agent(&agent, "hi").await.unwrap();
+
+        assert_eq!(output.statistics.turns, 2, "user input (targeted) should wake the listener");
+    }
+
+    #[tokio::test]
+    async fn wake_on_user_input_broadcast() {
+        let (harness, queue) = listener_harness(two_text_responses());
+        enqueue_after(&queue, 120, user_input(None, "anyone?"));
+
+        let agent = simple_agent().keep_alive_ms(5_000);
+        let output = harness.run_agent(&agent, "hi").await.unwrap();
+
+        assert_eq!(output.statistics.turns, 2, "user input (broadcast) should wake the listener");
+    }
+
+    #[tokio::test]
+    async fn ignores_peer_message_targeted_at_other_agent() {
+        let (harness, queue) = listener_harness(Arc::new(MockProvider::text("done")));
+        enqueue_after(&queue, 120, peer_msg(Some("someone-else"), "peer", "not for you"));
+
+        let agent = simple_agent().keep_alive_ms(400);
+        let t0 = std::time::Instant::now();
+        let output = harness.run_agent(&agent, "hi").await.unwrap();
+        let elapsed = t0.elapsed();
+
+        assert_eq!(output.statistics.turns, 1, "message for another agent must not wake us");
+        assert!(
+            elapsed >= std::time::Duration::from_millis(300),
+            "should have waited the full timeout, elapsed = {elapsed:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn times_out_when_queue_stays_empty() {
+        let (harness, _queue) = listener_harness(Arc::new(MockProvider::text("done")));
+
+        let agent = simple_agent().keep_alive_ms(200);
+        let t0 = std::time::Instant::now();
+        let output = harness.run_agent(&agent, "hi").await.unwrap();
+        let elapsed = t0.elapsed();
+
+        assert_eq!(output.statistics.turns, 1);
+        assert_eq!(output.status, Status::Completed);
+        assert!(
+            elapsed >= std::time::Duration::from_millis(150),
+            "must have waited the timeout, elapsed = {elapsed:?}"
+        );
+        assert!(
+            elapsed < std::time::Duration::from_millis(1500),
+            "must have exited near the timeout, elapsed = {elapsed:?}"
+        );
+    }
+
+    // ----- Lifecycle matrix -----
+
+    #[tokio::test]
+    async fn one_shot_when_keep_alive_unset() {
+        let harness = TestHarness::new(MockProvider::text("done"));
+        let agent = simple_agent();
+        let output = harness.run_agent(&agent, "hi").await.unwrap();
+
+        assert_eq!(output.status, Status::Completed);
+        assert_eq!(output.statistics.turns, 1);
+    }
+
+    #[tokio::test]
+    async fn cancel_interrupts_keep_alive_ms() {
+        let (harness, _queue) = listener_harness(Arc::new(MockProvider::text("done")));
+
+        let cancel = harness.cancel_signal_for_test();
+        tokio::spawn(async move {
+            tokio::time::sleep(std::time::Duration::from_millis(150)).await;
+            cancel.store(true, Ordering::Relaxed);
+        });
+
+        let agent = simple_agent().keep_alive_ms(10_000);
+        let t0 = std::time::Instant::now();
+        let _ = harness.run_agent(&agent, "hi").await.unwrap();
+        let elapsed = t0.elapsed();
+
+        assert!(
+            elapsed < std::time::Duration::from_millis(1_500),
+            "cancel must interrupt the long timeout promptly, elapsed = {elapsed:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn cancel_interrupts_keep_alive_unlimited() {
+        let (harness, _queue) = listener_harness(Arc::new(MockProvider::text("done")));
+
+        let cancel = harness.cancel_signal_for_test();
+        tokio::spawn(async move {
+            tokio::time::sleep(std::time::Duration::from_millis(150)).await;
+            cancel.store(true, Ordering::Relaxed);
+        });
+
+        let agent = simple_agent().keep_alive_unlimited();
+        let t0 = std::time::Instant::now();
+        let _ = harness.run_agent(&agent, "hi").await.unwrap();
+        let elapsed = t0.elapsed();
+
+        assert!(
+            elapsed >= std::time::Duration::from_millis(100),
+            "should have actually waited, elapsed = {elapsed:?}"
+        );
+        assert!(
+            elapsed < std::time::Duration::from_millis(1_500),
+            "should have exited promptly on cancel, elapsed = {elapsed:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn idle_and_resumed_events_fire_in_order() {
+        let (harness, queue) = listener_harness(two_text_responses());
+        enqueue_after(&queue, 120, peer_msg(Some(AGENT_NAME), "peer", "hi"));
+
+        let agent = simple_agent().keep_alive_ms(300);
+        let _ = harness.run_agent(&agent, "hi").await.unwrap();
+
+        let kinds: Vec<&'static str> = harness
+            .events()
+            .all()
+            .iter()
+            .filter_map(|e| match &e.kind {
+                EventKind::AgentIdle => Some("idle"),
+                EventKind::AgentResumed => Some("resumed"),
+                _ => None,
+            })
+            .collect();
+        let first_idle = kinds.iter().position(|k| *k == "idle").expect("idle fired");
+        let first_resumed = kinds.iter().position(|k| *k == "resumed").expect("resumed fired");
+        assert!(first_idle < first_resumed, "idle must precede resumed: {kinds:?}");
+    }
+
+    #[tokio::test]
+    async fn drain_before_exit_picks_up_preloaded_message() {
+        let (harness, queue) = listener_harness(two_text_responses());
+        queue.enqueue(peer_msg(Some(AGENT_NAME), "peer", "pre-loaded"));
+
+        // No keep_alive — the drain-before-exit safety net must still catch it.
+        let agent = simple_agent();
+        let output = harness.run_agent(&agent, "hi").await.unwrap();
+
+        assert_eq!(
+            output.statistics.turns, 2,
+            "drain-before-exit must inject the preloaded message and force a second turn"
+        );
+    }
+
+    #[tokio::test]
+    async fn drains_batch_of_messages_into_one_turn() {
+        let (harness, queue) = listener_harness(two_text_responses());
+        // Preload two messages. Both must arrive in a single drained turn,
+        // not in two separate turns.
+        queue.enqueue(peer_msg(Some(AGENT_NAME), "alice", "first"));
+        queue.enqueue(peer_msg(Some(AGENT_NAME), "bob", "second"));
+
+        let agent = simple_agent().keep_alive_ms(200);
+        let output = harness.run_agent(&agent, "hi").await.unwrap();
+
+        assert_eq!(
+            output.statistics.turns, 2,
+            "two pending messages should drain into ONE additional turn, not two"
+        );
+    }
 }
 
 #[cfg(test)]
@@ -1804,6 +2185,8 @@ mod retry_and_events_tests {
             EventKind::TokenUsage { .. } => "TokenUsage",
             EventKind::OutputTruncated { .. } => "OutputTruncated",
             EventKind::CompactTriggered { .. } => "CompactTriggered",
+            EventKind::AgentIdle => "AgentIdle",
+            EventKind::AgentResumed => "AgentResumed",
         }
     }
 }

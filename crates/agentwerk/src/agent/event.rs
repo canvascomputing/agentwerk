@@ -65,4 +65,6 @@ pub enum EventKind {
         threshold: u64,
         reason: CompactReason,
     },
+    AgentIdle,
+    AgentResumed,
 }
