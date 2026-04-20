@@ -90,7 +90,7 @@ crates/use-cases/src/
     main.rs                 multi-agent deep research with web search
 ```
 
-Integration tests are in `crates/agentwerk/tests/`. Shared helpers (provider setup, event handler, JSON output) are in `tests/common/mod.rs`. Run with `make test_integration`.
+Tests in `crates/agentwerk/tests/` are split by whether they hit a live provider. Mock-driven tests live in `tests/unit/` (bundled by `tests/unit.rs`) and run with `make test`. Real-LLM tests live in `tests/integration/` (bundled by `tests/integration.rs`) and run with `make test_integration`. Shared integration helpers (provider setup, event handler, JSON output) are in `tests/integration/common.rs`.
 Use cases are in `crates/use-cases/src/cli/`. Run with `make use_case name=<name>`.
 
 ## Key conventions

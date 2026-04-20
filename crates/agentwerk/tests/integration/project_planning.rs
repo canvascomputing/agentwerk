@@ -2,7 +2,7 @@
 //!
 //! Exercises: create, update, list, get, delete, claim, add_dependency.
 
-mod common;
+use super::common;
 
 use agentwerk::{Agent, TaskTool};
 

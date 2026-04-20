@@ -6,7 +6,7 @@
 //! original handle, one via a clone), cancels via a third clone on a
 //! spawned task, then awaits `run()`.
 
-mod common;
+use super::common;
 
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};

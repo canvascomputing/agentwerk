@@ -5,7 +5,7 @@
 //! executed: both agents ran, the orchestrator made at least two tool
 //! calls (spawn + send), and the worker completed.
 
-mod common;
+use super::common;
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};

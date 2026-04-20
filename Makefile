@@ -4,18 +4,18 @@
 build:
 	RUSTFLAGS="-D warnings" cargo build
 
-# Run unit tests (warnings are errors)
+# Run unit tests (warnings are errors) — inline `#[cfg(test)]` + mock-driven tests in tests/unit/
 test:
-	RUSTFLAGS="-D warnings" cargo test --lib
+	RUSTFLAGS="-D warnings" cargo test --lib --test unit
 
 # Run integration tests (requires a live LLM LITELLM_PROVIDER)
 # Usage: make test_integration              (run all)
-#        make test_integration name=bash_usage  (run one)
+#        make test_integration name=bash_usage  (run one file)
 test_integration:
 ifdef name
-	RUSTFLAGS="-D warnings" cargo test --test $(name) -- --nocapture
+	RUSTFLAGS="-D warnings" cargo test --test integration $(name) -- --nocapture
 else
-	RUSTFLAGS="-D warnings" cargo test --tests -- --nocapture --test-threads=1
+	RUSTFLAGS="-D warnings" cargo test --test integration -- --nocapture --test-threads=1
 endif
 
 # Format all code
