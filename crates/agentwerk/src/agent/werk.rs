@@ -55,7 +55,6 @@ use super::running::RunningAgent;
 pub struct Agent {
     pub(crate) config: Arc<AgentConfig>,
     pub(crate) runtime: AgentRuntime,
-    pub(crate) prompt_errors: Vec<String>,
 }
 
 /// Immutable agent definition. Shared across clones via `Arc`; changes trigger COW.
@@ -155,6 +154,17 @@ impl AgentRuntime {
     }
 }
 
+fn load_prompt_file(path: PathBuf) -> String {
+    std::fs::read_to_string(&path)
+        .unwrap_or_else(|e| panic!("failed to read prompt file {}: {e}", path.display()))
+}
+
+fn load_json_file(path: PathBuf) -> Value {
+    let content = load_prompt_file(path.clone());
+    serde_json::from_str(&content)
+        .unwrap_or_else(|e| panic!("invalid JSON in {}: {e}", path.display()))
+}
+
 impl Agent {
     /// Default number of retries for transient API errors.
     pub const DEFAULT_MAX_REQUEST_RETRIES: u32 = 3;
@@ -176,31 +186,6 @@ impl Agent {
     fn with_runtime<F: FnOnce(&mut AgentRuntime)>(mut self, f: F) -> Self {
         f(&mut self.runtime);
         self
-    }
-
-    fn read_file(&mut self, path: PathBuf) -> String {
-        match std::fs::read_to_string(&path) {
-            Ok(s) => s,
-            Err(err) => {
-                self.prompt_errors
-                    .push(format!("Failed to read prompt from {}: {}", path.display(), err));
-                String::new()
-            }
-        }
-    }
-
-    fn read_json_file(&mut self, path: PathBuf) -> Option<Value> {
-        let content = self.read_file(path);
-        if content.is_empty() {
-            return None;
-        }
-        match serde_json::from_str(&content) {
-            Ok(v) => Some(v),
-            Err(e) => {
-                self.prompt_errors.push(format!("invalid JSON: {e}"));
-                None
-            }
-        }
     }
 
     // --- Definition (static) builders — route through with_config ---
@@ -236,8 +221,8 @@ impl Agent {
     }
 
     /// Load the identity prompt from a file.
-    pub fn identity_prompt_file(mut self, path: impl Into<PathBuf>) -> Self {
-        let s = self.read_file(path.into());
+    pub fn identity_prompt_file(self, path: impl Into<PathBuf>) -> Self {
+        let s = load_prompt_file(path.into());
         self.with_config(|c| c.identity_prompt = s)
     }
 
@@ -261,24 +246,16 @@ impl Agent {
         self.with_config(|c| c.tools.register(tool))
     }
 
-    /// Register a structured output schema. Invalid schemas surface as an
-    /// error at `run()` time.
-    pub fn output_schema(mut self, schema: Value) -> Self {
-        match OutputSchema::new(schema) {
-            Ok(s) => self.with_config(|c| c.output_schema = Some(s)),
-            Err(e) => {
-                self.prompt_errors.push(format!("invalid output schema: {e}"));
-                self
-            }
-        }
+    /// Register a structured output schema. Panics if the schema is invalid.
+    pub fn output_schema(self, schema: Value) -> Self {
+        let schema =
+            OutputSchema::new(schema).unwrap_or_else(|e| panic!("invalid output schema: {e}"));
+        self.with_config(|c| c.output_schema = Some(schema))
     }
 
     /// Load a structured output schema from a JSON file.
-    pub fn output_schema_file(mut self, path: impl Into<PathBuf>) -> Self {
-        match self.read_json_file(path.into()) {
-            Some(schema) => self.output_schema(schema),
-            None => self,
-        }
+    pub fn output_schema_file(self, path: impl Into<PathBuf>) -> Self {
+        self.output_schema(load_json_file(path.into()))
     }
 
     /// Maximum retries for structured output compliance. Default is 10.
@@ -316,8 +293,8 @@ impl Agent {
     }
 
     /// Load a behavior prompt override from a file.
-    pub fn behavior_prompt_file(mut self, path: impl Into<PathBuf>) -> Self {
-        let content = self.read_file(path.into());
+    pub fn behavior_prompt_file(self, path: impl Into<PathBuf>) -> Self {
+        let content = load_prompt_file(path.into());
         self.with_config(|c| c.behavior_prompt = content)
     }
 
@@ -328,8 +305,8 @@ impl Agent {
     }
 
     /// Append additional context from a file.
-    pub fn context_prompt_file(mut self, path: impl Into<PathBuf>) -> Self {
-        let content = self.read_file(path.into());
+    pub fn context_prompt_file(self, path: impl Into<PathBuf>) -> Self {
+        let content = load_prompt_file(path.into());
         self.with_config(|c| c.context_prompts.push(content))
     }
 
@@ -360,8 +337,8 @@ impl Agent {
     }
 
     /// Load the instruction prompt from a file.
-    pub fn instruction_prompt_file(mut self, path: impl Into<PathBuf>) -> Self {
-        let s = self.read_file(path.into());
+    pub fn instruction_prompt_file(self, path: impl Into<PathBuf>) -> Self {
+        let s = load_prompt_file(path.into());
         self.with_runtime(|r| r.instruction_prompt = s)
     }
 
@@ -408,7 +385,6 @@ impl Agent {
 
     /// Execute this agent to completion. Requires `.provider()` and `.instruction_prompt()`.
     pub async fn run(&self) -> Result<AgentOutput> {
-        self.check_prompt_errors()?;
         let runtime = LoopRuntime::from_agent(self)?;
         let spec = AgentSpec::compile(self, &runtime, None)?;
         run_loop(Arc::new(runtime), Arc::new(spec), None).await
@@ -440,7 +416,6 @@ impl Agent {
         parent_model: &Model,
         description: Option<String>,
     ) -> Result<AgentOutput> {
-        self.check_prompt_errors()?;
         let runtime = parent_runtime.inherit(self);
         let spec = AgentSpec::compile(self, &runtime, Some(parent_model))?;
         run_loop(Arc::new(runtime), Arc::new(spec), description).await
@@ -454,14 +429,6 @@ impl Agent {
         spec: Arc<AgentSpec>,
     ) -> Result<AgentOutput> {
         run_loop(runtime, spec, None).await
-    }
-
-    fn check_prompt_errors(&self) -> Result<()> {
-        if self.prompt_errors.is_empty() {
-            Ok(())
-        } else {
-            Err(AgenticError::Other(self.prompt_errors.join("; ")))
-        }
     }
 
     /// Apply LLM-supplied JSON overrides for any Agent field a tool can
@@ -1661,16 +1628,15 @@ mod tests {
 
         let agent = Agent::new().identity_prompt_file(&path);
         assert_eq!(agent.config.identity_prompt, "You are a test agent");
-        assert!(agent.prompt_errors.is_empty());
 
         std::fs::remove_file(&path).ok();
         std::fs::remove_dir(&dir).ok();
     }
 
     #[test]
-    fn missing_prompt_file_surfaces_at_run() {
-        let agent = Agent::new().identity_prompt_file("/nonexistent/xxx.txt");
-        assert_eq!(agent.prompt_errors.len(), 1);
+    #[should_panic(expected = "failed to read prompt file")]
+    fn missing_prompt_file_panics() {
+        let _ = Agent::new().identity_prompt_file("/nonexistent/xxx.txt");
     }
 
     #[test]
@@ -1685,7 +1651,6 @@ mod tests {
         .unwrap();
 
         let agent = Agent::new().output_schema_file(&path);
-        assert!(agent.prompt_errors.is_empty());
         assert!(agent.config.output_schema.is_some());
 
         std::fs::remove_file(&path).ok();
@@ -1693,18 +1658,18 @@ mod tests {
     }
 
     #[test]
-    fn output_schema_file_missing_file_surfaces_error() {
-        let agent = Agent::new().output_schema_file("/nonexistent/schema.json");
-        assert_eq!(agent.prompt_errors.len(), 1);
+    #[should_panic(expected = "failed to read prompt file")]
+    fn output_schema_file_missing_file_panics() {
+        let _ = Agent::new().output_schema_file("/nonexistent/schema.json");
     }
 
     #[test]
-    fn invalid_output_schema_surfaces_as_prompt_error() {
-        let agent = Agent::new()
+    #[should_panic(expected = "invalid output schema")]
+    fn invalid_output_schema_panics() {
+        let _ = Agent::new()
             .name("test")
             .identity_prompt("")
             .output_schema(serde_json::json!({"type": "string"}));
-        assert_eq!(agent.prompt_errors.len(), 1);
     }
 
     #[tokio::test]
