@@ -1,15 +1,15 @@
 use crate::agent::compact::CompactReason;
-use crate::agent::output::Status;
+use crate::agent::output::AgentStatus;
 use crate::provider::types::TokenUsage;
 
 #[derive(Debug, Clone)]
-pub struct Event {
+pub struct AgentEvent {
     pub agent_name: String,
-    pub kind: EventKind,
+    pub kind: AgentEventKind,
 }
 
-impl Event {
-    pub(crate) fn new(agent_name: impl Into<String>, kind: EventKind) -> Self {
+impl AgentEvent {
+    pub(crate) fn new(agent_name: impl Into<String>, kind: AgentEventKind) -> Self {
         Self {
             agent_name: agent_name.into(),
             kind,
@@ -18,13 +18,13 @@ impl Event {
 }
 
 #[derive(Debug, Clone)]
-pub enum EventKind {
+pub enum AgentEventKind {
     AgentStart {
         description: Option<String>,
     },
     AgentEnd {
         turns: u32,
-        status: Status,
+        status: AgentStatus,
     },
     TurnStart {
         turn: u32,

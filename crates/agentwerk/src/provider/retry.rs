@@ -1,9 +1,3 @@
-/// Default number of retries for transient API errors.
-pub(crate) const DEFAULT_MAX_REQUEST_RETRIES: u32 = 3;
-
-/// Default base delay in milliseconds for exponential backoff.
-pub(crate) const DEFAULT_BACKOFF_MS: u64 = 10_000;
-
 /// Compute the delay before the next retry attempt.
 ///
 /// Uses exponential backoff: `backoff_ms * 2^attempt`, with ±20% jitter.

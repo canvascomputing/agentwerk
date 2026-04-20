@@ -1,11 +1,11 @@
 //! Context-window compaction seam. Two triggers are wired into the agent
 //! loop: [`trigger_if_over_threshold`] (estimate ≥ threshold) and
 //! [`trigger_reactive`] (provider-reported overflow). Both emit a
-//! [`EventKind::CompactTriggered`] event and call [`run`], which is a stub
+//! [`AgentEventKind::CompactTriggered`] event and call [`run`], which is a stub
 //! today.
 
-use crate::agent::event::{Event, EventKind};
-use crate::agent::werk::{AgentSpec, LoopState, Runtime};
+use crate::agent::event::{AgentEvent, AgentEventKind};
+use crate::agent::werk::{AgentSpec, LoopState, LoopRuntime};
 use crate::error::{AgenticError, Result};
 use crate::provider::types::{ContentBlock, Message};
 
@@ -13,23 +13,6 @@ use crate::provider::types::{ContentBlock, Message};
 pub enum CompactReason {
     Proactive,
     Reactive,
-}
-
-/// Tokens set aside for the model's response. The context window holds
-/// input + output combined, so input must leave at least this much room
-/// for the next reply. Treated as an upper bound on one response.
-pub const RESERVED_RESPONSE_TOKENS: u64 = 20_000;
-
-/// Headroom reserved below the hard window limit so compaction has room to
-/// fire *and* finish before the real overflow. Also absorbs drift in the
-/// `bytes / 4` token estimate, which usually under-counts code and JSON.
-pub const COMPACTION_HEADROOM_TOKENS: u64 = 13_000;
-
-/// Token count at which proactive compaction fires, given a context window size.
-pub fn threshold_for_context_window_size(context_window_size: u64) -> u64 {
-    context_window_size
-        .saturating_sub(RESERVED_RESPONSE_TOKENS)
-        .saturating_sub(COMPACTION_HEADROOM_TOKENS)
 }
 
 /// Estimate of the next request's input-token count: last API response's
@@ -66,25 +49,24 @@ fn text_bytes_in_content_block(block: &ContentBlock) -> usize {
     }
 }
 
-/// Proactive seam: emit [`EventKind::CompactTriggered`] and invoke [`run`]
+/// Proactive seam: emit [`AgentEventKind::CompactTriggered`] and invoke [`run`]
 /// when the estimated next-request size crosses the threshold. No-op when
 /// the agent's model has no known context window size.
 pub(crate) async fn trigger_if_over_threshold(
-    runtime: &Runtime,
+    runtime: &LoopRuntime,
     spec: &AgentSpec,
     state: &mut LoopState,
 ) -> Result<()> {
-    let Some(window_size) = spec.model.context_window_size else {
+    let Some(threshold) = spec.model.compact_threshold() else {
         return Ok(());
     };
-    let threshold = threshold_for_context_window_size(window_size);
     let tokens = estimate_next_request_tokens(state);
     if tokens < threshold {
         return Ok(());
     }
-    (runtime.event_handler)(Event::new(
+    (runtime.event_handler)(AgentEvent::new(
         spec.name.clone(),
-        EventKind::CompactTriggered {
+        AgentEventKind::CompactTriggered {
             turn: state.turn,
             token_count: tokens,
             threshold,
@@ -94,19 +76,19 @@ pub(crate) async fn trigger_if_over_threshold(
     run(runtime, spec, state, CompactReason::Proactive).await
 }
 
-/// Reactive seam: emit [`EventKind::CompactTriggered`] (sentinel token
+/// Reactive seam: emit [`AgentEventKind::CompactTriggered`] (sentinel token
 /// count / threshold of `0`) and invoke [`run`]. Fired when the provider
 /// itself reports a context-window overflow — either pre-flight or
 /// mid-generation.
 pub(crate) async fn trigger_reactive(
-    runtime: &Runtime,
+    runtime: &LoopRuntime,
     spec: &AgentSpec,
     state: &mut LoopState,
     turn: u32,
 ) -> Result<()> {
-    (runtime.event_handler)(Event::new(
+    (runtime.event_handler)(AgentEvent::new(
         spec.name.clone(),
-        EventKind::CompactTriggered {
+        AgentEventKind::CompactTriggered {
             turn,
             token_count: 0,
             threshold: 0,
@@ -119,7 +101,7 @@ pub(crate) async fn trigger_reactive(
 /// Compact `state.messages` in place. Not yet implemented — returns
 /// `AgenticError::NotImplemented` so callers see the trigger fired.
 pub(crate) async fn run(
-    _runtime: &Runtime,
+    _runtime: &LoopRuntime,
     _spec: &AgentSpec,
     _state: &mut LoopState,
     _reason: CompactReason,
@@ -130,17 +112,6 @@ pub(crate) async fn run(
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn threshold_200k_model() {
-        assert_eq!(threshold_for_context_window_size(200_000), 167_000);
-    }
-
-    #[test]
-    fn threshold_saturates_on_tiny_window() {
-        assert_eq!(threshold_for_context_window_size(100), 0);
-        assert_eq!(threshold_for_context_window_size(0), 0);
-    }
 
     #[test]
     fn estimate_scales_with_message_size() {

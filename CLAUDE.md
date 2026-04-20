@@ -39,34 +39,37 @@ crates/agentwerk/src/
 
   provider/
     mod.rs                re-exports
-    trait.rs              Provider trait, CompletionRequest, ToolChoice, prewarm_connection
-    types.rs              Message, ContentBlock, TokenUsage, StopReason, ModelResponse, StreamEvent
-    model.rs              ModelSpec (Exact, Inherit)
+    trait.rs              Provider trait, CompletionRequest, ToolChoice, prewarm_with
+    types.rs              Message, ContentBlock, TokenUsage, ResponseStatus, CompletionResponse, StreamEvent
+    model.rs              Model (compact_threshold, RESERVED_RESPONSE_TOKENS, COMPACTION_HEADROOM_TOKENS), ModelSpec (Exact, Inherit)
     anthropic.rs          AnthropicProvider (with SSE streaming)
     openai.rs             OpenAiProvider (with SSE streaming; includes litellm/mistral constructors)
+    litellm.rs            LiteLlmProvider
+    mistral.rs            MistralProvider
+    environment.rs        from_env (provider auto-detection from env vars)
     stream.rs             StreamParser, SseEvent (streaming response parser)
-    retry.rs              compute_delay, DEFAULT_MAX_REQUEST_RETRIES, DEFAULT_BACKOFF_MS
+    retry.rs              compute_delay (associated consts live on Agent)
 
   agent/
     mod.rs                re-exports
-    werk.rs               Agent (config+runtime split), Runtime, AgentSpec, LoopState, run_loop
-    event.rs              Event enum (AgentStart carries description for spawned children)
-    output.rs             AgentOutput, OutputSchema, parse_and_validate
-    prompts.rs            DEFAULT_BEHAVIOR_PROMPT, interpolate, collect_metadata
-    pool.rs               AgentPool, PoolStrategy, JobId (dynamic execution with concurrency control)
+    werk.rs               Agent (Agent::DEFAULT_MAX_REQUEST_RETRIES / DEFAULT_BACKOFF_MS, AgentConfig + AgentRuntime split), LoopRuntime (LoopRuntime::interpolate, LoopRuntime::environment), AgentSpec, LoopState, run_loop
+    event.rs              AgentEvent enum (AgentStart carries description for spawned children)
+    output.rs             AgentOutput, AgentStatus, OutputSchema (validate, retry_message)
+    prompts.rs            DEFAULT_BEHAVIOR_PROMPT and structured-output constants
+    pool.rs               AgentPool, AgentPoolStrategy, AgentJobId (dynamic execution with concurrency control)
     queue.rs              CommandQueue, QueuePriority, QueuedCommand (internal)
 
   tools/
     mod.rs                re-exports
-    tool.rs               Tool trait, ToolRegistry, ToolContext, ToolBuilder, execute_tool_calls
+    tool.rs               Tool trait, ToolRegistry (ToolRegistry::execute), ToolContext, ToolBuilder
     read_file.rs          ReadFileTool
     write_file.rs         WriteFileTool
     edit_file.rs          EditFileTool
     glob.rs               GlobTool
     grep.rs               GrepTool
     list_directory.rs     ListDirectoryTool
-    bash.rs               BashTool (pattern-restricted via new(), unrestricted via unrestricted())
-    util.rs               glob_match, run_shell_command, DEFAULT_TIMEOUT_MS, MAX_TIMEOUT_MS
+    bash.rs               BashTool (DEFAULT_TIMEOUT_MS, MAX_TIMEOUT_MS associated consts; pattern-restricted via new(), unrestricted via unrestricted())
+    util.rs               glob_match, run_shell_command
     tool_search.rs        ToolSearchTool
     spawn_agent.rs        SpawnAgentTool
     send_message.rs       SendMessageTool (peer agent messaging via CommandQueue)
@@ -77,7 +80,7 @@ crates/agentwerk/src/
     session.rs            SessionStore (JSONL transcripts)
     task.rs               TaskStore (file-based with locking)
 
-  testutil.rs             MockProvider, MockTool, TestHarness, EventCollector
+  testutil.rs             MockProvider, MockTool, TestHarness, AgentEventCollector
 
 crates/use-cases/src/
   lib.rs                    shared provider detection, env helpers
@@ -93,23 +96,53 @@ Use cases are in `crates/use-cases/src/cli/`. Run with `make use_case name=<name
 ## Key conventions
 
 - **No new dependencies without asking.** The crate is intentionally minimal (tokio, serde, serde_json, libc, reqwest, futures-util). Providers own a `reqwest::Client` directly — no transport abstraction.
-- **No ad-hoc changes to critical types without a plan.** These types form the public API and are used across the entire codebase: `Agent`, `ToolContext`, `Event`, `Tool` trait, `CompletionRequest`, `AgentOutput`, `AgentPool`. Propose changes in a plan first.
-- **Tools capture dependencies at construction time** via closures or struct fields. The internal `ToolContext` handles (`runtime: Arc<Runtime>`, `caller_spec: Arc<AgentSpec>`) exist solely for the agent loop to give `SpawnAgentTool` / `ToolSearchTool` read access to loop state — do not use them for new tools.
-- **`tools/tool.rs` vs `tools/`**: `tool.rs` defines the trait and infrastructure (Tool, ToolRegistry, ToolBuilder, execute_tool_calls). Other files in `tools/` are concrete implementations.
-- **`agent/` vs `provider/` vs `persistence/`**: `agent/` contains the agent definition (`Agent`), execution loop (`Runtime` / `AgentSpec` / `LoopState` / `run_loop`), events, output, and prompts. `provider/` contains LLM communication and estimated costs. `persistence/` contains internal disk storage (session transcripts, tasks).
+- **No ad-hoc changes to critical types without a plan.** These types form the public API and are used across the entire codebase: `Agent`, `ToolContext`, `AgentEvent`, `Tool` trait, `CompletionRequest`, `AgentOutput`, `AgentPool`. Propose changes in a plan first.
+- **Tools capture dependencies at construction time** via closures or struct fields. The internal `ToolContext` handles (`runtime: Arc<LoopRuntime>`, `caller_spec: Arc<AgentSpec>`) exist solely for the agent loop to give `SpawnAgentTool` / `ToolSearchTool` read access to loop state — do not use them for new tools.
+- **`tools/tool.rs` vs `tools/`**: `tool.rs` defines the trait and infrastructure (Tool, ToolRegistry, ToolBuilder). Other files in `tools/` are concrete implementations.
+- **`agent/` vs `provider/` vs `persistence/`**: `agent/` contains the agent definition (`Agent`), execution loop (`LoopRuntime` / `AgentSpec` / `LoopState` / `run_loop`), events, output, and prompts. `provider/` contains LLM communication and estimated costs. `persistence/` contains internal disk storage (session transcripts, tasks).
 - **`_file` variants**: All prompt builder methods (`identity_prompt`, `instruction_prompt`, `behavior_prompt`, `context_prompt`) and `output_schema` have `_file` counterparts (e.g. `identity_prompt_file(path)`, `output_schema_file(path)`) that load content from disk. File-read errors are collected on the `Agent` and surfaced when `run()` is called.
 - **Tests live inline** in each module as `#[cfg(test)] mod tests`. Use `MockProvider` and `TestHarness` from `testutil.rs`.
 
 ## Naming conventions
 
-- **Builder methods**: bare nouns or compound nouns. No `with_` prefix.
+### Type names
+
+**The rule: domain-prefix any type whose bare name would be too generic to read self-documenting.** Visibility (pub vs pub(crate)) does NOT change this — both crate users and crate authors benefit from self-documenting names.
+
+- **Generic single-word nouns always get the prefix.** `Status`, `Config`, `Output`, `Pool`, `Spec`, `Runtime`, `Statistics`, `Event`, `EventKind` are too vague on their own. They become `AgentStatus`, `AgentConfig`, `AgentOutput`, `AgentPool`, `AgentSpec`, `AgentRuntime`, `LoopRuntime`, `AgentStatistics`, `AgentEvent`, `AgentEventKind`.
+- **Inherently specific compounds stand alone.** `LoopState`, `OutputSchema`, `CompactReason`, `CompletionRequest`, `CompletionResponse`, `TokenUsage`, `ContentBlock`, `StreamEvent`, `ToolCall`, `ToolRegistry`, `ResponseStatus`, `CommandQueue`, `SessionStore`, `TaskStore`, `ModelSpec`, `ModelLookup`, `ProviderError`, `ProviderResult` already say what they are.
+- **Vendor-prefixed types** follow the same logic — `AnthropicProvider`, `OpenAiProvider`, `MistralProvider`, `LiteLlmProvider`, `BashTool`, `ReadFileTool`. The prefix disambiguates which thing.
+- **Acronyms follow Rust API guidelines**: `LiteLlmProvider`, not `LiteLLMProvider`. Already consistent: `OpenAiProvider`.
+- **Two structs may not share a bare name in one module.** When that would happen (e.g. `LoopRuntime` next to `AgentRuntime`), keep both qualified — don't use a domain prefix as a tiebreaker for one.
+
+**Documented exceptions** (kept against the rule, deliberately):
+- `Message` (re-exported at root) — Anthropic API convention; "message" in an LLM crate is unambiguous and rename cost is high.
+- `Result` (re-exported at root) — Rust idiom: crate-level `Result` aliases (`std::io::Result`, `anyhow::Result`) are standard; `agentwerk::Result` follows suit.
+- `Agent` (re-exported at root) — THE central type; carries the crate name as its noun, no prefix needed.
+
+### Builder methods
+
+- Bare nouns or compound nouns. No `with_` prefix.
   Exception: when the method name clashes with a trait method (e.g. `with_description` on BashTool).
   Examples: `.name()`, `.model()`, `.tool()`, `.sub_agents()`, `.read_only()`.
-- **Constructors**: `new()` for the primary/simple constructor. `with_client()` for custom-client variants. Named constructors for semantics: `open()`, `unrestricted()`, `success()`, `error()`, `empty()`.
-- **Getters/setters on mutable refs**: `set_`/`get_` prefix to distinguish from builder methods.
-  Example: `set_extension()`, `get_extension()`.
-- **Free functions**: snake_case. Example: `execute_tool_calls()`, `prewarm_connection()`.
-- **Tool structs**: `{Name}Tool`. Example: `ReadFileTool`, `BashTool`, `SpawnAgentTool`.
+
+### Constructors
+
+- `new()` for the primary/simple constructor.
+- `with_client()` for custom-client variants.
+- Named constructors for semantics: `open()`, `unrestricted()`, `success()`, `error()`, `empty()`, `from_id()`, `from_env()`.
+
+### Getters / setters on mutable refs
+
+- `set_` / `get_` prefix to distinguish from builder methods. Example: `set_extension()`, `get_extension()`.
+
+### Free functions
+
+- snake_case, reserved for cases without a natural receiver type. Most operations live as methods on their owning type — `OutputSchema::validate`, `ToolRegistry::execute`, `Model::compact_threshold`, `LoopRuntime::interpolate`.
+
+### Tool structs
+
+- `{Name}Tool`. Example: `ReadFileTool`, `BashTool`, `SpawnAgentTool`.
 
 ## README conventions
 

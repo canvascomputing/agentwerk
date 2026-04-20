@@ -5,7 +5,7 @@ use serde_json::Value;
 
 use crate::error::Result;
 use crate::tools::tool::{Tool, ToolContext, ToolResult};
-use crate::tools::util::{glob_match, run_shell_command, DEFAULT_TIMEOUT_MS, MAX_TIMEOUT_MS};
+use crate::tools::util::{glob_match, run_shell_command};
 
 /// Shell command execution tool restricted to commands matching a glob pattern.
 pub struct BashTool {
@@ -16,6 +16,12 @@ pub struct BashTool {
 }
 
 impl BashTool {
+    /// Default per-command timeout when the model omits `timeout_ms`.
+    pub const DEFAULT_TIMEOUT_MS: u64 = 120_000;
+
+    /// Maximum per-command timeout the model is allowed to request.
+    pub const MAX_TIMEOUT_MS: u64 = 600_000;
+
     /// Create a new `BashTool` with the given `name` that only permits
     /// commands matching `pattern`.
     pub fn new(name: &str, pattern: &str) -> Self {
@@ -26,7 +32,9 @@ impl BashTool {
             "Executes a bash command matching the pattern `{pattern}`.\n\
              Only commands that match this pattern are allowed. Other commands will be rejected.\n\n\
              The command is executed via `sh -c` in the working directory.\n\
-             You may specify an optional timeout in milliseconds (default: {DEFAULT_TIMEOUT_MS}, max: {MAX_TIMEOUT_MS})."
+             You may specify an optional timeout in milliseconds (default: {default}, max: {max}).",
+            default = Self::DEFAULT_TIMEOUT_MS,
+            max = Self::MAX_TIMEOUT_MS,
         );
 
         Self {
@@ -69,7 +77,7 @@ impl Tool for BashTool {
                 },
                 "timeout_ms": {
                     "type": "integer",
-                    "description": format!("Optional timeout in milliseconds (default: {DEFAULT_TIMEOUT_MS})")
+                    "description": format!("Optional timeout in milliseconds (default: {})", Self::DEFAULT_TIMEOUT_MS)
                 }
             },
             "required": ["command"]
@@ -101,7 +109,7 @@ impl Tool for BashTool {
             let timeout_ms = input
                 .get("timeout_ms")
                 .and_then(|v| v.as_u64())
-                .unwrap_or(DEFAULT_TIMEOUT_MS);
+                .unwrap_or(Self::DEFAULT_TIMEOUT_MS);
 
             Ok(run_shell_command(command, &ctx.working_directory, timeout_ms).await)
         })
@@ -125,7 +133,7 @@ IMPORTANT: Avoid using this tool when a dedicated tool exists:
 # Instructions
 - Always quote file paths that contain spaces with double quotes.
 - Try to maintain your current working directory by using absolute paths.
-- You may specify an optional timeout in milliseconds (default: {DEFAULT_TIMEOUT_MS}, max: {MAX_TIMEOUT_MS}).
+- You may specify an optional timeout in milliseconds (default: {default}, max: {max}).
 
 When issuing multiple commands:
 - If commands are independent, make multiple tool calls in parallel.
@@ -135,7 +143,9 @@ When issuing multiple commands:
 # Anti-patterns
 - Do not sleep between commands that can run immediately.
 - Do not retry failing commands in a sleep loop — diagnose the root cause.
-- Do not use interactive flags (-i) as they require input which is not supported."
+- Do not use interactive flags (-i) as they require input which is not supported.",
+            default = Self::DEFAULT_TIMEOUT_MS,
+            max = Self::MAX_TIMEOUT_MS,
         ))
     }
 }

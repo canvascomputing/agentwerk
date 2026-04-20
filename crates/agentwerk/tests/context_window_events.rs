@@ -19,9 +19,17 @@ use std::sync::Arc;
 use agentwerk::provider::types::ResponseStatus;
 use agentwerk::testutil::{text_response, tool_response, MockProvider, MockTool, TestHarness};
 use agentwerk::{
-    compact_threshold_for_context_window_size, Agent, AgenticError, CompactReason,
-    CompletionRequest, ContentBlock, Event, EventKind, Message, ProviderError, TokenUsage,
+    Agent, AgenticError, CompactReason, CompletionRequest, ContentBlock, AgentEvent, AgentEventKind,
+    Message, Model, ProviderError, TokenUsage,
 };
+
+/// Local helper: compact threshold for a known window size, used by these tests.
+fn compact_threshold(window: u64) -> u64 {
+    Model::from_id("unknown")
+        .with_context_window_size(Some(window))
+        .compact_threshold()
+        .expect("explicit window size always yields a threshold")
+}
 
 // ---------------------------------------------------------------------------
 // Expected states — one constant per node in the state machine
@@ -165,14 +173,14 @@ async fn state_machine_advances_one_turn_at_a_time() {
 // ---------------------------------------------------------------------------
 
 /// Context window used by the proactive tests. Paired with
-/// `compact_threshold_for_context_window_size(CONTEXT_WINDOW_SIZE)` so the
+/// `compact_threshold(CONTEXT_WINDOW_SIZE)` so the
 /// relationship between window, threshold, and usage is spelled out in
 /// every test body.
 const CONTEXT_WINDOW_SIZE: u64 = 50_000;
 
 #[tokio::test]
 async fn proactive_compact_fires_when_threshold_crossed() {
-    let threshold = compact_threshold_for_context_window_size(CONTEXT_WINDOW_SIZE);
+    let threshold = compact_threshold(CONTEXT_WINDOW_SIZE);
     let mut response = text_response("done");
     response.usage = TokenUsage {
         input_tokens: threshold + 1_000,
@@ -279,8 +287,8 @@ async fn sub_agent_compaction_uses_own_model_window() {
     // Each one's CompactTriggered event should reflect its own threshold,
     // and the `event.agent_name` should match the emitter — proving windows
     // don't leak across the parent/child boundary.
-    let parent_threshold = compact_threshold_for_context_window_size(200_000);
-    let child_threshold = compact_threshold_for_context_window_size(50_000);
+    let parent_threshold = compact_threshold(200_000);
+    let child_threshold = compact_threshold(50_000);
 
     let child = Agent::new()
         .name("child")
@@ -334,7 +342,7 @@ async fn sub_agent_compaction_uses_own_model_window() {
     let child_event = events
         .iter()
         .find_map(|e| match &e.kind {
-            EventKind::CompactTriggered {
+            AgentEventKind::CompactTriggered {
                 threshold, reason, ..
             } if e.agent_name == "child" => Some((*threshold, *reason)),
             _ => None,
@@ -343,7 +351,7 @@ async fn sub_agent_compaction_uses_own_model_window() {
     let parent_event = events
         .iter()
         .find_map(|e| match &e.kind {
-            EventKind::CompactTriggered {
+            AgentEventKind::CompactTriggered {
                 threshold, reason, ..
             } if e.agent_name == "parent" => Some((*threshold, *reason)),
             _ => None,
@@ -358,7 +366,7 @@ async fn sub_agent_compaction_uses_own_model_window() {
 async fn registry_populates_context_window_for_known_model_id() {
     // `.model("claude-…")` consults the built-in registry via Model::from_id,
     // so the compaction seam fires at the threshold derived from 200k.
-    let expected_threshold = compact_threshold_for_context_window_size(200_000);
+    let expected_threshold = compact_threshold(200_000);
     let mut response = text_response("done");
     response.usage = TokenUsage {
         input_tokens: expected_threshold + 1_000,
@@ -384,7 +392,7 @@ async fn registry_populates_context_window_for_known_model_id() {
 async fn model_with_context_window_size_bypasses_registry() {
     // The override lets callers name any id (private proxy, local deployment)
     // and set the window explicitly — without touching the registry.
-    let expected_threshold = compact_threshold_for_context_window_size(30_000);
+    let expected_threshold = compact_threshold(30_000);
     let mut response = text_response("done");
     response.usage = TokenUsage {
         input_tokens: expected_threshold + 500,
@@ -518,11 +526,11 @@ fn replace_value_with_placeholder(line: &str) -> String {
     format!("{key}: <{placeholder}>")
 }
 
-fn compact_reasons(events: &[Event]) -> Vec<CompactReason> {
+fn compact_reasons(events: &[AgentEvent]) -> Vec<CompactReason> {
     events
         .iter()
         .filter_map(|e| match e.kind {
-            EventKind::CompactTriggered { reason, .. } => Some(reason),
+            AgentEventKind::CompactTriggered { reason, .. } => Some(reason),
             _ => None,
         })
         .collect()
@@ -531,11 +539,11 @@ fn compact_reasons(events: &[Event]) -> Vec<CompactReason> {
 /// Extract `(turn, token_count, threshold, reason)` of the first
 /// `CompactTriggered` event. Panics if none was emitted — callers use this
 /// when the event is the behavior under test.
-fn first_compact(events: &[Event]) -> (u32, u64, u64, CompactReason) {
+fn first_compact(events: &[AgentEvent]) -> (u32, u64, u64, CompactReason) {
     events
         .iter()
         .find_map(|e| match e.kind {
-            EventKind::CompactTriggered {
+            AgentEventKind::CompactTriggered {
                 turn,
                 token_count,
                 threshold,

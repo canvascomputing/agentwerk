@@ -2,7 +2,7 @@
 //!
 //! `AgentPool` takes already-configured `Agent`s. Jobs can be pushed while the
 //! pool is running; results are consumed via `next()` (streaming) or `drain()`
-//! (collect all). Ordering of results is controlled by `PoolStrategy`.
+//! (collect all). Ordering of results is controlled by `AgentPoolStrategy`.
 
 use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -18,11 +18,11 @@ use super::werk::Agent;
 
 const DEFAULT_BATCH_SIZE: usize = 10;
 
-pub type JobId = u64;
+pub type AgentJobId = u64;
 
 /// Controls the order in which `next()` / `drain()` yield results.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum PoolStrategy {
+pub enum AgentPoolStrategy {
     /// Results are yielded as agents finish. An agent that completes
     /// earlier is returned before one spawned earlier. Default.
     CompletionOrder,
@@ -32,7 +32,7 @@ pub enum PoolStrategy {
     SpawnOrder,
 }
 
-impl Default for PoolStrategy {
+impl Default for AgentPoolStrategy {
     fn default() -> Self {
         Self::CompletionOrder
     }
@@ -43,26 +43,26 @@ impl Default for PoolStrategy {
 /// different code paths concurrently.
 pub struct AgentPool {
     batch_size: usize,
-    ordering: PoolStrategy,
+    ordering: AgentPoolStrategy,
     semaphore: Arc<Semaphore>,
     state: Mutex<PoolState>,
     next_id: AtomicU64,
 }
 
 struct PoolState {
-    join_set: JoinSet<(JobId, Result<AgentOutput>)>,
+    join_set: JoinSet<(AgentJobId, Result<AgentOutput>)>,
     /// Used only when `ordering == SpawnOrder` — buffers completed jobs that
     /// arrived before their predecessor.
-    buffer: BTreeMap<JobId, Result<AgentOutput>>,
-    /// Next JobId expected by `SpawnOrder` ordering.
-    next_expected: JobId,
+    buffer: BTreeMap<AgentJobId, Result<AgentOutput>>,
+    /// Next AgentJobId expected by `SpawnOrder` ordering.
+    next_expected: AgentJobId,
 }
 
 impl AgentPool {
     pub fn new() -> Self {
         Self {
             batch_size: DEFAULT_BATCH_SIZE,
-            ordering: PoolStrategy::default(),
+            ordering: AgentPoolStrategy::default(),
             semaphore: Arc::new(Semaphore::new(DEFAULT_BATCH_SIZE)),
             state: Mutex::new(PoolState {
                 join_set: JoinSet::new(),
@@ -81,13 +81,13 @@ impl AgentPool {
     }
 
     /// Select how `next()` / `drain()` order results.
-    pub fn ordering(mut self, o: PoolStrategy) -> Self {
+    pub fn ordering(mut self, o: AgentPoolStrategy) -> Self {
         self.ordering = o;
         self
     }
 
     /// Submit a pre-configured agent. Awaits a permit if at capacity.
-    pub async fn spawn(&self, agent: Agent) -> JobId {
+    pub async fn spawn(&self, agent: Agent) -> AgentJobId {
         let id = self.next_id.fetch_add(1, Ordering::Relaxed);
         let permit = self
             .semaphore
@@ -106,15 +106,15 @@ impl AgentPool {
 
     /// Yield the next completed job per the configured ordering. `None` when
     /// no jobs are pending and no buffered entries remain.
-    pub async fn next(&self) -> Option<(JobId, Result<AgentOutput>)> {
+    pub async fn next(&self) -> Option<(AgentJobId, Result<AgentOutput>)> {
         match self.ordering {
-            PoolStrategy::CompletionOrder => self.next_by_completion().await,
-            PoolStrategy::SpawnOrder => self.next_by_spawn_order().await,
+            AgentPoolStrategy::CompletionOrder => self.next_by_completion().await,
+            AgentPoolStrategy::SpawnOrder => self.next_by_spawn_order().await,
         }
     }
 
     /// Drain every currently pending job, yielding per the configured ordering.
-    pub async fn drain(&self) -> Vec<(JobId, Result<AgentOutput>)> {
+    pub async fn drain(&self) -> Vec<(AgentJobId, Result<AgentOutput>)> {
         let mut out = Vec::new();
         while let Some(entry) = self.next().await {
             out.push(entry);
@@ -122,7 +122,7 @@ impl AgentPool {
         out
     }
 
-    async fn next_by_completion(&self) -> Option<(JobId, Result<AgentOutput>)> {
+    async fn next_by_completion(&self) -> Option<(AgentJobId, Result<AgentOutput>)> {
         let mut st = self.state.lock().await;
         if st.join_set.is_empty() {
             return None;
@@ -137,7 +137,7 @@ impl AgentPool {
         }
     }
 
-    async fn next_by_spawn_order(&self) -> Option<(JobId, Result<AgentOutput>)> {
+    async fn next_by_spawn_order(&self) -> Option<(AgentJobId, Result<AgentOutput>)> {
         loop {
             let mut st = self.state.lock().await;
             let next_id = st.next_expected;
@@ -190,7 +190,7 @@ mod tests {
     async fn pool_drain_spawn_order() {
         let pool = AgentPool::new()
             .batch_size(2)
-            .ordering(PoolStrategy::SpawnOrder);
+            .ordering(AgentPoolStrategy::SpawnOrder);
         pool.spawn(agent_with_response("first")).await;
         pool.spawn(agent_with_response("second")).await;
         pool.spawn(agent_with_response("third")).await;
@@ -210,7 +210,7 @@ mod tests {
     async fn pool_individual_failures() {
         let pool = AgentPool::new()
             .batch_size(2)
-            .ordering(PoolStrategy::SpawnOrder);
+            .ordering(AgentPoolStrategy::SpawnOrder);
         pool.spawn(agent_with_response("ok")).await;
         pool.spawn({
             let provider = Arc::new(MockProvider::new(vec![]));
@@ -327,7 +327,7 @@ mod tests {
 
         let pool = AgentPool::new()
             .batch_size(2)
-            .ordering(PoolStrategy::SpawnOrder);
+            .ordering(AgentPoolStrategy::SpawnOrder);
         pool.spawn(a).await;
         pool.spawn(b).await;
 
@@ -373,7 +373,7 @@ mod tests {
 
         let pool = AgentPool::new()
             .batch_size(2)
-            .ordering(PoolStrategy::CompletionOrder);
+            .ordering(AgentPoolStrategy::CompletionOrder);
         pool.spawn(a).await;
         pool.spawn(b).await;
 
@@ -387,7 +387,7 @@ mod tests {
     async fn pool_completion_order_failure_does_not_block() {
         let pool = AgentPool::new()
             .batch_size(2)
-            .ordering(PoolStrategy::CompletionOrder);
+            .ordering(AgentPoolStrategy::CompletionOrder);
         pool.spawn({
             let provider = Arc::new(MockProvider::new(vec![]));
             Agent::new()
@@ -497,7 +497,7 @@ mod tests {
     async fn perf_spawn_order_vs_completion_order() {
         let mut times = Vec::new();
 
-        for strategy in [PoolStrategy::CompletionOrder, PoolStrategy::SpawnOrder] {
+        for strategy in [AgentPoolStrategy::CompletionOrder, AgentPoolStrategy::SpawnOrder] {
             let start = tokio::time::Instant::now();
             let pool = AgentPool::new().batch_size(10).ordering(strategy);
             for i in 0..50 {
@@ -624,7 +624,7 @@ mod tests {
     async fn perf_spawn_order_buffering_under_load() {
         let pool = AgentPool::new()
             .batch_size(10)
-            .ordering(PoolStrategy::SpawnOrder);
+            .ordering(AgentPoolStrategy::SpawnOrder);
 
         for i in 0u64..100 {
             let delay = (i % 5) * 10; // 0, 10, 20, 30, 40ms

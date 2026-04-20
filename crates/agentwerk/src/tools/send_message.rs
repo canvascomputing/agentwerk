@@ -83,7 +83,7 @@ impl Tool for SendMessageTool {
             let runtime = ctx
                 .runtime
                 .as_ref()
-                .ok_or_else(|| tool_err("Runtime not available in ToolContext"))?;
+                .ok_or_else(|| tool_err("LoopRuntime not available in ToolContext"))?;
             let caller = ctx
                 .caller_spec
                 .as_ref()
@@ -91,7 +91,7 @@ impl Tool for SendMessageTool {
             let queue = runtime
                 .command_queue
                 .as_ref()
-                .ok_or_else(|| tool_err("Command queue not available on Runtime"))?;
+                .ok_or_else(|| tool_err("Command queue not available on LoopRuntime"))?;
 
             if args.to == caller.name {
                 return Ok(ToolResult::error("Cannot send a message to yourself"));
@@ -123,7 +123,7 @@ fn tool_err(message: impl Into<String>) -> AgenticError {
 mod tests {
     use super::*;
     use crate::agent::queue::CommandQueue;
-    use crate::agent::{Agent, AgentSpec, Runtime};
+    use crate::agent::{Agent, AgentSpec, LoopRuntime};
     use crate::testutil::*;
     use std::path::PathBuf;
     use std::sync::atomic::AtomicBool;
@@ -131,7 +131,7 @@ mod tests {
 
     fn harness_ctx() -> (ToolContext, Arc<CommandQueue>, Arc<AgentSpec>) {
         let queue = Arc::new(CommandQueue::new());
-        let runtime = Runtime {
+        let runtime = LoopRuntime {
             provider: Arc::new(MockProvider::text("unused")),
             event_handler: Arc::new(|_| {}),
             cancel_signal: Arc::new(AtomicBool::new(false)),

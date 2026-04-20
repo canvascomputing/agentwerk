@@ -8,7 +8,7 @@ use super::error::ProviderResult;
 use super::model::ModelLookup;
 use super::openai::OpenAiProvider;
 use super::r#trait::{CompletionRequest, Provider};
-use super::types::{ModelResponse, StreamEvent};
+use super::types::{CompletionResponse, StreamEvent};
 use crate::error::Result;
 
 /// Mistral LLM provider. Speaks OpenAI's chat-completions API, so it
@@ -31,7 +31,7 @@ impl MistralProvider {
         Self(self.0.base_url(url))
     }
 
-    pub(crate) fn from_env() -> Result<(Self, String)> {
+    pub(crate) fn from_env_with_model() -> Result<(Self, String)> {
         use super::environment::{env_or, env_required};
         let provider = Self::new(env_required("MISTRAL_API_KEY")?)
             .base_url(env_or("MISTRAL_BASE_URL", DEFAULT_BASE_URL));
@@ -60,7 +60,7 @@ impl Provider for MistralProvider {
     fn complete(
         &self,
         request: CompletionRequest,
-    ) -> Pin<Box<dyn Future<Output = ProviderResult<ModelResponse>> + Send + '_>> {
+    ) -> Pin<Box<dyn Future<Output = ProviderResult<CompletionResponse>> + Send + '_>> {
         self.0.complete(request)
     }
 
@@ -68,7 +68,7 @@ impl Provider for MistralProvider {
         &self,
         request: CompletionRequest,
         on_event: Arc<dyn Fn(StreamEvent) + Send + Sync>,
-    ) -> Pin<Box<dyn Future<Output = ProviderResult<ModelResponse>> + Send + '_>> {
+    ) -> Pin<Box<dyn Future<Output = ProviderResult<CompletionResponse>> + Send + '_>> {
         self.0.complete_streaming(request, on_event)
     }
 

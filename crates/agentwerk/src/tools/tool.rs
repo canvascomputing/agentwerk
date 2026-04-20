@@ -7,7 +7,7 @@ use std::sync::Arc;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use crate::agent::{AgentSpec, Runtime};
+use crate::agent::{AgentSpec, LoopRuntime};
 use crate::error::Result;
 use crate::provider::types::ContentBlock;
 
@@ -23,7 +23,7 @@ pub struct ToolContext {
     /// Ambient externals for the run (provider, handlers, queue, session). Used by
     /// internal tools that need to spawn sub-agents — external tool authors do not
     /// have access.
-    pub(crate) runtime: Option<Arc<Runtime>>,
+    pub(crate) runtime: Option<Arc<LoopRuntime>>,
     /// The caller agent's compiled spec (name, model, sub_agents). Used by
     /// `SpawnAgentTool` to resolve registered sub-agents and to pass the caller's
     /// model as `ModelSpec::Inherit` fallback to children.
@@ -45,7 +45,7 @@ impl ToolContext {
         self
     }
 
-    pub(crate) fn runtime(mut self, runtime: Arc<Runtime>) -> Self {
+    pub(crate) fn runtime(mut self, runtime: Arc<LoopRuntime>) -> Self {
         self.runtime = Some(runtime);
         self
     }
@@ -196,6 +196,79 @@ impl ToolRegistry {
                 }
             })
             .collect()
+    }
+
+    /// Execute tool calls with concurrent read-only batching and serial write
+    /// execution.
+    ///
+    /// Returns `(ContentBlock, ToolResult)` pairs so the caller can read both
+    /// the LLM-visible result block and any `ToolResult` side-effects
+    /// (structured output capture, discovered tool names) without dispatching
+    /// on tool names.
+    pub(crate) async fn execute(
+        &self,
+        calls: &[ToolCall],
+        ctx: &ToolContext,
+    ) -> Vec<(ContentBlock, ToolResult)> {
+        let batches = partition_tool_calls(calls, self);
+        let mut results: Vec<(ContentBlock, ToolResult)> = Vec::new();
+        let semaphore = Arc::new(tokio::sync::Semaphore::new(10));
+
+        for batch in batches {
+            match batch {
+                ToolBatch::Concurrent(calls) => {
+                    let mut set = tokio::task::JoinSet::new();
+                    for call in calls {
+                        let sem = semaphore.clone();
+                        let ctx = ctx.clone();
+                        let tool_arc = self.get(&call.name);
+                        let call_id = call.id.clone();
+                        let call_name = call.name.clone();
+                        let input = call.input.clone();
+
+                        set.spawn(async move {
+                            let _permit = sem.acquire().await.unwrap();
+                            let result = match tool_arc {
+                                Some(t) => match t.call(input, &ctx).await {
+                                    Ok(r) => r,
+                                    Err(e) => ToolResult::error(format!("Tool error: {e}")),
+                                },
+                                None => ToolResult::error(format!("Unknown tool: {call_name}")),
+                            };
+                            (call_id, result)
+                        });
+                    }
+
+                    while let Some(join_result) = set.join_next().await {
+                        if let Ok((id, result)) = join_result {
+                            let block = ContentBlock::ToolResult {
+                                tool_use_id: id,
+                                content: result.content.clone(),
+                                is_error: result.is_error,
+                            };
+                            results.push((block, result));
+                        }
+                    }
+                }
+                ToolBatch::Serial(call) => {
+                    let result = match self.get(&call.name) {
+                        Some(tool) => match tool.call(call.input.clone(), ctx).await {
+                            Ok(r) => r,
+                            Err(e) => ToolResult::error(format!("Tool error: {e}")),
+                        },
+                        None => ToolResult::error(format!("Unknown tool: {}", call.name)),
+                    };
+                    let block = ContentBlock::ToolResult {
+                        tool_use_id: call.id.clone(),
+                        content: result.content.clone(),
+                        is_error: result.is_error,
+                    };
+                    results.push((block, result));
+                }
+            }
+        }
+
+        results
     }
 
     /// Search tools by query string. Returns matches sorted by relevance (highest first).
@@ -368,7 +441,7 @@ impl ToolBuilder {
 }
 
 // ---------------------------------------------------------------------------
-// execute_tool_calls
+// Tool batching helpers (used by ToolRegistry::execute)
 // ---------------------------------------------------------------------------
 
 enum ToolBatch {
@@ -400,94 +473,6 @@ fn partition_tool_calls(calls: &[ToolCall], registry: &ToolRegistry) -> Vec<Tool
     }
 
     batches
-}
-
-/// Execute tool calls with concurrent read-only batching and serial write execution.
-///
-/// Returns `(ContentBlock, ToolResult)` pairs so the caller can read both the
-/// LLM-visible result block and any `ToolResult` side-effects (structured output
-/// capture, discovered tool names) without dispatching on tool names.
-pub(crate) async fn execute_tool_calls(
-    calls: &[ToolCall],
-    ctx: &ToolContext,
-) -> Vec<(ContentBlock, ToolResult)> {
-    let registry = match ctx.tool_registry.as_ref() {
-        Some(r) => r,
-        None => {
-            return calls
-                .iter()
-                .map(|call| {
-                    let r = ToolResult::error("No tool registry available");
-                    let block = ContentBlock::ToolResult {
-                        tool_use_id: call.id.clone(),
-                        content: r.content.clone(),
-                        is_error: r.is_error,
-                    };
-                    (block, r)
-                })
-                .collect();
-        }
-    };
-
-    let batches = partition_tool_calls(calls, registry);
-    let mut results: Vec<(ContentBlock, ToolResult)> = Vec::new();
-    let semaphore = Arc::new(tokio::sync::Semaphore::new(10));
-
-    for batch in batches {
-        match batch {
-            ToolBatch::Concurrent(calls) => {
-                let mut set = tokio::task::JoinSet::new();
-                for call in calls {
-                    let sem = semaphore.clone();
-                    let ctx = ctx.clone();
-                    let tool_arc = registry.get(&call.name);
-                    let call_id = call.id.clone();
-                    let call_name = call.name.clone();
-                    let input = call.input.clone();
-
-                    set.spawn(async move {
-                        let _permit = sem.acquire().await.unwrap();
-                        let result = match tool_arc {
-                            Some(t) => match t.call(input, &ctx).await {
-                                Ok(r) => r,
-                                Err(e) => ToolResult::error(format!("Tool error: {e}")),
-                            },
-                            None => ToolResult::error(format!("Unknown tool: {call_name}")),
-                        };
-                        (call_id, result)
-                    });
-                }
-
-                while let Some(join_result) = set.join_next().await {
-                    if let Ok((id, result)) = join_result {
-                        let block = ContentBlock::ToolResult {
-                            tool_use_id: id,
-                            content: result.content.clone(),
-                            is_error: result.is_error,
-                        };
-                        results.push((block, result));
-                    }
-                }
-            }
-            ToolBatch::Serial(call) => {
-                let result = match registry.get(&call.name) {
-                    Some(tool) => match tool.call(call.input.clone(), ctx).await {
-                        Ok(r) => r,
-                        Err(e) => ToolResult::error(format!("Tool error: {e}")),
-                    },
-                    None => ToolResult::error(format!("Unknown tool: {}", call.name)),
-                };
-                let block = ContentBlock::ToolResult {
-                    tool_use_id: call.id.clone(),
-                    content: result.content.clone(),
-                    is_error: result.is_error,
-                };
-                results.push((block, result));
-            }
-        }
-    }
-
-    results
 }
 
 // ---------------------------------------------------------------------------
@@ -565,14 +550,14 @@ mod tests {
     #[tokio::test]
     async fn execute_unknown_tool_returns_error() {
         let registry = ToolRegistry::new();
-        let ctx = test_tool_context().registry(Arc::new(registry));
+        let ctx = test_tool_context();
         let calls = vec![ToolCall {
             id: "c1".into(),
             name: "nonexistent".into(),
             input: serde_json::json!({}),
         }];
 
-        let results = execute_tool_calls(&calls, &ctx).await;
+        let results = registry.execute(&calls, &ctx).await;
         assert_eq!(results.len(), 1);
         match &results[0].0 {
             ContentBlock::ToolResult {
@@ -590,7 +575,7 @@ mod tests {
         let mut registry = ToolRegistry::new();
         registry.register(MockTool::new("read1", true, "result1"));
         registry.register(MockTool::new("read2", true, "result2"));
-        let ctx = test_tool_context().registry(Arc::new(registry));
+        let ctx = test_tool_context();
 
         let calls = vec![
             ToolCall {
@@ -605,7 +590,7 @@ mod tests {
             },
         ];
 
-        let results = execute_tool_calls(&calls, &ctx).await;
+        let results = registry.execute(&calls, &ctx).await;
         assert_eq!(results.len(), 2);
     }
 
@@ -614,7 +599,7 @@ mod tests {
         let mut registry = ToolRegistry::new();
         let tool = MockTool::new("write_file", false, "written");
         registry.register(tool);
-        let ctx = test_tool_context().registry(Arc::new(registry));
+        let ctx = test_tool_context();
 
         let calls = vec![ToolCall {
             id: "c1".into(),
@@ -622,7 +607,7 @@ mod tests {
             input: serde_json::json!({"path": "/tmp/test"}),
         }];
 
-        let results = execute_tool_calls(&calls, &ctx).await;
+        let results = registry.execute(&calls, &ctx).await;
         assert_eq!(results.len(), 1);
         match &results[0].0 {
             ContentBlock::ToolResult {

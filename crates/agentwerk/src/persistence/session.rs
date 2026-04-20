@@ -7,7 +7,7 @@ use crate::error::Result;
 use crate::provider::types::{Message, TokenUsage};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub(crate) enum EntryType {
+pub(crate) enum TranscriptEntryType {
     UserMessage,
     AssistantMessage,
     ToolResult,
@@ -17,7 +17,7 @@ pub(crate) enum EntryType {
 #[derive(Debug, Serialize, Deserialize)]
 pub(crate) struct TranscriptEntry {
     pub(crate) recorded_at: u64,
-    pub(crate) entry_type: EntryType,
+    pub(crate) entry_type: TranscriptEntryType,
     pub(crate) message: Message,
     pub(crate) usage: Option<TokenUsage>,
     pub(crate) model: Option<String>,
@@ -176,7 +176,7 @@ mod tests {
     use crate::provider::types::{ContentBlock, Message};
     use std::time::{SystemTime, UNIX_EPOCH};
 
-    fn make_entry(entry_type: EntryType, text: &str) -> TranscriptEntry {
+    fn make_entry(entry_type: TranscriptEntryType, text: &str) -> TranscriptEntry {
         TranscriptEntry {
             recorded_at: SystemTime::now()
                 .duration_since(UNIX_EPOCH)
@@ -203,13 +203,13 @@ mod tests {
 
         let mut store = SessionStore::new(tmp.path(), "test-session");
         store
-            .record(make_entry(EntryType::UserMessage, "hello"))
+            .record(make_entry(TranscriptEntryType::UserMessage, "hello"))
             .unwrap();
         store
-            .record(make_entry(EntryType::AssistantMessage, "hi there"))
+            .record(make_entry(TranscriptEntryType::AssistantMessage, "hi there"))
             .unwrap();
         store
-            .record(make_entry(EntryType::ToolResult, "tool output"))
+            .record(make_entry(TranscriptEntryType::ToolResult, "tool output"))
             .unwrap();
         store.flush().unwrap();
 
@@ -226,16 +226,16 @@ mod tests {
 
         let mut store1 = SessionStore::new(tmp.path(), "session-a");
         store1
-            .record(make_entry(EntryType::UserMessage, "a"))
+            .record(make_entry(TranscriptEntryType::UserMessage, "a"))
             .unwrap();
         store1.flush().unwrap();
 
         let mut store2 = SessionStore::new(tmp.path(), "session-b");
         store2
-            .record(make_entry(EntryType::UserMessage, "b1"))
+            .record(make_entry(TranscriptEntryType::UserMessage, "b1"))
             .unwrap();
         store2
-            .record(make_entry(EntryType::UserMessage, "b2"))
+            .record(make_entry(TranscriptEntryType::UserMessage, "b2"))
             .unwrap();
         store2.flush().unwrap();
 

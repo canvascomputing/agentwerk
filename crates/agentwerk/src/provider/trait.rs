@@ -5,7 +5,7 @@ use std::sync::Arc;
 use serde::{Deserialize, Serialize};
 
 use super::error::ProviderResult;
-use super::types::{Message, ModelResponse, StreamEvent};
+use super::types::{Message, CompletionResponse, StreamEvent};
 use crate::tools::tool::ToolDefinition;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -30,7 +30,7 @@ pub trait Provider: Send + Sync {
     fn complete(
         &self,
         request: CompletionRequest,
-    ) -> Pin<Box<dyn Future<Output = ProviderResult<ModelResponse>> + Send + '_>>;
+    ) -> Pin<Box<dyn Future<Output = ProviderResult<CompletionResponse>> + Send + '_>>;
 
     /// Streaming completion. Emits incremental [`StreamEvent`]s via the
     /// callback as the model generates, then returns the assembled response.
@@ -40,7 +40,7 @@ pub trait Provider: Send + Sync {
         &self,
         request: CompletionRequest,
         on_event: Arc<dyn Fn(StreamEvent) + Send + Sync>,
-    ) -> Pin<Box<dyn Future<Output = ProviderResult<ModelResponse>> + Send + '_>> {
+    ) -> Pin<Box<dyn Future<Output = ProviderResult<CompletionResponse>> + Send + '_>> {
         Box::pin(async move {
             let response = self.complete(request).await?;
             on_event(StreamEvent::MessageDone);
@@ -56,14 +56,16 @@ pub trait Provider: Send + Sync {
     /// the first real LLM call reuse the already-established connection.
     ///
     /// Default implementation is a no-op — override in providers that own
-    /// a `reqwest::Client`.
+    /// a `reqwest::Client` and call `prewarm_with` from there.
     fn prewarm(&self) -> Pin<Box<dyn Future<Output = ()> + Send + '_>> {
         Box::pin(async {})
     }
 }
 
-/// Fire-and-forget HEAD request to warm the TCP+TLS connection pool.
-pub(crate) async fn prewarm_connection(client: &reqwest::Client, base_url: &str) {
+/// Fire-and-forget HEAD request to warm the TCP+TLS connection pool. Helper
+/// for `Provider::prewarm` overrides — call this with the provider's own
+/// `reqwest::Client` and base URL.
+pub(crate) async fn prewarm_with(client: &reqwest::Client, base_url: &str) {
     let _ = tokio::time::timeout(
         std::time::Duration::from_secs(10),
         client.head(base_url).send(),

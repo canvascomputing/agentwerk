@@ -1,1 +1,1 @@
-pub use agentwerk::provider_from_env;
+pub use agentwerk::provider::from_env;

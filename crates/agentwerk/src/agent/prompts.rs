@@ -1,17 +1,11 @@
-//! Prompt infrastructure: behavior defaults, context building, and constants.
-
-use std::collections::HashMap;
-use std::path::Path;
-
-use serde_json::Value;
-
+//! Prompt infrastructure: behavior defaults and structured-output constants.
 
 // ---------------------------------------------------------------------------
 // Behavior prompts
 // ---------------------------------------------------------------------------
 
 /// Default behavioral directives appended to the system prompt after the
-/// identity prompt. Override with [`Agent::behavior_prompt()`].
+/// identity prompt. Override with `Agent::behavior_prompt()`.
 pub const DEFAULT_BEHAVIOR_PROMPT: &str = "\
 # Task execution
 - Do not propose changes to files you have not read. Read first, then modify.
@@ -47,102 +41,3 @@ pub(crate) const STRUCTURED_OUTPUT_INSTRUCTION: &str =
      conforms to the declared output schema. After using any tools needed to complete \
      the task, your last message MUST be the JSON value, exactly once. Do not wrap it \
      in markdown code fences. Do not include any text before or after the JSON.";
-
-/// Build the corrective user message shown to the model after a terminal reply
-/// fails schema validation. `detail` is the validator's human-readable error
-/// (e.g. "Schema validation error at summary: missing required field") — it
-/// gives the model targeted feedback so it can fix the exact field rather
-/// than guess.
-pub(crate) fn structured_output_retry(detail: &str) -> String {
-    format!(
-        "Your last reply did not match the required output schema. You MUST reply with a \
-         single JSON value conforming to the schema, with no surrounding text and no code \
-         fences.\n\nValidator said: {detail}"
-    )
-}
-
-// ---------------------------------------------------------------------------
-// Template interpolation
-// ---------------------------------------------------------------------------
-
-/// Replace {key} placeholders in a template with values from state.
-pub(crate) fn interpolate(template: &str, state: &HashMap<String, Value>) -> String {
-    let mut result = template.to_string();
-    for (key, value) in state {
-        let replacement = match value {
-            Value::String(s) => s.clone(),
-            other => other.to_string(),
-        };
-        result = result.replace(&format!("{{{key}}}"), &replacement);
-    }
-    result
-}
-
-// ---------------------------------------------------------------------------
-// Environment prompt
-// ---------------------------------------------------------------------------
-
-/// Build the metadata block — working directory, platform, OS version, and
-/// current date. Prepended to the first user message.
-pub(crate) fn collect_metadata(cwd: &Path) -> String {
-    let working_directory = cwd.display();
-    let platform = std::env::consts::OS;
-    let os_version = std::process::Command::new("uname")
-        .arg("-r")
-        .output()
-        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
-        .unwrap_or_default();
-    let date = format_current_date();
-
-    format!(
-        "<environment>\nWorking directory: {working_directory}\nPlatform: {platform}\nOS version: {os_version}\nDate: {date}\n</environment>"
-    )
-}
-
-// ---------------------------------------------------------------------------
-// Private helpers
-// ---------------------------------------------------------------------------
-
-/// Convert epoch seconds to a date string using the civil-from-days algorithm.
-/// http://howardhinnant.github.io/date_algorithms.html
-fn format_current_date() -> String {
-    let epoch_secs = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_secs();
-
-    let days = epoch_secs / 86400;
-    let z = days + 719468;
-    let era = z / 146097;
-    let doe = z - era * 146097;
-    let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
-    let year = yoe + era * 400;
-    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
-    let mp = (5 * doy + 2) / 153;
-    let day = doy - (153 * mp + 2) / 5 + 1;
-    let month = if mp < 10 { mp + 3 } else { mp - 9 };
-    let year = if month <= 2 { year + 1 } else { year };
-
-    format!("{year:04}-{month:02}-{day:02}")
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn metadata_includes_path() {
-        let ctx = collect_metadata(std::path::Path::new("/home/user/project"));
-        assert!(ctx.contains("/home/user/project"));
-        assert!(ctx.contains("<environment>"));
-    }
-
-    #[test]
-    fn interpolate_substitutes_placeholders() {
-        let mut vars: HashMap<String, Value> = HashMap::new();
-        vars.insert("name".into(), Value::String("Alice".into()));
-        vars.insert("count".into(), Value::from(3));
-        let out = interpolate("Hello {name}, you have {count} tasks.", &vars);
-        assert_eq!(out, "Hello Alice, you have 3 tasks.");
-    }
-}

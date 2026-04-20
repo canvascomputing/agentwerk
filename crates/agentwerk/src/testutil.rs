@@ -6,9 +6,9 @@ use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, Mutex};
 
 use crate::agent::queue::CommandQueue;
-use crate::agent::{Agent, AgentOutput, Event, EventKind, Status};
+use crate::agent::{Agent, AgentOutput, AgentEvent, AgentEventKind, AgentStatus};
 use crate::error::Result;
-use crate::provider::types::{ContentBlock, ModelResponse, ResponseStatus, StreamEvent, TokenUsage};
+use crate::provider::types::{ContentBlock, CompletionResponse, ResponseStatus, StreamEvent, TokenUsage};
 use crate::provider::{CompletionRequest, Provider, ProviderError, ProviderResult};
 use crate::tools::{Tool, ToolContext, ToolResult};
 
@@ -17,19 +17,19 @@ use crate::tools::{Tool, ToolContext, ToolResult};
 /// Use `new()` for simple response sequences, or `with_results()` to interleave
 /// errors and successes (useful for testing retry logic).
 pub struct MockProvider {
-    results: Mutex<VecDeque<ProviderResult<ModelResponse>>>,
+    results: Mutex<VecDeque<ProviderResult<CompletionResponse>>>,
     pub requests: Mutex<Vec<CompletionRequest>>,
 }
 
 impl MockProvider {
-    pub fn new(responses: Vec<ModelResponse>) -> Self {
+    pub fn new(responses: Vec<CompletionResponse>) -> Self {
         Self {
             results: Mutex::new(responses.into_iter().map(Ok).collect()),
             requests: Mutex::new(Vec::new()),
         }
     }
 
-    pub fn with_results(results: Vec<ProviderResult<ModelResponse>>) -> Self {
+    pub fn with_results(results: Vec<ProviderResult<CompletionResponse>>) -> Self {
         Self {
             results: Mutex::new(VecDeque::from(results)),
             requests: Mutex::new(Vec::new()),
@@ -69,7 +69,7 @@ impl Provider for MockProvider {
     fn complete(
         &self,
         request: CompletionRequest,
-    ) -> Pin<Box<dyn Future<Output = ProviderResult<ModelResponse>> + Send + '_>> {
+    ) -> Pin<Box<dyn Future<Output = ProviderResult<CompletionResponse>> + Send + '_>> {
         self.requests.lock().unwrap().push(request);
 
         Box::pin(async move {
@@ -85,7 +85,7 @@ impl Provider for MockProvider {
         &self,
         request: CompletionRequest,
         on_event: Arc<dyn Fn(StreamEvent) + Send + Sync>,
-    ) -> Pin<Box<dyn Future<Output = ProviderResult<ModelResponse>> + Send + '_>> {
+    ) -> Pin<Box<dyn Future<Output = ProviderResult<CompletionResponse>> + Send + '_>> {
         Box::pin(async move {
             let response = self.complete(request).await?;
             for block in &response.content {
@@ -99,8 +99,8 @@ impl Provider for MockProvider {
     }
 }
 
-pub fn text_response(text: &str) -> ModelResponse {
-    ModelResponse {
+pub fn text_response(text: &str) -> CompletionResponse {
+    CompletionResponse {
         content: vec![ContentBlock::Text {
             text: text.to_string(),
         }],
@@ -110,8 +110,8 @@ pub fn text_response(text: &str) -> ModelResponse {
     }
 }
 
-pub fn truncated_response(text: &str) -> ModelResponse {
-    ModelResponse {
+pub fn truncated_response(text: &str) -> CompletionResponse {
+    CompletionResponse {
         content: vec![ContentBlock::Text {
             text: text.to_string(),
         }],
@@ -121,8 +121,8 @@ pub fn truncated_response(text: &str) -> ModelResponse {
     }
 }
 
-pub fn tool_response(tool_name: &str, id: &str, input: serde_json::Value) -> ModelResponse {
-    ModelResponse {
+pub fn tool_response(tool_name: &str, id: &str, input: serde_json::Value) -> CompletionResponse {
+    CompletionResponse {
         content: vec![ContentBlock::ToolUse {
             id: id.to_string(),
             name: tool_name.to_string(),
@@ -230,21 +230,21 @@ pub fn test_tool_context() -> ToolContext {
 }
 
 // ---------------------------------------------------------------------------
-// EventCollector
+// AgentEventCollector
 // ---------------------------------------------------------------------------
 
-pub struct EventCollector {
-    events: Arc<Mutex<Vec<Event>>>,
+pub struct AgentEventCollector {
+    events: Arc<Mutex<Vec<AgentEvent>>>,
 }
 
-impl EventCollector {
+impl AgentEventCollector {
     pub fn new() -> Self {
         Self {
             events: Arc::new(Mutex::new(Vec::new())),
         }
     }
 
-    pub fn callback(&self) -> Arc<dyn Fn(Event) + Send + Sync> {
+    pub fn callback(&self) -> Arc<dyn Fn(AgentEvent) + Send + Sync> {
         let events = self.events.clone();
         Arc::new(move |e| events.lock().unwrap().push(e))
     }
@@ -255,7 +255,7 @@ impl EventCollector {
             .unwrap()
             .iter()
             .filter_map(|e| match &e.kind {
-                EventKind::ResponseTextChunk { content } => Some(content.clone()),
+                AgentEventKind::ResponseTextChunk { content } => Some(content.clone()),
                 _ => None,
             })
             .collect()
@@ -267,7 +267,7 @@ impl EventCollector {
             .unwrap()
             .iter()
             .filter_map(|e| match &e.kind {
-                EventKind::ToolCallStart { tool_name, .. } => Some(tool_name.clone()),
+                AgentEventKind::ToolCallStart { tool_name, .. } => Some(tool_name.clone()),
                 _ => None,
             })
             .collect()
@@ -279,23 +279,23 @@ impl EventCollector {
             .unwrap()
             .iter()
             .filter_map(|e| match &e.kind {
-                EventKind::AgentStart { .. } => Some(e.agent_name.clone()),
+                AgentEventKind::AgentStart { .. } => Some(e.agent_name.clone()),
                 _ => None,
             })
             .collect()
     }
 
-    pub fn all(&self) -> Vec<Event> {
+    pub fn all(&self) -> Vec<AgentEvent> {
         self.events.lock().unwrap().clone()
     }
 
-    pub fn agent_ends(&self) -> Vec<(String, u32, Status)> {
+    pub fn agent_ends(&self) -> Vec<(String, u32, AgentStatus)> {
         self.events
             .lock()
             .unwrap()
             .iter()
             .filter_map(|e| match &e.kind {
-                EventKind::AgentEnd { turns, status } => Some((e.agent_name.clone(), *turns, status.clone())),
+                AgentEventKind::AgentEnd { turns, status } => Some((e.agent_name.clone(), *turns, status.clone())),
                 _ => None,
             })
             .collect()
@@ -308,7 +308,7 @@ impl EventCollector {
 
 pub struct TestHarness {
     provider: Arc<MockProvider>,
-    events: EventCollector,
+    events: AgentEventCollector,
     template_variables: HashMap<String, serde_json::Value>,
     working_directory: PathBuf,
     cancel_signal: Arc<AtomicBool>,
@@ -326,7 +326,7 @@ impl TestHarness {
     pub fn with_provider(provider: Arc<MockProvider>) -> Self {
         Self {
             provider,
-            events: EventCollector::new(),
+            events: AgentEventCollector::new(),
             template_variables: HashMap::new(),
             working_directory: std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")),
             cancel_signal: Arc::new(AtomicBool::new(false)),
@@ -361,11 +361,11 @@ impl TestHarness {
             prepared = prepared.template_variable(k.clone(), v.clone());
         }
         // If the harness carries a pre-built command queue, we need to share
-        // it with the agent's Runtime. We do that by running via run_with_parts.
+        // it with the agent's LoopRuntime. We do that by running via run_with_parts.
         #[cfg(test)]
         if let Some(queue) = &self.command_queue {
-            use crate::agent::{AgentSpec, Runtime};
-            let runtime = Runtime {
+            use crate::agent::{AgentSpec, LoopRuntime};
+            let runtime = LoopRuntime {
                 provider: self.provider.clone(),
                 event_handler: self.events.callback(),
                 cancel_signal: self.cancel_signal.clone(),
@@ -382,7 +382,7 @@ impl TestHarness {
         prepared.run().await
     }
 
-    pub fn events(&self) -> &EventCollector {
+    pub fn events(&self) -> &AgentEventCollector {
         &self.events
     }
 

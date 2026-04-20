@@ -13,6 +13,17 @@ pub struct Model {
 }
 
 impl Model {
+    /// Tokens set aside for the model's response. The context window holds
+    /// input + output combined, so input must leave at least this much room
+    /// for the next reply. Treated as an upper bound on one response.
+    pub const RESERVED_RESPONSE_TOKENS: u64 = 20_000;
+
+    /// Headroom reserved below the hard window limit so compaction has room
+    /// to fire *and* finish before the real overflow. Also absorbs drift in
+    /// the `bytes / 4` token estimate, which usually under-counts code and
+    /// JSON.
+    pub const COMPACTION_HEADROOM_TOKENS: u64 = 13_000;
+
     /// Build a `Model` by looking up the id in each provider's
     /// [`ModelLookup`] impl. Unknown ids produce a `Model` with
     /// `context_window_size: None` — compaction stays dormant, no error.
@@ -33,6 +44,16 @@ impl Model {
     pub fn with_context_window_size(mut self, size: Option<u64>) -> Self {
         self.context_window_size = size;
         self
+    }
+
+    /// Token count at which proactive compaction fires. Returns `None` when
+    /// the model's context window size is unknown — callers treat that as
+    /// "no threshold; compaction is dormant".
+    pub fn compact_threshold(&self) -> Option<u64> {
+        self.context_window_size.map(|size| {
+            size.saturating_sub(Self::RESERVED_RESPONSE_TOKENS)
+                .saturating_sub(Self::COMPACTION_HEADROOM_TOKENS)
+        })
     }
 }
 
@@ -118,5 +139,24 @@ mod tests {
         let child = ModelSpec::Inherit.resolve(&parent);
         assert_eq!(child.id, "claude-sonnet-4-20250514");
         assert_eq!(child.context_window_size, Some(200_000));
+    }
+
+    #[test]
+    fn compact_threshold_200k_model() {
+        let m = Model::from_id("unknown").with_context_window_size(Some(200_000));
+        assert_eq!(m.compact_threshold(), Some(167_000));
+    }
+
+    #[test]
+    fn compact_threshold_saturates_on_tiny_window() {
+        let tiny = Model::from_id("unknown").with_context_window_size(Some(100));
+        let zero = Model::from_id("unknown").with_context_window_size(Some(0));
+        assert_eq!(tiny.compact_threshold(), Some(0));
+        assert_eq!(zero.compact_threshold(), Some(0));
+    }
+
+    #[test]
+    fn compact_threshold_none_for_unknown_window() {
+        assert_eq!(Model::from_id("unknown").compact_threshold(), None);
     }
 }

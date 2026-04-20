@@ -10,7 +10,7 @@ use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Arc;
 
 use agentwerk::{
-    Agent, AgentPool, EventKind, GlobTool, ListDirectoryTool, PoolStrategy, ReadFileTool,
+    Agent, AgentPool, AgentEventKind, GlobTool, ListDirectoryTool, AgentPoolStrategy, ReadFileTool,
 };
 use serde_json::{json, Value};
 
@@ -69,7 +69,7 @@ fn summarize_schema() -> Value {
 #[tokio::main]
 async fn main() {
     let config = parse_args();
-    let (provider, default_model) = use_cases::provider_from_env().expect("LLM provider required");
+    let (provider, default_model) = use_cases::from_env().expect("LLM provider required");
     let model = if config.model.is_empty() { default_model } else { config.model };
 
     let cancel = Arc::new(AtomicBool::new(false));
@@ -95,7 +95,7 @@ async fn main() {
         .cancel_signal(cancel.clone())
         .max_turns(20)
         .event_handler(Arc::new(|event| match &event.kind {
-            EventKind::ToolCallStart { tool_name, input, .. } => {
+            AgentEventKind::ToolCallStart { tool_name, input, .. } => {
                 let detail = input["path"].as_str()
                     .or(input["pattern"].as_str())
                     .unwrap_or("");
@@ -105,7 +105,7 @@ async fn main() {
                     eprintln!("[discover] {tool_name}({detail})");
                 }
             }
-            EventKind::ToolCallEnd { is_error: true, tool_name, output, .. } => {
+            AgentEventKind::ToolCallEnd { is_error: true, tool_name, output, .. } => {
                 eprintln!("[discover] error in {tool_name}: {output}");
             }
             _ => {}
@@ -151,7 +151,7 @@ async fn main() {
 
     let pool = AgentPool::new()
         .batch_size(config.batch_size)
-        .ordering(PoolStrategy::SpawnOrder);
+        .ordering(AgentPoolStrategy::SpawnOrder);
     let total = files.len();
     let progress = Arc::new(AtomicUsize::new(0));
 
@@ -166,10 +166,10 @@ async fn main() {
             .working_directory(config.folder.clone())
             .cancel_signal(cancel.clone())
             .event_handler(Arc::new(move |event| match &event.kind {
-                EventKind::ToolCallEnd { is_error: true, output, .. } => {
+                AgentEventKind::ToolCallEnd { is_error: true, output, .. } => {
                     eprintln!("[summarize] {file_name} — error: {output}");
                 }
-                EventKind::AgentEnd { .. } => {
+                AgentEventKind::AgentEnd { .. } => {
                     let done = progress.fetch_add(1, Ordering::Relaxed) + 1;
                     eprintln!("[summarize] {done}/{total} {file_name}");
                 }

@@ -11,9 +11,9 @@ mod r#trait;
 pub mod types;
 
 pub use anthropic::AnthropicProvider;
-pub use environment::provider_from_env;
+pub use environment::from_env;
 pub use error::{ProviderError, ProviderResult};
-pub use litellm::LiteLLMProvider;
+pub use litellm::LiteLlmProvider;
 pub use mistral::MistralProvider;
 pub use model::{Model, ModelLookup};
 pub use openai::OpenAiProvider;

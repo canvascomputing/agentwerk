@@ -15,8 +15,7 @@ mod write_file;
 
 // Re-export tool infrastructure
 pub use tool::{Tool, ToolBuilder, ToolContext, ToolResult};
-pub(crate) use tool::ToolRegistry;
-pub(crate) use tool::{ToolCall, execute_tool_calls};
+pub(crate) use tool::{ToolCall, ToolRegistry};
 
 // Re-export built-in tools
 pub use bash::BashTool;

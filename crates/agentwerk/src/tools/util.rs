@@ -3,9 +3,6 @@ use std::time::Duration;
 
 use crate::tools::tool::ToolResult;
 
-pub(crate) const DEFAULT_TIMEOUT_MS: u64 = 120_000;
-pub(crate) const MAX_TIMEOUT_MS: u64 = 600_000;
-
 /// Execute a command via `sh -c` with a timeout, returning combined stdout/stderr.
 pub(crate) async fn run_shell_command(
     command: &str,

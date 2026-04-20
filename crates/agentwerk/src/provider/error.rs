@@ -1,7 +1,7 @@
 //! Provider-layer error type.
 //!
 //! Errors a `Provider` raises before returning a successful
-//! [`ModelResponse`](super::types::ModelResponse). Anything that maps to a
+//! [`CompletionResponse`](super::types::CompletionResponse). Anything that maps to a
 //! valid response-with-status belongs on
 //! [`ResponseStatus`](super::types::ResponseStatus), not here.
 

@@ -8,7 +8,7 @@ use crate::error::Result;
 
 use super::error::{ProviderError, ProviderResult};
 use super::model::ModelLookup;
-use super::types::{ContentBlock, Message, ModelResponse, ResponseStatus, StreamEvent, TokenUsage};
+use super::types::{ContentBlock, Message, CompletionResponse, ResponseStatus, StreamEvent, TokenUsage};
 use super::r#trait::{CompletionRequest, Provider, ToolChoice};
 
 pub struct AnthropicProvider {
@@ -26,7 +26,7 @@ impl AnthropicProvider {
         }
     }
 
-    pub(crate) fn from_env() -> Result<(Self, String)> {
+    pub(crate) fn from_env_with_model() -> Result<(Self, String)> {
         use super::environment::{env_or, env_required};
         let provider = Self::new(env_required("ANTHROPIC_API_KEY")?)
             .base_url(env_or("ANTHROPIC_BASE_URL", "https://api.anthropic.com"));
@@ -74,8 +74,8 @@ impl AnthropicProvider {
         body
     }
 
-    fn parse_response(&self, json: Value) -> ModelResponse {
-        ModelResponse {
+    fn parse_response(&self, json: Value) -> CompletionResponse {
+        CompletionResponse {
             content: parse_content(&json),
             status: parse_status(&json),
             usage: parse_usage(&json),
@@ -151,13 +151,13 @@ impl ModelLookup for AnthropicProvider {
 
 impl Provider for AnthropicProvider {
     fn prewarm(&self) -> Pin<Box<dyn Future<Output = ()> + Send + '_>> {
-        Box::pin(async { super::r#trait::prewarm_connection(&self.client, &self.base_url).await })
+        Box::pin(async { super::r#trait::prewarm_with(&self.client, &self.base_url).await })
     }
 
     fn complete(
         &self,
         request: CompletionRequest,
-    ) -> Pin<Box<dyn Future<Output = ProviderResult<ModelResponse>> + Send + '_>> {
+    ) -> Pin<Box<dyn Future<Output = ProviderResult<CompletionResponse>> + Send + '_>> {
         let body = self.serialize_request(&request);
 
         Box::pin(async move {
@@ -174,7 +174,7 @@ impl Provider for AnthropicProvider {
         &self,
         request: CompletionRequest,
         on_event: Arc<dyn Fn(StreamEvent) + Send + Sync>,
-    ) -> Pin<Box<dyn Future<Output = ProviderResult<ModelResponse>> + Send + '_>> {
+    ) -> Pin<Box<dyn Future<Output = ProviderResult<CompletionResponse>> + Send + '_>> {
         let mut body = self.serialize_request(&request);
         body["stream"] = Value::Bool(true);
 
@@ -188,7 +188,7 @@ impl Provider for AnthropicProvider {
 async fn stream_response(
     response: reqwest::Response,
     on_event: &Arc<dyn Fn(StreamEvent) + Send + Sync>,
-) -> ProviderResult<ModelResponse> {
+) -> ProviderResult<CompletionResponse> {
     use futures_util::StreamExt;
     use super::stream::{SseEvent, StreamParser};
 
@@ -234,8 +234,8 @@ impl StreamState {
         &mut self.blocks[idx]
     }
 
-    fn into_response(self) -> ModelResponse {
-        ModelResponse {
+    fn into_response(self) -> CompletionResponse {
+        CompletionResponse {
             content: self.content_blocks,
             status: self.status,
             usage: self.usage,

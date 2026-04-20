@@ -15,7 +15,7 @@ use super::error::{ProviderError, ProviderResult};
 use super::model::ModelLookup;
 use super::r#trait::{CompletionRequest, Provider, ToolChoice};
 use super::stream::{SseEvent, StreamParser};
-use super::types::{ContentBlock, Message, ModelResponse, ResponseStatus, StreamEvent, TokenUsage};
+use super::types::{ContentBlock, Message, CompletionResponse, ResponseStatus, StreamEvent, TokenUsage};
 
 /// OpenAI-compatible LLM provider.
 pub struct OpenAiProvider {
@@ -56,7 +56,7 @@ impl OpenAiProvider {
         self
     }
 
-    pub(crate) fn from_env() -> Result<(Self, String)> {
+    pub(crate) fn from_env_with_model() -> Result<(Self, String)> {
         use super::environment::{env_or, env_required};
         let provider = Self::new(env_required("OPENAI_API_KEY")?)
             .base_url(env_or("OPENAI_BASE_URL", "https://api.openai.com"));
@@ -97,13 +97,13 @@ impl ModelLookup for OpenAiProvider {
 
 impl Provider for OpenAiProvider {
     fn prewarm(&self) -> Pin<Box<dyn Future<Output = ()> + Send + '_>> {
-        Box::pin(async { super::r#trait::prewarm_connection(&self.client, &self.base_url).await })
+        Box::pin(async { super::r#trait::prewarm_with(&self.client, &self.base_url).await })
     }
 
     fn complete(
         &self,
         request: CompletionRequest,
-    ) -> Pin<Box<dyn Future<Output = ProviderResult<ModelResponse>> + Send + '_>> {
+    ) -> Pin<Box<dyn Future<Output = ProviderResult<CompletionResponse>> + Send + '_>> {
         let body = serialize_request(&request);
         let url = format!("{}/v1/chat/completions", self.base_url);
 
@@ -117,7 +117,7 @@ impl Provider for OpenAiProvider {
         &self,
         request: CompletionRequest,
         on_event: Arc<dyn Fn(StreamEvent) + Send + Sync>,
-    ) -> Pin<Box<dyn Future<Output = ProviderResult<ModelResponse>> + Send + '_>> {
+    ) -> Pin<Box<dyn Future<Output = ProviderResult<CompletionResponse>> + Send + '_>> {
         let mut body = serialize_request(&request);
         body["stream"] = Value::Bool(true);
         body["stream_options"] = serde_json::json!({"include_usage": true});
@@ -194,7 +194,7 @@ async fn stream_response(
     response: reqwest::Response,
     on_event: &Arc<dyn Fn(StreamEvent) + Send + Sync>,
     cache_tokens: bool,
-) -> ProviderResult<ModelResponse> {
+) -> ProviderResult<CompletionResponse> {
     use futures_util::StreamExt;
 
     let mut state = StreamState::default();
@@ -236,7 +236,7 @@ struct StreamState {
 }
 
 impl StreamState {
-    fn into_response(self) -> ModelResponse {
+    fn into_response(self) -> CompletionResponse {
         let mut content = Vec::new();
         if !self.text.is_empty() {
             content.push(ContentBlock::Text { text: self.text });
@@ -248,7 +248,7 @@ impl StreamState {
                 .unwrap_or(Value::Object(Default::default()));
             content.push(ContentBlock::ToolUse { id: acc.id, name: acc.name, input });
         }
-        ModelResponse {
+        CompletionResponse {
             content,
             status: self.status,
             usage: self.usage,
@@ -459,11 +459,11 @@ fn serialize_tool_choice(choice: &ToolChoice) -> Value {
 // Response parsing (non-streaming)
 // ---------------------------------------------------------------------------
 
-fn parse_response(json: Value, cache_tokens: bool) -> ModelResponse {
+fn parse_response(json: Value, cache_tokens: bool) -> CompletionResponse {
     let choice = &json["choices"][0];
     let message = &choice["message"];
 
-    ModelResponse {
+    CompletionResponse {
         content: parse_content(message),
         status: parse_status(choice),
         usage: parse_usage(&json, cache_tokens),

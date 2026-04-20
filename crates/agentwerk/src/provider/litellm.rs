@@ -10,18 +10,18 @@ use std::sync::Arc;
 use super::error::ProviderResult;
 use super::openai::OpenAiProvider;
 use super::r#trait::{CompletionRequest, Provider};
-use super::types::{ModelResponse, StreamEvent};
+use super::types::{CompletionResponse, StreamEvent};
 use crate::error::Result;
 
 /// LiteLLM proxy provider. Delegates to an inner [`OpenAiProvider`] with
 /// `cache_tokens = true` so cache-read / cache-creation counts from
 /// upstream providers are preserved.
-pub struct LiteLLMProvider(OpenAiProvider);
+pub struct LiteLlmProvider(OpenAiProvider);
 
 const DEFAULT_BASE_URL: &str = "http://localhost:4000";
 const DEFAULT_MODEL: &str = "claude-sonnet-4-20250514";
 
-impl LiteLLMProvider {
+impl LiteLlmProvider {
     pub fn new(api_key: impl Into<String>) -> Self {
         Self::with_client(api_key, reqwest::Client::new())
     }
@@ -34,7 +34,7 @@ impl LiteLLMProvider {
         Self(self.0.base_url(url))
     }
 
-    pub(crate) fn from_env() -> Result<(Self, String)> {
+    pub(crate) fn from_env_with_model() -> Result<(Self, String)> {
         use super::environment::env_or;
         let provider = Self::new(env_or("LITELLM_API_KEY", ""))
             .base_url(env_or("LITELLM_BASE_URL", DEFAULT_BASE_URL));
@@ -43,11 +43,11 @@ impl LiteLLMProvider {
     }
 }
 
-impl Provider for LiteLLMProvider {
+impl Provider for LiteLlmProvider {
     fn complete(
         &self,
         request: CompletionRequest,
-    ) -> Pin<Box<dyn Future<Output = ProviderResult<ModelResponse>> + Send + '_>> {
+    ) -> Pin<Box<dyn Future<Output = ProviderResult<CompletionResponse>> + Send + '_>> {
         self.0.complete(request)
     }
 
@@ -55,7 +55,7 @@ impl Provider for LiteLLMProvider {
         &self,
         request: CompletionRequest,
         on_event: Arc<dyn Fn(StreamEvent) + Send + Sync>,
-    ) -> Pin<Box<dyn Future<Output = ProviderResult<ModelResponse>> + Send + '_>> {
+    ) -> Pin<Box<dyn Future<Output = ProviderResult<CompletionResponse>> + Send + '_>> {
         self.0.complete_streaming(request, on_event)
     }
 

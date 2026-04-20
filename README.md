@@ -82,12 +82,12 @@ make use_case name=<name>    # run one
 You can integrate your agentic application with the following providers:
 
 ```rust
-use agentwerk::{MistralProvider, AnthropicProvider, OpenAiProvider, LiteLLMProvider};
+use agentwerk::{MistralProvider, AnthropicProvider, OpenAiProvider, LiteLlmProvider};
 
 let provider = MistralProvider::new(key);
 let provider = AnthropicProvider::new(key);
 let provider = OpenAiProvider::new(key);
-let provider = LiteLLMProvider::new(key);
+let provider = LiteLlmProvider::new(key);
 ```
 
 ### Agents
@@ -213,7 +213,7 @@ Orchestrate complex workflows in parallel. Use different execution strategies:
 - `SpawnOrder`: results are returned in the order agents were spawned.
 
 ```rust
-use agentwerk::{Agent, AgentPool, PoolStrategy, ReadFileTool};
+use agentwerk::{Agent, AgentPool, AgentPoolStrategy, ReadFileTool};
 
 let template = Agent::new()
     .model("claude-haiku-4-5-20251001")
@@ -221,7 +221,7 @@ let template = Agent::new()
 
 let pool = AgentPool::new()
     .batch_size(10)
-    .ordering(PoolStrategy::SpawnOrder);
+    .ordering(AgentPoolStrategy::SpawnOrder);
 
 for doc in ["document A", "document B"] {
     pool.spawn(
@@ -233,7 +233,7 @@ for doc in ["document A", "document B"] {
     .await;
 }
 
-let results = pool.drain().await; // Vec<(JobId, Result<AgentOutput>)>
+let results = pool.drain().await; // Vec<(AgentJobId, Result<AgentOutput>)>
 ```
 
 `spawn()` can be called after the pool has started processing. If the pool
@@ -244,11 +244,11 @@ is at capacity, it waits for a free slot.
 You can inspect what your agent is doing and how the LLM provider API is used:
 
 ```rust
-use agentwerk::{Event, EventKind};
+use agentwerk::{AgentEvent, AgentEventKind};
 
-let handler = Arc::new(|event: Event| match &event.kind {
-    EventKind::ToolCallStart { tool_name, .. } => eprintln!("[{}] {}", event.agent_name, tool_name),
-    EventKind::AgentEnd { turns } => eprintln!("[{}] done in {} turns", event.agent_name, turns),
+let handler = Arc::new(|event: AgentEvent| match &event.kind {
+    AgentEventKind::ToolCallStart { tool_name, .. } => eprintln!("[{}] {}", event.agent_name, tool_name),
+    AgentEventKind::AgentEnd { turns } => eprintln!("[{}] done in {} turns", event.agent_name, turns),
     _ => {}
 });
 ```

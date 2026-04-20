@@ -11,7 +11,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use agentwerk::{Agent, Event, EventKind, SendMessageTool};
+use agentwerk::{Agent, AgentEvent, AgentEventKind, SendMessageTool};
 
 #[tokio::test]
 async fn orchestrator_sends_message_to_backgrounded_worker(
@@ -27,9 +27,9 @@ async fn orchestrator_sends_message_to_backgrounded_worker(
         % 90_000
         + 10_000;
 
-    let events: Arc<Mutex<Vec<Event>>> = Arc::new(Mutex::new(Vec::new()));
+    let events: Arc<Mutex<Vec<AgentEvent>>> = Arc::new(Mutex::new(Vec::new()));
     let collected = events.clone();
-    let event_handler = Arc::new(move |e: Event| {
+    let event_handler = Arc::new(move |e: AgentEvent| {
         if let Some(line) = format_event(&e) {
             eprintln!("[{}] {line}", e.agent_name);
         }
@@ -37,7 +37,7 @@ async fn orchestrator_sends_message_to_backgrounded_worker(
     });
 
     // Shared cancel signal — set on the orchestrator; the worker inherits it
-    // via Runtime::inherit. We flip it from the test body after the worker
+    // via LoopRuntime::inherit. We flip it from the test body after the worker
     // has had time to process the peer message, to release its idle wait.
     let cancel = Arc::new(AtomicBool::new(false));
 
@@ -85,16 +85,16 @@ async fn orchestrator_sends_message_to_backgrounded_worker(
 
     let all = events.lock().unwrap();
     let worker_started = all.iter().any(
-        |e| matches!(e.kind, EventKind::AgentStart { .. }) && e.agent_name == "worker",
+        |e| matches!(e.kind, AgentEventKind::AgentStart { .. }) && e.agent_name == "worker",
     );
     let worker_ended = all.iter().any(
-        |e| matches!(e.kind, EventKind::AgentEnd { .. }) && e.agent_name == "worker",
+        |e| matches!(e.kind, AgentEventKind::AgentEnd { .. }) && e.agent_name == "worker",
     );
     let send_ok = all.iter().any(|e| {
         e.agent_name == "orchestrator"
             && matches!(
                 &e.kind,
-                EventKind::ToolCallEnd { tool_name, is_error: false, .. }
+                AgentEventKind::ToolCallEnd { tool_name, is_error: false, .. }
                     if tool_name == "send_message"
             )
     });
@@ -102,7 +102,7 @@ async fn orchestrator_sends_message_to_backgrounded_worker(
         .iter()
         .filter(|e| e.agent_name == "worker")
         .filter_map(|e| match &e.kind {
-            EventKind::ResponseTextChunk { content } => Some(content.as_str()),
+            AgentEventKind::ResponseTextChunk { content } => Some(content.as_str()),
             _ => None,
         })
         .collect();
@@ -125,29 +125,29 @@ async fn orchestrator_sends_message_to_backgrounded_worker(
 
 /// Render an event as a single crisp line. Returns `None` for the noisy
 /// streaming/usage events that would flood the log.
-fn format_event(e: &Event) -> Option<String> {
+fn format_event(e: &AgentEvent) -> Option<String> {
     match &e.kind {
-        EventKind::AgentStart { description } => Some(match description {
+        AgentEventKind::AgentStart { description } => Some(match description {
             Some(d) => format!("start  ({d})"),
             None => "start".into(),
         }),
-        EventKind::AgentEnd { turns, status } => {
+        AgentEventKind::AgentEnd { turns, status } => {
             Some(format!("end    ({turns} turns, {status:?})"))
         }
-        EventKind::TurnStart { turn } => Some(format!("turn   {turn}")),
-        EventKind::ToolCallStart { tool_name, input, .. } => {
+        AgentEventKind::TurnStart { turn } => Some(format!("turn   {turn}")),
+        AgentEventKind::ToolCallStart { tool_name, input, .. } => {
             Some(format!("tool   {tool_name}({})", one_line(input)))
         }
-        EventKind::ToolCallEnd { tool_name, is_error, output, .. } => {
+        AgentEventKind::ToolCallEnd { tool_name, is_error, output, .. } => {
             let tag = if *is_error { "err" } else { "ok" };
             Some(format!("tool   {tool_name} -> {tag} {}", truncate(output, 80)))
         }
-        EventKind::CompactTriggered { turn, token_count, threshold, reason } => Some(format!(
+        AgentEventKind::CompactTriggered { turn, token_count, threshold, reason } => Some(format!(
             "compact turn={turn} {token_count}/{threshold} ({reason:?})"
         )),
-        EventKind::OutputTruncated { turn } => Some(format!("truncated turn={turn}")),
-        EventKind::AgentIdle => Some("idle".into()),
-        EventKind::AgentResumed => Some("resumed".into()),
+        AgentEventKind::OutputTruncated { turn } => Some(format!("truncated turn={turn}")),
+        AgentEventKind::AgentIdle => Some("idle".into()),
+        AgentEventKind::AgentResumed => Some("resumed".into()),
         // Quiet: TurnEnd, RequestStart/End, ResponseTextChunk, TokenUsage.
         _ => None,
     }

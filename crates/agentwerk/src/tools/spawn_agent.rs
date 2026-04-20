@@ -14,7 +14,7 @@ use crate::tools::tool::{Tool, ToolContext, ToolResult};
 const DEFAULT_IDENTITY: &str = "You are a focused helper agent. Answer concisely.";
 
 /// LLM-facing tool that spawns a sub-agent. Carries no state — every per-call
-/// detail (caller's `Runtime`, `AgentSpec`) flows in via `ToolContext`.
+/// detail (caller's `LoopRuntime`, `AgentSpec`) flows in via `ToolContext`.
 pub struct SpawnAgentTool;
 
 /// Tool-control fields. Per-agent config overrides (identity, model, max_*, …)
@@ -138,7 +138,7 @@ impl Tool for SpawnAgentTool {
                 .as_ref()
                 .ok_or_else(|| AgenticError::Tool {
                     tool_name: "spawn_agent".into(),
-                    message: "Runtime not available in ToolContext".into(),
+                    message: "LoopRuntime not available in ToolContext".into(),
                 })?
                 .clone();
             let caller = ctx

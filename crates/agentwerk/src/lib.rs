@@ -12,9 +12,8 @@ pub use error::{AgenticError, Result};
 
 // Provider and message types
 pub use provider::{
-    AnthropicProvider, CompletionRequest, ContentBlock, LiteLLMProvider, Message, MistralProvider,
+    AnthropicProvider, CompletionRequest, ContentBlock, LiteLlmProvider, Message, MistralProvider,
     Model, ModelLookup, OpenAiProvider, Provider, ProviderError, TokenUsage,
-    provider_from_env,
 };
 
 // Tool infrastructure and built-in tools
@@ -26,7 +25,6 @@ pub use tools::{
 
 // Agent
 pub use agent::{
-    Agent, AgentOutput, AgentPool, CompactReason, DEFAULT_BEHAVIOR_PROMPT, Event, EventKind, JobId,
-    PoolStrategy, Statistics, Status,
-    compact_threshold_for_context_window_size, COMPACTION_HEADROOM_TOKENS, RESERVED_RESPONSE_TOKENS,
+    Agent, AgentOutput, AgentPool, AgentStatistics, AgentStatus, CompactReason,
+    DEFAULT_BEHAVIOR_PROMPT, AgentEvent, AgentEventKind, AgentJobId, AgentPoolStrategy,
 };

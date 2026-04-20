@@ -5,9 +5,9 @@ use crate::error::{AgenticError, Result};
 /// Why the agent loop exited.
 ///
 /// Distinct from [`crate::provider::types::ResponseStatus`], which describes
-/// what the LLM API reported. `Status` describes the agent-level outcome.
+/// what the LLM API reported. `AgentStatus` describes the agent-level outcome.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Status {
+pub enum AgentStatus {
     /// Model chose to stop — responded without tool calls (`EndTurn`).
     Completed,
     /// External cancel signal was set.
@@ -21,7 +21,7 @@ pub enum Status {
 }
 
 #[derive(Debug, Clone, Default)]
-pub struct Statistics {
+pub struct AgentStatistics {
     pub input_tokens: u64,
     pub output_tokens: u64,
     pub requests: u64,
@@ -33,8 +33,8 @@ pub struct Statistics {
 pub struct AgentOutput {
     pub response: Option<Value>,
     pub response_raw: String,
-    pub statistics: Statistics,
-    pub status: Status,
+    pub statistics: AgentStatistics,
+    pub status: AgentStatus,
 }
 
 impl AgentOutput {
@@ -42,8 +42,8 @@ impl AgentOutput {
         Self {
             response: None,
             response_raw: String::new(),
-            statistics: Statistics::default(),
-            status: Status::Completed,
+            statistics: AgentStatistics::default(),
+            status: AgentStatus::Completed,
         }
     }
 }
@@ -70,16 +70,29 @@ impl OutputSchema {
         }
         Ok(Self { schema })
     }
-}
 
-/// Parse the model's terminal text as JSON and validate it against `schema`.
-/// Strips an optional outer ```json … ``` (or bare ``` … ```) fence so the
-/// most common formatting mistake doesn't force a retry round-trip.
-pub(crate) fn parse_and_validate(text: &str, schema: &Value) -> std::result::Result<Value, String> {
-    let body = strip_code_fences(text.trim());
-    let value: Value = serde_json::from_str(body).map_err(|e| format!("not valid JSON: {e}"))?;
-    validate_value(&value, schema).map_err(|e| e.to_string())?;
-    Ok(value)
+    /// Parse the model's terminal text as JSON and validate it against this
+    /// schema. Strips an optional outer ```json … ``` (or bare ``` … ```)
+    /// fence so the most common formatting mistake doesn't force a retry
+    /// round-trip.
+    pub(crate) fn validate(&self, text: &str) -> std::result::Result<Value, String> {
+        let body = strip_code_fences(text.trim());
+        let value: Value = serde_json::from_str(body).map_err(|e| format!("not valid JSON: {e}"))?;
+        validate_value(&value, &self.schema).map_err(|e| e.to_string())?;
+        Ok(value)
+    }
+
+    /// Build the corrective user message shown to the model after a terminal
+    /// reply fails [`Self::validate`]. `detail` is the validator's
+    /// human-readable error — passing it to the model lets it fix the exact
+    /// field rather than guess.
+    pub(crate) fn retry_message(detail: &str) -> String {
+        format!(
+            "Your last reply did not match the required output schema. You MUST reply with a \
+             single JSON value conforming to the schema, with no surrounding text and no code \
+             fences.\n\nValidator said: {detail}"
+        )
+    }
 }
 
 fn strip_code_fences(s: &str) -> &str {
@@ -92,7 +105,7 @@ fn strip_code_fences(s: &str) -> &str {
 }
 
 /// Recursive walker: validate a JSON value against a schema. Internal to
-/// this module — `parse_and_validate` is the only external entry point.
+/// this module — `OutputSchema::validate` is the only external entry point.
 fn validate_value(value: &Value, schema: &Value) -> Result<()> {
     let schema_type = schema.get("type").and_then(|t| t.as_str()).unwrap_or("object");
 
@@ -175,41 +188,44 @@ fn validate_array(value: &Value, schema: &Value) -> Result<()> {
 mod tests {
     use super::*;
 
-    fn schema() -> Value {
-        serde_json::json!({
+    fn schema() -> OutputSchema {
+        OutputSchema::new(serde_json::json!({
             "type": "object",
             "properties": { "answer": { "type": "integer" } },
             "required": ["answer"]
-        })
+        }))
+        .unwrap()
     }
 
     #[test]
     fn parses_pure_json() {
-        let v = parse_and_validate(r#"{"answer":42}"#, &schema()).unwrap();
+        let v = schema().validate(r#"{"answer":42}"#).unwrap();
         assert_eq!(v["answer"], 42);
     }
 
     #[test]
     fn strips_json_code_fences() {
-        let v = parse_and_validate("```json\n{\"answer\":42}\n```", &schema()).unwrap();
+        let v = schema().validate("```json\n{\"answer\":42}\n```").unwrap();
         assert_eq!(v["answer"], 42);
     }
 
     #[test]
     fn strips_bare_code_fences() {
-        let v = parse_and_validate("```\n{\"answer\":42}\n```", &schema()).unwrap();
+        let v = schema().validate("```\n{\"answer\":42}\n```").unwrap();
         assert_eq!(v["answer"], 42);
     }
 
     #[test]
     fn whitespace_around_fences_ok() {
-        let v = parse_and_validate("  ```json\n  {\"answer\":42}\n```  ", &schema()).unwrap();
+        let v = schema()
+            .validate("  ```json\n  {\"answer\":42}\n```  ")
+            .unwrap();
         assert_eq!(v["answer"], 42);
     }
 
     #[test]
     fn rejects_invalid_json_with_parser_message() {
-        let err = parse_and_validate("the answer is 42", &schema()).unwrap_err();
+        let err = schema().validate("the answer is 42").unwrap_err();
         assert!(
             err.starts_with("not valid JSON"),
             "expected parse-error prefix, got: {err}"
@@ -218,13 +234,13 @@ mod tests {
 
     #[test]
     fn propagates_validate_value_error_with_path() {
-        let err = parse_and_validate(r#"{"answer":"not a number"}"#, &schema()).unwrap_err();
+        let err = schema().validate(r#"{"answer":"not a number"}"#).unwrap_err();
         assert!(err.contains("answer"), "expected field path, got: {err}");
     }
 
     #[test]
     fn rejects_missing_required_field() {
-        let err = parse_and_validate(r#"{}"#, &schema()).unwrap_err();
+        let err = schema().validate(r#"{}"#).unwrap_err();
         assert!(
             err.contains("missing required field"),
             "expected required-field error, got: {err}"

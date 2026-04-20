@@ -2,23 +2,23 @@ mod common;
 
 use std::sync::Arc;
 
-use agentwerk::{Agent, Event, EventKind};
+use agentwerk::{Agent, AgentEvent, AgentEventKind};
 
 #[tokio::test]
 async fn test() -> std::result::Result<(), Box<dyn std::error::Error>> {
     let (provider, model) = common::build_provider();
 
-    let event_handler = Arc::new(|event: Event| match &event.kind {
-        EventKind::ResponseTextChunk { content } => {
+    let event_handler = Arc::new(|event: AgentEvent| match &event.kind {
+        AgentEventKind::ResponseTextChunk { content } => {
             if event.agent_name == "orchestrator" {
                 print!("{content}")
             }
         }
-        EventKind::ToolCallStart { tool_name, .. } => {
+        AgentEventKind::ToolCallStart { tool_name, .. } => {
             eprintln!("\n[{}] tool: {tool_name}", event.agent_name)
         }
-        EventKind::AgentStart { .. } => eprintln!("[{}] started", event.agent_name),
-        EventKind::AgentEnd { turns, .. } => eprintln!("[{}] done ({turns} turns)", event.agent_name),
+        AgentEventKind::AgentStart { .. } => eprintln!("[{}] started", event.agent_name),
+        AgentEventKind::AgentEnd { turns, .. } => eprintln!("[{}] done ({turns} turns)", event.agent_name),
         _ => {}
     });
 

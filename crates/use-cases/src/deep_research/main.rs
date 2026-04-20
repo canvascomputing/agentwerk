@@ -12,7 +12,7 @@ use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 
 use agentwerk::{
-    Agent, AgenticError, Event, EventKind, ToolBuilder, ToolResult,
+    Agent, AgenticError, AgentEvent, AgentEventKind, ToolBuilder, ToolResult,
 };
 
 // ---------------------------------------------------------------------------
@@ -23,7 +23,7 @@ use agentwerk::{
 async fn main() {
     let question = parse_question();
     let brave_key = check_required_env();
-    let (provider, model) = use_cases::provider_from_env().expect("LLM provider required");
+    let (provider, model) = use_cases::from_env().expect("LLM provider required");
 
     eprintln!("Question: {question}\n");
 
@@ -206,19 +206,19 @@ fn urlencode(s: &str) -> String {
 }
 
 // ---------------------------------------------------------------------------
-// Event handler
+// AgentEvent handler
 // ---------------------------------------------------------------------------
 
-fn log_event(event: &Event) {
+fn log_event(event: &AgentEvent) {
     match &event.kind {
-        EventKind::RequestStart { model } => {
+        AgentEventKind::RequestStart { model } => {
             eprintln!("[{}] requesting {model}...", event.agent_name);
         }
-        EventKind::ToolCallStart { tool_name, input, .. } if tool_name != "StructuredOutput" => {
+        AgentEventKind::ToolCallStart { tool_name, input, .. } if tool_name != "StructuredOutput" => {
             let detail = tool_call_summary(tool_name, input);
             eprintln!("[{}] {tool_name}: {detail}", event.agent_name);
         }
-        EventKind::ToolCallEnd { tool_name, output, is_error: true, .. } => {
+        AgentEventKind::ToolCallEnd { tool_name, output, is_error: true, .. } => {
             eprintln!("[error] {tool_name}: {output}");
         }
         _ => {}

@@ -11,7 +11,7 @@
 use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 
-use agentwerk::{Agent, Event, EventKind, WebFetchTool};
+use agentwerk::{Agent, AgentEvent, AgentEventKind, WebFetchTool};
 
 // ---------------------------------------------------------------------------
 // Prompts
@@ -73,7 +73,7 @@ fn output_schema() -> serde_json::Value {
 #[tokio::main]
 async fn main() {
     let output_path = parse_args();
-    let (provider, model) = use_cases::provider_from_env().expect("LLM provider required");
+    let (provider, model) = use_cases::from_env().expect("LLM provider required");
 
     eprintln!("Model Pricing Tracker\n");
 
@@ -119,20 +119,20 @@ async fn main() {
 }
 
 // ---------------------------------------------------------------------------
-// Event logging
+// AgentEvent logging
 // ---------------------------------------------------------------------------
 
-fn log_event(event: &Event) {
+fn log_event(event: &AgentEvent) {
     match &event.kind {
-        EventKind::RequestStart { model, .. } => {
+        AgentEventKind::RequestStart { model, .. } => {
             eprintln!("[{}] requesting {model}...", event.agent_name);
         }
-        EventKind::ToolCallStart { tool_name, input, .. }
+        AgentEventKind::ToolCallStart { tool_name, input, .. }
             if tool_name != "StructuredOutput" =>
         {
             eprintln!("[{}] {tool_name}: {}", event.agent_name, tool_call_detail(tool_name, input));
         }
-        EventKind::ToolCallEnd { tool_name, output, is_error: true, .. } => {
+        AgentEventKind::ToolCallEnd { tool_name, output, is_error: true, .. } => {
             eprintln!("[error] {tool_name}: {output}");
         }
         _ => {}
