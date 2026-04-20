@@ -73,25 +73,23 @@ fn output_schema() -> serde_json::Value {
 #[tokio::main]
 async fn main() {
     let output_path = parse_args();
-    let (provider, model) = use_cases::from_env().expect("LLM provider required");
 
     eprintln!("Model Pricing Tracker\n");
 
     let pricing_researcher = Agent::new()
         .name("pricing_researcher")
-        .model(&model)
         .identity_prompt(PRICING_RESEARCHER_PROMPT)
         .tool(WebFetchTool)
         .max_turns(10);
 
     let output = match Agent::new()
         .name("pricing_tracker")
-        .model(&model)
+        .provider_from_env()
+        .expect("LLM provider required")
         .identity_prompt(ORCHESTRATOR_PROMPT)
         .sub_agents([pricing_researcher])
         .output_schema(output_schema())
         .max_turns(10)
-        .provider(provider)
         .instruction_prompt("Gather current model pricing from all supported providers.")
         .event_handler(Arc::new(|event| log_event(&event)))
         .cancel_signal(setup_cancel_signal())

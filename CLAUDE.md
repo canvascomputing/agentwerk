@@ -83,7 +83,6 @@ crates/agentwerk/src/
   testutil.rs             MockProvider, MockTool, TestHarness, AgentEventCollector
 
 crates/use-cases/src/
-  lib.rs                    shared provider detection, env helpers
   project_scanner/
     main.rs                 project scanning CLI
   deep_research/

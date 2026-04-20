@@ -69,7 +69,8 @@ fn summarize_schema() -> Value {
 #[tokio::main]
 async fn main() {
     let config = parse_args();
-    let (provider, default_model) = use_cases::from_env().expect("LLM provider required");
+    let (provider, default_model) =
+        agentwerk::provider::from_env().expect("LLM provider required");
     let model = if config.model.is_empty() { default_model } else { config.model };
 
     let cancel = Arc::new(AtomicBool::new(false));
@@ -143,6 +144,7 @@ async fn main() {
 
     // Phase 2: Summarize each file in parallel
     let summarizer = Agent::new()
+        .provider(provider.clone())
         .model(&model)
         .identity_prompt(SUMMARIZE_PROMPT)
         .tool(ReadFileTool)
@@ -161,7 +163,6 @@ async fn main() {
 
         let job = summarizer
             .clone()
-            .provider(provider.clone())
             .instruction_prompt(format!("Read and summarize: {file}"))
             .working_directory(config.folder.clone())
             .cancel_signal(cancel.clone())

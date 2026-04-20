@@ -29,10 +29,7 @@ const IDENTITY_PROMPT: &str =
 
 #[tokio::main]
 async fn main() {
-    let (provider, model) = use_cases::from_env().expect("LLM provider required");
-
-    eprintln!("agentwerk REPL — type /exit to quit, Ctrl-C to cancel.");
-    eprintln!("model: {model}\n");
+    eprintln!("agentwerk REPL — type /exit to quit, Ctrl-C to cancel.\n");
 
     let Some(first) = read_line_async("> ").await else { return };
     if first.is_empty() || first == "/exit" || first == "/quit" {
@@ -44,8 +41,8 @@ async fn main() {
 
     let running = Agent::new()
         .name("orchestrator")
-        .model(&model)
-        .provider(provider)
+        .provider_from_env()
+        .expect("LLM provider required")
         .identity_prompt(IDENTITY_PROMPT)
         .instruction_prompt(first)
         .tool(GlobTool)

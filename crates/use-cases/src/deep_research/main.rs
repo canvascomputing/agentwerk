@@ -23,7 +23,6 @@ use agentwerk::{
 async fn main() {
     let question = parse_question();
     let brave_key = check_required_env();
-    let (provider, model) = use_cases::from_env().expect("LLM provider required");
 
     eprintln!("Question: {question}\n");
 
@@ -31,7 +30,6 @@ async fn main() {
         .map(|i| {
             Agent::new()
                 .name(format!("researcher_{i}"))
-                .model(&model)
                 .identity_prompt(RESEARCHER_PROMPT)
                 .tool(brave_search_tool(brave_key.clone()))
                 .max_turns(3)
@@ -40,12 +38,12 @@ async fn main() {
 
     let output = match Agent::new()
         .name("report_writer")
-        .model(&model)
+        .provider_from_env()
+        .expect("LLM provider required")
         .identity_prompt(REPORT_WRITER_PROMPT)
         .sub_agents(researchers)
         .output_schema(output_schema())
         .max_turns(10)
-        .provider(provider)
         .instruction_prompt(question)
         .event_handler(Arc::new(|event| log_event(&event)))
         .cancel_signal(setup_cancel_signal())
