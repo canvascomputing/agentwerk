@@ -21,3 +21,7 @@ path = "src/deep_research/main.rs"
 [[bin]]
 name = "model-pricing-tracker"
 path = "src/model_pricing_tracker/main.rs"
+
+[[bin]]
+name = "terminal-repl"
+path = "src/terminal_repl/main.rs"

@@ -54,6 +54,7 @@ Example applications built with this project:
 - [Project Scanner](crates/use-cases/src/project_scanner/): scan and analyze local files
 - [Deep Research](crates/use-cases/src/deep_research/): multi-agent research with web search (requires `BRAVE_API_KEY`)
 - [Model Pricing Tracker](crates/use-cases/src/model_pricing_tracker/): check model prices
+- [Terminal REPL](crates/use-cases/src/terminal_repl/): interactive terminal chat with a local-search agent
 
 ```bash
 make use_case                # list available names
