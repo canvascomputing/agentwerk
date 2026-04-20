@@ -43,19 +43,23 @@ pub(crate) const MAX_TOKENS_CONTINUATION: &str =
      Resume exactly where you left off — do not repeat, apologize, or recap.";
 
 pub(crate) const STRUCTURED_OUTPUT_INSTRUCTION: &str =
-    "\n\nIMPORTANT: You must provide your final response using the StructuredOutput tool \
-     with the required structured format. After using any other tools needed to complete \
-     the task, always call StructuredOutput with your final answer in the specified schema.";
+    "\n\nIMPORTANT: You MUST return your final response as a single JSON value that \
+     conforms to the declared output schema. After using any tools needed to complete \
+     the task, your last message MUST be the JSON value, exactly once. Do not wrap it \
+     in markdown code fences. Do not include any text before or after the JSON.";
 
-pub(crate) const STRUCTURED_OUTPUT_RETRY: &str =
-    "You MUST call the StructuredOutput tool to complete \
-     this request. Call this tool now with the required schema.";
-
-pub(crate) const STRUCTURED_OUTPUT_TOOL_DESCRIPTION: &str =
-    "Return your final response using the required output schema. \
-     Call this tool exactly once at the end to provide the structured result.";
-
-pub(crate) const STRUCTURED_OUTPUT_TOOL_NAME: &str = "StructuredOutput";
+/// Build the corrective user message shown to the model after a terminal reply
+/// fails schema validation. `detail` is the validator's human-readable error
+/// (e.g. "Schema validation error at summary: missing required field") — it
+/// gives the model targeted feedback so it can fix the exact field rather
+/// than guess.
+pub(crate) fn structured_output_retry(detail: &str) -> String {
+    format!(
+        "Your last reply did not match the required output schema. You MUST reply with a \
+         single JSON value conforming to the schema, with no surrounding text and no code \
+         fences.\n\nValidator said: {detail}"
+    )
+}
 
 // ---------------------------------------------------------------------------
 // Template interpolation

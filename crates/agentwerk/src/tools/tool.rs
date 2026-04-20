@@ -88,9 +88,6 @@ pub struct ToolCall {
 pub struct ToolResult {
     pub(crate) content: String,
     pub(crate) is_error: bool,
-    /// Side-effect: captured structured output (set by `StructuredOutputTool`).
-    /// The agent loop reads this to populate `AgentOutput.response` — no name-based dispatch.
-    pub(crate) structured_output: Option<Value>,
     /// Side-effect: tool names discovered by an introspection tool (set by `ToolSearchTool`).
     /// The agent loop merges these into its discovered-tools set so deferred tools get
     /// their full definitions on subsequent LLM requests.
@@ -104,13 +101,6 @@ impl ToolResult {
 
     pub fn error(content: impl Into<String>) -> Self {
         Self { content: content.into(), is_error: true, ..Self::default() }
-    }
-
-    /// Attach a structured-output side-effect. Used by `StructuredOutputTool` so the
-    /// agent loop doesn't need to match on tool names.
-    pub fn with_structured_output(mut self, value: Value) -> Self {
-        self.structured_output = Some(value);
-        self
     }
 
     /// Attach discovered tool names. Used by `ToolSearchTool` so the agent loop doesn't
@@ -248,10 +238,6 @@ impl ToolRegistry {
 
         scored.sort_by(|a, b| b.1.cmp(&a.1));
         scored.into_iter().map(|(def, _)| def).collect()
-    }
-
-    pub(crate) fn is_empty(&self) -> bool {
-        self.tools.is_empty()
     }
 }
 
@@ -533,16 +519,6 @@ mod tests {
         assert_eq!(defs.len(), 2);
         assert_eq!(defs[0].name, "read");
         assert_eq!(defs[1].name, "write");
-    }
-
-    #[test]
-    fn registry_is_empty() {
-        let registry = ToolRegistry::new();
-        assert!(registry.is_empty());
-
-        let mut registry = ToolRegistry::new();
-        registry.register(MockTool::new("t", true, "ok"));
-        assert!(!registry.is_empty());
     }
 
     #[test]

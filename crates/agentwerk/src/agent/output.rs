@@ -1,11 +1,6 @@
-use std::future::Future;
-use std::pin::Pin;
-
 use serde_json::Value;
 
 use crate::error::{AgenticError, Result};
-use super::prompts::{STRUCTURED_OUTPUT_TOOL_DESCRIPTION, STRUCTURED_OUTPUT_TOOL_NAME};
-use crate::tools::{Tool, ToolContext, ToolResult};
 
 /// Why the agent loop exited.
 ///
@@ -77,47 +72,28 @@ impl OutputSchema {
     }
 }
 
-pub(crate) struct StructuredOutputTool {
-    schema: OutputSchema,
+/// Parse the model's terminal text as JSON and validate it against `schema`.
+/// Strips an optional outer ```json … ``` (or bare ``` … ```) fence so the
+/// most common formatting mistake doesn't force a retry round-trip.
+pub(crate) fn parse_and_validate(text: &str, schema: &Value) -> std::result::Result<Value, String> {
+    let body = strip_code_fences(text.trim());
+    let value: Value = serde_json::from_str(body).map_err(|e| format!("not valid JSON: {e}"))?;
+    validate_value(&value, schema).map_err(|e| e.to_string())?;
+    Ok(value)
 }
 
-impl StructuredOutputTool {
-    pub(crate) fn new(schema: OutputSchema) -> Self {
-        Self { schema }
-    }
+fn strip_code_fences(s: &str) -> &str {
+    let s = s
+        .strip_prefix("```json")
+        .or_else(|| s.strip_prefix("```"))
+        .unwrap_or(s)
+        .trim_start();
+    s.strip_suffix("```").unwrap_or(s).trim()
 }
 
-impl Tool for StructuredOutputTool {
-    fn name(&self) -> &str {
-        STRUCTURED_OUTPUT_TOOL_NAME
-    }
-
-    fn description(&self) -> &str {
-        STRUCTURED_OUTPUT_TOOL_DESCRIPTION
-    }
-
-    fn input_schema(&self) -> Value {
-        self.schema.schema.clone()
-    }
-
-    fn is_read_only(&self) -> bool {
-        true
-    }
-
-    fn call<'a>(
-        &'a self,
-        input: Value,
-        _ctx: &'a ToolContext,
-    ) -> Pin<Box<dyn Future<Output = Result<ToolResult>> + Send + 'a>> {
-        Box::pin(async move {
-            validate_value(&input, &self.schema.schema)?;
-            Ok(ToolResult::success("Structured output accepted.").with_structured_output(input))
-        })
-    }
-}
-
-/// Validate a JSON value against a JSON Schema object.
-pub(crate) fn validate_value(value: &Value, schema: &Value) -> Result<()> {
+/// Recursive walker: validate a JSON value against a schema. Internal to
+/// this module — `parse_and_validate` is the only external entry point.
+fn validate_value(value: &Value, schema: &Value) -> Result<()> {
     let schema_type = schema.get("type").and_then(|t| t.as_str()).unwrap_or("object");
 
     match schema_type {
@@ -193,4 +169,65 @@ fn validate_array(value: &Value, schema: &Value) -> Result<()> {
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn schema() -> Value {
+        serde_json::json!({
+            "type": "object",
+            "properties": { "answer": { "type": "integer" } },
+            "required": ["answer"]
+        })
+    }
+
+    #[test]
+    fn parses_pure_json() {
+        let v = parse_and_validate(r#"{"answer":42}"#, &schema()).unwrap();
+        assert_eq!(v["answer"], 42);
+    }
+
+    #[test]
+    fn strips_json_code_fences() {
+        let v = parse_and_validate("```json\n{\"answer\":42}\n```", &schema()).unwrap();
+        assert_eq!(v["answer"], 42);
+    }
+
+    #[test]
+    fn strips_bare_code_fences() {
+        let v = parse_and_validate("```\n{\"answer\":42}\n```", &schema()).unwrap();
+        assert_eq!(v["answer"], 42);
+    }
+
+    #[test]
+    fn whitespace_around_fences_ok() {
+        let v = parse_and_validate("  ```json\n  {\"answer\":42}\n```  ", &schema()).unwrap();
+        assert_eq!(v["answer"], 42);
+    }
+
+    #[test]
+    fn rejects_invalid_json_with_parser_message() {
+        let err = parse_and_validate("the answer is 42", &schema()).unwrap_err();
+        assert!(
+            err.starts_with("not valid JSON"),
+            "expected parse-error prefix, got: {err}"
+        );
+    }
+
+    #[test]
+    fn propagates_validate_value_error_with_path() {
+        let err = parse_and_validate(r#"{"answer":"not a number"}"#, &schema()).unwrap_err();
+        assert!(err.contains("answer"), "expected field path, got: {err}");
+    }
+
+    #[test]
+    fn rejects_missing_required_field() {
+        let err = parse_and_validate(r#"{}"#, &schema()).unwrap_err();
+        assert!(
+            err.contains("missing required field"),
+            "expected required-field error, got: {err}"
+        );
+    }
 }

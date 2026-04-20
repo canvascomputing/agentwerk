@@ -100,6 +100,10 @@ impl Tool for SpawnAgentTool {
                     "type": "integer",
                     "description": "Override structured-output retry count for this spawn."
                 },
+                "output_schema": {
+                    "type": "object",
+                    "description": "JSON Schema (object) the spawned agent's final reply must conform to. The validated JSON is returned as this tool's result."
+                },
                 "max_request_retries": {
                     "type": "integer",
                     "description": "Override transient-API retry count for this spawn."
@@ -272,6 +276,63 @@ mod tests {
         assert!(
             notification.contains("response-") || notification.contains("Failed"),
             "Notification should contain agent result: {notification}"
+        );
+    }
+
+    #[tokio::test]
+    async fn spawn_agent_background_with_schema_enqueues_json() {
+        // Background path: the child's `response_raw` is what `enqueue_notification`
+        // ships in the queue. With the new design, a schema-constrained child's
+        // `response_raw` IS the validated JSON text — so the queued notification
+        // must carry the JSON verbatim (modulo the `"Task <id> completed:"` prefix).
+        let agent = Agent::new()
+            .name("orchestrator")
+            .model("mock")
+            .identity_prompt("")
+            .tool(SpawnAgentTool);
+
+        let queue = Arc::new(CommandQueue::new());
+        let valid_json = r#"{"answer":42}"#;
+
+        // Background spawn means the child's first turn races the parent's
+        // turn 2 for the next mock response. Script both with the same valid
+        // JSON so either interleaving succeeds: the child validates and
+        // terminates; the parent (no schema) just returns whatever text it
+        // got. The queue notification still carries the child's JSON.
+        let provider = Arc::new(MockProvider::new(vec![
+            tool_response(
+                "spawn_agent",
+                "sa1",
+                serde_json::json!({
+                    "description": "bg-classifier",
+                    "instruction": "Answer.",
+                    "identity": "You answer with JSON.",
+                    "model": "mock",
+                    "background": true,
+                    "output_schema": {
+                        "type": "object",
+                        "properties": { "answer": { "type": "integer" } },
+                        "required": ["answer"]
+                    },
+                }),
+            ),
+            text_response(valid_json),
+            text_response(valid_json),
+        ]));
+
+        let harness = TestHarness::with_provider_and_queue(provider.clone(), queue.clone());
+        let output = harness.run_agent(&agent, "go").await.unwrap();
+        assert!(!output.response_raw.is_empty());
+
+        tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+
+        let cmd = queue.dequeue_if(None, |_| true);
+        let notification = cmd
+            .expect("background agent must enqueue a notification")
+            .content;
+        assert!(
+            notification.contains(valid_json),
+            "notification must carry the validated JSON, got: {notification}"
         );
     }
 

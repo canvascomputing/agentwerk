@@ -338,11 +338,10 @@ let output = Agent::new()
         "properties": { "category": { "type": "string" } },
         "required": ["category"]
     }))
-    .max_schema_retries(3)  // retry if agent doesn't comply (default: 3)
-
+    .max_schema_retries(3)
     .run().await?;
 
-output.response.unwrap()["category"]  // "billing"
+output.response.unwrap()["category"]
 ```
 
 Or load the schema from a file:
@@ -361,7 +360,6 @@ Each LLM request is assembled from the following parts:
 |------|------|--------|-------------|
 | **model** | `String` | `model()` | The LLM model that processes the request |
 | **max_tokens** | `Number` | `max_tokens()` | The maximum number of tokens the model can output |
-| **tool_choice** | `ToolChoice` | `output_schema()` | A constraint that forces the model to call a specific tool |
 | **system_prompt** | `String` | `identity_prompt()`<br>`behavior_prompt()` | Persistent instructions that define who the agent is and how it behaves |
 | **message** | `Message[]` | `context_prompt()`<br>`instruction_prompt()` | The conversation history between user and assistant, starting with metadata, context, and the task |
 | **tools** | `ToolDefinition[]` | `tool()` | The functions the model can call during execution |

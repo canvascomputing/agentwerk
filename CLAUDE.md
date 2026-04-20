@@ -51,7 +51,7 @@ crates/agentwerk/src/
     mod.rs                re-exports
     werk.rs               Agent (config+runtime split), Runtime, AgentSpec, LoopState, run_loop
     event.rs              Event enum (AgentStart carries description for spawned children)
-    output.rs             AgentOutput, OutputSchema, StructuredOutputTool, validate_value
+    output.rs             AgentOutput, OutputSchema, parse_and_validate
     prompts.rs            DEFAULT_BEHAVIOR_PROMPT, interpolate, collect_metadata
     pool.rs               AgentPool, PoolStrategy, JobId (dynamic execution with concurrency control)
     queue.rs              CommandQueue, QueuePriority, QueuedCommand (internal)

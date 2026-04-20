@@ -35,10 +35,8 @@ use crate::util::{generate_agent_name, now_millis};
 
 use super::compact;
 use super::event::{Event, EventKind};
-use super::output::{AgentOutput, OutputSchema, Statistics, Status, StructuredOutputTool};
-use super::prompts::{
-    self as prompts, interpolate, DEFAULT_BEHAVIOR_PROMPT, STRUCTURED_OUTPUT_TOOL_NAME,
-};
+use super::output::{parse_and_validate, AgentOutput, OutputSchema, Statistics, Status};
+use super::prompts::{self as prompts, interpolate, DEFAULT_BEHAVIOR_PROMPT};
 use super::queue::{CommandQueue, QueuePriority};
 
 // ---------------------------------------------------------------------------
@@ -445,6 +443,9 @@ impl Agent {
         if let Some(bo) = overrides.get("request_retry_backoff_ms").and_then(Value::as_u64) {
             self = self.request_retry_backoff_ms(bo);
         }
+        if let Some(schema) = overrides.get("output_schema").cloned() {
+            self = self.output_schema(schema);
+        }
         self
     }
 }
@@ -632,23 +633,7 @@ fn compile_tools(agent: &Agent) -> (Arc<ToolRegistry>, Option<ToolChoice>) {
         tools.register(SpawnAgentTool);
     }
 
-    // If the agent demands structured output, register the matching tool and
-    // (when no other tools exist) force the LLM to call it.
-    let tool_choice = if let Some(ref schema) = agent.config.output_schema {
-        let user_tools_empty = tools.is_empty();
-        tools.register(StructuredOutputTool::new(schema.clone()));
-        if user_tools_empty {
-            Some(ToolChoice::Specific {
-                name: STRUCTURED_OUTPUT_TOOL_NAME.into(),
-            })
-        } else {
-            None
-        }
-    } else {
-        None
-    };
-
-    (Arc::new(tools), tool_choice)
+    (Arc::new(tools), None)
 }
 
 fn compile_system_prompt(agent: &Agent) -> String {
@@ -692,7 +677,6 @@ pub(crate) struct LoopState {
     pub turn: u32,
     pub schema_retries: u32,
     pub discovered_tools: HashSet<String>,
-    pub structured_output: Option<Value>,
     pub is_idle: bool,
 }
 
@@ -833,14 +817,36 @@ pub(crate) fn run_loop(
                 continue;
             }
 
-            let finished_output = try_finish(&runtime, &spec, &mut state, text)?;
-            if let Some(output) = finished_output {
+            let output_validation = match &spec.output_schema {
+                None => Ok(None),
+                Some(schema) => parse_and_validate(&text, &schema.schema).map(Some),
+            };
+
+            if let Err(detail) = output_validation.as_ref() {
+                state.schema_retries += 1;
+
+                let retry_limit_exceeded = spec
+                    .max_schema_retries
+                    .filter(|&limit| state.schema_retries > limit);
+                if let Some(limit) = retry_limit_exceeded {
+                    return Err(AgenticError::SchemaRetryExhausted { retries: limit });
+                }
+
+                let retry_prompt = prompts::structured_output_retry(detail);
+                state.messages.push(Message::user(retry_prompt));
                 emit_turn_end(&runtime, &spec, turn);
-                return Ok(output);
+                continue;
             }
 
-            // try_finish returned None → schema-retry prompt queued; loop.
+            let validated = output_validation.expect("Err handled above");
+            let agent_end = EventKind::AgentEnd {
+                turns: state.turn,
+                status: Status::Completed,
+            };
+
+            emit(&runtime, &spec, agent_end);
             emit_turn_end(&runtime, &spec, turn);
+            return Ok(build_output(&state, text, validated, Status::Completed));
         }
     })
 }
@@ -860,7 +866,7 @@ fn finish_early(
             status: status.clone(),
         },
     );
-    build_output(state, text, status)
+    build_output(state, text, None, status)
 }
 
 fn check_guards(runtime: &Runtime, spec: &AgentSpec, state: &LoopState) -> Option<Status> {
@@ -990,36 +996,6 @@ fn parse_response(response: &ModelResponse) -> (String, Vec<ToolCall>) {
     (text, tool_calls)
 }
 
-fn try_finish(
-    runtime: &Runtime,
-    spec: &AgentSpec,
-    state: &mut LoopState,
-    text: String,
-) -> Result<Option<AgentOutput>> {
-    if spec.output_schema.is_some() && state.structured_output.is_none() {
-        state.schema_retries += 1;
-        if let Some(limit) = spec.max_schema_retries {
-            if state.schema_retries > limit {
-                return Err(AgenticError::SchemaRetryExhausted { retries: limit });
-            }
-        }
-        state
-            .messages
-            .push(Message::user(prompts::STRUCTURED_OUTPUT_RETRY));
-        return Ok(None);
-    }
-
-    emit(
-        runtime,
-        spec,
-        EventKind::AgentEnd {
-            turns: state.turn,
-            status: Status::Completed,
-        },
-    );
-    Ok(Some(build_output(state, text, Status::Completed)))
-}
-
 async fn execute_tools(
     runtime: &Arc<Runtime>,
     spec: &Arc<AgentSpec>,
@@ -1047,9 +1023,6 @@ async fn execute_tools(
     let raw = execute_tool_calls(calls, &tool_ctx).await;
     let mut blocks = Vec::with_capacity(raw.len());
     for (block, result) in raw {
-        if let Some(v) = result.structured_output {
-            state.structured_output = Some(v);
-        }
         for t in result.discovered_tools {
             state.discovered_tools.insert(t);
         }
@@ -1224,9 +1197,14 @@ fn record_transcript(
         .ok();
 }
 
-fn build_output(state: &mut LoopState, text: String, status: Status) -> AgentOutput {
+fn build_output(
+    state: &LoopState,
+    text: String,
+    response: Option<Value>,
+    status: Status,
+) -> AgentOutput {
     AgentOutput {
-        response: state.structured_output.take(),
+        response,
         response_raw: text,
         statistics: Statistics {
             input_tokens: state.total_usage.input_tokens,
@@ -1500,10 +1478,7 @@ mod tests {
     #[tokio::test]
     async fn structured_output_extracted() {
         let schema_input = serde_json::json!({"category": "billing", "priority": "high"});
-        let provider = MockProvider::new(vec![
-            tool_response(STRUCTURED_OUTPUT_TOOL_NAME, "so1", schema_input),
-            text_response("done"),
-        ]);
+        let provider = MockProvider::new(vec![text_response(&schema_input.to_string())]);
         let agent = Agent::new()
             .name("classifier")
             .model("mock")
