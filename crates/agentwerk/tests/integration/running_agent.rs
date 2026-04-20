@@ -60,7 +60,7 @@ async fn external_sender_delivers_two_instructions_and_clone_cancels(
                 Do not invent numbers. Do not echo any example. Do not restate the rules.",
         )
         .instruction_prompt("wait")
-        .keep_alive_unlimited()
+        .keep_alive()
         .max_turns(10)
         .event_handler(event_handler)
         .create();

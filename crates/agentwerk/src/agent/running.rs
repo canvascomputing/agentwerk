@@ -189,7 +189,7 @@ mod tests {
             .provider(provider.clone())
             .identity_prompt("")
             .instruction_prompt("initial")
-            .keep_alive_unlimited()
+            .keep_alive()
             .event_handler(Arc::new(move |e: AgentEvent| {
                 events_for_handler.lock().unwrap().push(e);
             }))
@@ -243,7 +243,7 @@ mod tests {
             .provider(provider)
             .identity_prompt("")
             .instruction_prompt("initial")
-            .keep_alive_unlimited()
+            .keep_alive()
             .event_handler(Arc::new(move |e: AgentEvent| {
                 events_for_handler.lock().unwrap().push(e);
             }))

@@ -115,7 +115,7 @@ let agent = Agent::new()
     .model("claude-sonnet-4-20250514")
     .identity_prompt("Answer questions about the codebase.")
     .tool(ReadFileTool)
-    .keep_alive_unlimited()
+    .keep_alive()
     .create();
 
 // Stop the agent on Ctrl-C from any task.
@@ -235,8 +235,7 @@ For protecting your budget or data, you can define clear execution rules for typ
 | `.max_schema_retries(3)` | 10 | Retry structured output compliance |
 | `.max_request_retries(5)` | 3 | Retry on transient API errors (429, 529, 5xx) |
 | `.request_retry_backoff_ms(2000)` | 10,000 | Base delay for exponential backoff (`ms * 2^attempt`) |
-| `.keep_alive_ms(10_000)` | off | Wait up to N ms for incoming messages before exiting. |
-| `.keep_alive_unlimited()` | off | Wait indefinitely for incoming messages, exiting only on cancel. |
+| `.keep_alive()` | off | Stay alive listening for incoming messages, exiting only on cancel. |
 
 To abort from outside the agent, use `.cancel_signal(signal)` — see
 [Inheritance](#inheritance) for how it propagates across sub-agents.

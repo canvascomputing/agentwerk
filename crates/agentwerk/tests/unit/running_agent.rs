@@ -265,7 +265,7 @@ fn keep_alive_agent(
         .provider(provider.clone())
         .identity_prompt("")
         .instruction_prompt("initial")
-        .keep_alive_unlimited()
+        .keep_alive()
         .event_handler(events.handler())
         .create();
     (provider, running)

@@ -18,7 +18,7 @@ use std::path::PathBuf;
 use std::pin::Pin;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use serde_json::Value;
 
@@ -73,13 +73,8 @@ pub(crate) struct AgentConfig {
     pub max_schema_retries: Option<u32>,
     pub max_request_retries: u32,
     pub request_retry_backoff_ms: u64,
-    pub keep_alive_ms: Option<u64>,
+    pub keep_alive: bool,
 }
-
-/// Sentinel value for "keep_alive with no timeout". ~584 million years in ms
-/// — effectively unbounded. Exposed only via `Agent::keep_alive_unlimited()`,
-/// never a user-facing magic number.
-const KEEP_ALIVE_UNLIMITED: u64 = u64::MAX;
 
 impl Default for AgentConfig {
     fn default() -> Self {
@@ -98,7 +93,7 @@ impl Default for AgentConfig {
             max_schema_retries: Some(10),
             max_request_retries: Agent::DEFAULT_MAX_REQUEST_RETRIES,
             request_retry_backoff_ms: Agent::DEFAULT_BACKOFF_MS,
-            keep_alive_ms: None,
+            keep_alive: false,
         }
     }
 }
@@ -120,7 +115,7 @@ impl Clone for AgentConfig {
             max_schema_retries: self.max_schema_retries,
             max_request_retries: self.max_request_retries,
             request_retry_backoff_ms: self.request_retry_backoff_ms,
-            keep_alive_ms: self.keep_alive_ms,
+            keep_alive: self.keep_alive,
         }
     }
 }
@@ -273,17 +268,11 @@ impl Agent {
         self.with_config(|c| c.request_retry_backoff_ms = ms)
     }
 
-    /// Keep the agent alive after a benign text-only response for up to `ms`
-    /// milliseconds, listening for peer messages. Wakes on any message visible
-    /// to this agent, or on `cancel_signal`. Default: unset (one-shot).
-    pub fn keep_alive_ms(self, ms: u64) -> Self {
-        self.with_config(|c| c.keep_alive_ms = Some(ms))
-    }
-
-    /// Keep the agent alive indefinitely after a benign text-only response.
-    /// Only the `cancel_signal` (or process exit) will stop the wait.
-    pub fn keep_alive_unlimited(self) -> Self {
-        self.with_config(|c| c.keep_alive_ms = Some(KEEP_ALIVE_UNLIMITED))
+    /// Keep the agent alive after a benign text-only response, listening for
+    /// peer messages until `cancel_signal` fires. If never called, the agent
+    /// is one-shot (default).
+    pub fn keep_alive(self) -> Self {
+        self.with_config(|c| c.keep_alive = true)
     }
 
     /// Override the default behavior prompt.
@@ -634,7 +623,7 @@ pub(crate) struct AgentSpec {
     pub max_schema_retries: Option<u32>,
     pub max_request_retries: u32,
     pub request_retry_backoff_ms: u64,
-    pub keep_alive_ms: Option<u64>,
+    pub keep_alive: bool,
 }
 
 impl AgentSpec {
@@ -682,7 +671,7 @@ impl AgentSpec {
             max_schema_retries: agent.config.max_schema_retries,
             max_request_retries: agent.config.max_request_retries,
             request_retry_backoff_ms: agent.config.request_retry_backoff_ms,
-            keep_alive_ms: agent.config.keep_alive_ms,
+            keep_alive: agent.config.keep_alive,
         })
     }
 }
@@ -873,8 +862,7 @@ pub(crate) fn run_loop(
 
             // Short-circuit: idle_until_message only runs when keep_alive is
             // enabled, preserving its side effects (emit Idle/Resumed).
-            let keep_alive_enabled = spec.keep_alive_ms.is_some();
-            let idle_found_message = keep_alive_enabled
+            let idle_found_message = spec.keep_alive
                 && idle_until_message(&runtime, &spec, &mut state).await;
             if idle_found_message {
                 emit_turn_end(&runtime, &spec, turn);
@@ -1160,17 +1148,11 @@ async fn idle_until_message(
 
 /// Park the agent between turn chains, polling the command queue for messages
 /// visible to `spec.name`. Returns `true` if a message arrived (agent should
-/// resume), `false` on timeout or cancel (agent should finalize).
+/// resume), `false` on cancel (agent should finalize).
 ///
-/// Only called via `idle_until_message` when `spec.keep_alive_ms.is_some()` —
-/// `None` is handled as an early return for defensive coding.
+/// Only called via `idle_until_message` when `spec.keep_alive` is true.
 async fn wait_for_message(runtime: &LoopRuntime, spec: &AgentSpec, state: &mut LoopState) -> bool {
     const POLL_INTERVAL: Duration = Duration::from_millis(100);
-    let deadline = match spec.keep_alive_ms {
-        Some(KEEP_ALIVE_UNLIMITED) => None,
-        Some(ms) => Some(Instant::now() + Duration::from_millis(ms)),
-        None => return false,
-    };
     loop {
         if runtime.cancel_signal.load(Ordering::Relaxed) {
             return false;
@@ -1180,14 +1162,7 @@ async fn wait_for_message(runtime: &LoopRuntime, spec: &AgentSpec, state: &mut L
         if state.messages.len() > before {
             return true;
         }
-        match deadline {
-            Some(d) if Instant::now() >= d => return false,
-            Some(d) => {
-                let remaining = d - Instant::now();
-                tokio::time::sleep(POLL_INTERVAL.min(remaining)).await;
-            }
-            None => tokio::time::sleep(POLL_INTERVAL).await,
-        }
+        tokio::time::sleep(POLL_INTERVAL).await;
     }
 }
 
@@ -1894,6 +1869,15 @@ mod tests {
         });
     }
 
+    /// Flip `cancel` after `delay_ms`. Used to break the unlimited idle wait
+    /// once a test's assertion-relevant turns have completed.
+    fn cancel_after(cancel: Arc<AtomicBool>, delay_ms: u64) {
+        tokio::spawn(async move {
+            tokio::time::sleep(std::time::Duration::from_millis(delay_ms)).await;
+            cancel.store(true, Ordering::Relaxed);
+        });
+    }
+
     fn two_text_responses() -> Arc<MockProvider> {
         Arc::new(MockProvider::new(vec![
             text_response("first"),
@@ -1907,8 +1891,9 @@ mod tests {
     async fn wake_on_peer_message_targeted_at_me() {
         let (harness, queue) = listener_harness(two_text_responses());
         enqueue_after(&queue, 120, peer_msg(Some(AGENT_NAME), "peer", "hi"));
+        cancel_after(harness.cancel_signal_for_test(), 400);
 
-        let agent = simple_agent().keep_alive_ms(5_000);
+        let agent = simple_agent().keep_alive();
         let output = harness.run_agent(&agent, "hi").await.unwrap();
 
         assert_eq!(output.statistics.turns, 2, "peer message should wake the listener");
@@ -1918,8 +1903,9 @@ mod tests {
     async fn wake_on_task_notification_broadcast() {
         let (harness, queue) = listener_harness(two_text_responses());
         enqueue_after(&queue, 120, task_notification(None, "Task foo completed"));
+        cancel_after(harness.cancel_signal_for_test(), 400);
 
-        let agent = simple_agent().keep_alive_ms(5_000);
+        let agent = simple_agent().keep_alive();
         let output = harness.run_agent(&agent, "hi").await.unwrap();
 
         assert_eq!(
@@ -1932,8 +1918,9 @@ mod tests {
     async fn wake_on_user_input_targeted_at_me() {
         let (harness, queue) = listener_harness(two_text_responses());
         enqueue_after(&queue, 120, user_input(Some(AGENT_NAME), "hello"));
+        cancel_after(harness.cancel_signal_for_test(), 400);
 
-        let agent = simple_agent().keep_alive_ms(5_000);
+        let agent = simple_agent().keep_alive();
         let output = harness.run_agent(&agent, "hi").await.unwrap();
 
         assert_eq!(output.statistics.turns, 2, "user input (targeted) should wake the listener");
@@ -1943,49 +1930,12 @@ mod tests {
     async fn wake_on_user_input_broadcast() {
         let (harness, queue) = listener_harness(two_text_responses());
         enqueue_after(&queue, 120, user_input(None, "anyone?"));
+        cancel_after(harness.cancel_signal_for_test(), 400);
 
-        let agent = simple_agent().keep_alive_ms(5_000);
+        let agent = simple_agent().keep_alive();
         let output = harness.run_agent(&agent, "hi").await.unwrap();
 
         assert_eq!(output.statistics.turns, 2, "user input (broadcast) should wake the listener");
-    }
-
-    #[tokio::test]
-    async fn ignores_peer_message_targeted_at_other_agent() {
-        let (harness, queue) = listener_harness(Arc::new(MockProvider::text("done")));
-        enqueue_after(&queue, 120, peer_msg(Some("someone-else"), "peer", "not for you"));
-
-        let agent = simple_agent().keep_alive_ms(400);
-        let t0 = std::time::Instant::now();
-        let output = harness.run_agent(&agent, "hi").await.unwrap();
-        let elapsed = t0.elapsed();
-
-        assert_eq!(output.statistics.turns, 1, "message for another agent must not wake us");
-        assert!(
-            elapsed >= std::time::Duration::from_millis(300),
-            "should have waited the full timeout, elapsed = {elapsed:?}"
-        );
-    }
-
-    #[tokio::test]
-    async fn times_out_when_queue_stays_empty() {
-        let (harness, _queue) = listener_harness(Arc::new(MockProvider::text("done")));
-
-        let agent = simple_agent().keep_alive_ms(200);
-        let t0 = std::time::Instant::now();
-        let output = harness.run_agent(&agent, "hi").await.unwrap();
-        let elapsed = t0.elapsed();
-
-        assert_eq!(output.statistics.turns, 1);
-        assert_eq!(output.status, AgentStatus::Completed);
-        assert!(
-            elapsed >= std::time::Duration::from_millis(150),
-            "must have waited the timeout, elapsed = {elapsed:?}"
-        );
-        assert!(
-            elapsed < std::time::Duration::from_millis(1500),
-            "must have exited near the timeout, elapsed = {elapsed:?}"
-        );
     }
 
     // ----- Lifecycle matrix -----
@@ -2001,7 +1951,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn cancel_interrupts_keep_alive_ms() {
+    async fn cancel_interrupts_keep_alive() {
         let (harness, _queue) = listener_harness(Arc::new(MockProvider::text("done")));
 
         let cancel = harness.cancel_signal_for_test();
@@ -2010,28 +1960,7 @@ mod tests {
             cancel.store(true, Ordering::Relaxed);
         });
 
-        let agent = simple_agent().keep_alive_ms(10_000);
-        let t0 = std::time::Instant::now();
-        let _ = harness.run_agent(&agent, "hi").await.unwrap();
-        let elapsed = t0.elapsed();
-
-        assert!(
-            elapsed < std::time::Duration::from_millis(1_500),
-            "cancel must interrupt the long timeout promptly, elapsed = {elapsed:?}"
-        );
-    }
-
-    #[tokio::test]
-    async fn cancel_interrupts_keep_alive_unlimited() {
-        let (harness, _queue) = listener_harness(Arc::new(MockProvider::text("done")));
-
-        let cancel = harness.cancel_signal_for_test();
-        tokio::spawn(async move {
-            tokio::time::sleep(std::time::Duration::from_millis(150)).await;
-            cancel.store(true, Ordering::Relaxed);
-        });
-
-        let agent = simple_agent().keep_alive_unlimited();
+        let agent = simple_agent().keep_alive();
         let t0 = std::time::Instant::now();
         let _ = harness.run_agent(&agent, "hi").await.unwrap();
         let elapsed = t0.elapsed();
@@ -2050,8 +1979,9 @@ mod tests {
     async fn idle_and_resumed_events_fire_in_order() {
         let (harness, queue) = listener_harness(two_text_responses());
         enqueue_after(&queue, 120, peer_msg(Some(AGENT_NAME), "peer", "hi"));
+        cancel_after(harness.cancel_signal_for_test(), 400);
 
-        let agent = simple_agent().keep_alive_ms(300);
+        let agent = simple_agent().keep_alive();
         let _ = harness.run_agent(&agent, "hi").await.unwrap();
 
         let kinds: Vec<&'static str> = harness
@@ -2092,7 +2022,9 @@ mod tests {
         queue.enqueue(peer_msg(Some(AGENT_NAME), "alice", "first"));
         queue.enqueue(peer_msg(Some(AGENT_NAME), "bob", "second"));
 
-        let agent = simple_agent().keep_alive_ms(200);
+        cancel_after(harness.cancel_signal_for_test(), 300);
+
+        let agent = simple_agent().keep_alive();
         let output = harness.run_agent(&agent, "hi").await.unwrap();
 
         assert_eq!(

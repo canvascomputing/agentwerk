@@ -52,7 +52,7 @@ async fn main() {
         .tool(GrepTool)
         .tool(ListDirectoryTool)
         .tool(ReadFileTool)
-        .keep_alive_unlimited()
+        .keep_alive()
         .event_handler(Arc::new(move |e: AgentEvent| {
             print_event(&e, &idle_for_handler)
         }))

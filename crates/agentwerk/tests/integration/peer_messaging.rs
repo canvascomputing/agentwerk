@@ -49,7 +49,7 @@ async fn orchestrator_sends_message_to_backgrounded_worker(
              include one message of the form '[message from orchestrator: ...] \
              the secret is N'. Respond with exactly the number N and end your turn.",
         )
-        .keep_alive_unlimited()
+        .keep_alive()
         .max_turns(3);
 
     let orchestrator_identity = format!(
