@@ -94,7 +94,7 @@ async fn orchestrator_sends_message_to_backgrounded_worker(
         e.agent_name == "orchestrator"
             && matches!(
                 &e.kind,
-                AgentEventKind::ToolCallEnd { tool_name, is_error: false, .. }
+                AgentEventKind::ToolCallEnd { tool_name, .. }
                     if tool_name == "send_message"
             )
     });
@@ -138,9 +138,11 @@ fn format_event(e: &AgentEvent) -> Option<String> {
         AgentEventKind::ToolCallStart { tool_name, input, .. } => {
             Some(format!("tool   {tool_name}({})", one_line(input)))
         }
-        AgentEventKind::ToolCallEnd { tool_name, is_error, output, .. } => {
-            let tag = if *is_error { "err" } else { "ok" };
-            Some(format!("tool   {tool_name} -> {tag} {}", truncate(output, 80)))
+        AgentEventKind::ToolCallEnd { tool_name, output, .. } => {
+            Some(format!("tool   {tool_name} -> ok {}", truncate(output, 80)))
+        }
+        AgentEventKind::ToolCallError { tool_name, error, .. } => {
+            Some(format!("tool   {tool_name} -> err {}", truncate(error, 80)))
         }
         AgentEventKind::CompactTriggered { turn, token_count, threshold, reason } => Some(format!(
             "compact turn={turn} {token_count}/{threshold} ({reason:?})"

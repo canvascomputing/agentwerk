@@ -144,7 +144,7 @@ mod tests {
             .await
             .unwrap();
 
-        assert!(!result.is_error, "unexpected error: {}", result.content);
+        assert!(!result.is_err(), "unexpected error: {}", result.content());
         let content = std::fs::read_to_string(dir.path().join("f.txt")).unwrap();
         assert_eq!(content, "hello rust");
     }
@@ -169,8 +169,8 @@ mod tests {
             .await
             .unwrap();
 
-        assert!(result.is_error);
-        assert!(result.content.contains("2"));
+        assert!(result.is_err());
+        assert!(result.content().contains("2"));
     }
 
     #[tokio::test]
@@ -194,7 +194,7 @@ mod tests {
             .await
             .unwrap();
 
-        assert!(!result.is_error, "unexpected error: {}", result.content);
+        assert!(!result.is_err(), "unexpected error: {}", result.content());
         let content = std::fs::read_to_string(dir.path().join("f.txt")).unwrap();
         assert_eq!(content, "ccc bbb ccc");
     }
@@ -219,7 +219,7 @@ mod tests {
             .await
             .unwrap();
 
-        assert!(result.is_error);
-        assert!(result.content.contains("not found"));
+        assert!(result.is_err());
+        assert!(result.content().contains("not found"));
     }
 }

@@ -139,6 +139,7 @@ mod tests {
             command_queue: Some(queue.clone()),
             session_store: None,
             metadata: None,
+            discovered_tools: Arc::new(std::sync::Mutex::new(std::collections::HashSet::new())),
         };
         let caller = Agent::new().name("alice").model("mock").identity_prompt("");
         let spec = Arc::new(AgentSpec::compile(&caller, &runtime, None).unwrap());
@@ -159,7 +160,7 @@ mod tests {
             "summary": "greeting"
         });
         let out = tool.call(input, &ctx).await.unwrap();
-        assert!(!out.is_error);
+        assert!(!out.is_err());
 
         let cmd = queue.dequeue_if(Some("bob"), |_| true).expect("queued for bob");
         assert_eq!(cmd.agent_name.as_deref(), Some("bob"));
@@ -180,7 +181,7 @@ mod tests {
 
         let input = serde_json::json!({ "to": "alice", "message": "hi" });
         let out = tool.call(input, &ctx).await.unwrap();
-        assert!(out.is_error);
+        assert!(out.is_err());
     }
 
     #[tokio::test]

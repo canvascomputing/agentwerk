@@ -243,14 +243,14 @@ mod tests {
             .await
             .unwrap();
 
-        assert!(!result.is_error);
-        let lines: Vec<&str> = result.content.lines().collect();
+        assert!(!result.is_err());
+        let lines: Vec<&str> = result.content().lines().collect();
         assert_eq!(lines.len(), 3);
         for line in &lines {
             assert!(line.ends_with(".rs"), "Expected .rs file, got: {line}");
         }
         // Should NOT include readme.md
-        assert!(!result.content.contains("readme.md"));
+        assert!(!result.content().contains("readme.md"));
     }
 
     #[tokio::test]
@@ -268,8 +268,8 @@ mod tests {
             .await
             .unwrap();
 
-        assert!(!result.is_error);
-        let lines: Vec<&str> = result.content.lines().collect();
+        assert!(!result.is_err());
+        let lines: Vec<&str> = result.content().lines().collect();
         assert_eq!(lines.len(), MAX_RESULTS);
     }
 }

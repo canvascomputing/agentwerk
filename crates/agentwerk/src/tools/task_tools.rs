@@ -150,8 +150,8 @@ mod tests {
             .await
             .unwrap();
 
-        assert!(!result.is_error);
-        let parsed: Value = serde_json::from_str(&result.content).unwrap();
+        assert!(!result.is_err());
+        let parsed: Value = serde_json::from_str(&result.content()).unwrap();
         assert_eq!(parsed["id"], "1");
         assert_eq!(parsed["subject"], "Do stuff");
     }
@@ -163,7 +163,7 @@ mod tests {
         tool.call(serde_json::json!({"action": "create", "subject": "B", "description": ""}), &test_ctx()).await.unwrap();
 
         let result = tool.call(serde_json::json!({"action": "list"}), &test_ctx()).await.unwrap();
-        let parsed: Vec<Value> = serde_json::from_str(&result.content).unwrap();
+        let parsed: Vec<Value> = serde_json::from_str(&result.content()).unwrap();
         assert_eq!(parsed.len(), 2);
     }
 
@@ -173,8 +173,8 @@ mod tests {
         tool.call(serde_json::json!({"action": "create", "subject": "My task", "description": "desc"}), &test_ctx()).await.unwrap();
 
         let result = tool.call(serde_json::json!({"action": "get", "id": "1"}), &test_ctx()).await.unwrap();
-        assert!(!result.is_error);
-        let parsed: Value = serde_json::from_str(&result.content).unwrap();
+        assert!(!result.is_err());
+        let parsed: Value = serde_json::from_str(&result.content()).unwrap();
         assert_eq!(parsed["subject"], "My task");
     }
 
@@ -184,11 +184,11 @@ mod tests {
         tool.call(serde_json::json!({"action": "create", "subject": "Task", "description": ""}), &test_ctx()).await.unwrap();
 
         let result = tool.call(serde_json::json!({"action": "update", "id": "1", "status": "InProgress"}), &test_ctx()).await.unwrap();
-        let parsed: Value = serde_json::from_str(&result.content).unwrap();
+        let parsed: Value = serde_json::from_str(&result.content()).unwrap();
         assert_eq!(parsed["status"], "InProgress");
 
         let result = tool.call(serde_json::json!({"action": "get", "id": "1"}), &test_ctx()).await.unwrap();
-        let parsed: Value = serde_json::from_str(&result.content).unwrap();
+        let parsed: Value = serde_json::from_str(&result.content()).unwrap();
         assert_eq!(parsed["status"], "InProgress");
     }
 
@@ -196,6 +196,6 @@ mod tests {
     async fn unknown_action_errors() {
         let tool = test_tool();
         let result = tool.call(serde_json::json!({"action": "foobar"}), &test_ctx()).await.unwrap();
-        assert!(result.is_error);
+        assert!(result.is_err());
     }
 }

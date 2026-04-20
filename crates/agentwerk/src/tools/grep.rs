@@ -288,10 +288,10 @@ mod tests {
             .await
             .unwrap();
 
-        assert!(!result.is_error);
-        assert!(result.content.contains("main.rs"));
+        assert!(!result.is_err());
+        assert!(result.content().contains("main.rs"));
         // lib.rs has "Hello" but not "Hello world"
-        assert!(!result.content.contains("lib.rs"));
+        assert!(!result.content().contains("lib.rs"));
     }
 
     #[tokio::test]
@@ -312,8 +312,8 @@ mod tests {
             .await
             .unwrap();
 
-        assert!(!result.is_error);
-        assert!(result.content.contains("main.rs"));
+        assert!(!result.is_err());
+        assert!(result.content().contains("main.rs"));
     }
 
     #[tokio::test]
@@ -334,11 +334,11 @@ mod tests {
             .await
             .unwrap();
 
-        assert!(!result.is_error);
+        assert!(!result.is_err());
         // Should include the matching line and context
-        assert!(result.content.contains("Hello world"));
+        assert!(result.content().contains("Hello world"));
         // With 1 context line, should also include fn main() line (line before)
-        assert!(result.content.contains("fn main()"));
+        assert!(result.content().contains("fn main()"));
     }
 
     #[tokio::test]
@@ -355,8 +355,8 @@ mod tests {
             )
             .await
             .unwrap();
-        assert!(!result.is_error);
-        let file_lines: Vec<&str> = result.content.lines().collect();
+        assert!(!result.is_err());
+        let file_lines: Vec<&str> = result.content().lines().collect();
         // Should find matches in main.rs, lib.rs, and readme.md
         assert!(file_lines.len() >= 2);
 
@@ -368,9 +368,9 @@ mod tests {
             )
             .await
             .unwrap();
-        assert!(!result.is_error);
+        assert!(!result.is_err());
         // Content lines have format "file:line_no: content"
-        for line in result.content.lines() {
+        for line in result.content().lines() {
             assert!(line.contains(':'), "Expected colon in content line: {line}");
         }
 
@@ -382,9 +382,9 @@ mod tests {
             )
             .await
             .unwrap();
-        assert!(!result.is_error);
+        assert!(!result.is_err());
         // Count lines have format "file: N matches"
-        for line in result.content.lines() {
+        for line in result.content().lines() {
             assert!(
                 line.contains("matches"),
                 "Expected 'matches' in count line: {line}"

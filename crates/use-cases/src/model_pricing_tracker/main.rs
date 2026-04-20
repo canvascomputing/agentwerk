@@ -130,8 +130,8 @@ fn log_event(event: &AgentEvent) {
         {
             eprintln!("[{}] {tool_name}: {}", event.agent_name, tool_call_detail(tool_name, input));
         }
-        AgentEventKind::ToolCallEnd { tool_name, output, is_error: true, .. } => {
-            eprintln!("[error] {tool_name}: {output}");
+        AgentEventKind::ToolCallError { tool_name, error, .. } => {
+            eprintln!("[error] {tool_name}: {error}");
         }
         _ => {}
     }

@@ -30,7 +30,7 @@ use crate::provider::types::{
     ContentBlock, Message, CompletionResponse, ResponseStatus, StreamEvent, TokenUsage,
 };
 use crate::provider::{CompletionRequest, Provider, ProviderError, ToolChoice};
-use crate::tools::{SpawnAgentTool, Toolable, ToolCall, ToolContext, ToolRegistry};
+use crate::tools::{SpawnAgentTool, Toolable, ToolCall, ToolContext, ToolRegistry, ToolResult};
 use crate::util::{generate_agent_name, now_millis};
 
 use super::compact;
@@ -474,6 +474,7 @@ pub(crate) struct LoopRuntime {
     pub command_queue: Option<Arc<CommandQueue>>,
     pub session_store: Option<Arc<Mutex<SessionStore>>>,
     pub metadata: Option<String>,
+    pub discovered_tools: Arc<Mutex<HashSet<String>>>,
 }
 
 impl LoopRuntime {
@@ -530,6 +531,7 @@ impl LoopRuntime {
             command_queue,
             session_store,
             metadata,
+            discovered_tools: Arc::new(Mutex::new(HashSet::new())),
         })
     }
 
@@ -573,6 +575,7 @@ impl LoopRuntime {
             command_queue: self.command_queue.clone(),
             session_store: self.session_store.clone(),
             metadata: self.metadata.clone(),
+            discovered_tools: self.discovered_tools.clone(),
         }
     }
 }
@@ -729,7 +732,6 @@ pub(crate) struct LoopState {
     pub tool_call_count: u64,
     pub turn: u32,
     pub schema_retries: u32,
-    pub discovered_tools: HashSet<String>,
     pub is_idle: bool,
 }
 
@@ -946,7 +948,9 @@ async fn call_provider(
     spec: &AgentSpec,
     state: &LoopState,
 ) -> Result<CompletionResponse> {
-    let tool_defs = spec.tools.definitions(&state.discovered_tools);
+    let tool_defs = spec
+        .tools
+        .definitions(&runtime.discovered_tools.lock().unwrap());
     let request = CompletionRequest {
         model: spec.model.id.clone(),
         system_prompt: spec.system_prompt.clone(),
@@ -1075,31 +1079,25 @@ async fn execute_tools(
     let raw = spec.tools.execute(calls, &tool_ctx).await;
     let mut blocks = Vec::with_capacity(raw.len());
     for (block, result) in raw {
-        for t in result.discovered_tools {
-            state.discovered_tools.insert(t);
-        }
-
-        if let ContentBlock::ToolResult {
-            tool_use_id,
-            content,
-            is_error,
-        } = &block
-        {
+        if let ContentBlock::ToolResult { tool_use_id, .. } = &block {
             let tool_name = calls
                 .iter()
                 .find(|c| c.id == *tool_use_id)
                 .map(|c| c.name.clone())
                 .unwrap_or_default();
-            emit(
-                runtime,
-                spec,
-                AgentEventKind::ToolCallEnd {
+            let event = match result {
+                ToolResult::Success(output) => AgentEventKind::ToolCallEnd {
                     tool_name,
                     call_id: tool_use_id.clone(),
-                    output: content.clone(),
-                    is_error: *is_error,
+                    output,
                 },
-            );
+                ToolResult::Failure(error) => AgentEventKind::ToolCallError {
+                    tool_name,
+                    call_id: tool_use_id.clone(),
+                    error,
+                },
+            };
+            emit(runtime, spec, event);
         }
 
         blocks.push(block);
@@ -1337,6 +1335,33 @@ mod tests {
         assert_eq!(output.response_raw, "Hello, world!");
         assert!(output.response.is_none());
         assert_eq!(harness.provider().request_count(), 1);
+    }
+
+    #[tokio::test]
+    async fn failing_tool_emits_tool_call_error() {
+        let provider =
+            MockProvider::tool_then_text("boom", serde_json::json!({}), "acknowledged");
+        let agent = Agent::new()
+            .name("test")
+            .model("mock")
+            .identity_prompt("")
+            .tool(MockTool::error("boom", false, "disk full"));
+
+        let harness = TestHarness::new(provider);
+        harness.run_agent(&agent, "go").await.unwrap();
+
+        let events = harness.events().all();
+        let saw_error = events.iter().any(|e| matches!(
+            &e.kind,
+            AgentEventKind::ToolCallError { tool_name, error, .. }
+                if tool_name == "boom" && error == "disk full"
+        ));
+        let saw_end = events.iter().any(|e| matches!(
+            e.kind,
+            AgentEventKind::ToolCallEnd { .. }
+        ));
+        assert!(saw_error, "a failing tool must emit ToolCallError");
+        assert!(!saw_end, "a failing tool must not also emit ToolCallEnd");
     }
 
     #[tokio::test]
@@ -1676,6 +1701,7 @@ mod tests {
             command_queue: None,
             session_store: None,
             metadata: Some(meta.to_string()),
+            discovered_tools: Arc::new(Mutex::new(HashSet::new())),
         }
     }
 
@@ -2172,6 +2198,7 @@ mod retry_and_events_tests {
             AgentEventKind::ResponseTextChunk { .. } => "ResponseTextChunk",
             AgentEventKind::ToolCallStart { .. } => "ToolCallStart",
             AgentEventKind::ToolCallEnd { .. } => "ToolCallEnd",
+            AgentEventKind::ToolCallError { .. } => "ToolCallError",
             AgentEventKind::TokenUsage { .. } => "TokenUsage",
             AgentEventKind::OutputTruncated { .. } => "OutputTruncated",
             AgentEventKind::CompactTriggered { .. } => "CompactTriggered",

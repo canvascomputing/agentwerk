@@ -54,6 +54,19 @@ impl ToolContext {
         self.caller_spec = Some(spec);
         self
     }
+
+    /// Register a deferred tool as discovered so its full definition is sent to the
+    /// model on subsequent requests. Used by `ToolSearchTool` — external tool authors
+    /// have no use for this.
+    pub(crate) fn mark_tool_discovered(&self, name: &str) {
+        if let Some(runtime) = self.runtime.as_ref() {
+            runtime
+                .discovered_tools
+                .lock()
+                .unwrap()
+                .insert(name.to_string());
+        }
+    }
 }
 
 impl std::fmt::Debug for ToolContext {
@@ -83,31 +96,34 @@ pub struct ToolCall {
     pub input: Value,
 }
 
-/// Result returned by a tool execution.
-#[derive(Debug, Clone, Default)]
-pub struct ToolResult {
-    pub(crate) content: String,
-    pub(crate) is_error: bool,
-    /// Side-effect: tool names discovered by an introspection tool (set by `ToolSearchTool`).
-    /// The agent loop merges these into its discovered-tools set so deferred tools get
-    /// their full definitions on subsequent LLM requests.
-    pub(crate) discovered_tools: Vec<String>,
+/// Outcome of a tool execution — a success payload or a failure message.
+#[derive(Debug, Clone)]
+pub enum ToolResult {
+    Success(String),
+    Failure(String),
 }
 
 impl ToolResult {
     pub fn success(content: impl Into<String>) -> Self {
-        Self { content: content.into(), is_error: false, ..Self::default() }
+        Self::Success(content.into())
     }
 
     pub fn error(content: impl Into<String>) -> Self {
-        Self { content: content.into(), is_error: true, ..Self::default() }
+        Self::Failure(content.into())
     }
 
-    /// Attach discovered tool names. Used by `ToolSearchTool` so the agent loop doesn't
-    /// need to parse tool output by name.
-    pub fn with_discovered_tools(mut self, names: Vec<String>) -> Self {
-        self.discovered_tools = names;
-        self
+    pub fn is_ok(&self) -> bool {
+        matches!(self, Self::Success(_))
+    }
+
+    pub fn is_err(&self) -> bool {
+        matches!(self, Self::Failure(_))
+    }
+
+    pub fn content(&self) -> &str {
+        match self {
+            Self::Success(s) | Self::Failure(s) => s,
+        }
     }
 }
 
@@ -245,11 +261,7 @@ impl ToolRegistry {
 
                     while let Some(join_result) = set.join_next().await {
                         if let Ok((id, result)) = join_result {
-                            let block = ContentBlock::ToolResult {
-                                tool_use_id: id,
-                                content: result.content.clone(),
-                                is_error: result.is_error,
-                            };
+                            let block = content_block_for(&id, &result);
                             results.push((block, result));
                         }
                     }
@@ -262,11 +274,7 @@ impl ToolRegistry {
                         },
                         None => ToolResult::error(format!("Unknown tool: {}", call.name)),
                     };
-                    let block = ContentBlock::ToolResult {
-                        tool_use_id: call.id.clone(),
-                        content: result.content.clone(),
-                        is_error: result.is_error,
-                    };
+                    let block = content_block_for(&call.id, &result);
                     results.push((block, result));
                 }
             }
@@ -448,6 +456,18 @@ impl Toolable for Tool {
 // ---------------------------------------------------------------------------
 // Tool batching helpers (used by ToolRegistry::execute)
 // ---------------------------------------------------------------------------
+
+fn content_block_for(tool_use_id: &str, result: &ToolResult) -> ContentBlock {
+    let (content, is_error) = match result {
+        ToolResult::Success(s) => (s.clone(), false),
+        ToolResult::Failure(s) => (s.clone(), true),
+    };
+    ContentBlock::ToolResult {
+        tool_use_id: tool_use_id.to_string(),
+        content,
+        is_error,
+    }
+}
 
 enum ToolBatch {
     Concurrent(Vec<ToolCall>),

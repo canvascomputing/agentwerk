@@ -193,8 +193,8 @@ mod tests {
         let ctx = test_tool_context();
         let input = serde_json::json!({ "command": "echo hello" });
         let result = tool.call(input, &ctx).await.unwrap();
-        assert!(result.content.contains("hello"));
-        assert!(!result.is_error);
+        assert!(result.content().contains("hello"));
+        assert!(!result.is_err());
     }
 
     #[tokio::test]
@@ -203,8 +203,8 @@ mod tests {
         let ctx = test_tool_context();
         let input = serde_json::json!({ "command": "sleep 10", "timeout_ms": 100 });
         let result = tool.call(input, &ctx).await.unwrap();
-        assert!(result.is_error);
-        assert!(result.content.contains("timed out"));
+        assert!(result.is_err());
+        assert!(result.content().contains("timed out"));
     }
 
     #[tokio::test]
@@ -213,7 +213,7 @@ mod tests {
         let ctx = test_tool_context();
         let input = serde_json::json!({ "command": "nonexistent_command_xyz" });
         let result = tool.call(input, &ctx).await.unwrap();
-        assert!(result.is_error);
+        assert!(result.is_err());
     }
 
     #[tokio::test]
@@ -222,8 +222,8 @@ mod tests {
         let ctx = test_tool_context();
         let input = serde_json::json!({ "command": "rm -rf /" });
         let result = tool.call(input, &ctx).await.unwrap();
-        assert!(result.is_error);
-        assert!(result.content.contains("does not match"));
+        assert!(result.is_err());
+        assert!(result.content().contains("does not match"));
     }
 
     #[tokio::test]
@@ -232,8 +232,8 @@ mod tests {
         let ctx = test_tool_context();
         let input = serde_json::json!({ "command": "echo hello" });
         let result = tool.call(input, &ctx).await.unwrap();
-        assert!(!result.is_error);
-        assert!(result.content.contains("hello"));
+        assert!(!result.is_err());
+        assert!(result.content().contains("hello"));
     }
 
     #[tokio::test]
@@ -242,6 +242,6 @@ mod tests {
         let ctx = test_tool_context();
         let input = serde_json::json!({ "command": "echo hello" });
         let result = tool.call(input, &ctx).await.unwrap();
-        assert!(result.is_error);
+        assert!(result.is_err());
     }
 }

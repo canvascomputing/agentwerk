@@ -142,8 +142,7 @@ pub fn tool_response(tool_name: &str, id: &str, input: serde_json::Value) -> Com
 pub struct MockTool {
     pub name: String,
     pub read_only: bool,
-    pub result: String,
-    pub is_error: bool,
+    pub outcome: ToolResult,
     pub calls: Mutex<Vec<serde_json::Value>>,
 }
 
@@ -152,8 +151,16 @@ impl MockTool {
         Self {
             name: name.to_string(),
             read_only,
-            result: result.to_string(),
-            is_error: false,
+            outcome: ToolResult::success(result),
+            calls: Mutex::new(Vec::new()),
+        }
+    }
+
+    pub fn error(name: &str, read_only: bool, error: &str) -> Self {
+        Self {
+            name: name.to_string(),
+            read_only,
+            outcome: ToolResult::error(error),
             calls: Mutex::new(Vec::new()),
         }
     }
@@ -178,12 +185,8 @@ impl Toolable for MockTool {
         _ctx: &'a ToolContext,
     ) -> Pin<Box<dyn Future<Output = Result<ToolResult>> + Send + 'a>> {
         self.calls.lock().unwrap().push(input);
-        let result = if self.is_error {
-            ToolResult::error(self.result.clone())
-        } else {
-            ToolResult::success(self.result.clone())
-        };
-        Box::pin(async move { Ok(result) })
+        let outcome = self.outcome.clone();
+        Box::pin(async move { Ok(outcome) })
     }
 }
 
@@ -373,6 +376,7 @@ impl TestHarness {
                 command_queue: Some(queue.clone()),
                 session_store: None,
                 metadata: None,
+                discovered_tools: Arc::new(Mutex::new(std::collections::HashSet::new())),
             };
             let spec = AgentSpec::compile(&prepared, &runtime, None)?;
             return prepared

@@ -41,7 +41,11 @@ pub enum AgentEventKind {
         tool_name: String,
         call_id: String,
         output: String,
-        is_error: bool,
+    },
+    ToolCallError {
+        tool_name: String,
+        call_id: String,
+        error: String,
     },
     TokenUsage {
         model: String,

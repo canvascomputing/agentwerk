@@ -282,24 +282,36 @@ You can inspect what your agent is doing and how the LLM provider API is used:
 use agentwerk::{AgentEvent, AgentEventKind};
 
 let handler = Arc::new(|event: AgentEvent| match &event.kind {
-    AgentEventKind::ToolCallStart { tool_name, .. } => eprintln!("[{}] {}", event.agent_name, tool_name),
-    AgentEventKind::AgentEnd { turns } => eprintln!("[{}] done in {} turns", event.agent_name, turns),
+    AgentEventKind::ToolCallStart { tool_name, .. } => {
+        eprintln!("[{}] → {tool_name}", event.agent_name);
+    }
+    AgentEventKind::ToolCallError { tool_name, error, .. } => {
+        eprintln!("[{}] ✗ {tool_name}: {error}", event.agent_name);
+    }
+    AgentEventKind::AgentEnd { turns, status } => {
+        eprintln!("[{}] done in {turns} turns ({status:?})", event.agent_name);
+    }
     _ => {}
 });
 ```
 
 | | Kind | Description |
-|-|-------|-------------|
-| **Agent** | `AgentStart` | Agent begins execution |
-| | `AgentEnd` | Agent finishes execution |
-| | `TurnStart` / `TurnEnd` | Turn boundaries |
-| | `AgentIdle` / `AgentResumed` | Keep-alive wait boundaries |
-| | `CompactTriggered` | Context approached maximum window length and compaction was invoked |
-| **Provider** | `RequestStart` / `RequestEnd` | LLM request lifecycle |
-| | `ResponseTextChunk` | Streamed text token arrived |
-| | `TokenUsage` | Update on token counts due to provider requests |
-| | `OutputTruncated` | Response was cut off because it exceeded allowed length |
-| **Tool Usage** | `ToolCallStart` / `ToolCallEnd` | Tool execution lifecycle |
+|-|------|-------------|
+| **Agent** | `AgentStart` | Agent run begins |
+| | `AgentEnd` | Agent run ends; `status` encodes the outcome (completed, cancelled, turn-limit, budget) |
+| | `TurnStart` | Agentic loop turn begins |
+| | `TurnEnd` | Agentic loop turn ends |
+| | `AgentIdle` | Keep-alive agent waits for new input |
+| | `AgentResumed` | Keep-alive agent resumes after idle |
+| | `CompactTriggered` | Context window nears its limit and triggers compaction |
+| **Provider** | `RequestStart` | Provider request begins |
+| | `RequestEnd` | Provider request ends |
+| | `ResponseTextChunk` | Streamed text token arrives |
+| | `TokenUsage` | Provider reports token counts for the last request |
+| | `OutputTruncated` | Response exceeds the allowed length and is cut off |
+| **Tools** | `ToolCallStart` | Tool invocation begins |
+| | `ToolCallEnd` | Tool invocation succeeds |
+| | `ToolCallError` | Tool invocation fails |
 
 
 ### Tools
@@ -316,9 +328,6 @@ let tool = Tool::new("greet", "Say hello")
         Ok(ToolResult::success("Hello!"))
     }));
 ```
-
-> `Tool` is the concrete struct for ad-hoc tools; it implements the `Toolable` trait.
-> To define a stateful tool, implement `Toolable` directly on your own type.
 
 > Use `.read_only(true)` when a tool has no side effects. 
 > If set, the the execution loop will run tools in parallel.

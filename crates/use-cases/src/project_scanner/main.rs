@@ -106,8 +106,8 @@ async fn main() {
                     eprintln!("[discover] {tool_name}({detail})");
                 }
             }
-            AgentEventKind::ToolCallEnd { is_error: true, tool_name, output, .. } => {
-                eprintln!("[discover] error in {tool_name}: {output}");
+            AgentEventKind::ToolCallError { tool_name, error, .. } => {
+                eprintln!("[discover] error in {tool_name}: {error}");
             }
             _ => {}
         }))
@@ -167,8 +167,8 @@ async fn main() {
             .working_directory(config.folder.clone())
             .cancel_signal(cancel.clone())
             .event_handler(Arc::new(move |event| match &event.kind {
-                AgentEventKind::ToolCallEnd { is_error: true, output, .. } => {
-                    eprintln!("[summarize] {file_name} — error: {output}");
+                AgentEventKind::ToolCallError { error, .. } => {
+                    eprintln!("[summarize] {file_name} — error: {error}");
                 }
                 AgentEventKind::AgentEnd { .. } => {
                     let done = progress.fetch_add(1, Ordering::Relaxed) + 1;

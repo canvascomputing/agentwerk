@@ -109,13 +109,8 @@ fn print_event(event: &AgentEvent, idle: &Arc<Notify>) {
         } => {
             eprintln!("· {tool_name}({})", compact_input(tool_name, input));
         }
-        AgentEventKind::ToolCallEnd {
-            tool_name,
-            output,
-            is_error: true,
-            ..
-        } => {
-            eprintln!("✗ {tool_name}: {output}");
+        AgentEventKind::ToolCallError { tool_name, error, .. } => {
+            eprintln!("✗ {tool_name}: {error}");
         }
         AgentEventKind::AgentIdle | AgentEventKind::AgentEnd { .. } => {
             println!();

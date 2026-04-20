@@ -82,8 +82,10 @@ impl Toolable for ToolSearchTool {
                 content.push_str("\n```\n\n---\n\n");
             }
 
-            let discovered: Vec<String> = results.iter().map(|d| d.name.clone()).collect();
-            Ok(ToolResult::success(content).with_discovered_tools(discovered))
+            for def in &results {
+                ctx.mark_tool_discovered(&def.name);
+            }
+            Ok(ToolResult::success(content))
         })
     }
 }
@@ -115,8 +117,8 @@ mod tests {
         let tool = ToolSearchTool;
         let input = serde_json::json!({ "query": "read_file" });
         let result = tool.call(input, &ctx).await.unwrap();
-        assert!(!result.is_error);
-        assert!(result.content.contains("read_file"));
+        assert!(!result.is_err());
+        assert!(result.content().contains("read_file"));
     }
 
     #[tokio::test]
@@ -126,9 +128,9 @@ mod tests {
         let tool = ToolSearchTool;
         let input = serde_json::json!({ "query": "file" });
         let result = tool.call(input, &ctx).await.unwrap();
-        assert!(!result.is_error);
-        assert!(result.content.contains("read_file"));
-        assert!(result.content.contains("write_file"));
+        assert!(!result.is_err());
+        assert!(result.content().contains("read_file"));
+        assert!(result.content().contains("write_file"));
     }
 
     #[tokio::test]
@@ -138,8 +140,8 @@ mod tests {
         let tool = ToolSearchTool;
         let input = serde_json::json!({ "query": "nonexistent_xyz" });
         let result = tool.call(input, &ctx).await.unwrap();
-        assert!(!result.is_error);
-        assert!(result.content.contains("No tools found"));
+        assert!(!result.is_err());
+        assert!(result.content().contains("No tools found"));
     }
 
     #[tokio::test]
@@ -149,8 +151,8 @@ mod tests {
         let tool = ToolSearchTool;
         let input = serde_json::json!({ "query": "read_file" });
         let result = tool.call(input, &ctx).await.unwrap();
-        assert!(result.content.contains("```json"));
-        assert!(result.content.contains("\"type\""));
+        assert!(result.content().contains("```json"));
+        assert!(result.content().contains("\"type\""));
     }
 
     #[tokio::test]
@@ -160,8 +162,8 @@ mod tests {
         let tool = ToolSearchTool;
         let input = serde_json::json!({});
         let result = tool.call(input, &ctx).await.unwrap();
-        assert!(result.is_error);
-        assert!(result.content.contains("Missing required field: query"));
+        assert!(result.is_err());
+        assert!(result.content().contains("Missing required field: query"));
     }
 
     #[tokio::test]
@@ -171,8 +173,8 @@ mod tests {
         let tool = ToolSearchTool;
         let input = serde_json::json!({ "query": "anything" });
         let result = tool.call(input, &ctx).await.unwrap();
-        assert!(result.is_error);
-        assert!(result.content.contains("No tool registry available"));
+        assert!(result.is_err());
+        assert!(result.content().contains("No tool registry available"));
     }
 
     #[tokio::test]
@@ -185,5 +187,27 @@ mod tests {
     async fn is_read_only() {
         let tool = ToolSearchTool;
         assert!(tool.is_read_only());
+    }
+
+    #[tokio::test]
+    async fn marks_found_tools_as_discovered() {
+        use crate::agent::{Agent, LoopRuntime};
+
+        let registry = registry_with_mock_tools();
+        let agent = Agent::new().name("t").model("mock").identity_prompt("").provider(Arc::new(
+            crate::testutil::MockProvider::text("ok"),
+        ));
+        let runtime = Arc::new(LoopRuntime::from_agent(&agent).unwrap());
+        let ctx = ToolContext::new(std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from(".")))
+            .registry(registry)
+            .runtime(runtime.clone());
+
+        let tool = ToolSearchTool;
+        tool.call(serde_json::json!({ "query": "read_file" }), &ctx)
+            .await
+            .unwrap();
+
+        let discovered = runtime.discovered_tools.lock().unwrap();
+        assert!(discovered.contains("read_file"));
     }
 }
