@@ -112,11 +112,15 @@ impl ToolResult {
 }
 
 // ---------------------------------------------------------------------------
-// Tool trait
+// Toolable trait
 // ---------------------------------------------------------------------------
 
 /// The core tool interface. Object-safe via boxed futures.
-pub trait Tool: Send + Sync {
+///
+/// Implement this on any type you want an agent to be able to invoke. For ad-hoc
+/// tools defined inline, use the concrete [`Tool`] struct instead — it implements
+/// `Toolable` for you.
+pub trait Toolable: Send + Sync {
     fn name(&self) -> &str;
     fn description(&self) -> &str;
     fn input_schema(&self) -> Value;
@@ -154,7 +158,7 @@ pub trait Tool: Send + Sync {
 
 /// Registry of tools available to an agent.
 pub(crate) struct ToolRegistry {
-    pub(crate) tools: Vec<Arc<dyn Tool>>,
+    pub(crate) tools: Vec<Arc<dyn Toolable>>,
 }
 
 impl std::fmt::Debug for ToolRegistry {
@@ -171,11 +175,11 @@ impl ToolRegistry {
         Self { tools: Vec::new() }
     }
 
-    pub(crate) fn register(&mut self, tool: impl Tool + 'static) {
+    pub(crate) fn register(&mut self, tool: impl Toolable + 'static) {
         self.tools.push(Arc::new(tool));
     }
 
-    pub(crate) fn get(&self, name: &str) -> Option<Arc<dyn Tool>> {
+    pub(crate) fn get(&self, name: &str) -> Option<Arc<dyn Toolable>> {
         self.tools.iter().find(|t| t.name() == name).cloned()
     }
 
@@ -323,7 +327,7 @@ impl Clone for ToolRegistry {
 }
 
 // ---------------------------------------------------------------------------
-// ToolBuilder
+// Tool (concrete, ad-hoc)
 // ---------------------------------------------------------------------------
 
 type ToolHandler = Box<
@@ -332,45 +336,23 @@ type ToolHandler = Box<
         + Sync,
 >;
 
-struct BuiltTool {
-    name: String,
-    description: String,
-    schema: Value,
-    read_only: bool,
-    defer: bool,
-    hints: Vec<String>,
-    handler: ToolHandler,
-}
-
-impl Tool for BuiltTool {
-    fn name(&self) -> &str {
-        &self.name
-    }
-    fn description(&self) -> &str {
-        &self.description
-    }
-    fn input_schema(&self) -> Value {
-        self.schema.clone()
-    }
-    fn is_read_only(&self) -> bool {
-        self.read_only
-    }
-    fn should_defer(&self) -> bool {
-        self.defer
-    }
-    fn search_hints(&self) -> Vec<String> {
-        self.hints.clone()
-    }
-    fn call<'a>(
-        &'a self,
-        input: Value,
-        ctx: &'a ToolContext,
-    ) -> Pin<Box<dyn Future<Output = Result<ToolResult>> + Send + 'a>> {
-        (self.handler)(input, ctx)
-    }
-}
-
-pub struct ToolBuilder {
+/// Ad-hoc tool defined inline with a closure handler.
+///
+/// Chain builder methods to configure, then hand the tool to an agent:
+/// ```ignore
+/// let greet = Tool::new("greet", "Say hello")
+///     .schema(serde_json::json!({"type": "object", "properties": {}}))
+///     .handler(|_input, _ctx| Box::pin(async {
+///         Ok(ToolResult::success("hi"))
+///     }));
+///
+/// Agent::new().tool(greet);
+/// ```
+///
+/// A handler is required — omitting [`Tool::handler`] causes the first invocation
+/// to panic. For tools with complex state, implement [`Toolable`] directly on your
+/// own type instead.
+pub struct Tool {
     name: String,
     description: String,
     schema: Value,
@@ -380,7 +362,7 @@ pub struct ToolBuilder {
     handler: Option<ToolHandler>,
 }
 
-impl ToolBuilder {
+impl Tool {
     pub fn new(name: impl Into<String>, description: impl Into<String>) -> Self {
         Self {
             name: name.into(),
@@ -408,7 +390,7 @@ impl ToolBuilder {
         self
     }
 
-    pub fn search_hints(mut self, hints: Vec<String>) -> Self {
+    pub fn hints(mut self, hints: Vec<String>) -> Self {
         self.hints = hints;
         self
     }
@@ -423,20 +405,43 @@ impl ToolBuilder {
         self.handler = Some(Box::new(f));
         self
     }
+}
 
-    pub fn build(self) -> impl Tool {
+impl Toolable for Tool {
+    fn name(&self) -> &str {
+        &self.name
+    }
+
+    fn description(&self) -> &str {
+        &self.description
+    }
+
+    fn input_schema(&self) -> Value {
+        self.schema.clone()
+    }
+
+    fn is_read_only(&self) -> bool {
+        self.read_only
+    }
+
+    fn should_defer(&self) -> bool {
+        self.defer
+    }
+
+    fn search_hints(&self) -> Vec<String> {
+        self.hints.clone()
+    }
+
+    fn call<'a>(
+        &'a self,
+        input: Value,
+        ctx: &'a ToolContext,
+    ) -> Pin<Box<dyn Future<Output = Result<ToolResult>> + Send + 'a>> {
         let handler = self
             .handler
-            .expect("ToolBuilder requires a handler before build()");
-        BuiltTool {
-            name: self.name,
-            description: self.description,
-            schema: self.schema,
-            read_only: self.read_only,
-            defer: self.defer,
-            hints: self.hints,
-            handler,
-        }
+            .as_ref()
+            .expect("Tool requires a handler — set one via `.handler(...)` before use");
+        (handler)(input, ctx)
     }
 }
 
@@ -621,8 +626,8 @@ mod tests {
     }
 
     #[test]
-    fn tool_builder_basic() {
-        let tool = ToolBuilder::new("echo", "Echoes input")
+    fn tool_basic() {
+        let tool = Tool::new("echo", "Echoes input")
             .schema(serde_json::json!({"type": "object", "properties": {"text": {"type": "string"}}}))
             .read_only(true)
             .handler(|input, _ctx| {
@@ -630,31 +635,31 @@ mod tests {
                     let text = input["text"].as_str().unwrap_or("").to_string();
                     Ok(ToolResult::success(text))
                 })
-            })
-            .build();
+            });
 
         assert_eq!(tool.name(), "echo");
         assert!(tool.is_read_only());
     }
 
     #[test]
-    fn tool_builder_defer_and_hints() {
-        let tool = ToolBuilder::new("advanced", "Advanced tool")
+    fn tool_defer_and_hints() {
+        let tool = Tool::new("advanced", "Advanced tool")
             .defer(true)
-            .search_hints(vec!["analyze".into(), "inspect".into()])
+            .hints(vec!["analyze".into(), "inspect".into()])
             .handler(|_input, _ctx| {
                 Box::pin(async { Ok(ToolResult::success("ok")) })
-            })
-            .build();
+            });
 
         assert!(tool.should_defer());
         assert_eq!(tool.search_hints().len(), 2);
     }
 
-    #[test]
+    #[tokio::test]
     #[should_panic(expected = "requires a handler")]
-    fn tool_builder_panics_without_handler() {
-        let _ = ToolBuilder::new("no_handler", "missing").build();
+    async fn tool_panics_without_handler() {
+        let tool = Tool::new("no_handler", "missing");
+        let ctx = test_tool_context();
+        let _ = tool.call(serde_json::json!({}), &ctx).await;
     }
 
 }

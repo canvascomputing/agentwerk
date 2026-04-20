@@ -4,7 +4,7 @@ use std::pin::Pin;
 use serde_json::Value;
 
 use crate::error::Result;
-use crate::tools::tool::{Tool, ToolContext, ToolResult};
+use crate::tools::tool::{Toolable, ToolContext, ToolResult};
 
 pub struct ReadFileTool;
 
@@ -15,7 +15,7 @@ Read the contents of a file, optionally returning a specific range of lines.
 - When you already know which part of the file you need, use offset and limit to read only that part. This is important for larger files.
 - This tool can only read files, not directories. To list a directory, use list_directory or bash with ls.";
 
-impl Tool for ReadFileTool {
+impl Toolable for ReadFileTool {
     fn name(&self) -> &str {
         "read_file"
     }

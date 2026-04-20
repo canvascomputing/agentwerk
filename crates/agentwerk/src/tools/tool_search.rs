@@ -4,7 +4,7 @@ use std::pin::Pin;
 use serde_json::Value;
 
 use crate::error::Result;
-use crate::tools::tool::{Tool, ToolContext, ToolResult};
+use crate::tools::tool::{Toolable, ToolContext, ToolResult};
 
 /// Tool that searches the tool registry by query string.
 pub struct ToolSearchTool;
@@ -12,7 +12,7 @@ pub struct ToolSearchTool;
 const DESCRIPTION: &str = "\
 Search for available tools by name or keyword. Returns tool names, descriptions, and input schemas.";
 
-impl Tool for ToolSearchTool {
+impl Toolable for ToolSearchTool {
     fn name(&self) -> &str {
         "tool_search"
     }

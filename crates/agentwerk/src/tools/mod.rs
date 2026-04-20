@@ -14,7 +14,7 @@ mod web_fetch;
 mod write_file;
 
 // Re-export tool infrastructure
-pub use tool::{Tool, ToolBuilder, ToolContext, ToolResult};
+pub use tool::{Tool, Toolable, ToolContext, ToolResult};
 pub(crate) use tool::{ToolCall, ToolRegistry};
 
 // Re-export built-in tools

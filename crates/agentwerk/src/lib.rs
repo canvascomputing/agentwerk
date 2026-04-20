@@ -19,7 +19,7 @@ pub use provider::{
 // Tool infrastructure and built-in tools
 pub use tools::{
     BashTool, EditFileTool, GlobTool, GrepTool, ListDirectoryTool, ReadFileTool,
-    SendMessageTool, SpawnAgentTool, TaskTool, Tool, ToolBuilder, ToolContext,
+    SendMessageTool, SpawnAgentTool, TaskTool, Tool, Toolable, ToolContext,
     ToolResult, ToolSearchTool, WebFetchTool, WriteFileTool,
 };
 

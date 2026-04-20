@@ -6,7 +6,7 @@ use std::time::SystemTime;
 use serde_json::Value;
 
 use crate::error::Result;
-use crate::tools::tool::{Tool, ToolContext, ToolResult};
+use crate::tools::tool::{Toolable, ToolContext, ToolResult};
 
 pub struct GlobTool;
 
@@ -19,7 +19,7 @@ Fast file pattern matching tool that works with any codebase size.
 - Use this when you need to find files by name or extension patterns.
 - For open-ended searches that may require multiple rounds, use spawn_agent instead.";
 
-impl Tool for GlobTool {
+impl Toolable for GlobTool {
     fn name(&self) -> &str {
         "glob"
     }

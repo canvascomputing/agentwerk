@@ -7,7 +7,7 @@ use serde_json::Value;
 use crate::agent::queue::{CommandSource, QueuePriority, QueuedCommand};
 use crate::error::{AgenticError, Result};
 
-use crate::tools::tool::{Tool, ToolContext, ToolResult};
+use crate::tools::tool::{Toolable, ToolContext, ToolResult};
 
 const NAME: &str = "send_message";
 
@@ -37,7 +37,7 @@ struct SendArgs {
     summary: Option<String>,
 }
 
-impl Tool for SendMessageTool {
+impl Toolable for SendMessageTool {
     fn name(&self) -> &str {
         NAME
     }

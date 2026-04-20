@@ -10,7 +10,7 @@ use crate::agent::{Agent, AgentOutput, AgentEvent, AgentEventKind, AgentStatus};
 use crate::error::Result;
 use crate::provider::types::{ContentBlock, CompletionResponse, ResponseStatus, StreamEvent, TokenUsage};
 use crate::provider::{CompletionRequest, Provider, ProviderError, ProviderResult};
-use crate::tools::{Tool, ToolContext, ToolResult};
+use crate::tools::{Toolable, ToolContext, ToolResult};
 
 /// A mock LLM provider that returns pre-configured responses in order.
 ///
@@ -159,7 +159,7 @@ impl MockTool {
     }
 }
 
-impl Tool for MockTool {
+impl Toolable for MockTool {
     fn name(&self) -> &str {
         &self.name
     }
@@ -199,7 +199,7 @@ impl DeferredMockTool {
     }
 }
 
-impl Tool for DeferredMockTool {
+impl Toolable for DeferredMockTool {
     fn name(&self) -> &str {
         &self.name
     }

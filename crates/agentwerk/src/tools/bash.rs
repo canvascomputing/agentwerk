@@ -4,7 +4,7 @@ use std::pin::Pin;
 use serde_json::Value;
 
 use crate::error::Result;
-use crate::tools::tool::{Tool, ToolContext, ToolResult};
+use crate::tools::tool::{Toolable, ToolContext, ToolResult};
 use crate::tools::util::{glob_match, run_shell_command};
 
 /// Shell command execution tool restricted to commands matching a glob pattern.
@@ -58,7 +58,7 @@ impl BashTool {
     }
 }
 
-impl Tool for BashTool {
+impl Toolable for BashTool {
     fn name(&self) -> &str {
         &self.tool_name
     }

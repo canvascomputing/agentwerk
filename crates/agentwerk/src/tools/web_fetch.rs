@@ -4,7 +4,7 @@ use std::pin::Pin;
 use serde_json::Value;
 
 use crate::error::Result;
-use crate::tools::tool::{Tool, ToolContext, ToolResult};
+use crate::tools::tool::{Toolable, ToolContext, ToolResult};
 
 const MAX_URL_LENGTH: usize = 2000;
 const MAX_RESPONSE_BYTES: usize = 10 * 1024 * 1024;
@@ -26,11 +26,11 @@ Fetches content from a specified URL and returns it as text.
 - When a URL redirects to a different host, the tool will report the redirect URL instead of following it. \
   Make a new request with the redirect URL to fetch the content.";
 
-// -- Tool trait ---------------------------------------------------------------
+// -- Toolable impl ------------------------------------------------------------
 
 pub struct WebFetchTool;
 
-impl Tool for WebFetchTool {
+impl Toolable for WebFetchTool {
     fn name(&self) -> &str {
         "web_fetch"
     }

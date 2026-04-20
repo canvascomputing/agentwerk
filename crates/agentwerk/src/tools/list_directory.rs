@@ -5,7 +5,7 @@ use std::pin::Pin;
 use serde_json::Value;
 
 use crate::error::Result;
-use crate::tools::tool::{Tool, ToolContext, ToolResult};
+use crate::tools::tool::{Toolable, ToolContext, ToolResult};
 
 pub struct ListDirectoryTool;
 
@@ -15,7 +15,7 @@ List the contents of a directory. Returns file and directory names.
 - Use this for a quick overview of directory structure.
 - For finding files by pattern across the tree, use glob instead.";
 
-impl Tool for ListDirectoryTool {
+impl Toolable for ListDirectoryTool {
     fn name(&self) -> &str {
         "list_directory"
     }

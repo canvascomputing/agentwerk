@@ -172,7 +172,7 @@ impl Default for AgentPool {
 mod tests {
     use super::*;
     use crate::testutil::{text_response, tool_response, MockProvider};
-    use crate::tools::{ToolBuilder, ToolResult};
+    use crate::tools::{Tool, ToolResult};
     use std::sync::atomic::AtomicUsize;
     use std::time::Duration;
 
@@ -250,7 +250,7 @@ mod tests {
             let running = running.clone();
             let max_concurrent = max_concurrent.clone();
 
-            let slow_tool = ToolBuilder::new("slow", "Simulates slow work")
+            let slow_tool = Tool::new("slow", "Simulates slow work")
                 .schema(serde_json::json!({"type": "object", "properties": {}}))
                 .handler(move |_, _| {
                     let running = running.clone();
@@ -262,8 +262,7 @@ mod tests {
                         running.fetch_sub(1, Ordering::SeqCst);
                         Ok(ToolResult::success("done"))
                     })
-                })
-                .build();
+                });
 
             let provider = Arc::new(MockProvider::new(vec![
                 tool_response("slow", "c1", serde_json::json!({})),
@@ -297,15 +296,14 @@ mod tests {
     async fn pool_spawn_order_buffers_fast_finishers() {
         // Agent A is slow (sleeps), Agent B is fast. Spawn A then B.
         // SpawnOrder should yield A first despite B completing first.
-        let slow_tool = ToolBuilder::new("slow", "slow tool")
+        let slow_tool = Tool::new("slow", "slow tool")
             .schema(serde_json::json!({"type": "object", "properties": {}}))
             .handler(|_, _| {
                 Box::pin(async move {
                     tokio::time::sleep(Duration::from_millis(80)).await;
                     Ok(ToolResult::success("slow done"))
                 })
-            })
-            .build();
+            });
 
         let a = Agent::new()
             .name("A")
@@ -343,15 +341,14 @@ mod tests {
     async fn pool_completion_order_yields_fast_first() {
         // Agent A is slow (sleeps), Agent B is fast. Spawn A then B.
         // CompletionOrder should yield B first because it finishes first.
-        let slow_tool = ToolBuilder::new("slow", "slow tool")
+        let slow_tool = Tool::new("slow", "slow tool")
             .schema(serde_json::json!({"type": "object", "properties": {}}))
             .handler(|_, _| {
                 Box::pin(async move {
                     tokio::time::sleep(Duration::from_millis(80)).await;
                     Ok(ToolResult::success("slow done"))
                 })
-            })
-            .build();
+            });
 
         let a = Agent::new()
             .name("A")
@@ -435,15 +432,14 @@ mod tests {
     // --- Performance tests ---
 
     fn agent_with_delay(name: &str, delay_ms: u64, text: &str) -> Agent {
-        let slow_tool = ToolBuilder::new("slow", "simulates work")
+        let slow_tool = Tool::new("slow", "simulates work")
             .schema(serde_json::json!({"type": "object", "properties": {}}))
             .handler(move |_, _| {
                 Box::pin(async move {
                     tokio::time::sleep(Duration::from_millis(delay_ms)).await;
                     Ok(ToolResult::success("done"))
                 })
-            })
-            .build();
+            });
 
         let provider = Arc::new(MockProvider::new(vec![
             tool_response("slow", "c1", serde_json::json!({})),
@@ -558,7 +554,7 @@ mod tests {
             for i in 0..50 {
                 let r = running_s.clone();
                 let m = max_s.clone();
-                let slow_tool = ToolBuilder::new("slow", "work")
+                let slow_tool = Tool::new("slow", "work")
                     .schema(serde_json::json!({"type": "object", "properties": {}}))
                     .handler(move |_, _| {
                         let r = r.clone();
@@ -570,8 +566,7 @@ mod tests {
                             r.fetch_sub(1, Ordering::SeqCst);
                             Ok(ToolResult::success("done"))
                         })
-                    })
-                    .build();
+                    });
 
                 let provider = Arc::new(MockProvider::new(vec![
                     tool_response("slow", "c1", serde_json::json!({})),

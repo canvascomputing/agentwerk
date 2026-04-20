@@ -307,45 +307,60 @@ let handler = Arc::new(|event: AgentEvent| match &event.kind {
 Give your agent access to simple tools for driving tasks:
 
 ```rust
-use agentwerk::{ToolBuilder, ToolResult};
+use agentwerk::{Tool, ToolResult};
 
-let tool = ToolBuilder::new("greet", "Say hello")
+let tool = Tool::new("greet", "Say hello")
     .schema(json!({...}))
     .read_only(true)
     .handler(|input, ctx| Box::pin(async move {
         Ok(ToolResult::success("Hello!"))
-    }))
-    .build();
+    }));
 ```
+
+> `Tool` is the concrete struct for ad-hoc tools; it implements the `Toolable` trait.
+> To define a stateful tool, implement `Toolable` directly on your own type.
 
 > Use `.read_only(true)` when a tool has no side effects. 
 > If set, the the execution loop will run tools in parallel.
 
-Built-in tools:
+#### Built-in tools
 
 | | Tool | Description |
 |-|------|-------------|
 | **File** | `ReadFileTool` | Read a file with line numbers, offset, and limit |
 | | `WriteFileTool` | Create or overwrite a file |
 | | `EditFileTool` | Find-and-replace in a file |
-| **Search** | `GlobTool` | Find files by pattern (e.g., `**/*.rs`) |
+| **Search** | `GlobTool` | Find files by pattern |
 | | `GrepTool` | Search file contents by substring |
 | | `ListDirectoryTool` | List directory entries with type and size |
-| **Shell** | `BashTool::unrestricted()` | Execute any shell command |
-| | `BashTool::new(name, pattern)` | Execute shell commands matching a glob pattern |
 | **Web** | `WebFetchTool` | Fetch a URL and return its content as text |
-| **Utility** | `SpawnAgentTool` | Delegate work to a sub-agent |
+| **Utility** | `BashTool` | Execute shell commands matching a glob pattern |
+| | `SpawnAgentTool` | Delegate work to a sub-agent |
 | | `SendMessageTool` | Send messages to other agents |
-| | `TaskTool` | Persistent task management (create, update, list, get) |
+| | `TaskTool` | Perform task management |
 | | `ToolSearchTool` | Discover available tools by keyword |
 
 ```rust
-use agentwerk::{ReadFileTool, BashTool, TaskTool};
+use agentwerk::{
+    ReadFileTool, WriteFileTool, EditFileTool,
+    GlobTool, GrepTool, ListDirectoryTool,
+    WebFetchTool, SpawnAgentTool, BashTool,
+    SendMessageTool, TaskTool, ToolSearchTool,
+};
 
 let agent = Agent::new()
     .tool(ReadFileTool)
+    .tool(WriteFileTool)
+    .tool(EditFileTool)
+    .tool(GlobTool)
+    .tool(GrepTool)
+    .tool(ListDirectoryTool)
+    .tool(WebFetchTool)
+    .tool(SpawnAgentTool)
     .tool(BashTool::new("git", "git *"))
+    .tool(SendMessageTool)
     .tool(TaskTool::new(Path::new("/tmp/tasks")))
+    .tool(ToolSearchTool)
     .run().await?;
 ```
 

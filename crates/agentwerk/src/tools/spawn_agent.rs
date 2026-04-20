@@ -8,7 +8,7 @@ use crate::agent::Agent;
 use crate::error::{AgenticError, Result};
 use crate::util::generate_agent_name;
 
-use crate::tools::tool::{Tool, ToolContext, ToolResult};
+use crate::tools::tool::{Toolable, ToolContext, ToolResult};
 
 /// Default identity for ad-hoc sub-agents (when the LLM doesn't supply one).
 const DEFAULT_IDENTITY: &str = "You are a focused helper agent. Answer concisely.";
@@ -51,7 +51,7 @@ Write prompts that prove you understood the problem and what specifically needs 
 - Foreground (default): blocks until the agent completes. Use when you need results before proceeding.
 - Background: returns immediately with an agent ID. Use when you have independent work to do in parallel.";
 
-impl Tool for SpawnAgentTool {
+impl Toolable for SpawnAgentTool {
     fn name(&self) -> &str {
         "spawn_agent"
     }

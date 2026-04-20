@@ -30,7 +30,7 @@ use crate::provider::types::{
     ContentBlock, Message, CompletionResponse, ResponseStatus, StreamEvent, TokenUsage,
 };
 use crate::provider::{CompletionRequest, Provider, ProviderError, ToolChoice};
-use crate::tools::{SpawnAgentTool, Tool, ToolCall, ToolContext, ToolRegistry};
+use crate::tools::{SpawnAgentTool, Toolable, ToolCall, ToolContext, ToolRegistry};
 use crate::util::{generate_agent_name, now_millis};
 
 use super::compact;
@@ -237,7 +237,7 @@ impl Agent {
     }
 
     /// Register a tool.
-    pub fn tool(self, tool: impl Tool + 'static) -> Self {
+    pub fn tool(self, tool: impl Toolable + 'static) -> Self {
         self.with_config(|c| c.tools.register(tool))
     }
 

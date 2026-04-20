@@ -7,7 +7,7 @@ use serde_json::Value;
 
 use crate::error::Result;
 use crate::persistence::task::{TaskStatus, TaskStore, TaskUpdate};
-use crate::tools::tool::{Tool, ToolContext, ToolResult};
+use crate::tools::tool::{Toolable, ToolContext, ToolResult};
 
 /// Persistent task management. The agent can create, update, list, and get tasks.
 pub struct TaskTool {
@@ -22,7 +22,7 @@ impl TaskTool {
     }
 }
 
-impl Tool for TaskTool {
+impl Toolable for TaskTool {
     fn name(&self) -> &str {
         "task"
     }

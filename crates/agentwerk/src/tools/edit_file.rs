@@ -4,7 +4,7 @@ use std::pin::Pin;
 use serde_json::Value;
 
 use crate::error::Result;
-use crate::tools::tool::{Tool, ToolContext, ToolResult};
+use crate::tools::tool::{Toolable, ToolContext, ToolResult};
 
 pub struct EditFileTool;
 
@@ -17,7 +17,7 @@ Edit a file by replacing occurrences of a string.
 - ALWAYS prefer editing existing files over creating new ones.
 - Use replace_all for renaming or replacing a string across the entire file.";
 
-impl Tool for EditFileTool {
+impl Toolable for EditFileTool {
     fn name(&self) -> &str {
         "edit_file"
     }

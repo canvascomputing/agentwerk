@@ -4,7 +4,7 @@ use std::pin::Pin;
 use serde_json::Value;
 
 use crate::error::Result;
-use crate::tools::tool::{Tool, ToolContext, ToolResult};
+use crate::tools::tool::{Toolable, ToolContext, ToolResult};
 
 pub struct WriteFileTool;
 
@@ -14,7 +14,7 @@ Write content to a file, creating parent directories if needed.
 - If this is an existing file, you MUST use read_file first to read its contents.
 - Prefer edit_file for modifying existing files — it only sends the diff. Use write_file for new files or complete rewrites.";
 
-impl Tool for WriteFileTool {
+impl Toolable for WriteFileTool {
     fn name(&self) -> &str {
         "write_file"
     }
