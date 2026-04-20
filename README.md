@@ -135,7 +135,8 @@ let output = agent.run().await?;
 | `send(instruction)` | Deliver an instruction to the agent |
 | `cancel()` | Signal the agent to stop |
 | `is_cancelled()` | Check if the agent was cancelled |
-| `run().await` | Await the agent's completion |
+| `is_stopped()` | Check if the agent finished execution |
+| `run()` | Await the agent's completion |
 | `clone()` | Create another handle to the same running agent |
 
 ### Models

@@ -8,6 +8,8 @@
 //!   turn boundary, or immediately if the agent is parked in keep-alive idle.
 //! - `cancel()` — flip the shared cancel signal.
 //! - `is_cancelled()` — read that signal.
+//! - `is_stopped()` — read the terminal-state flag; `true` once the loop has
+//!   emitted `AgentEnd` and will not return to idle.
 //! - `run().await` — await the background task and receive `AgentOutput`.
 //!   May be called at most once across all clones.
 //! - `clone()` — produce another handle to the same task. `send` and `cancel`
@@ -136,6 +138,76 @@ async fn cancel_breaks_an_idle_agent_out_of_its_wait() {
         .await;
     let out = running.run().await.expect("output");
     assert_eq!(out.status, AgentStatus::Completed);
+}
+
+// ---------------------------------------------------------------------------
+// `is_stopped()` — has the loop actually ended?
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn is_stopped_is_false_before_run_is_awaited() {
+    // The loop may or may not have already finished on the background task
+    // by the time we poll, but immediately after `create()` the flag is
+    // guaranteed to start `false` — it only flips after the future resolves.
+    let running = Agent::new()
+        .model("mock")
+        .provider(Arc::new(MockProvider::text("done")))
+        .identity_prompt("")
+        .instruction_prompt("x")
+        .create();
+
+    assert!(!running.is_stopped());
+    let _ = running.run().await;
+}
+
+#[tokio::test]
+async fn is_stopped_stays_false_during_keep_alive_idle() {
+    // Per the contract: during an idle wait the loop has *not* emitted
+    // `AgentEnd` and may still resume. `is_stopped()` must therefore stay
+    // `false` until the loop truly exits.
+    let events = EventLog::new();
+    let (_provider, running) = keep_alive_agent(vec![text_response("first")], &events);
+
+    events
+        .wait_for(|e| matches!(e.kind, AgentEventKind::AgentIdle))
+        .await;
+    assert!(!running.is_stopped(), "idle is not stopped");
+
+    // cleanup: wake the keep-alive loop so the background task exits.
+    running.cancel();
+    let _ = running.run().await;
+}
+
+#[tokio::test]
+async fn is_stopped_is_true_after_run_completes() {
+    let running = Agent::new()
+        .model("mock")
+        .provider(Arc::new(MockProvider::text("done")))
+        .identity_prompt("")
+        .instruction_prompt("x")
+        .create();
+
+    let _ = running.run().await.expect("output");
+    assert!(running.is_stopped());
+}
+
+#[tokio::test]
+async fn is_stopped_becomes_true_after_cancel_during_idle() {
+    // Pairs with `cancel_breaks_an_idle_agent_out_of_its_wait`: cancel wakes
+    // the idle wait, the loop emits `AgentEnd`, and only then does the
+    // `is_stopped()` flag flip.
+    let events = EventLog::new();
+    let (_provider, running) = keep_alive_agent(vec![text_response("first")], &events);
+
+    events
+        .wait_for(|e| matches!(e.kind, AgentEventKind::AgentIdle))
+        .await;
+    running.cancel();
+    events
+        .wait_for(|e| matches!(e.kind, AgentEventKind::AgentResumed))
+        .await;
+    let _ = running.run().await.expect("output");
+    assert!(running.is_stopped());
 }
 
 // ---------------------------------------------------------------------------

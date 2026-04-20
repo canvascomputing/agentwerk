@@ -399,11 +399,17 @@ impl Agent {
     pub fn create(self) -> RunningAgent {
         let queue = Arc::new(CommandQueue::new());
         let cancel = Arc::new(AtomicBool::new(false));
+        let stopped = Arc::new(AtomicBool::new(false));
         let prepared = self
             .cancel_signal(cancel.clone())
             .command_queue(queue.clone());
-        let join = tokio::spawn(async move { prepared.run().await });
-        RunningAgent::new(queue, cancel, join)
+        let stopped_for_task = stopped.clone();
+        let join = tokio::spawn(async move {
+            let result = prepared.run().await;
+            stopped_for_task.store(true, Ordering::Relaxed);
+            result
+        });
+        RunningAgent::new(queue, cancel, stopped, join)
     }
 
     /// Crate-internal: run this agent as a child under a parent's `LoopRuntime`.

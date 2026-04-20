@@ -27,6 +27,7 @@ pub struct RunningAgent {
 struct Inner {
     queue: Arc<CommandQueue>,
     cancel: Arc<AtomicBool>,
+    stopped: Arc<AtomicBool>,
     join: Mutex<Option<JoinHandle<Result<AgentOutput>>>>,
 }
 
@@ -34,12 +35,14 @@ impl RunningAgent {
     pub(crate) fn new(
         queue: Arc<CommandQueue>,
         cancel: Arc<AtomicBool>,
+        stopped: Arc<AtomicBool>,
         join: JoinHandle<Result<AgentOutput>>,
     ) -> Self {
         Self {
             inner: Arc::new(Inner {
                 queue,
                 cancel,
+                stopped,
                 join: Mutex::new(Some(join)),
             }),
         }
@@ -66,6 +69,16 @@ impl RunningAgent {
     /// Returns `true` if `cancel()` has been called.
     pub fn is_cancelled(&self) -> bool {
         self.inner.cancel.load(Ordering::Relaxed)
+    }
+
+    /// Returns `true` once the agent loop has terminated — i.e. it has
+    /// emitted [`AgentEnd`](crate::agent::AgentEventKind::AgentEnd) and will
+    /// not return to a keep-alive idle wait. Reports *reality* (the loop is
+    /// over) as opposed to [`is_cancelled`](Self::is_cancelled) which reports
+    /// the *request* (stop has been asked for). During an idle wait the
+    /// loop is still live, so this stays `false`.
+    pub fn is_stopped(&self) -> bool {
+        self.inner.stopped.load(Ordering::Relaxed)
     }
 
     /// Await the agent's completion and return its final output. May only be
@@ -142,6 +155,15 @@ mod tests {
             .expect("queued command");
         assert_eq!(cmd.content, "relay");
         let _ = running.run().await;
+    }
+
+    #[tokio::test]
+    async fn is_stopped_is_shared_across_clones() {
+        let running = new_agent();
+        let other = running.clone();
+        assert!(!running.is_stopped() && !other.is_stopped());
+        let _ = running.run().await;
+        assert!(running.is_stopped() && other.is_stopped());
     }
 
     #[tokio::test]
