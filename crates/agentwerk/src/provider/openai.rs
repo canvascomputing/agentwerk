@@ -30,7 +30,7 @@ impl OpenAiProvider {
         Self::raw(
             api_key,
             "https://api.openai.com",
-            reqwest::Client::new(),
+            super::r#trait::default_client(),
             false,
         )
     }

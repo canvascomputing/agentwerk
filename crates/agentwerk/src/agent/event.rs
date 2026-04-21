@@ -63,6 +63,16 @@ impl AgentEvent {
                 AgentEventKind::OutputTruncated { turn } => {
                     eprintln!("[{agent}] truncated turn={turn}");
                 }
+                AgentEventKind::RequestRetried {
+                    attempt,
+                    max_retries,
+                    error,
+                } => {
+                    eprintln!("[{agent}] ↻ retry {attempt}/{max_retries} ({error})");
+                }
+                AgentEventKind::RequestFailed { error } => {
+                    eprintln!("[{agent}] ✗ request failed: {error}");
+                }
                 _ => {}
             }
         })
@@ -111,6 +121,14 @@ pub enum AgentEventKind {
     },
     RequestEnd {
         model: String,
+    },
+    RequestRetried {
+        attempt: u32,
+        max_retries: u32,
+        error: String,
+    },
+    RequestFailed {
+        error: String,
     },
     OutputTruncated {
         turn: u32,
@@ -182,6 +200,14 @@ mod tests {
             },
             AgentEventKind::RequestStart { model: "m".into() },
             AgentEventKind::RequestEnd { model: "m".into() },
+            AgentEventKind::RequestRetried {
+                attempt: 1,
+                max_retries: 5,
+                error: "rate limited".into(),
+            },
+            AgentEventKind::RequestFailed {
+                error: "auth failed".into(),
+            },
             AgentEventKind::OutputTruncated { turn: 2 },
             AgentEventKind::CompactTriggered {
                 turn: 2,
@@ -208,6 +234,8 @@ mod tests {
                 | AgentEventKind::ResponseTextChunk { .. }
                 | AgentEventKind::RequestStart { .. }
                 | AgentEventKind::RequestEnd { .. }
+                | AgentEventKind::RequestRetried { .. }
+                | AgentEventKind::RequestFailed { .. }
                 | AgentEventKind::OutputTruncated { .. }
                 | AgentEventKind::CompactTriggered { .. }
                 | AgentEventKind::AgentIdle

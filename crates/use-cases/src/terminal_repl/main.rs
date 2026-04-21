@@ -4,7 +4,8 @@ use std::io::{self, Write};
 use std::sync::Arc;
 
 use agentwerk::{
-    Agent, AgentEvent, AgentEventKind, GlobTool, GrepTool, ListDirectoryTool, ReadFileTool,
+    Agent, AgentEvent, AgentEventKind, AgentOutput, AgenticError, GlobTool, GrepTool,
+    ListDirectoryTool, ReadFileTool,
 };
 use tokio::sync::Notify;
 
@@ -39,13 +40,19 @@ async fn main() {
         }))
         .spawn();
 
-    loop {
+    tokio::pin!(output);
+    let mut early_result: Option<Result<AgentOutput, AgenticError>> = None;
+
+    'session: loop {
         tokio::select! {
             _ = idle.notified() => {}
-            _ = tokio::signal::ctrl_c() => break,
-        }
-        if running.is_stopped() {
-            break;
+            // Loop exited on its own (success or error) — don't wait for an
+            // idle notification that will never come.
+            res = &mut output => {
+                early_result = Some(res);
+                break 'session;
+            }
+            _ = tokio::signal::ctrl_c() => break 'session,
         }
         let line = tokio::select! {
             line = read_line("> ") => line,
@@ -62,11 +69,20 @@ async fn main() {
     }
 
     running.cancel();
-    if let Ok(o) = output.await {
-        eprintln!(
+    let result = match early_result {
+        Some(r) => r,
+        None => (&mut output).await,
+    };
+    match result {
+        Ok(o) => eprintln!(
             "[ended: {:?}, turns={}, tokens={}in/{}out]",
             o.status, o.statistics.turns, o.statistics.input_tokens, o.statistics.output_tokens,
-        );
+        ),
+        Err(e) => {
+            let msg = e.to_string();
+            let short = msg.split_once(':').map(|(h, _)| h).unwrap_or(&msg);
+            eprintln!("[error: {short}]");
+        }
     }
     std::process::exit(0);
 }
@@ -89,6 +105,18 @@ fn print_event(event: &AgentEvent, idle: &Arc<Notify>) {
         AgentEventKind::ToolCallError {
             tool_name, error, ..
         } => eprintln!("✗ {tool_name}: {error}"),
+        AgentEventKind::RequestRetried {
+            attempt,
+            max_retries,
+            error,
+        } => {
+            let short = error.split_once(':').map(|(h, _)| h).unwrap_or(error);
+            eprintln!("↻ retry {attempt}/{max_retries}: {short}");
+        }
+        AgentEventKind::RequestFailed { error } => {
+            let short = error.split_once(':').map(|(h, _)| h).unwrap_or(error);
+            eprintln!("✗ request failed: {short}");
+        }
         AgentEventKind::AgentIdle | AgentEventKind::AgentEnd { .. } => {
             println!();
             idle.notify_one();

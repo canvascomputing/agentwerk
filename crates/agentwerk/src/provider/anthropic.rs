@@ -26,7 +26,7 @@ impl AnthropicProvider {
         Self {
             api_key: api_key.into(),
             base_url: "https://api.anthropic.com".into(),
-            client: reqwest::Client::new(),
+            client: super::r#trait::default_client(),
         }
     }
 

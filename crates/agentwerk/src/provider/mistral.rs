@@ -20,7 +20,7 @@ const DEFAULT_MODEL: &str = "mistral-medium-2508";
 
 impl MistralProvider {
     pub fn new(api_key: impl Into<String>) -> Self {
-        Self::with_client(api_key, reqwest::Client::new())
+        Self::with_client(api_key, super::r#trait::default_client())
     }
 
     pub fn with_client(api_key: impl Into<String>, client: reqwest::Client) -> Self {

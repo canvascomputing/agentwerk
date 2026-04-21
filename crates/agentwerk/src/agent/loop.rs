@@ -142,7 +142,23 @@ pub(crate) fn run_loop(
             emit_turn_start(&runtime, &spec, turn);
             emit_request_start(&runtime, &spec);
 
-            let response = call_provider_with_retry(&runtime, &spec, &mut state, turn).await?;
+            let response = match call_provider_with_retry(&runtime, &spec, &mut state, turn).await {
+                Ok(r) => r,
+                Err(e) => {
+                    // A cancel landing during the HTTP call or backoff sleep
+                    // exits through this error path; return a clean Cancelled
+                    // status instead of bubbling the last provider error.
+                    if runtime.cancel_signal.load(Ordering::Relaxed) {
+                        return Ok(finish_early(
+                            &runtime,
+                            &spec,
+                            &mut state,
+                            AgentStatus::Cancelled,
+                        ));
+                    }
+                    return Err(e);
+                }
+            };
 
             emit_request_end(&runtime, &spec);
             record_usage(&runtime, &spec, &mut state, &response);
@@ -288,6 +304,25 @@ fn check_guards(runtime: &LoopRuntime, spec: &AgentSpec, state: &LoopState) -> O
     None
 }
 
+/// Sleep for `duration` but poll the cancel signal every 100 ms. Returns
+/// `true` when the full duration elapsed, `false` when a cancel was observed.
+/// Lets Ctrl-C break out of a long backoff within ~100 ms instead of waiting
+/// up to `MAX_DELAY_MS` for the sleep to complete.
+async fn cancellable_sleep(duration: std::time::Duration, cancel: &Arc<AtomicBool>) -> bool {
+    let deadline = tokio::time::Instant::now() + duration;
+    loop {
+        if cancel.load(Ordering::Relaxed) {
+            return false;
+        }
+        let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
+        if remaining.is_zero() {
+            return true;
+        }
+        let tick = std::cmp::min(remaining, std::time::Duration::from_millis(100));
+        tokio::time::sleep(tick).await;
+    }
+}
+
 async fn call_provider(
     runtime: &LoopRuntime,
     spec: &AgentSpec,
@@ -353,13 +388,32 @@ async fn call_provider_with_retry(
             Err(e) if e.is_retryable() && attempt < spec.max_request_retries => {
                 let delay_ms =
                     compute_delay(spec.request_retry_backoff_ms, attempt, e.retry_after_ms());
-                tokio::time::sleep(std::time::Duration::from_millis(delay_ms)).await;
+                if !cancellable_sleep(
+                    std::time::Duration::from_millis(delay_ms),
+                    &runtime.cancel_signal,
+                )
+                .await
+                {
+                    return Err(AgenticError::Aborted);
+                }
+                emit_request_retried(
+                    runtime,
+                    spec,
+                    attempt + 1,
+                    spec.max_request_retries,
+                    format!("{e}"),
+                );
                 last_err = Some(e);
             }
-            Err(e) => return Err(e),
+            Err(e) => {
+                emit_request_failed(runtime, spec, format!("{e}"));
+                return Err(e);
+            }
         }
     }
-    Err(last_err.unwrap_or_else(|| AgenticError::Other("retry loop ended unexpectedly".into())))
+    let e = last_err.unwrap_or_else(|| AgenticError::Other("retry loop ended unexpectedly".into()));
+    emit_request_failed(runtime, spec, format!("{e}"));
+    Err(e)
 }
 
 fn record_usage(
@@ -539,6 +593,28 @@ fn emit_request_end(runtime: &LoopRuntime, spec: &AgentSpec) {
             model: spec.model().id.clone(),
         },
     );
+}
+
+fn emit_request_retried(
+    runtime: &LoopRuntime,
+    spec: &AgentSpec,
+    attempt: u32,
+    max_retries: u32,
+    error: String,
+) {
+    emit(
+        runtime,
+        spec,
+        AgentEventKind::RequestRetried {
+            attempt,
+            max_retries,
+            error,
+        },
+    );
+}
+
+fn emit_request_failed(runtime: &LoopRuntime, spec: &AgentSpec, error: String) {
+    emit(runtime, spec, AgentEventKind::RequestFailed { error });
 }
 
 fn emit_output_truncated(runtime: &LoopRuntime, spec: &AgentSpec, turn: u32) {
@@ -1341,6 +1417,8 @@ mod tests {
 
 #[cfg(test)]
 mod retry_and_events_tests {
+    use std::sync::Mutex as StdMutex;
+
     use super::super::agent::Agent;
     use super::*;
     use crate::error::AgenticError;
@@ -1353,6 +1431,30 @@ mod retry_and_events_tests {
             status: 429,
             retry_after_ms: None,
         }
+    }
+
+    fn retries_in(events: &[AgentEvent]) -> Vec<(u32, u32, String)> {
+        events
+            .iter()
+            .filter_map(|e| match &e.kind {
+                AgentEventKind::RequestRetried {
+                    attempt,
+                    max_retries,
+                    error,
+                } => Some((*attempt, *max_retries, error.clone())),
+                _ => None,
+            })
+            .collect()
+    }
+
+    fn failures_in(events: &[AgentEvent]) -> Vec<String> {
+        events
+            .iter()
+            .filter_map(|e| match &e.kind {
+                AgentEventKind::RequestFailed { error } => Some(error.clone()),
+                _ => None,
+            })
+            .collect()
     }
 
     #[tokio::test]
@@ -1440,6 +1542,8 @@ mod retry_and_events_tests {
             AgentEventKind::TurnEnd { .. } => "TurnEnd",
             AgentEventKind::RequestStart { .. } => "RequestStart",
             AgentEventKind::RequestEnd { .. } => "RequestEnd",
+            AgentEventKind::RequestRetried { .. } => "RequestRetried",
+            AgentEventKind::RequestFailed { .. } => "RequestFailed",
             AgentEventKind::ResponseTextChunk { .. } => "ResponseTextChunk",
             AgentEventKind::ToolCallStart { .. } => "ToolCallStart",
             AgentEventKind::ToolCallEnd { .. } => "ToolCallEnd",
@@ -1450,5 +1554,526 @@ mod retry_and_events_tests {
             AgentEventKind::AgentIdle => "AgentIdle",
             AgentEventKind::AgentResumed => "AgentResumed",
         }
+    }
+
+    #[tokio::test]
+    async fn retry_emits_request_retried_with_attempt_numbers() {
+        let provider = MockProvider::with_results(vec![
+            Err(rate_limit_error()),
+            Err(rate_limit_error()),
+            Ok(text_response("hello")),
+        ]);
+        let agent = Agent::new()
+            .name("test")
+            .model("mock")
+            .identity_prompt("")
+            .max_request_retries(4)
+            .request_retry_backoff_ms(1);
+
+        let harness = TestHarness::new(provider);
+        harness.run_agent(&agent, "go").await.unwrap();
+
+        let retries: Vec<(u32, u32)> = harness
+            .events()
+            .all()
+            .iter()
+            .filter_map(|e| match &e.kind {
+                AgentEventKind::RequestRetried {
+                    attempt,
+                    max_retries,
+                    ..
+                } => Some((*attempt, *max_retries)),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(retries, vec![(1, 4), (2, 4)]);
+        let failed_count = harness
+            .events()
+            .all()
+            .iter()
+            .filter(|e| matches!(e.kind, AgentEventKind::RequestFailed { .. }))
+            .count();
+        assert_eq!(failed_count, 0, "no terminal failure on eventual success");
+    }
+
+    #[tokio::test]
+    async fn terminal_error_emits_request_failed_once() {
+        let provider = MockProvider::with_results(vec![Err(ProviderError::AuthenticationFailed {
+            provider_message: "unauthorized".into(),
+        })]);
+        let agent = Agent::new()
+            .name("test")
+            .model("mock")
+            .identity_prompt("")
+            .max_request_retries(3)
+            .request_retry_backoff_ms(1);
+
+        let harness = TestHarness::new(provider);
+        let err = harness.run_agent(&agent, "go").await.unwrap_err();
+        assert!(matches!(
+            err,
+            AgenticError::Provider(ProviderError::AuthenticationFailed { .. })
+        ));
+
+        let events = harness.events().all();
+        let failed: Vec<&str> = events
+            .iter()
+            .filter_map(|e| match &e.kind {
+                AgentEventKind::RequestFailed { error } => Some(error.as_str()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(failed.len(), 1);
+        assert!(failed[0].contains("unauthorized"));
+        assert!(!events
+            .iter()
+            .any(|e| matches!(e.kind, AgentEventKind::RequestRetried { .. })));
+    }
+
+    #[tokio::test]
+    async fn retries_exhausted_emits_single_request_failed() {
+        let provider = MockProvider::with_results(vec![
+            Err(rate_limit_error()),
+            Err(rate_limit_error()),
+            Err(rate_limit_error()),
+        ]);
+        let agent = Agent::new()
+            .name("test")
+            .model("mock")
+            .identity_prompt("")
+            .max_request_retries(2)
+            .request_retry_backoff_ms(1);
+
+        let harness = TestHarness::new(provider);
+        harness.run_agent(&agent, "go").await.unwrap_err();
+
+        let events = harness.events().all();
+        let retries: Vec<(u32, u32)> = retries_in(&events)
+            .into_iter()
+            .map(|(a, m, _)| (a, m))
+            .collect();
+        assert_eq!(retries, vec![(1, 2), (2, 2)]);
+        assert_eq!(failures_in(&events).len(), 1);
+    }
+
+    #[tokio::test]
+    async fn happy_path_emits_no_request_failed() {
+        let provider = MockProvider::text("done");
+        let agent = Agent::new().name("test").model("mock").identity_prompt("");
+
+        let harness = TestHarness::new(provider);
+        harness.run_agent(&agent, "go").await.unwrap();
+
+        let events = harness.events().all();
+        assert!(retries_in(&events).is_empty());
+        assert!(failures_in(&events).is_empty());
+    }
+
+    #[tokio::test]
+    async fn max_retries_on_event_matches_spec_max_request_retries() {
+        for max_retries in [0u32, 1, 3, 5] {
+            let results: Vec<_> = (0..=max_retries).map(|_| Err(rate_limit_error())).collect();
+            let provider = MockProvider::with_results(results);
+            let agent = Agent::new()
+                .name("test")
+                .model("mock")
+                .identity_prompt("")
+                .max_request_retries(max_retries)
+                .request_retry_backoff_ms(1);
+
+            let harness = TestHarness::new(provider);
+            harness.run_agent(&agent, "go").await.unwrap_err();
+
+            let events = harness.events().all();
+            let retries = retries_in(&events);
+            assert_eq!(
+                retries.len() as u32,
+                max_retries,
+                "max_retries={max_retries}"
+            );
+            for (_, evt_max_retries, _) in &retries {
+                assert_eq!(
+                    *evt_max_retries, max_retries,
+                    "event.max_retries must equal spec.max_request_retries (got {evt_max_retries} for {max_retries})"
+                );
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn max_request_retries_zero_goes_straight_to_request_failed() {
+        let provider = MockProvider::with_results(vec![Err(rate_limit_error())]);
+        let agent = Agent::new()
+            .name("test")
+            .model("mock")
+            .identity_prompt("")
+            .max_request_retries(0)
+            .request_retry_backoff_ms(1);
+
+        let harness = TestHarness::new(provider);
+        harness.run_agent(&agent, "go").await.unwrap_err();
+
+        let events = harness.events().all();
+        assert!(retries_in(&events).is_empty());
+        assert_eq!(failures_in(&events).len(), 1);
+    }
+
+    #[tokio::test]
+    async fn request_retried_carries_provider_error_display() {
+        let provider = MockProvider::with_results(vec![
+            Err(ProviderError::ConnectionFailed {
+                reason: "dns lookup failed: no such host".into(),
+            }),
+            Ok(text_response("ok")),
+        ]);
+        let agent = Agent::new()
+            .name("test")
+            .model("mock")
+            .identity_prompt("")
+            .max_request_retries(3)
+            .request_retry_backoff_ms(1);
+
+        let harness = TestHarness::new(provider);
+        harness.run_agent(&agent, "go").await.unwrap();
+
+        let events = harness.events().all();
+        let retries = retries_in(&events);
+        assert_eq!(retries.len(), 1);
+        assert!(
+            retries[0].2.contains("dns lookup failed"),
+            "retry error must surface provider message, got: {}",
+            retries[0].2
+        );
+    }
+
+    #[tokio::test]
+    async fn request_failed_carries_terminal_error_display_for_each_non_retryable_variant() {
+        let cases: Vec<(ProviderError, &'static str)> = vec![
+            (
+                ProviderError::AuthenticationFailed {
+                    provider_message: "bad key 401".into(),
+                },
+                "bad key 401",
+            ),
+            (
+                ProviderError::PermissionDenied {
+                    provider_message: "no access 403".into(),
+                },
+                "no access 403",
+            ),
+            (
+                ProviderError::ModelNotFound {
+                    provider_message: "unknown-model-xyz".into(),
+                },
+                "unknown-model-xyz",
+            ),
+            (
+                ProviderError::SafetyFilterTriggered {
+                    provider_message: "blocked by safety-filter-7".into(),
+                },
+                "safety-filter-7",
+            ),
+            (
+                ProviderError::InvalidResponse {
+                    reason: "malformed-json-token".into(),
+                },
+                "malformed-json-token",
+            ),
+        ];
+
+        for (err, needle) in cases {
+            let provider = MockProvider::with_results(vec![Err(err)]);
+            let agent = Agent::new()
+                .name("test")
+                .model("mock")
+                .identity_prompt("")
+                .max_request_retries(3)
+                .request_retry_backoff_ms(1);
+
+            let harness = TestHarness::new(provider);
+            harness.run_agent(&agent, "go").await.unwrap_err();
+
+            let events = harness.events().all();
+            let failures = failures_in(&events);
+            assert_eq!(failures.len(), 1, "{needle}");
+            assert!(
+                failures[0].contains(needle),
+                "RequestFailed must carry error detail '{needle}', got: {}",
+                failures[0]
+            );
+            assert!(retries_in(&events).is_empty(), "{needle}");
+        }
+    }
+
+    #[tokio::test]
+    async fn context_window_exceeded_with_known_window_does_not_emit_request_failed() {
+        let provider =
+            MockProvider::with_results(vec![Err(ProviderError::ContextWindowExceeded {
+                provider_message: "context overflow".into(),
+            })]);
+        let agent = Agent::new()
+            .name("test")
+            .model_with_context_window_size("mock", 100_000)
+            .identity_prompt("")
+            .max_request_retries(3)
+            .request_retry_backoff_ms(1);
+
+        let harness = TestHarness::new(provider);
+        harness.run_agent(&agent, "go").await.unwrap_err();
+
+        let events = harness.events().all();
+        let compact_count = events
+            .iter()
+            .filter(|e| matches!(e.kind, AgentEventKind::CompactTriggered { .. }))
+            .count();
+        assert_eq!(compact_count, 1);
+        assert!(failures_in(&events).is_empty());
+    }
+
+    #[tokio::test]
+    async fn context_window_exceeded_with_unknown_window_emits_request_failed() {
+        let provider =
+            MockProvider::with_results(vec![Err(ProviderError::ContextWindowExceeded {
+                provider_message: "context overflow 413".into(),
+            })]);
+        let agent = Agent::new()
+            .name("test")
+            .model("mock")
+            .identity_prompt("")
+            .max_request_retries(3)
+            .request_retry_backoff_ms(1);
+
+        let harness = TestHarness::new(provider);
+        harness.run_agent(&agent, "go").await.unwrap_err();
+
+        let events = harness.events().all();
+        let failures = failures_in(&events);
+        assert_eq!(failures.len(), 1);
+        assert!(failures[0].contains("context overflow 413"));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn request_retried_fires_after_backoff_sleep_not_before() {
+        let provider = MockProvider::with_results(vec![
+            Err(ProviderError::RateLimited {
+                message: "rl".into(),
+                status: 429,
+                retry_after_ms: Some(1_000),
+            }),
+            Ok(text_response("ok")),
+        ]);
+        let collected: Arc<StdMutex<Vec<AgentEvent>>> = Arc::new(StdMutex::new(Vec::new()));
+        let handler: Arc<dyn Fn(AgentEvent) + Send + Sync> = {
+            let c = collected.clone();
+            Arc::new(move |e| c.lock().unwrap().push(e))
+        };
+        let agent = Agent::new()
+            .name("test")
+            .model("mock")
+            .provider(Arc::new(provider))
+            .identity_prompt("")
+            .max_request_retries(3)
+            .request_retry_backoff_ms(1_000)
+            .event_handler(handler)
+            .instruction_prompt("go");
+
+        let run_fut = agent.run();
+        let check_fut = async {
+            for _ in 0..20 {
+                tokio::task::yield_now().await;
+            }
+            let retries = || {
+                collected
+                    .lock()
+                    .unwrap()
+                    .iter()
+                    .filter(|e| matches!(e.kind, AgentEventKind::RequestRetried { .. }))
+                    .count()
+            };
+            assert_eq!(retries(), 0, "no retry event before sleep");
+
+            tokio::time::advance(std::time::Duration::from_millis(999)).await;
+            for _ in 0..20 {
+                tokio::task::yield_now().await;
+            }
+            assert_eq!(retries(), 0, "no retry event at 999ms into backoff");
+
+            tokio::time::advance(std::time::Duration::from_millis(2)).await;
+            for _ in 0..20 {
+                tokio::task::yield_now().await;
+            }
+            assert_eq!(retries(), 1, "retry event fires once sleep completes");
+        };
+
+        let (run_result, _) = tokio::join!(run_fut, check_fut);
+        run_result.unwrap();
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn backoff_between_consecutive_retries_grows_exponentially() {
+        // backoff_ms = 2_000 with additive 0..25% jitter, capped at 32_000:
+        //   attempt 0 → [2_000, 2_500]ms
+        //   attempt 1 → [4_000, 5_000]ms
+        //   attempt 2 → [8_000, 10_000]ms
+        // Cumulative arrival windows for retry events (worst-case widths):
+        //   retry 1 → [ 2_000,  2_500]
+        //   retry 2 → [ 6_000,  7_500]
+        //   retry 3 → [14_000, 17_500]
+        let provider = MockProvider::with_results(vec![
+            Err(rate_limit_error()),
+            Err(rate_limit_error()),
+            Err(rate_limit_error()),
+            Err(rate_limit_error()),
+        ]);
+        let collected: Arc<StdMutex<Vec<AgentEvent>>> = Arc::new(StdMutex::new(Vec::new()));
+        let handler: Arc<dyn Fn(AgentEvent) + Send + Sync> = {
+            let c = collected.clone();
+            Arc::new(move |e| c.lock().unwrap().push(e))
+        };
+        let agent = Agent::new()
+            .name("test")
+            .model("mock")
+            .provider(Arc::new(provider))
+            .identity_prompt("")
+            .max_request_retries(3)
+            .request_retry_backoff_ms(2_000)
+            .event_handler(handler)
+            .instruction_prompt("go");
+
+        let drain = || async {
+            for _ in 0..20 {
+                tokio::task::yield_now().await;
+            }
+        };
+        let retries = || {
+            collected
+                .lock()
+                .unwrap()
+                .iter()
+                .filter(|e| matches!(e.kind, AgentEventKind::RequestRetried { .. }))
+                .count()
+        };
+
+        let run_fut = agent.run();
+        let check_fut = async {
+            drain().await;
+            assert_eq!(retries(), 0, "T=0: no retries yet");
+
+            // Upper bound of attempt 0's sleep (2_500) → retry 1 must have fired.
+            tokio::time::advance(std::time::Duration::from_millis(2_500)).await;
+            drain().await;
+            assert_eq!(retries(), 1, "T=2.5s: retry 1 fired");
+
+            // Below the minimum arrival of retry 2 (6_000).
+            tokio::time::advance(std::time::Duration::from_millis(3_499)).await;
+            drain().await;
+            assert_eq!(retries(), 1, "T≈6s-1ms: retry 2 has not fired yet");
+
+            // Past upper bound of retry 2's window (7_500).
+            tokio::time::advance(std::time::Duration::from_millis(1_501)).await;
+            drain().await;
+            assert_eq!(retries(), 2, "T=7.5s: retry 2 fired");
+
+            // Below minimum arrival of retry 3 (14_000).
+            tokio::time::advance(std::time::Duration::from_millis(6_499)).await;
+            drain().await;
+            assert_eq!(retries(), 2, "T≈14s-1ms: retry 3 has not fired yet");
+
+            // Past upper bound of retry 3's window (17_500).
+            tokio::time::advance(std::time::Duration::from_millis(3_501)).await;
+            drain().await;
+            assert_eq!(retries(), 3, "T=17.5s: retry 3 fired");
+        };
+
+        let (run_result, _) = tokio::join!(run_fut, check_fut);
+        run_result.unwrap_err();
+
+        let failures = collected
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|e| matches!(e.kind, AgentEventKind::RequestFailed { .. }))
+            .count();
+        assert_eq!(failures, 1, "one terminal failure after retries exhaust");
+    }
+
+    #[tokio::test]
+    async fn cancel_during_backoff_exits_quickly_with_cancelled_status() {
+        let provider = MockProvider::with_results(vec![
+            Err(rate_limit_error()),
+            Err(rate_limit_error()),
+            Err(rate_limit_error()),
+            Err(rate_limit_error()),
+            Err(rate_limit_error()),
+        ]);
+        let cancel: Arc<AtomicBool> = Arc::new(AtomicBool::new(false));
+        let agent = Agent::new()
+            .name("test")
+            .model("mock")
+            .provider(Arc::new(provider))
+            .identity_prompt("")
+            .max_request_retries(4)
+            .request_retry_backoff_ms(30_000)
+            .cancel_signal(cancel.clone())
+            .instruction_prompt("go");
+
+        let cancel_setter = {
+            let c = cancel.clone();
+            async move {
+                tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+                c.store(true, Ordering::Relaxed);
+            }
+        };
+
+        let start = std::time::Instant::now();
+        let (run_result, _) = tokio::join!(agent.run(), cancel_setter);
+        let elapsed = start.elapsed();
+
+        let output = run_result.unwrap();
+        assert_eq!(output.status, AgentStatus::Cancelled);
+        assert!(
+            elapsed < std::time::Duration::from_secs(2),
+            "cancel during a 30s backoff must exit within 2s (took {:?})",
+            elapsed
+        );
+    }
+
+    #[tokio::test]
+    async fn custom_event_handler_observes_retry_and_failure() {
+        let provider = MockProvider::with_results(vec![
+            Err(rate_limit_error()),
+            Err(rate_limit_error()),
+            Err(ProviderError::AuthenticationFailed {
+                provider_message: "terminal".into(),
+            }),
+        ]);
+        let collected: Arc<StdMutex<Vec<AgentEvent>>> = Arc::new(StdMutex::new(Vec::new()));
+        let handler: Arc<dyn Fn(AgentEvent) + Send + Sync> = {
+            let c = collected.clone();
+            Arc::new(move |e| c.lock().unwrap().push(e))
+        };
+        let agent = Agent::new()
+            .name("test")
+            .model("mock")
+            .provider(Arc::new(provider))
+            .identity_prompt("")
+            .max_request_retries(3)
+            .request_retry_backoff_ms(1)
+            .event_handler(handler)
+            .instruction_prompt("go");
+
+        agent.run().await.unwrap_err();
+
+        let events = collected.lock().unwrap().clone();
+        assert_eq!(
+            retries_in(&events).len(),
+            2,
+            "custom handler must receive both retry events"
+        );
+        assert_eq!(
+            failures_in(&events).len(),
+            1,
+            "custom handler must receive the terminal failure"
+        );
     }
 }

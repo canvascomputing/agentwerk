@@ -298,8 +298,8 @@ For protecting your budget or data, you can define clear execution rules for typ
 | `.max_turns(10)` | no limit | Stop after N agentic loop iterations |
 | `.max_tokens(4096)` | provider default | Cap output tokens per LLM request |
 | `.max_schema_retries(3)` | 10 | Retry structured output compliance |
-| `.max_request_retries(5)` | 3 | Retry on transient API errors (429, 529, 5xx) |
-| `.request_retry_backoff_ms(2000)` | 10,000 | Base delay for exponential backoff (`ms * 2^attempt`) |
+| `.max_request_retries(5)` | 10 | Retry on API errors (429, 529, 5xx) |
+| `.request_retry_backoff_ms(2000)` | 500 | Retry request delay as exponential backoff |
 
 ### AgentOutput
 

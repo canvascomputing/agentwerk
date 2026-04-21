@@ -61,11 +61,11 @@ impl Default for AgentSpec {
 impl AgentSpec {
     /// Default number of retries for transient API errors. Re-exported as
     /// `Agent::DEFAULT_MAX_REQUEST_RETRIES` for the public API surface.
-    pub const DEFAULT_MAX_REQUEST_RETRIES: u32 = 3;
+    pub const DEFAULT_MAX_REQUEST_RETRIES: u32 = 10;
 
     /// Default base delay (ms) for the exponential-backoff retry policy.
     /// Re-exported as `Agent::DEFAULT_BACKOFF_MS`.
-    pub const DEFAULT_BACKOFF_MS: u64 = 10_000;
+    pub const DEFAULT_BACKOFF_MS: u64 = 500;
 
     /// Read the resolved model. Panics if called on an unresolved spec — only
     /// `Agent::compile` is supposed to observe a spec whose model is `None`.
