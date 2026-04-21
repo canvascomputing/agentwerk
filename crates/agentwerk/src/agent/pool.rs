@@ -13,8 +13,8 @@ use tokio::task::JoinSet;
 
 use crate::error::{AgenticError, Result};
 
+use super::agent::Agent;
 use super::output::AgentOutput;
-use super::werk::Agent;
 
 const DEFAULT_BATCH_SIZE: usize = 10;
 

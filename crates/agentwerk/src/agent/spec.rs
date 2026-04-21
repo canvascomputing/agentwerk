@@ -1,0 +1,184 @@
+//! Agent definition — the static template the loop consumes.
+//!
+//! `AgentSpec` holds everything that identifies an agent (name, model,
+//! prompts, tools, sub-agents, limits) independently of any particular run.
+//! `Agent` wraps it in `Arc<AgentSpec>` so cloning a template is cheap even
+//! when it carries a large `ToolRegistry` or a nested `Vec<Agent>` of
+//! sub-agents; builder mutations go through `Arc::make_mut` (copy-on-write).
+//!
+//! Also lives here:
+//! - `interpolate` — shared `{key}` → value substitution used by both
+//!   `AgentSpec::system_prompt` and `Agent::interpolate`.
+//! - `build_context_prompt` — composes the optional initial user message
+//!   (environment metadata + `<context>` blocks).
+
+use std::collections::HashMap;
+
+use serde_json::Value;
+
+use crate::provider::model::Model;
+use crate::tools::ToolRegistry;
+
+use super::agent::Agent;
+use super::output::OutputSchema;
+use super::prompts;
+
+// ---------------------------------------------------------------------------
+// AgentSpec — the agent's definition
+// ---------------------------------------------------------------------------
+
+/// The agent's definition: name, prompts, tools, sub-agents, limits. Held by
+/// `Agent` as `Arc<AgentSpec>` (shared across clones, COW on mutation) and
+/// passed to `run_loop` directly. The only field with two semantic states is
+/// `model: Option<Model>` — `None` at template level means "inherit from
+/// parent"; after `Agent::compile` fills it in, it is always `Some` (accessed
+/// via `AgentSpec::model()`).
+#[derive(Clone)]
+pub(crate) struct AgentSpec {
+    /// Eagerly set by `Agent::new()`; the `.name(...)` builder overwrites it.
+    pub name: String,
+    /// `None` = inherit from parent. Always `Some` after `Agent::compile`.
+    pub model: Option<Model>,
+    pub identity_prompt: String,
+    pub behavior_prompt: String,
+    pub context_prompts: Vec<String>,
+    pub tools: ToolRegistry,
+    pub sub_agents: Vec<Agent>,
+    pub output_schema: Option<OutputSchema>,
+    pub max_output_tokens: Option<u32>,
+    pub max_input_tokens: Option<u64>,
+    pub max_turns: Option<u32>,
+    pub max_schema_retries: Option<u32>,
+    pub max_request_retries: u32,
+    pub request_retry_backoff_ms: u64,
+    pub keep_alive: bool,
+}
+
+impl Default for AgentSpec {
+    fn default() -> Self {
+        Self {
+            name: crate::util::generate_agent_name("agent"),
+            model: None,
+            identity_prompt: String::new(),
+            behavior_prompt: prompts::DEFAULT_BEHAVIOR_PROMPT.to_string(),
+            context_prompts: Vec::new(),
+            tools: ToolRegistry::new(),
+            sub_agents: Vec::new(),
+            output_schema: None,
+            max_output_tokens: None,
+            max_input_tokens: None,
+            max_turns: None,
+            max_schema_retries: Some(10),
+            max_request_retries: AgentSpec::DEFAULT_MAX_REQUEST_RETRIES,
+            request_retry_backoff_ms: AgentSpec::DEFAULT_BACKOFF_MS,
+            keep_alive: false,
+        }
+    }
+}
+
+impl AgentSpec {
+    /// Default number of retries for transient API errors. Re-exported as
+    /// `Agent::DEFAULT_MAX_REQUEST_RETRIES` for the public API surface.
+    pub const DEFAULT_MAX_REQUEST_RETRIES: u32 = 3;
+
+    /// Default base delay (ms) for the exponential-backoff retry policy.
+    /// Re-exported as `Agent::DEFAULT_BACKOFF_MS`.
+    pub const DEFAULT_BACKOFF_MS: u64 = 10_000;
+
+    /// Read the resolved model. Panics if called on an unresolved spec — only
+    /// `Agent::compile` is supposed to observe a spec whose model is `None`.
+    pub(crate) fn model(&self) -> &Model {
+        self.model
+            .as_ref()
+            .expect("AgentSpec::model() called on unresolved spec; Agent::compile must run first")
+    }
+
+    /// Compose the system prompt: interpolated `identity_prompt`
+    /// + `\n\n` + `behavior_prompt` + structured-output instruction when
+    /// `output_schema` is set.
+    pub(crate) fn system_prompt(&self, vars: &HashMap<String, Value>) -> String {
+        let mut s = interpolate(&self.identity_prompt, vars);
+        if !self.behavior_prompt.is_empty() {
+            s.push_str("\n\n");
+            s.push_str(&self.behavior_prompt);
+        }
+        if self.output_schema.is_some() {
+            s.push_str(prompts::STRUCTURED_OUTPUT_INSTRUCTION);
+        }
+        s
+    }
+}
+
+/// Replace `{key}` placeholders in `template` with stringified values.
+pub(crate) fn interpolate(template: &str, vars: &HashMap<String, Value>) -> String {
+    let mut result = template.to_string();
+    for (key, value) in vars {
+        let replacement = match value {
+            Value::String(s) => s.clone(),
+            other => other.to_string(),
+        };
+        result = result.replace(&format!("{{{key}}}"), &replacement);
+    }
+    result
+}
+
+/// Compose the optional initial "context" user message: environment metadata
+/// (when present) followed by each user-supplied `context_prompts` entry
+/// wrapped in `<context>…</context>` tags. Returns `None` if both inputs are
+/// empty — caller shouldn't push a message at all in that case.
+pub(crate) fn build_context_prompt(
+    context_prompts: &[String],
+    metadata: Option<&str>,
+) -> Option<String> {
+    let mut parts: Vec<String> = Vec::new();
+    if let Some(meta) = metadata {
+        parts.push(meta.to_string());
+    }
+    for block in context_prompts {
+        parts.push(format!("<context>\n{block}\n</context>"));
+    }
+    if parts.is_empty() {
+        None
+    } else {
+        Some(parts.join("\n\n"))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn context_prompt_appended_after_metadata() {
+        let blocks = ["user-provided context".to_string()];
+        let ctx = build_context_prompt(
+            &blocks,
+            Some("<environment>\ntest metadata\n</environment>"),
+        )
+        .expect("context_prompt should be composed");
+
+        let meta_pos = ctx.find("<environment>").expect("metadata missing");
+        let user_pos = ctx
+            .find("<context>\nuser-provided context\n</context>")
+            .expect("context_prompt missing");
+        assert!(
+            meta_pos < user_pos,
+            "metadata should appear before context_prompt:\n{ctx}"
+        );
+    }
+
+    #[test]
+    fn multiple_context_prompts_stacked() {
+        let blocks = ["first block".to_string(), "second block".to_string()];
+        let ctx = build_context_prompt(&blocks, Some("<environment>\nmetadata\n</environment>"))
+            .expect("context_prompt should be composed");
+        let meta_pos = ctx.find("<environment>").unwrap();
+        let first_pos = ctx.find("<context>\nfirst block\n</context>").unwrap();
+        let second_pos = ctx.find("<context>\nsecond block\n</context>").unwrap();
+        assert!(meta_pos < first_pos, "metadata before first context");
+        assert!(
+            first_pos < second_pos,
+            "first context before second context"
+        );
+    }
+}

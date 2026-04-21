@@ -5,7 +5,8 @@
 //! today.
 
 use crate::agent::event::{AgentEvent, AgentEventKind};
-use crate::agent::r#loop::{AgentSpec, LoopRuntime, LoopState};
+use crate::agent::r#loop::{LoopRuntime, LoopState};
+use crate::agent::spec::AgentSpec;
 use crate::error::{AgenticError, Result};
 use crate::provider::types::{ContentBlock, Message};
 

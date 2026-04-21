@@ -52,8 +52,10 @@ crates/agentwerk/src/
 
   agent/
     mod.rs                re-exports
-    werk.rs               Agent (Agent::DEFAULT_MAX_REQUEST_RETRIES / DEFAULT_BACKOFF_MS, Arc<AgentSpec> + AgentRuntime split, AgentRuntime::interpolate), Agent::compile
-    loop.rs               AgentSpec (model accessor, system_prompt method, Default + DEFAULT_MAX_REQUEST_RETRIES/DEFAULT_BACKOFF_MS), LoopRuntime (environment), LoopState (initial), build_context_prompt, run_loop
+    agent.rs              Agent (Agent::DEFAULT_MAX_REQUEST_RETRIES / DEFAULT_BACKOFF_MS, Arc<AgentSpec> + inlined per-run fields, Agent::interpolate, Agent::compile)
+    spec.rs               AgentSpec (model accessor, system_prompt method, Default + DEFAULT_MAX_REQUEST_RETRIES/DEFAULT_BACKOFF_MS), interpolate, build_context_prompt
+    loop.rs               LoopRuntime (environment), LoopState (initial), run_loop
+    spawn.rs              AgentHandle, AgentOutputFuture, impl Agent { spawn }
     event.rs              AgentEvent enum (AgentStart carries description for spawned children)
     output.rs             AgentOutput, AgentStatus, OutputSchema (validate, retry_message)
     prompts.rs            DEFAULT_BEHAVIOR_PROMPT and structured-output constants
@@ -109,11 +111,11 @@ Use cases are in `crates/use-cases/src/cli/`. Run with `make use_case name=<name
 
 **The rule: domain-prefix any type whose bare name would be too generic to read self-documenting.** Visibility (pub vs pub(crate)) does NOT change this — both crate users and crate authors benefit from self-documenting names.
 
-- **Generic single-word nouns always get the prefix.** `Status`, `Output`, `Pool`, `Spec`, `Runtime`, `Statistics`, `Event`, `EventKind` are too vague on their own. They become `AgentStatus`, `AgentOutput`, `AgentPool`, `AgentSpec`, `AgentRuntime`, `LoopRuntime`, `AgentStatistics`, `AgentEvent`, `AgentEventKind`.
+- **Generic single-word nouns always get the prefix.** `Status`, `Output`, `Pool`, `Spec`, `Runtime`, `Statistics`, `Event`, `EventKind` are too vague on their own. They become `AgentStatus`, `AgentOutput`, `AgentPool`, `AgentSpec`, `LoopRuntime`, `AgentStatistics`, `AgentEvent`, `AgentEventKind`.
 - **Inherently specific compounds stand alone.** `LoopState`, `OutputSchema`, `CompactReason`, `CompletionRequest`, `CompletionResponse`, `TokenUsage`, `ContentBlock`, `StreamEvent`, `ToolCall`, `ToolRegistry`, `ResponseStatus`, `CommandQueue`, `SessionStore`, `TaskStore`, `ModelLookup`, `ProviderError`, `ProviderResult` already say what they are.
 - **Vendor-prefixed types** follow the same logic — `AnthropicProvider`, `OpenAiProvider`, `MistralProvider`, `LiteLlmProvider`, `BashTool`, `ReadFileTool`. The prefix disambiguates which thing.
 - **Acronyms follow Rust API guidelines**: `LiteLlmProvider`, not `LiteLLMProvider`. Already consistent: `OpenAiProvider`.
-- **Two structs may not share a bare name in one module.** When that would happen (e.g. `LoopRuntime` next to `AgentRuntime`), keep both qualified — don't use a domain prefix as a tiebreaker for one.
+- **Two structs may not share a bare name in one module.** When that would happen, keep both qualified — don't use a domain prefix as a tiebreaker for one.
 
 **Documented exceptions** (kept against the rule, deliberately):
 - `Message` (re-exported at root) — Anthropic API convention; "message" in an LLM crate is unambiguous and rename cost is high.
@@ -139,7 +141,7 @@ Use cases are in `crates/use-cases/src/cli/`. Run with `make use_case name=<name
 
 ### Free functions
 
-- snake_case, reserved for cases without a natural receiver type. Most operations live as methods on their owning type — `OutputSchema::validate`, `ToolRegistry::execute`, `Model::compact_threshold`, `AgentRuntime::interpolate`.
+- snake_case, reserved for cases without a natural receiver type. Most operations live as methods on their owning type — `OutputSchema::validate`, `ToolRegistry::execute`, `Model::compact_threshold`, `Agent::interpolate`.
 
 ### Tool structs
 

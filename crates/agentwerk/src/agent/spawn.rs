@@ -24,6 +24,7 @@ use std::task::{Context, Poll};
 
 use tokio::task::JoinHandle;
 
+use crate::agent::agent::Agent;
 use crate::agent::output::AgentOutput;
 use crate::agent::queue::{CommandQueue, CommandSource, QueuePriority, QueuedCommand};
 use crate::error::{AgenticError, Result};
@@ -154,6 +155,58 @@ impl Future for AgentOutputFuture {
                 Poll::Ready(Err(AgenticError::Other(format!("agent task failed: {e}"))))
             }
         }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// `Agent::spawn` — starts the loop on a background task and returns the
+// handle / output-future pair defined above. Co-located with the types it
+// constructs rather than with the rest of the `Agent` builder surface.
+// ---------------------------------------------------------------------------
+
+impl Agent {
+    /// Start the agent on a background tokio task and return a pair:
+    ///
+    /// - [`AgentHandle`] — cheap, clonable handle for injecting new
+    ///   instructions, cancelling, or inspecting state.
+    /// - [`AgentOutputFuture`] — resolves to the final
+    ///   [`AgentOutput`](crate::agent::AgentOutput) once the loop exits.
+    ///
+    /// The loop idles after each terminal output as long as any handle is
+    /// alive. Dropping the last handle calls [`AgentHandle::cancel`] for you
+    /// (RAII safety); an explicit `.cancel()` does the same thing. For a
+    /// pure one-shot run without a handle, use [`Agent::run`] instead — a
+    /// `let (_, out) = agent.spawn(); out.await?` pattern will cancel
+    /// before the first turn completes.
+    ///
+    /// Requires a running tokio runtime (`tokio::spawn` is invoked
+    /// synchronously). Requires `.provider()` and `.instruction_prompt()`.
+    pub fn spawn(self) -> (AgentHandle, AgentOutputFuture) {
+        let queue = Arc::new(CommandQueue::new());
+        let cancel = Arc::new(AtomicBool::new(false));
+        let stopped = Arc::new(AtomicBool::new(false));
+        let life = LifeToken::new(cancel.clone());
+
+        let prepared = self
+            .cancel_signal(cancel.clone())
+            .command_queue(queue.clone())
+            .keep_alive();
+
+        let stopped_for_task = stopped.clone();
+        let join = tokio::spawn(async move {
+            let result = prepared.run().await;
+            stopped_for_task.store(true, Ordering::Relaxed);
+            result
+        });
+
+        let state = Arc::new(HandleState {
+            queue,
+            cancel,
+            stopped,
+        });
+        let handle = AgentHandle::new(state, life);
+        let output = AgentOutputFuture::new(join);
+        (handle, output)
     }
 }
 

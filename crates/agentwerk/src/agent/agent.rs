@@ -3,22 +3,21 @@
 //! Holds:
 //! - `Agent` (public) — the single user-facing type. Internally split into a
 //!   shared `Arc<AgentSpec>` (static template: name, model, prompts, tools,
-//!   sub-agents, tuning knobs) and an owned `AgentRuntime` (per-run: provider,
-//!   instruction prompt, working directory, event handler). Builder methods
-//!   route through `with_spec` (copy-on-write via `Arc::make_mut`) or
-//!   `with_runtime` (direct mutation), so
-//!   `template.clone().provider(p).instruction_prompt(t)` never copies the
-//!   heavy template.
+//!   sub-agents, tuning knobs) and a handful of owned per-run fields
+//!   (provider, instruction prompt, working directory, event handler, …).
+//!   Per-run fields are cheap (`Option<Arc<_>>` / small types) and mutate in
+//!   place; the spec is shared via `Arc::make_mut` (copy-on-write) so cloning
+//!   a template doesn't duplicate `ToolRegistry` or `Vec<Agent>` sub-agents.
 //! - `Agent::compile` — single entry point that produces the pair
 //!   `(Arc<AgentSpec>, LoopRuntime)` the execution loop consumes. The spec is
 //!   a CoW-clone of the template with `model: Some(resolved)` filled in.
 //!
-//! The actual loop machinery and `AgentSpec`'s definition live in
-//! `super::r#loop`.
+//! The loop machinery lives in `super::r#loop`; `AgentSpec` lives in
+//! `super::spec`; the spawn-handle types live in `super::spawn`.
 
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, Mutex};
 
 use serde_json::Value;
@@ -26,22 +25,22 @@ use serde_json::Value;
 use crate::error::{AgenticError, Result};
 use crate::persistence::session::SessionStore;
 use crate::provider::model::Model;
+use crate::provider::Provider;
 use crate::tools::{SpawnAgentTool, ToolRegistry, Toolable};
 use crate::util::generate_agent_name;
 
 use super::event::AgentEvent;
 use super::output::{AgentOutput, OutputSchema};
 use super::queue::CommandQueue;
-use super::r#loop::{build_context_prompt, run_loop, AgentSpec, LoopRuntime, LoopState};
-use super::running::{AgentHandle, AgentOutputFuture, HandleState, LifeToken};
-use crate::provider::Provider;
+use super::r#loop::{run_loop, LoopRuntime, LoopState};
+use super::spec::{build_context_prompt, AgentSpec};
 
 // ---------------------------------------------------------------------------
 // Agent — the single public user-facing type
 // ---------------------------------------------------------------------------
 
 /// An LLM-powered agent. Cheap to clone (internally `Arc`-wrapped spec + a
-/// small owned runtime struct).
+/// handful of small per-run fields).
 ///
 /// Build with `Agent::new()` and chain builder methods; call `.run()` to
 /// execute. The same `Agent` can be `run()` multiple times. Cloning an agent
@@ -50,44 +49,29 @@ use crate::provider::Provider;
 #[derive(Clone)]
 pub struct Agent {
     pub(crate) spec: Arc<AgentSpec>,
-    pub(crate) runtime: AgentRuntime,
+    pub(crate) provider: Option<Arc<dyn Provider>>,
+    pub(crate) instruction_prompt: String,
+    pub(crate) template_variables: HashMap<String, Value>,
+    pub(crate) working_directory: Option<PathBuf>,
+    pub(crate) event_handler: Option<Arc<dyn Fn(AgentEvent) + Send + Sync>>,
+    pub(crate) cancel_signal: Option<Arc<AtomicBool>>,
+    pub(crate) command_queue: Option<Arc<CommandQueue>>,
+    pub(crate) session_dir: Option<PathBuf>,
 }
 
 impl Default for Agent {
     fn default() -> Self {
         Self {
             spec: Arc::new(AgentSpec::default()),
-            runtime: AgentRuntime::default(),
+            provider: None,
+            instruction_prompt: String::new(),
+            template_variables: HashMap::new(),
+            working_directory: None,
+            event_handler: None,
+            cancel_signal: None,
+            command_queue: None,
+            session_dir: None,
         }
-    }
-}
-
-/// Per-run configuration. Owned per `Agent` clone — no COW, cheap direct mutation.
-#[derive(Clone, Default)]
-pub(crate) struct AgentRuntime {
-    pub provider: Option<Arc<dyn Provider>>,
-    pub instruction_prompt: String,
-    pub template_variables: HashMap<String, Value>,
-    pub working_directory: Option<PathBuf>,
-    pub event_handler: Option<Arc<dyn Fn(AgentEvent) + Send + Sync>>,
-    pub cancel_signal: Option<Arc<AtomicBool>>,
-    pub command_queue: Option<Arc<CommandQueue>>,
-    pub session_dir: Option<PathBuf>,
-}
-
-impl AgentRuntime {
-    /// Replace `{key}` placeholders in `template` with the runtime's
-    /// template variables.
-    pub(crate) fn interpolate(&self, template: &str) -> String {
-        let mut result = template.to_string();
-        for (key, value) in &self.template_variables {
-            let replacement = match value {
-                Value::String(s) => s.clone(),
-                other => other.to_string(),
-            };
-            result = result.replace(&format!("{{{key}}}"), &replacement);
-        }
-        result
     }
 }
 
@@ -113,16 +97,27 @@ impl Agent {
         Self::default()
     }
 
-    // --- Internal mutators ---
+    // --- Internal mutator ---
 
+    /// Mutate the shared `AgentSpec` via copy-on-write (`Arc::make_mut`).
+    /// Per-run fields are owned and mutate directly at their call sites.
     fn with_spec<F: FnOnce(&mut AgentSpec)>(mut self, f: F) -> Self {
         f(Arc::make_mut(&mut self.spec));
         self
     }
 
-    fn with_runtime<F: FnOnce(&mut AgentRuntime)>(mut self, f: F) -> Self {
-        f(&mut self.runtime);
-        self
+    /// Replace `{key}` placeholders in `template` with this agent's template
+    /// variables.
+    pub(crate) fn interpolate(&self, template: &str) -> String {
+        let mut result = template.to_string();
+        for (key, value) in &self.template_variables {
+            let replacement = match value {
+                Value::String(s) => s.clone(),
+                other => other.to_string(),
+            };
+            result = result.replace(&format!("{{{key}}}"), &replacement);
+        }
+        result
     }
 
     // --- Definition (static) builders — route through with_spec ---
@@ -253,10 +248,11 @@ impl Agent {
         self.with_spec(|c| c.sub_agents.extend(agents))
     }
 
-    // --- Per-run (runtime) builders — route through with_runtime ---
+    // --- Per-run builders — mutate self directly ---
 
-    pub fn provider(self, p: Arc<dyn Provider>) -> Self {
-        self.with_runtime(|r| r.provider = Some(p))
+    pub fn provider(mut self, p: Arc<dyn Provider>) -> Self {
+        self.provider = Some(p);
+        self
     }
 
     /// Resolve the provider + default model from environment variables and
@@ -268,52 +264,55 @@ impl Agent {
     }
 
     /// The task for this run — what to do right now.
-    pub fn instruction_prompt(self, p: impl Into<String>) -> Self {
-        self.with_runtime(|r| r.instruction_prompt = p.into())
+    pub fn instruction_prompt(mut self, p: impl Into<String>) -> Self {
+        self.instruction_prompt = p.into();
+        self
     }
 
     /// Load the instruction prompt from a file.
-    pub fn instruction_prompt_file(self, path: impl Into<PathBuf>) -> Self {
-        let s = load_prompt_file(path.into());
-        self.with_runtime(|r| r.instruction_prompt = s)
+    pub fn instruction_prompt_file(mut self, path: impl Into<PathBuf>) -> Self {
+        self.instruction_prompt = load_prompt_file(path.into());
+        self
     }
 
-    pub fn template_variable(self, key: impl Into<String>, value: Value) -> Self {
-        let key = key.into();
-        self.with_runtime(|r| {
-            r.template_variables.insert(key, value);
-        })
+    pub fn template_variable(mut self, key: impl Into<String>, value: Value) -> Self {
+        self.template_variables.insert(key.into(), value);
+        self
     }
 
-    pub fn working_directory(self, d: impl Into<PathBuf>) -> Self {
-        let d = d.into();
-        self.with_runtime(|r| r.working_directory = Some(d))
+    pub fn working_directory(mut self, d: impl Into<PathBuf>) -> Self {
+        self.working_directory = Some(d.into());
+        self
     }
 
-    pub fn event_handler(self, h: Arc<dyn Fn(AgentEvent) + Send + Sync>) -> Self {
-        self.with_runtime(|r| r.event_handler = Some(h))
+    pub fn event_handler(mut self, h: Arc<dyn Fn(AgentEvent) + Send + Sync>) -> Self {
+        self.event_handler = Some(h);
+        self
     }
 
     /// Drop every event. Opts out of the default stderr logger installed when no
     /// handler is set.
-    pub fn silent(self) -> Self {
-        self.with_runtime(|r| r.event_handler = Some(Arc::new(|_| {})))
+    pub fn silent(mut self) -> Self {
+        self.event_handler = Some(Arc::new(|_| {}));
+        self
     }
 
-    pub fn cancel_signal(self, s: Arc<AtomicBool>) -> Self {
-        self.with_runtime(|r| r.cancel_signal = Some(s))
+    pub fn cancel_signal(mut self, s: Arc<AtomicBool>) -> Self {
+        self.cancel_signal = Some(s);
+        self
     }
 
     /// Install an externally-owned command queue. Only used by `Agent::spawn`
     /// so the returned `AgentHandle` can inject instructions into the loop.
-    pub(crate) fn command_queue(self, q: Arc<CommandQueue>) -> Self {
-        self.with_runtime(|r| r.command_queue = Some(q))
+    pub(crate) fn command_queue(mut self, q: Arc<CommandQueue>) -> Self {
+        self.command_queue = Some(q);
+        self
     }
 
     /// Enable session transcript persistence to the given directory.
-    pub fn session_dir(self, d: impl Into<PathBuf>) -> Self {
-        let d = d.into();
-        self.with_runtime(|r| r.session_dir = Some(d))
+    pub fn session_dir(mut self, d: impl Into<PathBuf>) -> Self {
+        self.session_dir = Some(d.into());
+        self
     }
 
     // --- Accessors ---
@@ -330,55 +329,11 @@ impl Agent {
     pub async fn run(&self) -> Result<AgentOutput> {
         let (spec, runtime) = self.compile(None)?;
         let runtime = Arc::new(runtime);
-        let instruction = self.runtime.interpolate(&self.runtime.instruction_prompt);
+        let instruction = self.interpolate(&self.instruction_prompt);
         let context_prompt =
             build_context_prompt(&spec.context_prompts, runtime.metadata.as_deref());
         let state = LoopState::initial(context_prompt, instruction);
         run_loop(runtime, spec, state, None).await
-    }
-
-    /// Start the agent on a background tokio task and return a pair:
-    ///
-    /// - [`AgentHandle`] — cheap, clonable handle for injecting new
-    ///   instructions, cancelling, or inspecting state.
-    /// - [`AgentOutputFuture`] — resolves to the final
-    ///   [`AgentOutput`](crate::agent::AgentOutput) once the loop exits.
-    ///
-    /// The loop idles after each terminal output as long as any handle is
-    /// alive. Dropping the last handle calls [`AgentHandle::cancel`] for you
-    /// (RAII safety); an explicit `.cancel()` does the same thing. For a
-    /// pure one-shot run without a handle, use [`Agent::run`] instead — a
-    /// `let (_, out) = agent.spawn(); out.await?` pattern will cancel
-    /// before the first turn completes.
-    ///
-    /// Requires a running tokio runtime (`tokio::spawn` is invoked
-    /// synchronously). Requires `.provider()` and `.instruction_prompt()`.
-    pub fn spawn(self) -> (AgentHandle, AgentOutputFuture) {
-        let queue = Arc::new(CommandQueue::new());
-        let cancel = Arc::new(AtomicBool::new(false));
-        let stopped = Arc::new(AtomicBool::new(false));
-        let life = LifeToken::new(cancel.clone());
-
-        let prepared = self
-            .cancel_signal(cancel.clone())
-            .command_queue(queue.clone())
-            .keep_alive();
-
-        let stopped_for_task = stopped.clone();
-        let join = tokio::spawn(async move {
-            let result = prepared.run().await;
-            stopped_for_task.store(true, Ordering::Relaxed);
-            result
-        });
-
-        let state = Arc::new(HandleState {
-            queue,
-            cancel,
-            stopped,
-        });
-        let handle = AgentHandle::new(state, life);
-        let output = AgentOutputFuture::new(join);
-        (handle, output)
     }
 
     /// Crate-internal: run this agent as a child under a parent's run-tree.
@@ -393,7 +348,7 @@ impl Agent {
     ) -> Result<AgentOutput> {
         let (spec, runtime) = self.compile(Some((parent_spec, parent_runtime)))?;
         let runtime = Arc::new(runtime);
-        let instruction = self.runtime.interpolate(&self.runtime.instruction_prompt);
+        let instruction = self.interpolate(&self.instruction_prompt);
         let context_prompt =
             build_context_prompt(&spec.context_prompts, runtime.metadata.as_deref());
         let state = LoopState::initial(context_prompt, instruction);
@@ -443,7 +398,7 @@ impl Agent {
     /// falling back to sensible defaults.
     ///
     /// `parent = Some((parent_spec, parent_runtime))` spawns a sub-agent —
-    /// externals inherit from `parent_runtime` (child's own runtime fields
+    /// externals inherit from `parent_runtime` (child's own per-run fields
     /// override on a per-field basis), and `self.spec.model = None` resolves
     /// against `parent_spec.model()`.
     ///
@@ -479,28 +434,24 @@ impl Agent {
     }
 
     /// Build the root `LoopRuntime` from this agent's per-run fields plus
-    /// reasonable defaults. Requires `self.runtime.provider` to be set.
+    /// reasonable defaults. Requires `self.provider` to be set.
     fn build_runtime(&self, spec: &AgentSpec) -> Result<LoopRuntime> {
         let provider = self
-            .runtime
             .provider
             .clone()
             .ok_or_else(|| AgenticError::Other("Agent::run() requires a provider".into()))?;
 
         let working_directory = self
-            .runtime
             .working_directory
             .clone()
             .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
 
         let event_handler: Arc<dyn Fn(AgentEvent) + Send + Sync> = self
-            .runtime
             .event_handler
             .clone()
             .unwrap_or_else(AgentEvent::default_logger);
 
         let cancel_signal = self
-            .runtime
             .cancel_signal
             .clone()
             .unwrap_or_else(|| Arc::new(AtomicBool::new(false)));
@@ -509,13 +460,12 @@ impl Agent {
         // notifications back to the parent. An externally supplied queue
         // (e.g. from `Agent::spawn`) wins so the handle can reach the loop.
         let command_queue = Some(
-            self.runtime
-                .command_queue
+            self.command_queue
                 .clone()
                 .unwrap_or_else(|| Arc::new(CommandQueue::new())),
         );
 
-        let session_store = self.runtime.session_dir.as_ref().map(|dir| {
+        let session_store = self.session_dir.as_ref().map(|dir| {
             let store = SessionStore::new(dir, &generate_agent_name("session"));
             Arc::new(Mutex::new(store))
         });
@@ -532,28 +482,27 @@ impl Agent {
             metadata,
             discovered_tools: Arc::new(Mutex::new(HashSet::new())),
             tools: build_tools(spec),
-            template_variables: self.runtime.template_variables.clone(),
+            template_variables: self.template_variables.clone(),
         })
     }
 
     /// Build a child `LoopRuntime`: inherit externals from the parent, let this
     /// agent's own per-run fields override any that it set explicitly.
     fn inherit_runtime(&self, parent: &LoopRuntime, spec: &AgentSpec) -> LoopRuntime {
-        let overrides = &self.runtime;
         LoopRuntime {
-            provider: overrides
+            provider: self
                 .provider
                 .clone()
                 .unwrap_or_else(|| parent.provider.clone()),
-            event_handler: overrides
+            event_handler: self
                 .event_handler
                 .clone()
                 .unwrap_or_else(|| parent.event_handler.clone()),
-            cancel_signal: overrides
+            cancel_signal: self
                 .cancel_signal
                 .clone()
                 .unwrap_or_else(|| parent.cancel_signal.clone()),
-            working_directory: overrides
+            working_directory: self
                 .working_directory
                 .clone()
                 .unwrap_or_else(|| parent.working_directory.clone()),
@@ -562,7 +511,7 @@ impl Agent {
             metadata: parent.metadata.clone(),
             discovered_tools: parent.discovered_tools.clone(),
             tools: build_tools(spec),
-            template_variables: overrides.template_variables.clone(),
+            template_variables: self.template_variables.clone(),
         }
     }
 }
@@ -593,7 +542,6 @@ mod tests {
     fn silent_sets_a_no_op_handler() {
         let agent = Agent::new().silent();
         let handler = agent
-            .runtime
             .event_handler
             .as_ref()
             .expect(".silent() must install a handler")
@@ -622,7 +570,7 @@ mod tests {
             .provider(std::sync::Arc::new(crate::testutil::MockProvider::text(
                 "ok",
             )));
-        assert!(agent.runtime.event_handler.is_none());
+        assert!(agent.event_handler.is_none());
         // `compile` must succeed without a user-set handler — proves the
         // default path is wired up.
         let _ = agent.compile(None).expect("compile with default logger");
