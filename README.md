@@ -116,17 +116,11 @@ let (agent, output) = Agent::new()
     .tool(ReadFileTool)
     .spawn();
 
-// Stop the agent on Ctrl-C from any task.
-let stopper = agent.clone();
-tokio::spawn(async move {
-    tokio::signal::ctrl_c().await.ok();
-    stopper.cancel();
-});
-
 agent.send("What does src/main.rs do?");
 agent.send("Now summarize src/lib.rs.");
 
 agent.cancel();
+
 let output = output.await?;
 ```
 
@@ -160,11 +154,11 @@ Prompts are the core ingredient of every agentic application. Here are different
 use agentwerk::Agent;
 
 let output = Agent::new()
+    .provider(provider)
+    .model("claude-sonnet-4-20250514")
     .identity_prompt("You are a helpful assistant.")
     .instruction_prompt("What does src/main.rs do?")
-    .model("claude-sonnet-4-20250514")
     .tool(ReadFileTool)
-    .provider(provider)
     .run()
     .await?;
 ```
@@ -463,6 +457,17 @@ make litellm                               # default: anthropic
 make litellm LITELLM_PROVIDER=openai       # use OpenAI
 make litellm LITELLM_PROVIDER=mistral      # use Mistral
 ```
+
+### Local inference servers
+
+agentwerk relies on server-side tool calling. You can enable it through the following flags:
+
+| Server | Flag |
+|---|---|
+| vLLM | `--enable-auto-tool-choice --tool-call-parser <parser>` |
+| SGLang | `--tool-call-parser <parser>` |
+| llama.cpp `llama-server` | `--jinja` (enables tool calling) |
+| Ollama | tool calling enabled by default |
 
 ### Environment
 
