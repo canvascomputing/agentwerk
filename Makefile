@@ -1,7 +1,7 @@
 .PHONY: build test test_integration fmt clean update use_case litellm bump publish
 
 # Build the project (warnings are errors)
-build:
+build: fmt
 	RUSTFLAGS="-D warnings" cargo build
 
 # Run unit tests (warnings are errors) — inline `#[cfg(test)]` + mock-driven tests in tests/unit/

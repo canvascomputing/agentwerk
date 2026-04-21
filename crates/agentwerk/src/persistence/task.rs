@@ -1,10 +1,10 @@
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs::{self, File, OpenOptions};
 use std::path::{Path, PathBuf};
-use serde::{Deserialize, Serialize};
 
-use crate::util::now_millis;
 use crate::error::{AgenticError, Result};
+use crate::util::now_millis;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) struct Task {
@@ -146,9 +146,7 @@ impl TaskStore {
             let mut task = self.require_task(id)?;
 
             if task.status == TaskStatus::Completed {
-                return Err(AgenticError::Other(format!(
-                    "Task {id} already completed"
-                )));
+                return Err(AgenticError::Other(format!("Task {id} already completed")));
             }
             self.check_not_blocked(id, &task.blocked_by)?;
 

@@ -24,8 +24,8 @@ use serde_json::Value;
 use crate::error::{AgenticError, Result};
 use crate::persistence::session::SessionStore;
 use crate::provider::model::{Model, ModelSpec};
-use crate::tools::{SpawnAgentTool, Toolable, ToolRegistry};
 use crate::provider::ToolChoice;
+use crate::tools::{SpawnAgentTool, ToolRegistry, Toolable};
 use crate::util::generate_agent_name;
 
 use super::event::AgentEvent;
@@ -418,7 +418,11 @@ impl Agent {
             result
         });
 
-        let state = Arc::new(HandleState { queue, cancel, stopped });
+        let state = Arc::new(HandleState {
+            queue,
+            cancel,
+            stopped,
+        });
         let handle = AgentHandle::new(state, life);
         let output = AgentOutputFuture::new(join);
         (handle, output)
@@ -460,7 +464,10 @@ impl Agent {
         if let Some(rr) = overrides.get("max_request_retries").and_then(Value::as_u64) {
             self = self.max_request_retries(rr as u32);
         }
-        if let Some(bo) = overrides.get("request_retry_backoff_ms").and_then(Value::as_u64) {
+        if let Some(bo) = overrides
+            .get("request_retry_backoff_ms")
+            .and_then(Value::as_u64)
+        {
             self = self.request_retry_backoff_ms(bo);
         }
         if let Some(schema) = overrides.get("output_schema").cloned() {
@@ -680,9 +687,9 @@ fn compile_context_prompt(runtime: &LoopRuntime, agent: &Agent) -> Option<String
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use super::super::event::AgentEventKind;
     use super::super::output::AgentStatus;
+    use super::*;
     use crate::error::AgenticError;
 
     #[test]
@@ -715,7 +722,9 @@ mod tests {
             .name("t")
             .model("mock")
             .identity_prompt("")
-            .provider(std::sync::Arc::new(crate::testutil::MockProvider::text("ok")));
+            .provider(std::sync::Arc::new(crate::testutil::MockProvider::text(
+                "ok",
+            )));
         assert!(agent.runtime.event_handler.is_none());
         // `compile` must succeed without a user-set handler — proves the
         // default path is wired up.

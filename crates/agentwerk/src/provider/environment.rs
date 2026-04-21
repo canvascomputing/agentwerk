@@ -40,15 +40,25 @@ pub(crate) fn env_required(name: &str) -> Result<String> {
 ///
 /// Empty env vars are treated as unset.
 pub fn from_env() -> Result<(Arc<dyn Provider>, String)> {
-    let detected = detect_provider_name(|name| {
-        std::env::var(name).ok().filter(|v| !v.is_empty())
-    })?;
+    let detected = detect_provider_name(|name| std::env::var(name).ok().filter(|v| !v.is_empty()))?;
 
     let (provider, model): (Arc<dyn Provider>, String) = match detected {
-        DetectedProvider::Anthropic => { let (p, m) = AnthropicProvider::from_env_with_model()?; (Arc::new(p), m) }
-        DetectedProvider::Mistral   => { let (p, m) = MistralProvider::from_env_with_model()?;   (Arc::new(p), m) }
-        DetectedProvider::OpenAi    => { let (p, m) = OpenAiProvider::from_env_with_model()?;    (Arc::new(p), m) }
-        DetectedProvider::LiteLlm   => { let (p, m) = LiteLlmProvider::from_env_with_model()?;   (Arc::new(p), m) }
+        DetectedProvider::Anthropic => {
+            let (p, m) = AnthropicProvider::from_env_with_model()?;
+            (Arc::new(p), m)
+        }
+        DetectedProvider::Mistral => {
+            let (p, m) = MistralProvider::from_env_with_model()?;
+            (Arc::new(p), m)
+        }
+        DetectedProvider::OpenAi => {
+            let (p, m) = OpenAiProvider::from_env_with_model()?;
+            (Arc::new(p), m)
+        }
+        DetectedProvider::LiteLlm => {
+            let (p, m) = LiteLlmProvider::from_env_with_model()?;
+            (Arc::new(p), m)
+        }
     };
     Ok((provider, model))
 }
@@ -113,7 +123,8 @@ mod tests {
         let result = detect_provider_name(env_map(&[
             ("LITELLM_PROVIDER", "anthropic"),
             ("ANTHROPIC_API_KEY", "key"),
-        ])).unwrap();
+        ]))
+        .unwrap();
         assert_eq!(result, DetectedProvider::Anthropic);
     }
 
@@ -122,7 +133,8 @@ mod tests {
         let result = detect_provider_name(env_map(&[
             ("LITELLM_PROVIDER", "mistral"),
             ("MISTRAL_API_KEY", "key"),
-        ])).unwrap();
+        ]))
+        .unwrap();
         assert_eq!(result, DetectedProvider::Mistral);
     }
 
@@ -131,15 +143,14 @@ mod tests {
         let result = detect_provider_name(env_map(&[
             ("LITELLM_PROVIDER", "openai"),
             ("OPENAI_API_KEY", "key"),
-        ])).unwrap();
+        ]))
+        .unwrap();
         assert_eq!(result, DetectedProvider::OpenAi);
     }
 
     #[test]
     fn explicit_litellm() {
-        let result = detect_provider_name(env_map(&[
-            ("LITELLM_PROVIDER", "litellm"),
-        ])).unwrap();
+        let result = detect_provider_name(env_map(&[("LITELLM_PROVIDER", "litellm")])).unwrap();
         assert_eq!(result, DetectedProvider::LiteLlm);
     }
 
@@ -149,7 +160,8 @@ mod tests {
             ("LITELLM_PROVIDER", "anthropic"),
             ("ANTHROPIC_API_KEY", "key"),
             ("OPENAI_API_KEY", "key"),
-        ])).unwrap();
+        ]))
+        .unwrap();
         assert_eq!(result, DetectedProvider::Anthropic);
     }
 
@@ -157,33 +169,25 @@ mod tests {
 
     #[test]
     fn auto_litellm_api_key() {
-        let result = detect_provider_name(env_map(&[
-            ("LITELLM_API_KEY", "key"),
-        ])).unwrap();
+        let result = detect_provider_name(env_map(&[("LITELLM_API_KEY", "key")])).unwrap();
         assert_eq!(result, DetectedProvider::LiteLlm);
     }
 
     #[test]
     fn auto_mistral() {
-        let result = detect_provider_name(env_map(&[
-            ("MISTRAL_API_KEY", "key"),
-        ])).unwrap();
+        let result = detect_provider_name(env_map(&[("MISTRAL_API_KEY", "key")])).unwrap();
         assert_eq!(result, DetectedProvider::Mistral);
     }
 
     #[test]
     fn auto_anthropic() {
-        let result = detect_provider_name(env_map(&[
-            ("ANTHROPIC_API_KEY", "key"),
-        ])).unwrap();
+        let result = detect_provider_name(env_map(&[("ANTHROPIC_API_KEY", "key")])).unwrap();
         assert_eq!(result, DetectedProvider::Anthropic);
     }
 
     #[test]
     fn auto_openai() {
-        let result = detect_provider_name(env_map(&[
-            ("OPENAI_API_KEY", "key"),
-        ])).unwrap();
+        let result = detect_provider_name(env_map(&[("OPENAI_API_KEY", "key")])).unwrap();
         assert_eq!(result, DetectedProvider::OpenAi);
     }
 
@@ -195,7 +199,8 @@ mod tests {
             ("LITELLM_API_KEY", "key"),
             ("MISTRAL_API_KEY", "key"),
             ("ANTHROPIC_API_KEY", "key"),
-        ])).unwrap();
+        ]))
+        .unwrap();
         assert_eq!(result, DetectedProvider::LiteLlm);
     }
 
@@ -204,7 +209,8 @@ mod tests {
         let result = detect_provider_name(env_map(&[
             ("MISTRAL_API_KEY", "key"),
             ("ANTHROPIC_API_KEY", "key"),
-        ])).unwrap();
+        ]))
+        .unwrap();
         assert_eq!(result, DetectedProvider::Mistral);
     }
 
@@ -215,7 +221,8 @@ mod tests {
         let err = detect_provider_name(env_map(&[
             ("LITELLM_PROVIDER", "invalid"),
             ("ANTHROPIC_API_KEY", "key"),
-        ])).unwrap_err();
+        ]))
+        .unwrap_err();
         assert!(err.to_string().contains("Unknown LITELLM_PROVIDER"));
     }
 
@@ -229,9 +236,7 @@ mod tests {
 
     #[test]
     fn empty_values_treated_as_unset() {
-        let err = detect_provider_name(env_map(&[
-            ("ANTHROPIC_API_KEY", ""),
-        ])).unwrap_err();
+        let err = detect_provider_name(env_map(&[("ANTHROPIC_API_KEY", "")])).unwrap_err();
         assert!(err.to_string().contains("No LLM provider found"));
     }
 }

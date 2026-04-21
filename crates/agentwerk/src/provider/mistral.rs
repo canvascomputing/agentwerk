@@ -24,7 +24,12 @@ impl MistralProvider {
     }
 
     pub fn with_client(api_key: impl Into<String>, client: reqwest::Client) -> Self {
-        Self(OpenAiProvider::raw(api_key, DEFAULT_BASE_URL, client, false))
+        Self(OpenAiProvider::raw(
+            api_key,
+            DEFAULT_BASE_URL,
+            client,
+            false,
+        ))
     }
 
     pub fn base_url(self, url: String) -> Self {

@@ -8,12 +8,10 @@
 //!   BRAVE_API_KEY       Required for web search
 //!   ANTHROPIC_API_KEY   (or other provider env vars)
 
-use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
+use std::sync::Arc;
 
-use agentwerk::{
-    Agent, AgenticError, AgentEvent, AgentEventKind, Tool, ToolResult,
-};
+use agentwerk::{Agent, AgentEvent, AgentEventKind, AgenticError, Tool, ToolResult};
 
 // ---------------------------------------------------------------------------
 // Main
@@ -62,7 +60,10 @@ async fn main() {
         Some(data) => println!("\n{}\n", format_title_first(data)),
         None => println!("\n{}\n", output.response_raw),
     }
-    eprintln!("Tokens: {} in, {} out", output.statistics.input_tokens, output.statistics.output_tokens);
+    eprintln!(
+        "Tokens: {} in, {} out",
+        output.statistics.input_tokens, output.statistics.output_tokens
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -75,8 +76,7 @@ const RESEARCHER_PROMPT: &str =
      Include pros, cons, costs, and real-world experiences. \
      Produce a factual report with sources.";
 
-const REPORT_WRITER_PROMPT: &str =
-    "You are a decision analyst. Given a question:\n\
+const REPORT_WRITER_PROMPT: &str = "You are a decision analyst. Given a question:\n\
      1. Spawn all three researchers in parallel: 'researcher_1', 'researcher_2', 'researcher_3'\n\
      2. Review and aggregate all research reports\n\
      3. Produce your final recommendation as structured output\n\n\
@@ -107,7 +107,12 @@ fn format_title_first(data: &serde_json::Value) -> String {
 
     let fields: Vec<String> = entries
         .iter()
-        .map(|(k, v)| format!("  \"{k}\": {}", serde_json::to_string_pretty(v).unwrap_or_default()))
+        .map(|(k, v)| {
+            format!(
+                "  \"{k}\": {}",
+                serde_json::to_string_pretty(v).unwrap_or_default()
+            )
+        })
         .collect();
 
     format!("{{\n{}\n}}", fields.join(",\n"))
@@ -129,20 +134,23 @@ fn output_schema() -> serde_json::Value {
 // ---------------------------------------------------------------------------
 
 fn brave_search_tool(api_key: String) -> impl agentwerk::Toolable {
-    Tool::new("brave_search", "Search the web. Returns titles, URLs, and descriptions.")
-        .schema(serde_json::json!({
-            "type": "object",
-            "properties": {
-                "query": { "type": "string", "description": "Search query" },
-                "count": { "type": "integer", "description": "Results count (1-20, default: 5)" }
-            },
-            "required": ["query"]
-        }))
-        .read_only(true)
-        .handler(move |input, _ctx| {
-            let api_key = api_key.clone();
-            Box::pin(async move { brave_search(&api_key, &input).await })
-        })
+    Tool::new(
+        "brave_search",
+        "Search the web. Returns titles, URLs, and descriptions.",
+    )
+    .schema(serde_json::json!({
+        "type": "object",
+        "properties": {
+            "query": { "type": "string", "description": "Search query" },
+            "count": { "type": "integer", "description": "Results count (1-20, default: 5)" }
+        },
+        "required": ["query"]
+    }))
+    .read_only(true)
+    .handler(move |input, _ctx| {
+        let api_key = api_key.clone();
+        Box::pin(async move { brave_search(&api_key, &input).await })
+    })
 }
 
 async fn brave_search(api_key: &str, input: &serde_json::Value) -> agentwerk::Result<ToolResult> {
@@ -151,7 +159,8 @@ async fn brave_search(api_key: &str, input: &serde_json::Value) -> agentwerk::Re
 
     let url = format!(
         "https://api.search.brave.com/res/v1/web/search?q={}&count={}",
-        urlencode(query), count,
+        urlencode(query),
+        count,
     );
 
     let response = reqwest::Client::new()
@@ -211,11 +220,15 @@ fn log_event(event: &AgentEvent) {
         AgentEventKind::RequestStart { model } => {
             eprintln!("[{}] requesting {model}...", event.agent_name);
         }
-        AgentEventKind::ToolCallStart { tool_name, input, .. } if tool_name != "StructuredOutput" => {
+        AgentEventKind::ToolCallStart {
+            tool_name, input, ..
+        } if tool_name != "StructuredOutput" => {
             let detail = tool_call_summary(tool_name, input);
             eprintln!("[{}] {tool_name}: {detail}", event.agent_name);
         }
-        AgentEventKind::ToolCallError { tool_name, error, .. } => {
+        AgentEventKind::ToolCallError {
+            tool_name, error, ..
+        } => {
             eprintln!("[error] {tool_name}: {error}");
         }
         _ => {}
@@ -226,9 +239,17 @@ fn tool_call_summary(tool_name: &str, input: &serde_json::Value) -> String {
     match tool_name {
         "brave_search" => {
             let q = input["query"].as_str().unwrap_or("");
-            if q.len() > 50 { format!("{}…", &q[..50]) } else { q.into() }
+            if q.len() > 50 {
+                format!("{}…", &q[..50])
+            } else {
+                q.into()
+            }
         }
-        "spawn_agent" => input["agent"].as_str().or(input["description"].as_str()).unwrap_or("").into(),
+        "spawn_agent" => input["agent"]
+            .as_str()
+            .or(input["description"].as_str())
+            .unwrap_or("")
+            .into(),
         _ => serde_json::to_string(input).unwrap_or_default(),
     }
 }

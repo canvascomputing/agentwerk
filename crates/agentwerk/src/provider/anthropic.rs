@@ -8,8 +8,10 @@ use crate::error::Result;
 
 use super::error::{ProviderError, ProviderResult};
 use super::model::ModelLookup;
-use super::types::{ContentBlock, Message, CompletionResponse, ResponseStatus, StreamEvent, TokenUsage};
 use super::r#trait::{CompletionRequest, Provider, ToolChoice};
+use super::types::{
+    CompletionResponse, ContentBlock, Message, ResponseStatus, StreamEvent, TokenUsage,
+};
 
 pub struct AnthropicProvider {
     api_key: String,
@@ -65,7 +67,11 @@ impl AnthropicProvider {
             body["max_tokens"] = Value::from(n);
         }
         if !request.tools.is_empty() {
-            let tools: Vec<Value> = request.tools.iter().map(serialize_tool_definition).collect();
+            let tools: Vec<Value> = request
+                .tools
+                .iter()
+                .map(serialize_tool_definition)
+                .collect();
             body["tools"] = Value::Array(tools);
         }
         if let Some(ref choice) = request.tool_choice {
@@ -92,7 +98,9 @@ impl AnthropicProvider {
         let resp = req
             .send()
             .await
-            .map_err(|e| ProviderError::ConnectionFailed { reason: e.to_string() })?;
+            .map_err(|e| ProviderError::ConnectionFailed {
+                reason: e.to_string(),
+            })?;
 
         super::map_http_errors(resp, classify_error).await
     }
@@ -105,9 +113,15 @@ impl AnthropicProvider {
 /// for 429/529).
 fn classify_error(status: u16, body: &str) -> Option<ProviderError> {
     match status {
-        401 => Some(ProviderError::AuthenticationFailed { provider_message: body.into() }),
-        403 => Some(ProviderError::PermissionDenied { provider_message: body.into() }),
-        404 => Some(ProviderError::ModelNotFound { provider_message: body.into() }),
+        401 => Some(ProviderError::AuthenticationFailed {
+            provider_message: body.into(),
+        }),
+        403 => Some(ProviderError::PermissionDenied {
+            provider_message: body.into(),
+        }),
+        404 => Some(ProviderError::ModelNotFound {
+            provider_message: body.into(),
+        }),
         400 => classify_400(body),
         _ => None,
     }
@@ -120,9 +134,13 @@ fn classify_400(body: &str) -> Option<ProviderError> {
     let message = err["message"].as_str().unwrap_or("").to_string();
     match type_ {
         "invalid_request_error" if message.contains("prompt is too long") => {
-            Some(ProviderError::ContextWindowExceeded { provider_message: message })
+            Some(ProviderError::ContextWindowExceeded {
+                provider_message: message,
+            })
         }
-        "not_found_error" => Some(ProviderError::ModelNotFound { provider_message: message }),
+        "not_found_error" => Some(ProviderError::ModelNotFound {
+            provider_message: message,
+        }),
         _ => None,
     }
 }
@@ -165,7 +183,9 @@ impl Provider for AnthropicProvider {
             let json: Value = resp
                 .json()
                 .await
-                .map_err(|e| ProviderError::InvalidResponse { reason: e.to_string() })?;
+                .map_err(|e| ProviderError::InvalidResponse {
+                    reason: e.to_string(),
+                })?;
             Ok(self.parse_response(json))
         })
     }
@@ -189,16 +209,17 @@ async fn stream_response(
     response: reqwest::Response,
     on_event: &Arc<dyn Fn(StreamEvent) + Send + Sync>,
 ) -> ProviderResult<CompletionResponse> {
-    use futures_util::StreamExt;
     use super::stream::{SseEvent, StreamParser};
+    use futures_util::StreamExt;
 
     let mut state = StreamState::default();
     let mut parser = StreamParser::new();
     let mut stream = response.bytes_stream();
 
     while let Some(chunk) = stream.next().await {
-        let chunk = chunk
-            .map_err(|e| ProviderError::ConnectionFailed { reason: e.to_string() })?;
+        let chunk = chunk.map_err(|e| ProviderError::ConnectionFailed {
+            reason: e.to_string(),
+        })?;
         for event in parser.push(&chunk) {
             match event {
                 SseEvent::Done => on_event(StreamEvent::MessageDone),
@@ -214,7 +235,11 @@ async fn stream_response(
 /// `Vec<Option<String>>` lookups with one typed slot per index.
 enum BlockAcc {
     Text(String),
-    Tool { id: String, name: String, input: String },
+    Tool {
+        id: String,
+        name: String,
+        input: String,
+    },
 }
 
 #[derive(Default)]
@@ -239,7 +264,11 @@ impl StreamState {
             content: self.content_blocks,
             status: self.status,
             usage: self.usage,
-            model: if self.model.is_empty() { "unknown".into() } else { self.model },
+            model: if self.model.is_empty() {
+                "unknown".into()
+            } else {
+                self.model
+            },
         }
     }
 }
@@ -265,7 +294,8 @@ fn handle_message_start(json: &Value, state: &mut StreamState) {
     let u = &message["usage"];
     state.usage.input_tokens = u["input_tokens"].as_u64().unwrap_or(0);
     state.usage.cache_read_input_tokens = u["cache_read_input_tokens"].as_u64().unwrap_or(0);
-    state.usage.cache_creation_input_tokens = u["cache_creation_input_tokens"].as_u64().unwrap_or(0);
+    state.usage.cache_creation_input_tokens =
+        u["cache_creation_input_tokens"].as_u64().unwrap_or(0);
 }
 
 fn handle_block_start(json: &Value, state: &mut StreamState) {
@@ -321,7 +351,9 @@ fn handle_block_stop(
         Some(BlockAcc::Text(text)) => state.content_blocks.push(ContentBlock::Text { text }),
         Some(BlockAcc::Tool { id, name, input }) => {
             let input = serde_json::from_str(&input).unwrap_or(Value::Object(Default::default()));
-            state.content_blocks.push(ContentBlock::ToolUse { id, name, input });
+            state
+                .content_blocks
+                .push(ContentBlock::ToolUse { id, name, input });
         }
         None => {}
     }
@@ -438,9 +470,7 @@ fn parse_usage(json: &Value) -> TokenUsage {
         input_tokens: usage["input_tokens"].as_u64().unwrap_or(0),
         output_tokens: usage["output_tokens"].as_u64().unwrap_or(0),
         cache_read_input_tokens: usage["cache_read_input_tokens"].as_u64().unwrap_or(0),
-        cache_creation_input_tokens: usage["cache_creation_input_tokens"]
-            .as_u64()
-            .unwrap_or(0),
+        cache_creation_input_tokens: usage["cache_creation_input_tokens"].as_u64().unwrap_or(0),
     }
 }
 
@@ -485,7 +515,9 @@ mod tests {
     #[test]
     fn serialize_request_includes_tool_choice() {
         let mut req = simple_request();
-        req.tool_choice = Some(ToolChoice::Specific { name: "read_file".into() });
+        req.tool_choice = Some(ToolChoice::Specific {
+            name: "read_file".into(),
+        });
         let body = provider().serialize_request(&req);
         assert_eq!(body["tool_choice"]["type"], "tool");
         assert_eq!(body["tool_choice"]["name"], "read_file");
@@ -544,7 +576,10 @@ mod tests {
             ("stop_sequence", ResponseStatus::StopSequence),
             ("tool_use", ResponseStatus::ToolUse),
             ("max_tokens", ResponseStatus::OutputTruncated),
-            ("model_context_window_exceeded", ResponseStatus::ContextWindowExceeded),
+            (
+                "model_context_window_exceeded",
+                ResponseStatus::ContextWindowExceeded,
+            ),
             ("refusal", ResponseStatus::Refused),
             ("pause_turn", ResponseStatus::PauseTurn),
         ] {

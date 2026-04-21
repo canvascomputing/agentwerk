@@ -49,7 +49,10 @@ impl ProviderError {
             self,
             ProviderError::RateLimited { .. }
                 | ProviderError::ConnectionFailed { .. }
-                | ProviderError::UnexpectedStatus { retryable: true, .. }
+                | ProviderError::UnexpectedStatus {
+                    retryable: true,
+                    ..
+                }
         )
     }
 
@@ -80,7 +83,9 @@ impl fmt::Display for ProviderError {
             ProviderError::SafetyFilterTriggered { provider_message } => {
                 write!(f, "Safety filter triggered: {provider_message}")
             }
-            ProviderError::RateLimited { message, status, .. } => {
+            ProviderError::RateLimited {
+                message, status, ..
+            } => {
                 write!(f, "Rate limited (status {status}): {message}")
             }
             ProviderError::UnexpectedStatus {
@@ -126,7 +131,9 @@ mod tests {
 
     #[test]
     fn connection_failed_is_retryable() {
-        let err = ProviderError::ConnectionFailed { reason: "dns".into() };
+        let err = ProviderError::ConnectionFailed {
+            reason: "dns".into(),
+        };
         assert!(err.is_retryable());
         assert_eq!(err.retry_after_ms(), None);
     }
@@ -152,12 +159,24 @@ mod tests {
     #[test]
     fn classified_variants_are_not_retryable() {
         for err in [
-            ProviderError::AuthenticationFailed { provider_message: String::new() },
-            ProviderError::PermissionDenied { provider_message: String::new() },
-            ProviderError::ModelNotFound { provider_message: String::new() },
-            ProviderError::ContextWindowExceeded { provider_message: String::new() },
-            ProviderError::SafetyFilterTriggered { provider_message: String::new() },
-            ProviderError::InvalidResponse { reason: String::new() },
+            ProviderError::AuthenticationFailed {
+                provider_message: String::new(),
+            },
+            ProviderError::PermissionDenied {
+                provider_message: String::new(),
+            },
+            ProviderError::ModelNotFound {
+                provider_message: String::new(),
+            },
+            ProviderError::ContextWindowExceeded {
+                provider_message: String::new(),
+            },
+            ProviderError::SafetyFilterTriggered {
+                provider_message: String::new(),
+            },
+            ProviderError::InvalidResponse {
+                reason: String::new(),
+            },
         ] {
             assert!(!err.is_retryable(), "expected terminal: {err:?}");
         }
@@ -166,11 +185,21 @@ mod tests {
     #[test]
     fn all_variants_display_non_empty() {
         let variants = [
-            ProviderError::AuthenticationFailed { provider_message: "bad key".into() },
-            ProviderError::PermissionDenied { provider_message: "nope".into() },
-            ProviderError::ModelNotFound { provider_message: "no such model".into() },
-            ProviderError::ContextWindowExceeded { provider_message: "too long".into() },
-            ProviderError::SafetyFilterTriggered { provider_message: "blocked".into() },
+            ProviderError::AuthenticationFailed {
+                provider_message: "bad key".into(),
+            },
+            ProviderError::PermissionDenied {
+                provider_message: "nope".into(),
+            },
+            ProviderError::ModelNotFound {
+                provider_message: "no such model".into(),
+            },
+            ProviderError::ContextWindowExceeded {
+                provider_message: "too long".into(),
+            },
+            ProviderError::SafetyFilterTriggered {
+                provider_message: "blocked".into(),
+            },
             ProviderError::RateLimited {
                 message: "slow".into(),
                 status: 429,
@@ -182,8 +211,12 @@ mod tests {
                 retryable: true,
                 retry_after_ms: None,
             },
-            ProviderError::ConnectionFailed { reason: "dns".into() },
-            ProviderError::InvalidResponse { reason: "bad json".into() },
+            ProviderError::ConnectionFailed {
+                reason: "dns".into(),
+            },
+            ProviderError::InvalidResponse {
+                reason: "bad json".into(),
+            },
         ];
         for v in &variants {
             assert!(!format!("{v}").is_empty(), "empty display: {v:?}");

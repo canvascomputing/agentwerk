@@ -4,7 +4,7 @@ use std::pin::Pin;
 use serde_json::Value;
 
 use crate::error::Result;
-use crate::tools::tool::{Toolable, ToolContext, ToolResult};
+use crate::tools::tool::{ToolContext, ToolResult, Toolable};
 
 const MAX_URL_LENGTH: usize = 2000;
 const MAX_RESPONSE_BYTES: usize = 10 * 1024 * 1024;
@@ -88,7 +88,12 @@ impl Toolable for WebFetchTool {
                 Ok(text) => text,
                 Err(msg) => return Ok(ToolResult::error(msg)),
             };
-            if let FetchedContent::Redirect { original_url, redirect_url, status } = &text {
+            if let FetchedContent::Redirect {
+                original_url,
+                redirect_url,
+                status,
+            } = &text
+            {
                 let msg = format!(
                     "REDIRECT DETECTED: The URL redirects to a different host.\n\n\
                      Original URL: {original_url}\n\
@@ -98,11 +103,25 @@ impl Toolable for WebFetchTool {
                 );
                 return Ok(ToolResult::success(msg));
             }
-            let FetchedContent::Page { body, status, content_type, byte_count } = text else {
+            let FetchedContent::Page {
+                body,
+                status,
+                content_type,
+                byte_count,
+            } = text
+            else {
                 unreachable!()
             };
 
-            let output = format_output(url, prompt, &body, status, &content_type, byte_count, max_length);
+            let output = format_output(
+                url,
+                prompt,
+                &body,
+                status,
+                &content_type,
+                byte_count,
+                max_length,
+            );
             Ok(ToolResult::success(output))
         })
     }
@@ -133,10 +152,21 @@ async fn fetch_url(url: &str) -> std::result::Result<FetchedContent, String> {
         .map_err(|e| e.to_string())?;
 
     let response = follow_safe_redirects(&client, url).await?;
-    if let FollowResult::CrossDomain { original_url, redirect_url, status } = response {
-        return Ok(FetchedContent::Redirect { original_url, redirect_url, status });
+    if let FollowResult::CrossDomain {
+        original_url,
+        redirect_url,
+        status,
+    } = response
+    {
+        return Ok(FetchedContent::Redirect {
+            original_url,
+            redirect_url,
+            status,
+        });
     }
-    let FollowResult::Ok(response) = response else { unreachable!() };
+    let FollowResult::Ok(response) = response else {
+        unreachable!()
+    };
 
     let status = response.status().as_u16();
     let content_type = response
@@ -146,7 +176,10 @@ async fn fetch_url(url: &str) -> std::result::Result<FetchedContent, String> {
         .unwrap_or("")
         .to_string();
 
-    let bytes = response.bytes().await.map_err(|e| format!("Failed to read response: {e}"))?;
+    let bytes = response
+        .bytes()
+        .await
+        .map_err(|e| format!("Failed to read response: {e}"))?;
     if bytes.len() > MAX_RESPONSE_BYTES {
         return Err(format!(
             "Response too large: {} bytes (max {MAX_RESPONSE_BYTES})",
@@ -161,7 +194,12 @@ async fn fetch_url(url: &str) -> std::result::Result<FetchedContent, String> {
         raw_text.into_owned()
     };
 
-    Ok(FetchedContent::Page { body, status, content_type, byte_count: bytes.len() })
+    Ok(FetchedContent::Page {
+        body,
+        status,
+        content_type,
+        byte_count: bytes.len(),
+    })
 }
 
 fn format_output(
@@ -255,8 +293,12 @@ fn is_redirect(status: u16) -> bool {
 /// Allows redirects that keep the same scheme, port, and host (ignoring www. prefix).
 /// Rejects cross-domain redirects and targets with embedded credentials.
 fn is_same_origin(original_url: &str, redirect_url: &str) -> bool {
-    let Some(orig) = parse_origin(original_url) else { return false };
-    let Some(redir) = parse_origin(redirect_url) else { return false };
+    let Some(orig) = parse_origin(original_url) else {
+        return false;
+    };
+    let Some(redir) = parse_origin(redirect_url) else {
+        return false;
+    };
 
     orig.scheme == redir.scheme && orig.port == redir.port && orig.bare_host() == redir.bare_host()
 }
@@ -286,7 +328,11 @@ fn parse_origin(url: &str) -> Option<UrlOrigin> {
         .map(|(h, p)| (h.to_string(), p.to_string()))
         .unwrap_or_else(|| (authority.to_string(), String::new()));
 
-    Some(UrlOrigin { scheme: scheme.to_string(), host, port })
+    Some(UrlOrigin {
+        scheme: scheme.to_string(),
+        host,
+        port,
+    })
 }
 
 /// Resolve a possibly-relative Location header against the request URL.
@@ -314,7 +360,10 @@ fn resolve_redirect_location(base_url: &str, location: &str) -> String {
 
 fn validate_url(url: &str) -> std::result::Result<String, String> {
     if url.len() > MAX_URL_LENGTH {
-        return Err(format!("URL too long: {} chars (max {MAX_URL_LENGTH})", url.len()));
+        return Err(format!(
+            "URL too long: {} chars (max {MAX_URL_LENGTH})",
+            url.len()
+        ));
     }
 
     let (scheme, rest) = url.split_once("://").ok_or("Invalid URL: missing scheme")?;
@@ -684,7 +733,10 @@ mod tests {
 
     #[test]
     fn strip_html_nested_tags() {
-        assert_eq!(strip_html("<div><p><b>deep text</b></p></div>"), "deep text");
+        assert_eq!(
+            strip_html("<div><p><b>deep text</b></p></div>"),
+            "deep text"
+        );
     }
 
     #[test]
@@ -703,6 +755,9 @@ mod tests {
 
     #[test]
     fn collapse_whitespace_limits_blank_lines() {
-        assert_eq!(collapse_whitespace("line1\n\n\n\n\nline2"), "line1\n\nline2");
+        assert_eq!(
+            collapse_whitespace("line1\n\n\n\n\nline2"),
+            "line1\n\nline2"
+        );
     }
 }

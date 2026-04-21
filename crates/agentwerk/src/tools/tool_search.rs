@@ -4,7 +4,7 @@ use std::pin::Pin;
 use serde_json::Value;
 
 use crate::error::Result;
-use crate::tools::tool::{Toolable, ToolContext, ToolResult};
+use crate::tools::tool::{ToolContext, ToolResult, Toolable};
 
 /// Tool that searches the tool registry by query string.
 pub struct ToolSearchTool;
@@ -65,7 +65,9 @@ impl Toolable for ToolSearchTool {
             let results = registry.search(query);
 
             if results.is_empty() {
-                return Ok(ToolResult::success(format!("No tools found matching '{query}'.")));
+                return Ok(ToolResult::success(format!(
+                    "No tools found matching '{query}'."
+                )));
             }
 
             let count = results.len();
@@ -168,8 +170,9 @@ mod tests {
 
     #[tokio::test]
     async fn no_registry_errors() {
-        let ctx =
-            ToolContext::new(std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from(".")));
+        let ctx = ToolContext::new(
+            std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from(".")),
+        );
         let tool = ToolSearchTool;
         let input = serde_json::json!({ "query": "anything" });
         let result = tool.call(input, &ctx).await.unwrap();
@@ -194,14 +197,18 @@ mod tests {
         use crate::agent::Agent;
 
         let registry = registry_with_mock_tools();
-        let agent = Agent::new().name("t").model("mock").identity_prompt("").provider(Arc::new(
-            crate::testutil::MockProvider::text("ok"),
-        ));
+        let agent = Agent::new()
+            .name("t")
+            .model("mock")
+            .identity_prompt("")
+            .provider(Arc::new(crate::testutil::MockProvider::text("ok")));
         let (runtime, _) = agent.compile(None).unwrap();
         let runtime = Arc::new(runtime);
-        let ctx = ToolContext::new(std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from(".")))
-            .registry(registry)
-            .runtime(runtime.clone());
+        let ctx = ToolContext::new(
+            std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from(".")),
+        )
+        .registry(registry)
+        .runtime(runtime.clone());
 
         let tool = ToolSearchTool;
         tool.call(serde_json::json!({ "query": "read_file" }), &ctx)

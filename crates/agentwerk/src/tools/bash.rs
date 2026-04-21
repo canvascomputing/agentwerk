@@ -4,7 +4,7 @@ use std::pin::Pin;
 use serde_json::Value;
 
 use crate::error::Result;
-use crate::tools::tool::{Toolable, ToolContext, ToolResult};
+use crate::tools::tool::{ToolContext, ToolResult, Toolable};
 use crate::tools::util::{glob_match, run_shell_command};
 
 /// Shell command execution tool restricted to commands matching a glob pattern.
@@ -120,7 +120,7 @@ impl BashTool {
     /// Create an unrestricted bash tool with the standard description.
     pub fn unrestricted() -> Self {
         Self::new("bash", "*").with_description(&format!(
-        "\
+            "\
 Executes a bash command in the working directory and returns its output.
 
 IMPORTANT: Avoid using this tool when a dedicated tool exists:

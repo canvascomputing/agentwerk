@@ -19,8 +19,8 @@ use std::sync::Arc;
 use agentwerk::provider::types::ResponseStatus;
 use agentwerk::testutil::{text_response, tool_response, MockProvider, MockTool, TestHarness};
 use agentwerk::{
-    Agent, AgenticError, CompactReason, CompletionRequest, ContentBlock, AgentEvent, AgentEventKind,
-    Message, Model, ProviderError, TokenUsage,
+    Agent, AgentEvent, AgentEventKind, AgenticError, CompactReason, CompletionRequest,
+    ContentBlock, Message, Model, ProviderError, TokenUsage,
 };
 
 /// Local helper: compact threshold for a known window size, used by these tests.

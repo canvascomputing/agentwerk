@@ -15,7 +15,9 @@ use super::error::{ProviderError, ProviderResult};
 use super::model::ModelLookup;
 use super::r#trait::{CompletionRequest, Provider, ToolChoice};
 use super::stream::{SseEvent, StreamParser};
-use super::types::{ContentBlock, Message, CompletionResponse, ResponseStatus, StreamEvent, TokenUsage};
+use super::types::{
+    CompletionResponse, ContentBlock, Message, ResponseStatus, StreamEvent, TokenUsage,
+};
 
 /// OpenAI-compatible LLM provider.
 pub struct OpenAiProvider {
@@ -27,7 +29,12 @@ pub struct OpenAiProvider {
 
 impl OpenAiProvider {
     pub fn new(api_key: impl Into<String>) -> Self {
-        Self::raw(api_key, "https://api.openai.com", reqwest::Client::new(), false)
+        Self::raw(
+            api_key,
+            "https://api.openai.com",
+            reqwest::Client::new(),
+            false,
+        )
     }
 
     pub fn with_client(api_key: impl Into<String>, client: reqwest::Client) -> Self {
@@ -135,7 +142,9 @@ impl OpenAiProvider {
         let resp = self.send_raw(url, body).await?;
         resp.json()
             .await
-            .map_err(|e| ProviderError::InvalidResponse { reason: e.to_string() })
+            .map_err(|e| ProviderError::InvalidResponse {
+                reason: e.to_string(),
+            })
     }
 
     async fn send_raw(&self, url: &str, body: Value) -> ProviderResult<reqwest::Response> {
@@ -147,7 +156,9 @@ impl OpenAiProvider {
             .json(&body)
             .send()
             .await
-            .map_err(|e| ProviderError::ConnectionFailed { reason: e.to_string() })?;
+            .map_err(|e| ProviderError::ConnectionFailed {
+                reason: e.to_string(),
+            })?;
 
         super::map_http_errors(resp, classify_error).await
     }
@@ -159,9 +170,15 @@ impl OpenAiProvider {
 /// text is the fallback signal).
 fn classify_error(status: u16, body: &str) -> Option<ProviderError> {
     match status {
-        401 => Some(ProviderError::AuthenticationFailed { provider_message: body.into() }),
-        403 => Some(ProviderError::PermissionDenied { provider_message: body.into() }),
-        404 => Some(ProviderError::ModelNotFound { provider_message: body.into() }),
+        401 => Some(ProviderError::AuthenticationFailed {
+            provider_message: body.into(),
+        }),
+        403 => Some(ProviderError::PermissionDenied {
+            provider_message: body.into(),
+        }),
+        404 => Some(ProviderError::ModelNotFound {
+            provider_message: body.into(),
+        }),
         400 => classify_400(body),
         _ => None,
     }
@@ -177,11 +194,17 @@ fn classify_400(body: &str) -> Option<ProviderError> {
         || message.contains("maximum context length")
         || message.contains("context_length_exceeded");
     if is_context_window {
-        return Some(ProviderError::ContextWindowExceeded { provider_message: message });
+        return Some(ProviderError::ContextWindowExceeded {
+            provider_message: message,
+        });
     }
     match code {
-        "model_not_found" => Some(ProviderError::ModelNotFound { provider_message: message }),
-        "content_filter" => Some(ProviderError::SafetyFilterTriggered { provider_message: message }),
+        "model_not_found" => Some(ProviderError::ModelNotFound {
+            provider_message: message,
+        }),
+        "content_filter" => Some(ProviderError::SafetyFilterTriggered {
+            provider_message: message,
+        }),
         _ => None,
     }
 }
@@ -202,8 +225,9 @@ async fn stream_response(
     let mut stream = response.bytes_stream();
 
     while let Some(chunk) = stream.next().await {
-        let chunk = chunk
-            .map_err(|e| ProviderError::ConnectionFailed { reason: e.to_string() })?;
+        let chunk = chunk.map_err(|e| ProviderError::ConnectionFailed {
+            reason: e.to_string(),
+        })?;
         for event in parser.push(&chunk) {
             match event {
                 SseEvent::Done => on_event(StreamEvent::MessageDone),
@@ -244,15 +268,23 @@ impl StreamState {
         let mut sorted: Vec<_> = self.tool_calls.into_iter().collect();
         sorted.sort_by_key(|(idx, _)| *idx);
         for (_, acc) in sorted {
-            let input = serde_json::from_str(&acc.arguments)
-                .unwrap_or(Value::Object(Default::default()));
-            content.push(ContentBlock::ToolUse { id: acc.id, name: acc.name, input });
+            let input =
+                serde_json::from_str(&acc.arguments).unwrap_or(Value::Object(Default::default()));
+            content.push(ContentBlock::ToolUse {
+                id: acc.id,
+                name: acc.name,
+                input,
+            });
         }
         CompletionResponse {
             content,
             status: self.status,
             usage: self.usage,
-            model: if self.model.is_empty() { "unknown".into() } else { self.model },
+            model: if self.model.is_empty() {
+                "unknown".into()
+            } else {
+                self.model
+            },
         }
     }
 }
@@ -341,7 +373,11 @@ fn serialize_request(request: &CompletionRequest) -> Value {
         body["max_tokens"] = Value::from(n);
     }
     if !request.tools.is_empty() {
-        let tools: Vec<Value> = request.tools.iter().map(serialize_tool_definition).collect();
+        let tools: Vec<Value> = request
+            .tools
+            .iter()
+            .map(serialize_tool_definition)
+            .collect();
         body["tools"] = Value::Array(tools);
     }
     if let Some(ref choice) = request.tool_choice {
@@ -539,7 +575,9 @@ mod tests {
             model: "test-model".into(),
             system_prompt: "You are helpful.".into(),
             messages: vec![Message::User {
-                content: vec![ContentBlock::Text { text: "Hello".into() }],
+                content: vec![ContentBlock::Text {
+                    text: "Hello".into(),
+                }],
             }],
             tools: vec![],
             max_output_tokens: Some(1024),
@@ -594,7 +632,9 @@ mod tests {
             messages: vec![],
             tools: vec![],
             max_output_tokens: Some(1024),
-            tool_choice: Some(ToolChoice::Specific { name: "read_file".into() }),
+            tool_choice: Some(ToolChoice::Specific {
+                name: "read_file".into(),
+            }),
         };
         let body = serialize_request(&request);
         assert_eq!(body["tool_choice"]["type"], "function");
@@ -660,7 +700,11 @@ mod tests {
                 "usage": {"prompt_tokens": 0, "completion_tokens": 0},
                 "model": "m"
             });
-            assert_eq!(parse_response(json, false).status, expected, "Failed for {reason}");
+            assert_eq!(
+                parse_response(json, false).status,
+                expected,
+                "Failed for {reason}"
+            );
         }
     }
 

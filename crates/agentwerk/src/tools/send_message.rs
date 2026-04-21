@@ -7,7 +7,7 @@ use serde_json::Value;
 use crate::agent::queue::{CommandSource, QueuePriority, QueuedCommand};
 use crate::error::{AgenticError, Result};
 
-use crate::tools::tool::{Toolable, ToolContext, ToolResult};
+use crate::tools::tool::{ToolContext, ToolResult, Toolable};
 
 const NAME: &str = "send_message";
 
@@ -162,7 +162,9 @@ mod tests {
         let out = tool.call(input, &ctx).await.unwrap();
         assert!(!out.is_err());
 
-        let cmd = queue.dequeue_if(Some("bob"), |_| true).expect("queued for bob");
+        let cmd = queue
+            .dequeue_if(Some("bob"), |_| true)
+            .expect("queued for bob");
         assert_eq!(cmd.agent_name.as_deref(), Some("bob"));
         assert_eq!(cmd.content, "hi");
         match cmd.source {

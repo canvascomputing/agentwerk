@@ -47,7 +47,10 @@ async fn test() -> std::result::Result<(), Box<dyn std::error::Error>> {
 
     common::print_result(&output);
 
-    let json = output.response.as_ref().expect("Expected structured JSON response");
+    let json = output
+        .response
+        .as_ref()
+        .expect("Expected structured JSON response");
     assert!(json["line_count"].as_u64().unwrap_or(0) > 1);
     assert!(json["files"].as_array().map_or(0, |a| a.len()) > 1);
 

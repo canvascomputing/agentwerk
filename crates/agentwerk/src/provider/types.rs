@@ -121,10 +121,21 @@ pub struct CompletionResponse {
 /// Incremental event emitted during SSE streaming.
 #[derive(Debug, Clone)]
 pub enum StreamEvent {
-    TextDelta { index: usize, text: String },
-    InputJsonDelta { index: usize, partial_json: String },
-    ContentBlockStop { index: usize },
-    MessageDelta { status: ResponseStatus, usage: TokenUsage },
+    TextDelta {
+        index: usize,
+        text: String,
+    },
+    InputJsonDelta {
+        index: usize,
+        partial_json: String,
+    },
+    ContentBlockStop {
+        index: usize,
+    },
+    MessageDelta {
+        status: ResponseStatus,
+        usage: TokenUsage,
+    },
     MessageDone,
 }
 

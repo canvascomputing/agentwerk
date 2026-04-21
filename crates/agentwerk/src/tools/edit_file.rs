@@ -4,7 +4,7 @@ use std::pin::Pin;
 use serde_json::Value;
 
 use crate::error::Result;
-use crate::tools::tool::{Toolable, ToolContext, ToolResult};
+use crate::tools::tool::{ToolContext, ToolResult, Toolable};
 
 pub struct EditFileTool;
 
@@ -108,7 +108,9 @@ impl Toolable for EditFileTool {
             };
 
             match std::fs::write(&resolved, &new_content) {
-                Ok(()) => Ok(ToolResult::success(format!("Edited {path}: replaced {count} occurrence(s)"))),
+                Ok(()) => Ok(ToolResult::success(format!(
+                    "Edited {path}: replaced {count} occurrence(s)"
+                ))),
                 Err(e) => Ok(ToolResult::error(format!("Failed to write file: {e}"))),
             }
         })

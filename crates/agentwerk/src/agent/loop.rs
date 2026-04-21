@@ -248,8 +248,8 @@ pub(crate) fn run_loop(
 
             // Short-circuit: idle_until_message only runs when keep_alive is
             // enabled, preserving its side effects (emit Idle/Resumed).
-            let idle_found_message = spec.keep_alive
-                && idle_until_message(&runtime, &spec, &mut state).await;
+            let idle_found_message =
+                spec.keep_alive && idle_until_message(&runtime, &spec, &mut state).await;
             if idle_found_message {
                 emit_turn_end(&runtime, &spec, turn);
                 continue;
@@ -284,7 +284,12 @@ pub(crate) fn run_loop(
 
             emit(&runtime, &spec, agent_end);
             emit_turn_end(&runtime, &spec, turn);
-            return Ok(build_output(&state, text, validated, AgentStatus::Completed));
+            return Ok(build_output(
+                &state,
+                text,
+                validated,
+                AgentStatus::Completed,
+            ));
         }
     })
 }
@@ -502,11 +507,7 @@ fn drain_command_queue(runtime: &LoopRuntime, spec: &LoopSpec, state: &mut LoopS
 /// Drain the command queue into `state.messages` and report whether anything
 /// arrived. Used by `run_loop` to decide whether to continue the loop without
 /// a new LLM request when the model gave no actionable output.
-fn drain_pending_messages(
-    runtime: &LoopRuntime,
-    spec: &LoopSpec,
-    state: &mut LoopState,
-) -> bool {
+fn drain_pending_messages(runtime: &LoopRuntime, spec: &LoopSpec, state: &mut LoopState) -> bool {
     let before = state.messages.len();
     drain_command_queue(runtime, spec, state);
     state.messages.len() > before
@@ -515,11 +516,7 @@ fn drain_pending_messages(
 /// Park the agent as idle, poll for incoming messages, then emit the resume
 /// event. Returns `true` if a message arrived (loop should continue),
 /// `false` on timeout or cancel (loop should finalize).
-async fn idle_until_message(
-    runtime: &LoopRuntime,
-    spec: &LoopSpec,
-    state: &mut LoopState,
-) -> bool {
+async fn idle_until_message(runtime: &LoopRuntime, spec: &LoopSpec, state: &mut LoopState) -> bool {
     state.is_idle = true;
     emit_agent_idle(runtime, spec);
     let woken = wait_for_message(runtime, spec, state).await;
@@ -723,8 +720,7 @@ mod tests {
 
     #[tokio::test]
     async fn failing_tool_emits_tool_call_error() {
-        let provider =
-            MockProvider::tool_then_text("boom", serde_json::json!({}), "acknowledged");
+        let provider = MockProvider::tool_then_text("boom", serde_json::json!({}), "acknowledged");
         let agent = Agent::new()
             .name("test")
             .model("mock")
@@ -735,15 +731,16 @@ mod tests {
         harness.run_agent(&agent, "go").await.unwrap();
 
         let events = harness.events().all();
-        let saw_error = events.iter().any(|e| matches!(
-            &e.kind,
-            AgentEventKind::ToolCallError { tool_name, error, .. }
-                if tool_name == "boom" && error == "disk full"
-        ));
-        let saw_end = events.iter().any(|e| matches!(
-            e.kind,
-            AgentEventKind::ToolCallEnd { .. }
-        ));
+        let saw_error = events.iter().any(|e| {
+            matches!(
+                &e.kind,
+                AgentEventKind::ToolCallError { tool_name, error, .. }
+                    if tool_name == "boom" && error == "disk full"
+            )
+        });
+        let saw_end = events
+            .iter()
+            .any(|e| matches!(e.kind, AgentEventKind::ToolCallEnd { .. }));
         assert!(saw_error, "a failing tool must emit ToolCallError");
         assert!(!saw_end, "a failing tool must not also emit ToolCallEnd");
     }
@@ -1239,7 +1236,10 @@ mod tests {
         let agent = simple_agent().keep_alive();
         let output = harness.run_agent(&agent, "hi").await.unwrap();
 
-        assert_eq!(output.statistics.turns, 2, "peer message should wake the listener");
+        assert_eq!(
+            output.statistics.turns, 2,
+            "peer message should wake the listener"
+        );
     }
 
     #[tokio::test]
@@ -1266,7 +1266,10 @@ mod tests {
         let agent = simple_agent().keep_alive();
         let output = harness.run_agent(&agent, "hi").await.unwrap();
 
-        assert_eq!(output.statistics.turns, 2, "user input (targeted) should wake the listener");
+        assert_eq!(
+            output.statistics.turns, 2,
+            "user input (targeted) should wake the listener"
+        );
     }
 
     #[tokio::test]
@@ -1278,7 +1281,10 @@ mod tests {
         let agent = simple_agent().keep_alive();
         let output = harness.run_agent(&agent, "hi").await.unwrap();
 
-        assert_eq!(output.statistics.turns, 2, "user input (broadcast) should wake the listener");
+        assert_eq!(
+            output.statistics.turns, 2,
+            "user input (broadcast) should wake the listener"
+        );
     }
 
     // ----- Lifecycle matrix -----
@@ -1338,8 +1344,14 @@ mod tests {
             })
             .collect();
         let first_idle = kinds.iter().position(|k| *k == "idle").expect("idle fired");
-        let first_resumed = kinds.iter().position(|k| *k == "resumed").expect("resumed fired");
-        assert!(first_idle < first_resumed, "idle must precede resumed: {kinds:?}");
+        let first_resumed = kinds
+            .iter()
+            .position(|k| *k == "resumed")
+            .expect("resumed fired");
+        assert!(
+            first_idle < first_resumed,
+            "idle must precede resumed: {kinds:?}"
+        );
     }
 
     #[tokio::test]

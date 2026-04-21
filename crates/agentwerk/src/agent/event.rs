@@ -30,16 +30,22 @@ impl AgentEvent {
         Arc::new(|event: AgentEvent| {
             let agent = &event.agent_name;
             match &event.kind {
-                AgentEventKind::AgentStart { description: Some(d) } => {
+                AgentEventKind::AgentStart {
+                    description: Some(d),
+                } => {
                     eprintln!("[{agent}] start: {d}");
                 }
                 AgentEventKind::AgentEnd { turns, status } => {
                     eprintln!("[{agent}] done ({turns} turns, {status:?})");
                 }
-                AgentEventKind::ToolCallStart { tool_name, input, .. } => {
+                AgentEventKind::ToolCallStart {
+                    tool_name, input, ..
+                } => {
                     eprintln!("[{agent}] → {tool_name}({})", compact_input(input));
                 }
-                AgentEventKind::ToolCallError { tool_name, error, .. } => {
+                AgentEventKind::ToolCallError {
+                    tool_name, error, ..
+                } => {
                     eprintln!("[{agent}] ✗ {tool_name}: {error}");
                 }
                 AgentEventKind::CompactTriggered {
@@ -140,9 +146,14 @@ mod tests {
     fn default_logger_handles_every_variant() {
         let logger = AgentEvent::default_logger();
         let every: Vec<AgentEventKind> = vec![
-            AgentEventKind::AgentStart { description: Some("desc".into()) },
+            AgentEventKind::AgentStart {
+                description: Some("desc".into()),
+            },
             AgentEventKind::AgentStart { description: None },
-            AgentEventKind::AgentEnd { turns: 3, status: AgentStatus::Completed },
+            AgentEventKind::AgentEnd {
+                turns: 3,
+                status: AgentStatus::Completed,
+            },
             AgentEventKind::TurnStart { turn: 1 },
             AgentEventKind::TurnEnd { turn: 1 },
             AgentEventKind::ToolCallStart {
@@ -160,8 +171,13 @@ mod tests {
                 call_id: "c1".into(),
                 error: "boom".into(),
             },
-            AgentEventKind::TokenUsage { model: "m".into(), usage: TokenUsage::default() },
-            AgentEventKind::ResponseTextChunk { content: "hi".into() },
+            AgentEventKind::TokenUsage {
+                model: "m".into(),
+                usage: TokenUsage::default(),
+            },
+            AgentEventKind::ResponseTextChunk {
+                content: "hi".into(),
+            },
             AgentEventKind::RequestStart { model: "m".into() },
             AgentEventKind::RequestEnd { model: "m".into() },
             AgentEventKind::OutputTruncated { turn: 2 },

@@ -8,7 +8,7 @@ use crate::agent::Agent;
 use crate::error::{AgenticError, Result};
 use crate::util::generate_agent_name;
 
-use crate::tools::tool::{Toolable, ToolContext, ToolResult};
+use crate::tools::tool::{ToolContext, ToolResult, Toolable};
 
 /// Default identity for ad-hoc sub-agents (when the LLM doesn't supply one).
 const DEFAULT_IDENTITY: &str = "You are a focused helper agent. Answer concisely.";
@@ -265,7 +265,10 @@ mod tests {
         ]));
 
         let harness = TestHarness::with_provider_and_queue(provider.clone(), queue.clone());
-        let output = harness.run_agent(&agent, "Start background work").await.unwrap();
+        let output = harness
+            .run_agent(&agent, "Start background work")
+            .await
+            .unwrap();
         assert!(!output.response_raw.is_empty());
 
         tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
@@ -364,7 +367,10 @@ mod tests {
         ]));
 
         let harness = TestHarness::with_provider(provider);
-        let output = harness.run_agent(&agent, "Use the specialist").await.unwrap();
+        let output = harness
+            .run_agent(&agent, "Use the specialist")
+            .await
+            .unwrap();
         assert_eq!(output.response_raw, "Got specialized result");
     }
 
@@ -390,7 +396,10 @@ mod tests {
         ]));
 
         let harness = TestHarness::with_provider(provider);
-        let output = harness.run_agent(&agent, "Use nonexistent agent").await.unwrap();
+        let output = harness
+            .run_agent(&agent, "Use nonexistent agent")
+            .await
+            .unwrap();
         assert_eq!(output.response_raw, "Could not find agent");
     }
 }

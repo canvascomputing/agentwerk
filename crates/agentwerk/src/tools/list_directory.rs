@@ -5,7 +5,7 @@ use std::pin::Pin;
 use serde_json::Value;
 
 use crate::error::Result;
-use crate::tools::tool::{Toolable, ToolContext, ToolResult};
+use crate::tools::tool::{ToolContext, ToolResult, Toolable};
 
 pub struct ListDirectoryTool;
 
@@ -81,11 +81,7 @@ struct EntryInfo {
     size: Option<u64>,
 }
 
-fn list_entries(
-    dir: &PathBuf,
-    base: &PathBuf,
-    recursive: bool,
-) -> std::io::Result<Vec<EntryInfo>> {
+fn list_entries(dir: &PathBuf, base: &PathBuf, recursive: bool) -> std::io::Result<Vec<EntryInfo>> {
     let mut results = Vec::new();
     let read_dir = std::fs::read_dir(dir)?;
 
@@ -147,10 +143,7 @@ mod tests {
 
         let tool = ListDirectoryTool;
         let ctx = test_ctx(tmp.path());
-        let result = tool
-            .call(serde_json::json!({}), &ctx)
-            .await
-            .unwrap();
+        let result = tool.call(serde_json::json!({}), &ctx).await.unwrap();
 
         assert!(!result.is_err());
         let lines: Vec<&str> = result.content().lines().collect();

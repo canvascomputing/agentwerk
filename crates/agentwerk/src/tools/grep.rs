@@ -5,7 +5,7 @@ use std::pin::Pin;
 use serde_json::Value;
 
 use crate::error::Result;
-use crate::tools::tool::{Toolable, ToolContext, ToolResult};
+use crate::tools::tool::{ToolContext, ToolResult, Toolable};
 use crate::tools::util::glob_match;
 
 pub struct GrepTool;
@@ -82,20 +82,33 @@ impl Toolable for GrepTool {
                 None => return Ok(ToolResult::error("Missing required parameter: pattern")),
             };
 
-            let base = ctx.working_directory.join(input["path"].as_str().unwrap_or("."));
+            let base = ctx
+                .working_directory
+                .join(input["path"].as_str().unwrap_or("."));
             let glob_filter = input["glob"].as_str().map(|s| s.to_string());
             let output_mode = input["output_mode"].as_str().unwrap_or("files");
             let context_lines = input["context_lines"].as_u64().unwrap_or(0) as usize;
             let case_insensitive = input["case_insensitive"].as_bool().unwrap_or(false);
             let max_results = input["max_results"].as_u64().unwrap_or(DEFAULT_MAX_RESULTS) as usize;
 
-            let needle = if case_insensitive { pattern.to_lowercase() } else { pattern.to_string() };
+            let needle = if case_insensitive {
+                pattern.to_lowercase()
+            } else {
+                pattern.to_string()
+            };
 
             let mut files = Vec::new();
             collect_files(&base, &glob_filter, &mut files);
 
             let result = match output_mode {
-                "content" => search_content(&files, &base, &needle, case_insensitive, context_lines, max_results),
+                "content" => search_content(
+                    &files,
+                    &base,
+                    &needle,
+                    case_insensitive,
+                    context_lines,
+                    max_results,
+                ),
                 "count" => search_count(&files, &base, &needle, case_insensitive, max_results),
                 _ => search_files(&files, &base, &needle, case_insensitive, max_results),
             };
@@ -166,7 +179,10 @@ fn search_count(
             Err(_) => continue,
         };
 
-        let n = content.lines().filter(|line| line_matches(line, needle, case_insensitive)).count();
+        let n = content
+            .lines()
+            .filter(|line| line_matches(line, needle, case_insensitive))
+            .count();
         if n > 0 {
             counts.push(format!("{}: {n} matches", relative_path(file_path, base)));
         }
@@ -193,7 +209,10 @@ fn search_files(
             Err(_) => continue,
         };
 
-        if content.lines().any(|line| line_matches(line, needle, case_insensitive)) {
+        if content
+            .lines()
+            .any(|line| line_matches(line, needle, case_insensitive))
+        {
             matched.push(relative_path(file_path, base));
             if matched.len() >= max_results {
                 break;
@@ -270,7 +289,11 @@ mod tests {
             "pub fn greet() {\n    println!(\"Hello\");\n}\n",
         )
         .unwrap();
-        fs::write(tmp.path().join("readme.md"), "# Hello Project\nThis is a test.\n").unwrap();
+        fs::write(
+            tmp.path().join("readme.md"),
+            "# Hello Project\nThis is a test.\n",
+        )
+        .unwrap();
         tmp
     }
 

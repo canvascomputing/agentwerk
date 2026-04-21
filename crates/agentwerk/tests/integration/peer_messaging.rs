@@ -84,12 +84,12 @@ async fn orchestrator_sends_message_to_backgrounded_worker(
     tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
 
     let all = events.lock().unwrap();
-    let worker_started = all.iter().any(
-        |e| matches!(e.kind, AgentEventKind::AgentStart { .. }) && e.agent_name == "worker",
-    );
-    let worker_ended = all.iter().any(
-        |e| matches!(e.kind, AgentEventKind::AgentEnd { .. }) && e.agent_name == "worker",
-    );
+    let worker_started = all
+        .iter()
+        .any(|e| matches!(e.kind, AgentEventKind::AgentStart { .. }) && e.agent_name == "worker");
+    let worker_ended = all
+        .iter()
+        .any(|e| matches!(e.kind, AgentEventKind::AgentEnd { .. }) && e.agent_name == "worker");
     let send_ok = all.iter().any(|e| {
         e.agent_name == "orchestrator"
             && matches!(
@@ -135,16 +135,21 @@ fn format_event(e: &AgentEvent) -> Option<String> {
             Some(format!("end    ({turns} turns, {status:?})"))
         }
         AgentEventKind::TurnStart { turn } => Some(format!("turn   {turn}")),
-        AgentEventKind::ToolCallStart { tool_name, input, .. } => {
-            Some(format!("tool   {tool_name}({})", one_line(input)))
-        }
-        AgentEventKind::ToolCallEnd { tool_name, output, .. } => {
-            Some(format!("tool   {tool_name} -> ok {}", truncate(output, 80)))
-        }
-        AgentEventKind::ToolCallError { tool_name, error, .. } => {
-            Some(format!("tool   {tool_name} -> err {}", truncate(error, 80)))
-        }
-        AgentEventKind::CompactTriggered { turn, token_count, threshold, reason } => Some(format!(
+        AgentEventKind::ToolCallStart {
+            tool_name, input, ..
+        } => Some(format!("tool   {tool_name}({})", one_line(input))),
+        AgentEventKind::ToolCallEnd {
+            tool_name, output, ..
+        } => Some(format!("tool   {tool_name} -> ok {}", truncate(output, 80))),
+        AgentEventKind::ToolCallError {
+            tool_name, error, ..
+        } => Some(format!("tool   {tool_name} -> err {}", truncate(error, 80))),
+        AgentEventKind::CompactTriggered {
+            turn,
+            token_count,
+            threshold,
+            reason,
+        } => Some(format!(
             "compact turn={turn} {token_count}/{threshold} ({reason:?})"
         )),
         AgentEventKind::OutputTruncated { turn } => Some(format!("truncated turn={turn}")),

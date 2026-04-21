@@ -1,4 +1,3 @@
-pub mod tool;
 mod bash;
 mod edit_file;
 mod glob;
@@ -8,13 +7,14 @@ mod read_file;
 pub mod send_message;
 pub mod spawn_agent;
 pub mod task_tools;
+pub mod tool;
 mod tool_search;
 pub(crate) mod util;
 mod web_fetch;
 mod write_file;
 
 // Re-export tool infrastructure
-pub use tool::{Tool, Toolable, ToolContext, ToolResult};
+pub use tool::{Tool, ToolContext, ToolResult, Toolable};
 pub(crate) use tool::{ToolCall, ToolRegistry};
 
 // Re-export built-in tools

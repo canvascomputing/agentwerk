@@ -7,7 +7,7 @@ use std::sync::Arc;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use crate::agent::{LoopSpec, LoopRuntime};
+use crate::agent::{LoopRuntime, LoopSpec};
 use crate::error::Result;
 use crate::provider::types::ContentBlock;
 
@@ -479,9 +479,7 @@ fn partition_tool_calls(calls: &[ToolCall], registry: &ToolRegistry) -> Vec<Tool
     let mut concurrent_batch: Vec<ToolCall> = Vec::new();
 
     for call in calls {
-        let is_read_only = registry
-            .get(&call.name)
-            .map_or(false, |t| t.is_read_only());
+        let is_read_only = registry.get(&call.name).map_or(false, |t| t.is_read_only());
 
         if is_read_only {
             concurrent_batch.push(call.clone());
@@ -648,7 +646,9 @@ mod tests {
     #[test]
     fn tool_basic() {
         let tool = Tool::new("echo", "Echoes input")
-            .schema(serde_json::json!({"type": "object", "properties": {"text": {"type": "string"}}}))
+            .schema(
+                serde_json::json!({"type": "object", "properties": {"text": {"type": "string"}}}),
+            )
             .read_only(true)
             .handler(|input, _ctx| {
                 Box::pin(async move {
@@ -666,9 +666,7 @@ mod tests {
         let tool = Tool::new("advanced", "Advanced tool")
             .defer(true)
             .hints(vec!["analyze".into(), "inspect".into()])
-            .handler(|_input, _ctx| {
-                Box::pin(async { Ok(ToolResult::success("ok")) })
-            });
+            .handler(|_input, _ctx| Box::pin(async { Ok(ToolResult::success("ok")) }));
 
         assert!(tool.should_defer());
         assert_eq!(tool.search_hints().len(), 2);
@@ -681,5 +679,4 @@ mod tests {
         let ctx = test_tool_context();
         let _ = tool.call(serde_json::json!({}), &ctx).await;
     }
-
 }

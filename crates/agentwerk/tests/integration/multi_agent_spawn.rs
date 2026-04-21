@@ -18,14 +18,18 @@ async fn test() -> std::result::Result<(), Box<dyn std::error::Error>> {
             eprintln!("\n[{}] tool: {tool_name}", event.agent_name)
         }
         AgentEventKind::AgentStart { .. } => eprintln!("[{}] started", event.agent_name),
-        AgentEventKind::AgentEnd { turns, .. } => eprintln!("[{}] done ({turns} turns)", event.agent_name),
+        AgentEventKind::AgentEnd { turns, .. } => {
+            eprintln!("[{}] done ({turns} turns)", event.agent_name)
+        }
         _ => {}
     });
 
     let researcher = Agent::new()
         .name("researcher")
         .model(&model)
-        .identity_prompt("You are a research assistant. Answer the given question concisely in 1-2 sentences.")
+        .identity_prompt(
+            "You are a research assistant. Answer the given question concisely in 1-2 sentences.",
+        )
         .max_turns(1);
 
     let output = Agent::new()

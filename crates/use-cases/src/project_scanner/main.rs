@@ -10,7 +10,7 @@ use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Arc;
 
 use agentwerk::{
-    Agent, AgentPool, AgentEventKind, GlobTool, ListDirectoryTool, AgentPoolStrategy, ReadFileTool,
+    Agent, AgentEventKind, AgentPool, AgentPoolStrategy, GlobTool, ListDirectoryTool, ReadFileTool,
 };
 use serde_json::{json, Value};
 
@@ -69,9 +69,12 @@ fn summarize_schema() -> Value {
 #[tokio::main]
 async fn main() {
     let config = parse_args();
-    let (provider, default_model) =
-        agentwerk::provider::from_env().expect("LLM provider required");
-    let model = if config.model.is_empty() { default_model } else { config.model };
+    let (provider, default_model) = agentwerk::provider::from_env().expect("LLM provider required");
+    let model = if config.model.is_empty() {
+        default_model
+    } else {
+        config.model
+    };
 
     let cancel = Arc::new(AtomicBool::new(false));
     let cancel_handle = cancel.clone();
@@ -96,8 +99,11 @@ async fn main() {
         .cancel_signal(cancel.clone())
         .max_turns(20)
         .event_handler(Arc::new(|event| match &event.kind {
-            AgentEventKind::ToolCallStart { tool_name, input, .. } => {
-                let detail = input["path"].as_str()
+            AgentEventKind::ToolCallStart {
+                tool_name, input, ..
+            } => {
+                let detail = input["path"]
+                    .as_str()
                     .or(input["pattern"].as_str())
                     .unwrap_or("");
                 if detail.is_empty() {
@@ -106,7 +112,9 @@ async fn main() {
                     eprintln!("[discover] {tool_name}({detail})");
                 }
             }
-            AgentEventKind::ToolCallError { tool_name, error, .. } => {
+            AgentEventKind::ToolCallError {
+                tool_name, error, ..
+            } => {
                 eprintln!("[discover] error in {tool_name}: {error}");
             }
             _ => {}
@@ -239,9 +247,18 @@ fn parse_args() -> CliConfig {
     let mut i = 1;
     while i < args.len() {
         match args[i].as_str() {
-            "--model" => { i += 1; model = args[i].clone(); }
-            "-o" | "--output" => { i += 1; output = args[i].clone(); }
-            "--batch-size" => { i += 1; batch_size = args[i].parse().expect("batch-size must be a number"); }
+            "--model" => {
+                i += 1;
+                model = args[i].clone();
+            }
+            "-o" | "--output" => {
+                i += 1;
+                output = args[i].clone();
+            }
+            "--batch-size" => {
+                i += 1;
+                batch_size = args[i].parse().expect("batch-size must be a number");
+            }
             "-h" | "--help" => {
                 eprintln!("Scan a project and output a JSON summary.\n");
                 eprintln!("Usage: project-scanner [OPTIONS] [FOLDER]\n");
@@ -261,5 +278,10 @@ fn parse_args() -> CliConfig {
     }
 
     let folder = std::fs::canonicalize(&folder).unwrap_or_else(|_| PathBuf::from(&folder));
-    CliConfig { folder, model, output, batch_size }
+    CliConfig {
+        folder,
+        model,
+        output,
+        batch_size,
+    }
 }

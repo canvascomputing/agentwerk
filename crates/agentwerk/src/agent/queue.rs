@@ -50,8 +50,13 @@ impl QueuedCommand {
 #[allow(dead_code)] // UserInput used in tests; others used by in-crate tools.
 pub(crate) enum CommandSource {
     UserInput,
-    TaskNotification { task_id: String },
-    PeerMessage { from: String, summary: Option<String> },
+    TaskNotification {
+        task_id: String,
+    },
+    PeerMessage {
+        from: String,
+        summary: Option<String>,
+    },
 }
 
 /// Thread-safe priority queue for commands.
@@ -205,7 +210,10 @@ mod tests {
             },
             agent_name: Some("bob".into()),
         };
-        assert_eq!(cmd.as_user_message(), "[message from alice: greeting]\nping");
+        assert_eq!(
+            cmd.as_user_message(),
+            "[message from alice: greeting]\nping"
+        );
     }
 
     #[test]

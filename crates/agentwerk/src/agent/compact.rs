@@ -118,8 +118,7 @@ mod tests {
         let short = vec![Message::user("hi")];
         let long = vec![Message::user("x".repeat(400))];
         assert!(
-            estimate_tokens_from_message_bytes(&long)
-                > estimate_tokens_from_message_bytes(&short)
+            estimate_tokens_from_message_bytes(&long) > estimate_tokens_from_message_bytes(&short)
         );
         assert_eq!(estimate_tokens_from_message_bytes(&long), 100);
     }

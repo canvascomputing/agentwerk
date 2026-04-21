@@ -8,8 +8,8 @@
 //! Environment:
 //!   ANTHROPIC_API_KEY   (or other provider env vars)
 
-use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
+use std::sync::Arc;
 
 use agentwerk::{Agent, AgentEvent, AgentEventKind, WebFetchTool};
 
@@ -113,7 +113,10 @@ async fn main() {
         Err(e) => eprintln!("Failed to write {output_path}: {e}"),
     }
     println!("{json}");
-    eprintln!("Tokens: {} in, {} out", output.statistics.input_tokens, output.statistics.output_tokens);
+    eprintln!(
+        "Tokens: {} in, {} out",
+        output.statistics.input_tokens, output.statistics.output_tokens
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -125,12 +128,18 @@ fn log_event(event: &AgentEvent) {
         AgentEventKind::RequestStart { model, .. } => {
             eprintln!("[{}] requesting {model}...", event.agent_name);
         }
-        AgentEventKind::ToolCallStart { tool_name, input, .. }
-            if tool_name != "StructuredOutput" =>
-        {
-            eprintln!("[{}] {tool_name}: {}", event.agent_name, tool_call_detail(tool_name, input));
+        AgentEventKind::ToolCallStart {
+            tool_name, input, ..
+        } if tool_name != "StructuredOutput" => {
+            eprintln!(
+                "[{}] {tool_name}: {}",
+                event.agent_name,
+                tool_call_detail(tool_name, input)
+            );
         }
-        AgentEventKind::ToolCallError { tool_name, error, .. } => {
+        AgentEventKind::ToolCallError {
+            tool_name, error, ..
+        } => {
             eprintln!("[error] {tool_name}: {error}");
         }
         _ => {}
@@ -140,11 +149,13 @@ fn log_event(event: &AgentEvent) {
 fn tool_call_detail(tool_name: &str, input: &serde_json::Value) -> String {
     let key = match tool_name {
         "web_fetch" => "url",
-        "spawn_agent" => return input["agent"]
-            .as_str()
-            .or(input["description"].as_str())
-            .unwrap_or("")
-            .into(),
+        "spawn_agent" => {
+            return input["agent"]
+                .as_str()
+                .or(input["description"].as_str())
+                .unwrap_or("")
+                .into()
+        }
         _ => return serde_json::to_string(input).unwrap_or_default(),
     };
     input[key].as_str().unwrap_or("").into()

@@ -6,11 +6,13 @@ use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, Mutex};
 
 use crate::agent::queue::CommandQueue;
-use crate::agent::{Agent, AgentOutput, AgentEvent, AgentEventKind, AgentStatus};
+use crate::agent::{Agent, AgentEvent, AgentEventKind, AgentOutput, AgentStatus};
 use crate::error::Result;
-use crate::provider::types::{ContentBlock, CompletionResponse, ResponseStatus, StreamEvent, TokenUsage};
+use crate::provider::types::{
+    CompletionResponse, ContentBlock, ResponseStatus, StreamEvent, TokenUsage,
+};
 use crate::provider::{CompletionRequest, Provider, ProviderError, ProviderResult};
-use crate::tools::{Toolable, ToolContext, ToolResult};
+use crate::tools::{ToolContext, ToolResult, Toolable};
 
 /// A mock LLM provider that returns pre-configured responses in order.
 ///
@@ -90,7 +92,10 @@ impl Provider for MockProvider {
             let response = self.complete(request).await?;
             for block in &response.content {
                 if let ContentBlock::Text { text } = block {
-                    on_event(StreamEvent::TextDelta { index: 0, text: text.clone() });
+                    on_event(StreamEvent::TextDelta {
+                        index: 0,
+                        text: text.clone(),
+                    });
                 }
             }
             on_event(StreamEvent::MessageDone);
@@ -133,7 +138,6 @@ pub fn tool_response(tool_name: &str, id: &str, input: serde_json::Value) -> Com
         model: "mock".to_string(),
     }
 }
-
 
 // ---------------------------------------------------------------------------
 // MockTool
@@ -298,7 +302,9 @@ impl AgentEventCollector {
             .unwrap()
             .iter()
             .filter_map(|e| match &e.kind {
-                AgentEventKind::AgentEnd { turns, status } => Some((e.agent_name.clone(), *turns, status.clone())),
+                AgentEventKind::AgentEnd { turns, status } => {
+                    Some((e.agent_name.clone(), *turns, status.clone()))
+                }
                 _ => None,
             })
             .collect()
@@ -338,7 +344,10 @@ impl TestHarness {
     }
 
     #[cfg(test)]
-    pub(crate) fn with_provider_and_queue(provider: Arc<MockProvider>, queue: Arc<CommandQueue>) -> Self {
+    pub(crate) fn with_provider_and_queue(
+        provider: Arc<MockProvider>,
+        queue: Arc<CommandQueue>,
+    ) -> Self {
         let mut h = Self::with_provider(provider);
         h.command_queue = Some(queue);
         h

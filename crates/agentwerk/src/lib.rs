@@ -1,8 +1,8 @@
+pub mod agent;
 pub mod error;
+pub(crate) mod persistence;
 pub mod provider;
 pub mod tools;
-pub mod agent;
-pub(crate) mod persistence;
 pub(crate) mod util;
 
 pub mod testutil;
@@ -18,9 +18,9 @@ pub use provider::{
 
 // Tool infrastructure and built-in tools
 pub use tools::{
-    BashTool, EditFileTool, GlobTool, GrepTool, ListDirectoryTool, ReadFileTool,
-    SendMessageTool, SpawnAgentTool, TaskTool, Tool, Toolable, ToolContext,
-    ToolResult, ToolSearchTool, WebFetchTool, WriteFileTool,
+    BashTool, EditFileTool, GlobTool, GrepTool, ListDirectoryTool, ReadFileTool, SendMessageTool,
+    SpawnAgentTool, TaskTool, Tool, ToolContext, ToolResult, ToolSearchTool, Toolable,
+    WebFetchTool, WriteFileTool,
 };
 
 // Agent

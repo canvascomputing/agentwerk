@@ -20,7 +20,9 @@ pub(crate) fn compute_delay(backoff_ms: u64, attempt: u32, retry_after_ms: Optio
         .subsec_nanos() as u64;
     let jitter_offset = entropy % (jitter_range * 2);
 
-    exponential.saturating_sub(jitter_range).saturating_add(jitter_offset)
+    exponential
+        .saturating_sub(jitter_range)
+        .saturating_add(jitter_offset)
 }
 
 #[cfg(test)]

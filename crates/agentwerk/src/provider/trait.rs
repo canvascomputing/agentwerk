@@ -5,7 +5,7 @@ use std::sync::Arc;
 use serde::{Deserialize, Serialize};
 
 use super::error::ProviderResult;
-use super::types::{Message, CompletionResponse, StreamEvent};
+use super::types::{CompletionResponse, Message, StreamEvent};
 use crate::tools::tool::ToolDefinition;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

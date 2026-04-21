@@ -1,7 +1,7 @@
+use serde::{Deserialize, Serialize};
 use std::fs::{self, File, OpenOptions};
 use std::io::{BufRead, BufReader, BufWriter, Write};
 use std::path::{Path, PathBuf};
-use serde::{Deserialize, Serialize};
 
 use crate::error::Result;
 use crate::provider::types::{Message, TokenUsage};
@@ -160,10 +160,7 @@ impl SessionStore {
     }
 
     fn write_metadata(&self) -> Result<()> {
-        let meta = Self::metadata_from_transcript(
-            &self.base_dir,
-            self.session_id.clone(),
-        )?;
+        let meta = Self::metadata_from_transcript(&self.base_dir, self.session_id.clone())?;
         let json = serde_json::to_string_pretty(&meta)?;
         fs::write(self.metadata_path(), json)?;
         Ok(())
@@ -206,7 +203,10 @@ mod tests {
             .record(make_entry(TranscriptEntryType::UserMessage, "hello"))
             .unwrap();
         store
-            .record(make_entry(TranscriptEntryType::AssistantMessage, "hi there"))
+            .record(make_entry(
+                TranscriptEntryType::AssistantMessage,
+                "hi there",
+            ))
             .unwrap();
         store
             .record(make_entry(TranscriptEntryType::ToolResult, "tool output"))

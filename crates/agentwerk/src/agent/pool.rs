@@ -493,7 +493,10 @@ mod tests {
     async fn perf_spawn_order_vs_completion_order() {
         let mut times = Vec::new();
 
-        for strategy in [AgentPoolStrategy::CompletionOrder, AgentPoolStrategy::SpawnOrder] {
+        for strategy in [
+            AgentPoolStrategy::CompletionOrder,
+            AgentPoolStrategy::SpawnOrder,
+        ] {
             let start = tokio::time::Instant::now();
             let pool = AgentPool::new().batch_size(10).ordering(strategy);
             for i in 0..50 {

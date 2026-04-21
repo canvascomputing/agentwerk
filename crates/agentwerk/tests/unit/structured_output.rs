@@ -223,7 +223,11 @@ async fn state_machine_advances_invalid_then_valid() {
         .unwrap();
 
     // --- contract checks (cheap, fail fast) ---------------------------
-    assert_eq!(harness.provider().request_count(), 2, "two turns: invalid + valid");
+    assert_eq!(
+        harness.provider().request_count(),
+        2,
+        "two turns: invalid + valid"
+    );
     assert_eq!(output.response_raw, VALID_REPORT_JSON);
     assert_eq!(
         output.response,
@@ -243,7 +247,9 @@ async fn state_machine_advances_invalid_then_valid() {
     // so the snapshot documents the entire state machine end-to-end.
     let mut terminal_messages = reqs[1].messages.clone();
     terminal_messages.push(Message::Assistant {
-        content: vec![ContentBlock::Text { text: output.response_raw.clone() }],
+        content: vec![ContentBlock::Text {
+            text: output.response_raw.clone(),
+        }],
     });
     let terminal = render_conversation(&reqs[1].system_prompt, &terminal_messages);
     assert_eq!(canonicalize(&terminal), S2_AFTER_VALID_REPLY);
@@ -431,10 +437,7 @@ async fn validator_path_reaches_into_array_items() {
     // an integer — the corrective message must surface that path so the model
     // can fix the right field on its next attempt.
     let bad = r#"{"category":"perf","priority":"low","summary":"slow query","findings":[{"file":"src/db.rs","line":"forty-two","severity":"low"}]}"#;
-    let provider = MockProvider::new(vec![
-        text_response(bad),
-        text_response(VALID_REPORT_JSON),
-    ]);
+    let provider = MockProvider::new(vec![text_response(bad), text_response(VALID_REPORT_JSON)]);
     let harness = TestHarness::new(provider);
     let output = harness.run_agent(&report_agent(), "review").await.unwrap();
 
@@ -457,10 +460,7 @@ async fn missing_required_field_at_depth_triggers_retry() {
     // `severity` from the first finding — the validator must report the
     // missing field with its full path, not just say "something is off".
     let bad = r#"{"category":"bug","priority":"med","summary":"flaky test","findings":[{"file":"src/x.rs","line":10}]}"#;
-    let provider = MockProvider::new(vec![
-        text_response(bad),
-        text_response(VALID_REPORT_JSON),
-    ]);
+    let provider = MockProvider::new(vec![text_response(bad), text_response(VALID_REPORT_JSON)]);
     let harness = TestHarness::new(provider);
     let output = harness.run_agent(&report_agent(), "review").await.unwrap();
 

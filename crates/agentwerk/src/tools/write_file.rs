@@ -4,7 +4,7 @@ use std::pin::Pin;
 use serde_json::Value;
 
 use crate::error::Result;
-use crate::tools::tool::{Toolable, ToolContext, ToolResult};
+use crate::tools::tool::{ToolContext, ToolResult, Toolable};
 
 pub struct WriteFileTool;
 
@@ -64,7 +64,9 @@ impl Toolable for WriteFileTool {
 
             if let Some(parent) = resolved.parent() {
                 if let Err(e) = std::fs::create_dir_all(parent) {
-                    return Ok(ToolResult::error(format!("Failed to create parent directories: {e}")));
+                    return Ok(ToolResult::error(format!(
+                        "Failed to create parent directories: {e}"
+                    )));
                 }
             }
 

@@ -145,7 +145,10 @@ mod tests {
 
     #[test]
     fn from_provider_error() {
-        let err: AgenticError = ProviderError::ConnectionFailed { reason: "dns".into() }.into();
+        let err: AgenticError = ProviderError::ConnectionFailed {
+            reason: "dns".into(),
+        }
+        .into();
         assert!(matches!(
             err,
             AgenticError::Provider(ProviderError::ConnectionFailed { .. })

@@ -7,7 +7,7 @@ use serde_json::Value;
 
 use crate::error::Result;
 use crate::persistence::task::{TaskStatus, TaskStore, TaskUpdate};
-use crate::tools::tool::{Toolable, ToolContext, ToolResult};
+use crate::tools::tool::{ToolContext, ToolResult, Toolable};
 
 /// Persistent task management. The agent can create, update, list, and get tasks.
 pub struct TaskTool {
@@ -119,7 +119,9 @@ impl Toolable for TaskTool {
                     let from = input["from"].as_str().unwrap_or("");
                     let to = input["to"].as_str().unwrap_or("");
                     self.store.lock().unwrap().add_dependency(from, to)?;
-                    Ok(ToolResult::success(format!("Dependency added: {from} blocks {to}")))
+                    Ok(ToolResult::success(format!(
+                        "Dependency added: {from} blocks {to}"
+                    )))
                 }
                 _ => Ok(ToolResult::error(format!("Unknown action: {action}"))),
             }
@@ -159,10 +161,23 @@ mod tests {
     #[tokio::test]
     async fn list_returns_all() {
         let tool = test_tool();
-        tool.call(serde_json::json!({"action": "create", "subject": "A", "description": ""}), &test_ctx()).await.unwrap();
-        tool.call(serde_json::json!({"action": "create", "subject": "B", "description": ""}), &test_ctx()).await.unwrap();
+        tool.call(
+            serde_json::json!({"action": "create", "subject": "A", "description": ""}),
+            &test_ctx(),
+        )
+        .await
+        .unwrap();
+        tool.call(
+            serde_json::json!({"action": "create", "subject": "B", "description": ""}),
+            &test_ctx(),
+        )
+        .await
+        .unwrap();
 
-        let result = tool.call(serde_json::json!({"action": "list"}), &test_ctx()).await.unwrap();
+        let result = tool
+            .call(serde_json::json!({"action": "list"}), &test_ctx())
+            .await
+            .unwrap();
         let parsed: Vec<Value> = serde_json::from_str(&result.content()).unwrap();
         assert_eq!(parsed.len(), 2);
     }
@@ -170,9 +185,17 @@ mod tests {
     #[tokio::test]
     async fn get_returns_details() {
         let tool = test_tool();
-        tool.call(serde_json::json!({"action": "create", "subject": "My task", "description": "desc"}), &test_ctx()).await.unwrap();
+        tool.call(
+            serde_json::json!({"action": "create", "subject": "My task", "description": "desc"}),
+            &test_ctx(),
+        )
+        .await
+        .unwrap();
 
-        let result = tool.call(serde_json::json!({"action": "get", "id": "1"}), &test_ctx()).await.unwrap();
+        let result = tool
+            .call(serde_json::json!({"action": "get", "id": "1"}), &test_ctx())
+            .await
+            .unwrap();
         assert!(!result.is_err());
         let parsed: Value = serde_json::from_str(&result.content()).unwrap();
         assert_eq!(parsed["subject"], "My task");
@@ -181,13 +204,27 @@ mod tests {
     #[tokio::test]
     async fn update_changes_status() {
         let tool = test_tool();
-        tool.call(serde_json::json!({"action": "create", "subject": "Task", "description": ""}), &test_ctx()).await.unwrap();
+        tool.call(
+            serde_json::json!({"action": "create", "subject": "Task", "description": ""}),
+            &test_ctx(),
+        )
+        .await
+        .unwrap();
 
-        let result = tool.call(serde_json::json!({"action": "update", "id": "1", "status": "InProgress"}), &test_ctx()).await.unwrap();
+        let result = tool
+            .call(
+                serde_json::json!({"action": "update", "id": "1", "status": "InProgress"}),
+                &test_ctx(),
+            )
+            .await
+            .unwrap();
         let parsed: Value = serde_json::from_str(&result.content()).unwrap();
         assert_eq!(parsed["status"], "InProgress");
 
-        let result = tool.call(serde_json::json!({"action": "get", "id": "1"}), &test_ctx()).await.unwrap();
+        let result = tool
+            .call(serde_json::json!({"action": "get", "id": "1"}), &test_ctx())
+            .await
+            .unwrap();
         let parsed: Value = serde_json::from_str(&result.content()).unwrap();
         assert_eq!(parsed["status"], "InProgress");
     }
@@ -195,7 +232,10 @@ mod tests {
     #[tokio::test]
     async fn unknown_action_errors() {
         let tool = test_tool();
-        let result = tool.call(serde_json::json!({"action": "foobar"}), &test_ctx()).await.unwrap();
+        let result = tool
+            .call(serde_json::json!({"action": "foobar"}), &test_ctx())
+            .await
+            .unwrap();
         assert!(result.is_err());
     }
 }

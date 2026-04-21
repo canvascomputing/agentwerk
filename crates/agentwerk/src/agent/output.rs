@@ -77,7 +77,8 @@ impl OutputSchema {
     /// round-trip.
     pub(crate) fn validate(&self, text: &str) -> std::result::Result<Value, String> {
         let body = strip_code_fences(text.trim());
-        let value: Value = serde_json::from_str(body).map_err(|e| format!("not valid JSON: {e}"))?;
+        let value: Value =
+            serde_json::from_str(body).map_err(|e| format!("not valid JSON: {e}"))?;
         validate_value(&value, &self.schema).map_err(|e| e.to_string())?;
         Ok(value)
     }
@@ -107,7 +108,10 @@ fn strip_code_fences(s: &str) -> &str {
 /// Recursive walker: validate a JSON value against a schema. Internal to
 /// this module — `OutputSchema::validate` is the only external entry point.
 fn validate_value(value: &Value, schema: &Value) -> Result<()> {
-    let schema_type = schema.get("type").and_then(|t| t.as_str()).unwrap_or("object");
+    let schema_type = schema
+        .get("type")
+        .and_then(|t| t.as_str())
+        .unwrap_or("object");
 
     match schema_type {
         "object" => validate_object(value, schema),
@@ -234,7 +238,9 @@ mod tests {
 
     #[test]
     fn propagates_validate_value_error_with_path() {
-        let err = schema().validate(r#"{"answer":"not a number"}"#).unwrap_err();
+        let err = schema()
+            .validate(r#"{"answer":"not a number"}"#)
+            .unwrap_err();
         assert!(err.contains("answer"), "expected field path, got: {err}");
     }
 

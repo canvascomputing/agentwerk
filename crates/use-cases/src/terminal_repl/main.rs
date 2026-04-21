@@ -13,8 +13,12 @@ const IDENTITY: &str = "You are a local-repo search assistant. Help the user exp
 #[tokio::main]
 async fn main() {
     eprintln!("agentwerk REPL: /exit to quit, Ctrl-C to cancel.\n");
-    let Some(first) = read_line("> ").await else { return };
-    if first.is_empty() || first == "/exit" || first == "/quit" { return }
+    let Some(first) = read_line("> ").await else {
+        return;
+    };
+    if first.is_empty() || first == "/exit" || first == "/quit" {
+        return;
+    }
 
     let idle = Arc::new(Notify::new());
     let handler_idle = idle.clone();
@@ -28,7 +32,9 @@ async fn main() {
         .tool(GrepTool)
         .tool(ListDirectoryTool)
         .tool(ReadFileTool)
-        .event_handler(Arc::new(move |e: AgentEvent| print_event(&e, &handler_idle)))
+        .event_handler(Arc::new(move |e: AgentEvent| {
+            print_event(&e, &handler_idle)
+        }))
         .spawn();
 
     loop {
@@ -36,14 +42,20 @@ async fn main() {
             _ = idle.notified() => {}
             _ = tokio::signal::ctrl_c() => break,
         }
-        if running.is_stopped() { break }
+        if running.is_stopped() {
+            break;
+        }
         let line = tokio::select! {
             line = read_line("> ") => line,
             _ = tokio::signal::ctrl_c() => { eprintln!("^C"); None }
         };
         let Some(line) = line else { break };
-        if line.is_empty() { continue }
-        if line == "/exit" || line == "/quit" { break }
+        if line.is_empty() {
+            continue;
+        }
+        if line == "/exit" || line == "/quit" {
+            break;
+        }
         running.send(line);
     }
 

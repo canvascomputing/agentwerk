@@ -65,18 +65,25 @@ async fn external_sender_delivers_two_instructions_and_clone_cancels(
         .spawn();
 
     wait_for(&events, |all| {
-        all.iter().any(|e| matches!(e.kind, AgentEventKind::AgentIdle))
+        all.iter()
+            .any(|e| matches!(e.kind, AgentEventKind::AgentIdle))
     })
     .await?;
 
     eprintln!("[test] sending secret_a={secret_a} via original handle");
     agent.send(format!("the secret is {secret_a}"));
-    wait_for(&events, |all| listener_text(all).contains(&secret_a.to_string())).await?;
+    wait_for(&events, |all| {
+        listener_text(all).contains(&secret_a.to_string())
+    })
+    .await?;
 
     let via_clone = agent.clone();
     eprintln!("[test] sending secret_b={secret_b} via cloned handle");
     via_clone.send(format!("the secret is {secret_b}"));
-    wait_for(&events, |all| listener_text(all).contains(&secret_b.to_string())).await?;
+    wait_for(&events, |all| {
+        listener_text(all).contains(&secret_b.to_string())
+    })
+    .await?;
 
     let canceler = agent.clone();
     tokio::spawn(async move {
@@ -94,11 +101,13 @@ async fn external_sender_delivers_two_instructions_and_clone_cancels(
     );
     let all = events.lock().unwrap();
     assert!(
-        all.iter().any(|e| matches!(e.kind, AgentEventKind::AgentIdle)),
+        all.iter()
+            .any(|e| matches!(e.kind, AgentEventKind::AgentIdle)),
         "agent should have idled at least once"
     );
     assert!(
-        all.iter().any(|e| matches!(e.kind, AgentEventKind::AgentResumed)),
+        all.iter()
+            .any(|e| matches!(e.kind, AgentEventKind::AgentResumed)),
         "agent should have resumed at least once"
     );
     let text = listener_text(&all);
@@ -149,7 +158,9 @@ where
             return Ok(());
         }
         if Instant::now() >= deadline {
-            return Err(format!("timed out after {TIMEOUT:?} waiting for event condition"));
+            return Err(format!(
+                "timed out after {TIMEOUT:?} waiting for event condition"
+            ));
         }
         tokio::time::sleep(Duration::from_millis(50)).await;
     }
@@ -167,15 +178,15 @@ fn format_event(e: &AgentEvent) -> Option<String> {
             Some(format!("end    ({turns} turns, {status:?})"))
         }
         AgentEventKind::TurnStart { turn } => Some(format!("turn   {turn}")),
-        AgentEventKind::ToolCallStart { tool_name, input, .. } => {
-            Some(format!("tool   {tool_name}({})", one_line(input)))
-        }
-        AgentEventKind::ToolCallEnd { tool_name, output, .. } => {
-            Some(format!("tool   {tool_name} -> ok {}", truncate(output, 80)))
-        }
-        AgentEventKind::ToolCallError { tool_name, error, .. } => {
-            Some(format!("tool   {tool_name} -> err {}", truncate(error, 80)))
-        }
+        AgentEventKind::ToolCallStart {
+            tool_name, input, ..
+        } => Some(format!("tool   {tool_name}({})", one_line(input))),
+        AgentEventKind::ToolCallEnd {
+            tool_name, output, ..
+        } => Some(format!("tool   {tool_name} -> ok {}", truncate(output, 80))),
+        AgentEventKind::ToolCallError {
+            tool_name, error, ..
+        } => Some(format!("tool   {tool_name} -> err {}", truncate(error, 80))),
         AgentEventKind::CompactTriggered {
             turn,
             token_count,
