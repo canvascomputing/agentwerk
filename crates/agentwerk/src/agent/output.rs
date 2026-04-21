@@ -33,6 +33,7 @@ pub struct AgentStatistics {
 
 #[derive(Debug, Clone)]
 pub struct AgentOutput {
+    pub name: String,
     pub response: Option<Value>,
     pub response_raw: String,
     pub statistics: AgentStatistics,
@@ -42,6 +43,7 @@ pub struct AgentOutput {
 impl AgentOutput {
     pub fn empty() -> Self {
         Self {
+            name: String::new(),
             response: None,
             response_raw: String::new(),
             statistics: AgentStatistics::default(),

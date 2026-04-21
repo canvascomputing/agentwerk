@@ -59,7 +59,7 @@ crates/agentwerk/src/
     event.rs              AgentEvent enum (AgentStart carries description for spawned children)
     output.rs             AgentOutput, AgentStatus, OutputSchema (validate, retry_message)
     prompts.rs            DEFAULT_BEHAVIOR_PROMPT and structured-output constants
-    pool.rs               AgentPool, AgentPoolStrategy, AgentJobId (dynamic execution with concurrency control)
+    batch.rs              batch (free fn: run many agents with bounded concurrency, yields a Stream of results)
     queue.rs              CommandQueue, QueuePriority, QueuedCommand (internal)
 
   tools/
@@ -98,7 +98,7 @@ Use cases are in `crates/use-cases/src/cli/`. Run with `make use_case name=<name
 ## Key conventions
 
 - **No new dependencies without asking.** The crate is intentionally minimal (tokio, serde, serde_json, libc, reqwest, futures-util). Providers own a `reqwest::Client` directly — no transport abstraction.
-- **No ad-hoc changes to critical types without a plan.** These types form the public API and are used across the entire codebase: `Agent`, `ToolContext`, `AgentEvent`, `Toolable` trait, `CompletionRequest`, `AgentOutput`, `AgentPool`. Propose changes in a plan first.
+- **No ad-hoc changes to critical types without a plan.** These types form the public API and are used across the entire codebase: `Agent`, `ToolContext`, `AgentEvent`, `Toolable` trait, `CompletionRequest`, `AgentOutput`, `batch`. Propose changes in a plan first.
 - **Tools capture dependencies at construction time** via closures or struct fields. The internal `ToolContext` handles (`runtime: Arc<LoopRuntime>`, `caller_spec: Arc<AgentSpec>`) exist solely for the agent loop to give `SpawnAgentTool` / `ToolSearchTool` read access to loop state — do not use them for new tools.
 - **`tools/tool.rs` vs `tools/`**: `tool.rs` defines the trait and infrastructure (`Toolable` trait, `Tool` struct for ad-hoc tools, `ToolRegistry`, `ToolContext`). Other files in `tools/` are concrete implementations.
 - **`agent/` vs `provider/` vs `persistence/`**: `agent/` contains the agent's builder surface (`Agent` in `werk.rs`) and everything the execution loop consumes (`AgentSpec` / `LoopRuntime` / `LoopState` / `run_loop` in `loop.rs`), events, output, and prompts. `provider/` contains LLM communication and estimated costs. `persistence/` contains internal disk storage (session transcripts, tasks).
@@ -111,7 +111,7 @@ Use cases are in `crates/use-cases/src/cli/`. Run with `make use_case name=<name
 
 **The rule: domain-prefix any type whose bare name would be too generic to read self-documenting.** Visibility (pub vs pub(crate)) does NOT change this — both crate users and crate authors benefit from self-documenting names.
 
-- **Generic single-word nouns always get the prefix.** `Status`, `Output`, `Pool`, `Spec`, `Runtime`, `Statistics`, `Event`, `EventKind` are too vague on their own. They become `AgentStatus`, `AgentOutput`, `AgentPool`, `AgentSpec`, `LoopRuntime`, `AgentStatistics`, `AgentEvent`, `AgentEventKind`.
+- **Generic single-word nouns always get the prefix.** `Status`, `Output`, `Spec`, `Runtime`, `Statistics`, `Event`, `EventKind` are too vague on their own. They become `AgentStatus`, `AgentOutput`, `AgentSpec`, `LoopRuntime`, `AgentStatistics`, `AgentEvent`, `AgentEventKind`.
 - **Inherently specific compounds stand alone.** `LoopState`, `OutputSchema`, `CompactReason`, `CompletionRequest`, `CompletionResponse`, `TokenUsage`, `ContentBlock`, `StreamEvent`, `ToolCall`, `ToolRegistry`, `ResponseStatus`, `CommandQueue`, `SessionStore`, `TaskStore`, `ModelLookup`, `ProviderError`, `ProviderResult` already say what they are.
 - **Vendor-prefixed types** follow the same logic — `AnthropicProvider`, `OpenAiProvider`, `MistralProvider`, `LiteLlmProvider`, `BashTool`, `ReadFileTool`. The prefix disambiguates which thing.
 - **Acronyms follow Rust API guidelines**: `LiteLlmProvider`, not `LiteLLMProvider`. Already consistent: `OpenAiProvider`.
@@ -300,7 +300,7 @@ The README is the public face of the library. Keep it terse, example-driven, and
 - **Use `>` blockquotes for callouts** — tips, prerequisites, cross-references. Example: `> Consider configuring your LLM provider (see [Environment](#environment)).`
 - **Use cases show real output.** Every entry in Use Cases includes the invocation (`make use_case ...`) and a realistic JSON output block. No placeholder results.
 - **Cross-link, don't repeat.** Reference the Environment section from anywhere that mentions provider setup; reference Inheritance when discussing sub-agents. Keep each fact in one place.
-- **Headers**: `#` title, `##` top-level (Installation, API, Development), `###` features (Agent, Prompting, Sub-agents, Guardrails, AgentPool, Tools), `####` nested topics (Inheritance).
+- **Headers**: `#` title, `##` top-level (Installation, API, Development), `###` features (Agent, Prompting, Sub-agents, Guardrails, Batch, Tools), `####` nested topics (Inheritance).
 - **Voice**: direct, imperative, no marketing. "Give your agent access to simple tools" — not "empower your application with…". Keep the one-sentence tagline style ("A minimal Rust crate that…").
 - **Keep examples minimal.** Show the smallest snippet that demonstrates the feature. Elide unrelated setup with `...` or obvious imports. Use `claude-haiku-4-5-20251001` / `claude-sonnet-4-20250514` as example models to stay consistent.
 - **Update triggers**: a new builder method, a new tool, a new event kind, a new env variable, or a changed default all require a README edit in the matching table. Structural/internal changes do not.

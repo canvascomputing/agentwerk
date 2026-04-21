@@ -1,17 +1,16 @@
 //! Scans a project directory in two phases:
 //! 1. Discovery agent finds files worth reading
-//! 2. Pool of agents summarizes each file in parallel
+//! 2. Batch of agents summarizes each file in parallel
 //!
 //! Usage: project-scanner [OPTIONS] [FOLDER]
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Arc;
 
-use agentwerk::{
-    Agent, AgentEventKind, AgentPool, AgentPoolStrategy, GlobTool, ListDirectoryTool, ReadFileTool,
-};
+use agentwerk::{batch, Agent, AgentEventKind, GlobTool, ListDirectoryTool, ReadFileTool};
+use futures_util::StreamExt;
 use serde_json::{json, Value};
 
 const DISCOVERY_PROMPT: &str = "\
@@ -151,58 +150,66 @@ async fn main() {
         .output_schema(summarize_schema())
         .max_turns(5);
 
-    let pool = AgentPool::new()
-        .batch_size(config.batch_size)
-        .ordering(AgentPoolStrategy::SpawnOrder);
     let total = files.len();
     let progress = Arc::new(AtomicUsize::new(0));
 
-    for file in &files {
+    let agents = files.iter().map(|file| {
         let file_name = file.clone();
         let progress = progress.clone();
-
-        let job = summarizer
+        summarizer
             .clone()
+            .name(format!("summarize-{file}"))
             .instruction_prompt(format!("Read and summarize: {file}"))
             .working_directory(config.folder.clone())
             .cancel_signal(cancel.clone())
             .event_handler(Arc::new(move |event| match &event.kind {
                 AgentEventKind::ToolCallError { error, .. } => {
-                    eprintln!("[summarize] {file_name} — error: {error}");
+                    eprintln!("[summarize] {file_name}: error: {error}");
                 }
                 AgentEventKind::AgentEnd { .. } => {
                     let done = progress.fetch_add(1, Ordering::Relaxed) + 1;
                     eprintln!("[summarize] {done}/{total} {file_name}");
                 }
                 _ => {}
-            }));
+            }))
+    });
 
-        pool.spawn(job).await;
-    }
-
-    let results = pool.drain().await;
+    let results: Vec<_> = batch(agents, config.batch_size).collect().await;
 
     // Phase 3: Aggregate
     let mut languages = BTreeSet::new();
-    let mut file_summaries = Vec::new();
+    let mut by_file: BTreeMap<&str, (&str, &str)> = BTreeMap::new();
 
-    for (i, (_job_id, result)) in results.iter().enumerate() {
+    for result in &results {
         match result {
             Ok(output) => {
+                let file = output
+                    .name
+                    .strip_prefix("summarize-")
+                    .unwrap_or(&output.name);
                 if let Some(ref data) = output.response {
                     let lang = data["language"].as_str().unwrap_or("unknown");
                     let summary = data["summary"].as_str().unwrap_or("");
                     languages.insert(lang.to_string());
-                    file_summaries.push(json!({
-                        "file": files[i],
-                        "summary": summary,
-                        "language": lang,
-                    }));
+                    by_file.insert(file, (summary, lang));
                 }
             }
-            Err(e) => eprintln!("[error] {} — {e}", files[i]),
+            Err(e) => eprintln!("[error] {e}"),
         }
     }
+
+    let file_summaries: Vec<_> = files
+        .iter()
+        .filter_map(|f| {
+            by_file.get(f.as_str()).map(|(summary, lang)| {
+                json!({
+                    "file": f,
+                    "summary": summary,
+                    "language": lang,
+                })
+            })
+        })
+        .collect();
 
     let output = json!({
         "languages": languages.into_iter().collect::<Vec<_>>(),

@@ -74,7 +74,7 @@ make use_case name=<name>    # run one
 - [Guardrails](#guardrails): retries, token caps, and turn limits
 - [AgentOutput](#agentoutput): validated, schema-based responses
 - [Sub-agents](#sub-agents): nested workers
-- [AgentPool](#agentpool): parallel execution
+- [Batch](#batch): parallel execution
 - [Todo](#todo): planned work
 
 ### Providers
@@ -370,39 +370,40 @@ The following fields are inherited, shared or owned by the sub-agents:
 | Shared | `command_queue`, `session_store` |
 | Per sub-agent | `identity_prompt`, `instruction_prompt`, `behavior_prompt`, `context_prompt`, `tools`, `output_schema`, `max_turns`, `max_tokens`, `max_schema_retries`, `max_request_retries`, `request_retry_backoff_ms` |
 
-### AgentPool
+### Batch
 
-Orchestrate complex workflows in parallel. Use different execution strategies:
-
-- `CompletionOrder`: results are returned as each agent finishes (default).
-- `SpawnOrder`: results are returned in the order agents were spawned.
+Run many agents in parallel with a fixed concurrency cap. Yields results as
+each agent finishes; correlate each result to its input via
+[`AgentOutput.name`](#agentoutput).
 
 ```rust
-use agentwerk::{Agent, AgentPool, AgentPoolStrategy, ReadFileTool};
+use agentwerk::{batch, Agent, ReadFileTool};
+use futures_util::StreamExt;
 
 let template = Agent::new()
     .model("claude-haiku-4-5-20251001")
-    .tool(ReadFileTool);
+    .tool(ReadFileTool)
+    .provider(provider);
 
-let pool = AgentPool::new()
-    .batch_size(10)
-    .ordering(AgentPoolStrategy::SpawnOrder);
+let agents = ["document A", "document B"].iter().map(|doc| {
+    template
+        .clone()
+        .name(format!("summarize-{doc}"))
+        .instruction_prompt(format!("Summarize {doc}"))
+});
 
-for doc in ["document A", "document B"] {
-    pool.spawn(
-        template
-            .clone()
-            .provider(provider.clone())
-            .instruction_prompt(format!("Summarize {doc}"))
-    )
-    .await;
+let results: Vec<_> = batch(agents, 10).collect().await;
+
+for r in results {
+    let out = r?;
+    println!("{}: {}", out.name, out.response_raw);
 }
-
-let results = pool.drain().await; // Vec<(AgentJobId, Result<AgentOutput>)>
 ```
 
-`spawn()` can be called after the pool has started processing. If the pool
-is at capacity, it waits for a free slot.
+`batch` accepts any `IntoIterator<Item = Agent>` and returns an
+`impl Stream<Item = Result<AgentOutput>>`. Use `StreamExt::collect` to gather
+every result, or combine with `for_each_concurrent` / `map` to process results
+as they arrive.
 
 ### Todo
 

@@ -240,6 +240,7 @@ pub(crate) fn run_loop(
             emit(&runtime, &spec, agent_end);
             emit_turn_end(&runtime, &spec, turn);
             return Ok(build_output(
+                &spec,
                 &state,
                 text,
                 validated,
@@ -264,7 +265,7 @@ fn finish_early(
             status: status.clone(),
         },
     );
-    build_output(state, text, None, status)
+    build_output(spec, state, text, None, status)
 }
 
 fn check_guards(runtime: &LoopRuntime, spec: &AgentSpec, state: &LoopState) -> Option<AgentStatus> {
@@ -575,12 +576,14 @@ fn record_transcript(
 }
 
 fn build_output(
+    spec: &AgentSpec,
     state: &LoopState,
     text: String,
     response: Option<Value>,
     status: AgentStatus,
 ) -> AgentOutput {
     AgentOutput {
+        name: spec.name.clone(),
         response,
         response_raw: text,
         statistics: AgentStatistics {

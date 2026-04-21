@@ -23,7 +23,6 @@ pub use tools::{
 };
 
 pub use agent::{
-    Agent, AgentEvent, AgentEventKind, AgentHandle, AgentJobId, AgentOutput, AgentOutputFuture,
-    AgentPool, AgentPoolStrategy, AgentStatistics, AgentStatus, CompactReason,
-    DEFAULT_BEHAVIOR_PROMPT,
+    batch, Agent, AgentEvent, AgentEventKind, AgentHandle, AgentOutput, AgentOutputFuture,
+    AgentStatistics, AgentStatus, CompactReason, DEFAULT_BEHAVIOR_PROMPT,
 };
