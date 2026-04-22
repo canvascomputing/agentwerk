@@ -74,7 +74,7 @@ make use_case name=<name>    # run one
 - [Guardrails](#guardrails): retries, token caps, and turn limits
 - [AgentOutput](#agentoutput): validated, schema-based responses
 - [Sub-agents](#sub-agents): nested workers
-- [Batch](#batch): parallel execution
+- [Batches](#batches): parallel execution
 - [Todo](#todo): planned work
 
 ### Providers
@@ -378,18 +378,21 @@ The following fields are inherited, shared or owned by the sub-agents:
 | Shared | `command_queue`, `session_store` |
 | Per sub-agent | `identity_prompt`, `instruction_prompt`, `behavior_prompt`, `context_prompt`, `tools`, `output_schema`, `max_turns`, `max_request_tokens`, `max_input_tokens`, `max_output_tokens`, `max_schema_retries`, `max_request_retries`, `request_retry_delay` |
 
-### Batch
+### Batches
 
-Run many agents in parallel with `batch`:
+Run many agents in parallel with `Batch`.
+
+#### Static Batch
+
+Wait for the execution of all agents in a fixed sized batch:
 
 ```rust
-use agentwerk::{batch, Agent, ReadFileTool};
-use futures_util::StreamExt;
+use agentwerk::{Agent, Batch, ReadFileTool};
 
 let template = Agent::new()
+    .provider(provider)
     .model("claude-haiku-4-5-20251001")
-    .tool(ReadFileTool)
-    .provider(provider);
+    .tool(ReadFileTool);
 
 let agents = ["document A", "document B"].iter().map(|doc| {
     template
@@ -398,13 +401,43 @@ let agents = ["document A", "document B"].iter().map(|doc| {
         .instruction_prompt(format!("Summarize {doc}"))
 });
 
-let results: Vec<_> = batch(agents, 10).collect().await;
+let results = Batch::new()
+    .concurrency(10)
+    .agents(agents)
+    .run()
+    .await;
+```
 
-for r in results {
-    let out = r?;
+#### Dynamic Number of Agents
+
+Start a dynamic pool of agents, which might grow over time. Results arrive in the completion order:
+
+```rust
+let (pool, mut results) = Batch::new()
+    .concurrency(10)
+    .spawn();
+
+for doc in ["document A", "document B"] {
+    pool.submit(
+        template
+            .clone()
+            .name(format!("summarize-{doc}"))
+            .instruction_prompt(format!("Summarize {doc}")),
+    );
+}
+
+while let Some(result) = results.next().await {
+    let out = result?;
     println!("{}: {}", out.name, out.response_raw);
 }
 ```
+
+| Method | Description |
+|--------|-------------|
+| `.submit(agent)` | Enqueue another agent |
+| `.cancel()` | Stop in-flight agents and close the pool |
+| `.is_cancelled()` | Check if the pool was cancelled |
+| `.clone()` | Get another handle to the same pool |
 
 ### Todo
 

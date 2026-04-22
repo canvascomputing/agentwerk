@@ -59,7 +59,7 @@ crates/agentwerk/src/
     event.rs              Event struct + EventKind enum (AgentStarted carries description for spawned children)
     output.rs             AgentOutput, AgentStatus, OutputSchema (validate, retry_message)
     prompts.rs            DEFAULT_BEHAVIOR_PROMPT and structured-output constants
-    batch.rs              batch (free fn: run many agents with bounded concurrency, yields a Stream of results)
+    batch.rs              Batch (builder: .run waits for all, .spawn returns BatchHandle + BatchOutputStream for dynamic pools)
     queue.rs              CommandQueue, QueuePriority, QueuedCommand (internal)
 
   tools/
@@ -98,7 +98,7 @@ Use cases are in `crates/use-cases/src/cli/`. Run with `make use_case name=<name
 ## Key conventions
 
 - **No new dependencies without asking.** The crate is intentionally minimal (tokio, serde, serde_json, libc, reqwest, futures-util). Providers own a `reqwest::Client` directly — no transport abstraction.
-- **No ad-hoc changes to critical types without a plan.** These types form the public API and are used across the entire codebase: `Agent`, `ToolContext`, `Event`, `Toolable` trait, `CompletionRequest`, `AgentOutput`, `batch`. Propose changes in a plan first.
+- **No ad-hoc changes to critical types without a plan.** These types form the public API and are used across the entire codebase: `Agent`, `ToolContext`, `Event`, `Toolable` trait, `CompletionRequest`, `AgentOutput`, `Batch`. Propose changes in a plan first.
 - **Tools capture dependencies at construction time** via closures or struct fields. The internal `ToolContext` handles (`runtime: Arc<LoopRuntime>`, `caller_spec: Arc<AgentSpec>`) exist solely for the agent loop to give `SpawnAgentTool` / `ToolSearchTool` read access to loop state — do not use them for new tools.
 - **`tools/tool.rs` vs `tools/`**: `tool.rs` defines the trait and infrastructure (`Toolable` trait, `Tool` struct for ad-hoc tools, `ToolRegistry`, `ToolContext`). Other files in `tools/` are concrete implementations.
 - **`agent/` vs `provider/` vs `persistence/`**: `agent/` contains the agent's builder surface (`Agent` in `werk.rs`) and everything the execution loop consumes (`AgentSpec` / `LoopRuntime` / `LoopState` / `run_loop` in `loop.rs`), events, output, and prompts. `provider/` contains LLM communication and estimated costs. `persistence/` contains internal disk storage (session transcripts, tasks).

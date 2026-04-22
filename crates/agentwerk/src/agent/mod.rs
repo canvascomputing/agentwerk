@@ -12,7 +12,7 @@ mod spawn;
 pub(crate) mod spec;
 
 pub use agent::Agent;
-pub use batch::batch;
+pub use batch::{Batch, BatchHandle, BatchOutputStream};
 pub use compact::CompactReason;
 pub use event::{Event, EventKind};
 pub use output::{AgentOutput, AgentStatistics, AgentStatus};

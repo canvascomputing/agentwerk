@@ -9,8 +9,7 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Arc;
 
-use agentwerk::{batch, Agent, EventKind, GlobTool, ListDirectoryTool, ReadFileTool};
-use futures_util::StreamExt;
+use agentwerk::{Agent, Batch, EventKind, GlobTool, ListDirectoryTool, ReadFileTool};
 use serde_json::{json, Value};
 
 const DISCOVERY_PROMPT: &str = "\
@@ -161,7 +160,6 @@ async fn main() {
             .name(format!("summarize-{file}"))
             .instruction_prompt(format!("Read and summarize: {file}"))
             .working_directory(config.folder.clone())
-            .cancel_signal(cancel.clone())
             .event_handler(Arc::new(move |event| match &event.kind {
                 EventKind::ToolCallError { error, .. } => {
                     eprintln!("[summarize] {file_name}: error: {error}");
@@ -174,7 +172,12 @@ async fn main() {
             }))
     });
 
-    let results: Vec<_> = batch(agents, config.batch_size).collect().await;
+    let results = Batch::new()
+        .concurrency(config.batch_size)
+        .cancel_signal(cancel.clone())
+        .agents(agents)
+        .run()
+        .await;
 
     // Phase 3: Aggregate
     let mut languages = BTreeSet::new();
