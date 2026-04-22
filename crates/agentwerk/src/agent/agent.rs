@@ -231,12 +231,21 @@ impl Agent {
         self
     }
 
-    /// Resolve the provider + default model from environment variables and
-    /// apply both in one call. See [`crate::provider::from_env`] for the
-    /// detection order.
+    /// Resolve the provider from environment variables (`*_API_KEY` +
+    /// `*_BASE_URL`). See [`crate::provider::from_env`] for the detection
+    /// matrix. Pair with [`Agent::model_from_env`] to also pick a model, or
+    /// call [`Agent::model_name`] / [`Agent::model`] explicitly.
     pub fn provider_from_env(self) -> Result<Self> {
-        let (provider, model) = crate::provider::from_env()?;
-        Ok(self.provider(provider).model_name(model))
+        Ok(self.provider(crate::provider::from_env()?))
+    }
+
+    /// Resolve the model from environment variables.
+    ///
+    /// Priority: `MODEL` (generic override) → `*_MODEL` (provider-prefixed,
+    /// same detection matrix as [`Agent::provider_from_env`]) → hosted
+    /// default for the detected provider.
+    pub fn model_from_env(self) -> Result<Self> {
+        Ok(self.model_name(crate::provider::environment::model_from_env()?))
     }
 
     /// The task for this run — what to do right now.

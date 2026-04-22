@@ -37,6 +37,7 @@ use agentwerk::{Agent, GlobTool};
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let output = Agent::new()
         .provider_from_env()?
+        .model_name("mistral-large-2512")
         .instruction_prompt("Find all Rust source files.")
         .tool(GlobTool)
         .run()
@@ -91,6 +92,23 @@ let provider = OpenAiProvider::new(key);
 let provider = LiteLlmProvider::new(key);
 ```
 
+Point a provider at a custom endpoint:
+
+```rust
+let provider = AnthropicProvider::new(key)
+    .base_url("http://localhost:8000");
+```
+
+Or pick a provider for your agent from environment variables (see [Environment](#environment)):
+
+```rust
+let output = Agent::new()
+    .provider_from_env()?
+    .model_name("mistral-small-2603")
+    .instruction_prompt("...")
+    .run().await?;
+```
+
 ### Agents
 
 The `Agent` interface is the main entry point. Build with `Agent::new()`, chain configurations, then call `.run()`:
@@ -142,8 +160,17 @@ Methods on the spawned agent:
 You can configure each agent to use a single model:
 
 ```rust
+Agent::new().model_from_env()?
 Agent::new().model_name("claude-sonnet-4-20250514")
-Agent::new().model(Model::from_name("custom-model").context_window_size(100_000))
+```
+
+If you have to set a custom context window size, e.g. due to compaction algorithms, you can set:
+
+```rust
+let model = Model::from_name("custom-model")
+    .context_window_size(100_000);
+
+let agent = Agent::new().model(model);
 ```
 
 ### Prompting
@@ -517,7 +544,7 @@ Use cases and integration tests use the following environment variables:
 **General**
 | Variable | Description |
 |----------|-------------|
-| `LITELLM_PROVIDER` | Explicit provider selection (`anthropic`, `mistral`, `openai`, `litellm`). Skips auto-detection |
+| `MODEL` | Generic model override for `.model_from_env()` |
 
 **Anthropic**
 | Variable | Description |

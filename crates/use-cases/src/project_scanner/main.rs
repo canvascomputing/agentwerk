@@ -59,9 +59,9 @@ fn summarize_schema() -> Value {
 #[tokio::main]
 async fn main() {
     let config = parse_args();
-    let (provider, default_model) = agentwerk::provider::from_env().expect("LLM provider required");
+    let provider = agentwerk::provider::from_env().expect("LLM provider required");
     let model = if config.model.is_empty() {
-        default_model
+        agentwerk::provider::model_from_env().expect("model name required")
     } else {
         config.model
     };

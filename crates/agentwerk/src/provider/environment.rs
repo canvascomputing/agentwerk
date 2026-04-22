@@ -31,7 +31,9 @@ pub(crate) fn env_required(name: &str) -> Result<String> {
         .ok_or_else(|| AgenticError::Other(format!("{name} environment variable not set")))
 }
 
-/// Detect an LLM provider from environment variables and return `(provider, model)`.
+/// Detect an LLM provider from environment variables and construct it from
+/// API key + base URL. Does not resolve a model — pair with
+/// [`model_from_env`] or set one explicitly on the agent.
 ///
 /// Detection order:
 ///   0. `LITELLM_PROVIDER` → explicit selection (`anthropic`, `mistral`, `openai`, `litellm`)
@@ -41,28 +43,45 @@ pub(crate) fn env_required(name: &str) -> Result<String> {
 ///   4. `OPENAI_API_KEY`   → OpenAI
 ///
 /// Empty env vars are treated as unset.
-pub fn from_env() -> Result<(Arc<dyn Provider>, String)> {
+pub fn from_env() -> Result<Arc<dyn Provider>> {
     let detected = detect_provider_name(|name| std::env::var(name).ok().filter(|v| !v.is_empty()))?;
+    Ok(match detected {
+        DetectedProvider::Anthropic => Arc::new(AnthropicProvider::from_env()?),
+        DetectedProvider::Mistral => Arc::new(MistralProvider::from_env()?),
+        DetectedProvider::OpenAi => Arc::new(OpenAiProvider::from_env()?),
+        DetectedProvider::LiteLlm => Arc::new(LiteLlmProvider::from_env()?),
+    })
+}
 
-    let (provider, model): (Arc<dyn Provider>, String) = match detected {
-        DetectedProvider::Anthropic => {
-            let (p, m) = AnthropicProvider::from_env_with_model()?;
-            (Arc::new(p), m)
-        }
-        DetectedProvider::Mistral => {
-            let (p, m) = MistralProvider::from_env_with_model()?;
-            (Arc::new(p), m)
-        }
-        DetectedProvider::OpenAi => {
-            let (p, m) = OpenAiProvider::from_env_with_model()?;
-            (Arc::new(p), m)
-        }
-        DetectedProvider::LiteLlm => {
-            let (p, m) = LiteLlmProvider::from_env_with_model()?;
-            (Arc::new(p), m)
-        }
+/// Resolve a model name from environment variables.
+///
+/// Priority:
+///   1. `MODEL`        — generic override, wins regardless of provider.
+///   2. `*_MODEL`      — provider-prefixed, selected by the same detection
+///                       matrix as [`from_env`] (e.g. `OPENAI_MODEL`).
+///   3. hosted default — the vendor's canonical model for the detected provider.
+pub fn model_from_env() -> Result<String> {
+    model_from_env_with(|name| std::env::var(name).ok())
+}
+
+pub(crate) fn model_from_env_with<F>(get: F) -> Result<String>
+where
+    F: Fn(&str) -> Option<String>,
+{
+    let filtered = |name: &str| get(name).filter(|v| !v.is_empty());
+
+    if let Some(m) = filtered("MODEL") {
+        return Ok(m);
+    }
+
+    let detected = detect_provider_name(&filtered)?;
+    let (model_var, default_model) = match detected {
+        DetectedProvider::Anthropic => ("ANTHROPIC_MODEL", "claude-sonnet-4-20250514"),
+        DetectedProvider::Mistral => ("MISTRAL_MODEL", "mistral-medium-2508"),
+        DetectedProvider::OpenAi => ("OPENAI_MODEL", "gpt-4o"),
+        DetectedProvider::LiteLlm => ("LITELLM_MODEL", "claude-sonnet-4-20250514"),
     };
-    Ok((provider, model))
+    Ok(filtered(model_var).unwrap_or_else(|| default_model.to_string()))
 }
 
 /// Pure detection logic. Determines which provider to use based on env var values.
@@ -230,5 +249,58 @@ mod tests {
     fn empty_values_treated_as_unset() {
         let err = detect_provider_name(env_map(&[("ANTHROPIC_API_KEY", "")])).unwrap_err();
         assert!(err.to_string().contains("No LLM provider found"));
+    }
+
+    #[test]
+    fn model_generic_wins_over_provider_prefixed() {
+        let model = model_from_env_with(env_map(&[
+            ("OPENAI_API_KEY", "key"),
+            ("OPENAI_MODEL", "gpt-4-turbo"),
+            ("MODEL", "override"),
+        ]))
+        .unwrap();
+        assert_eq!(model, "override");
+    }
+
+    #[test]
+    fn model_provider_prefixed_used_when_generic_unset() {
+        let model = model_from_env_with(env_map(&[
+            ("OPENAI_API_KEY", "key"),
+            ("OPENAI_MODEL", "gpt-4-turbo"),
+        ]))
+        .unwrap();
+        assert_eq!(model, "gpt-4-turbo");
+    }
+
+    #[test]
+    fn model_falls_back_to_hosted_default() {
+        let model = model_from_env_with(env_map(&[("OPENAI_API_KEY", "key")])).unwrap();
+        assert_eq!(model, "gpt-4o");
+    }
+
+    #[test]
+    fn model_hosted_defaults_per_provider() {
+        let anthropic = model_from_env_with(env_map(&[("ANTHROPIC_API_KEY", "k")])).unwrap();
+        assert_eq!(anthropic, "claude-sonnet-4-20250514");
+
+        let mistral = model_from_env_with(env_map(&[("MISTRAL_API_KEY", "k")])).unwrap();
+        assert_eq!(mistral, "mistral-medium-2508");
+
+        let litellm = model_from_env_with(env_map(&[("LITELLM_API_KEY", "k")])).unwrap();
+        assert_eq!(litellm, "claude-sonnet-4-20250514");
+    }
+
+    #[test]
+    fn model_errors_when_no_provider_detected() {
+        let err = model_from_env_with(env_map(&[])).unwrap_err();
+        assert!(err.to_string().contains("No LLM provider found"));
+    }
+
+    #[test]
+    fn model_empty_provider_prefixed_falls_through_to_default() {
+        let model =
+            model_from_env_with(env_map(&[("OPENAI_API_KEY", "key"), ("OPENAI_MODEL", "")]))
+                .unwrap();
+        assert_eq!(model, "gpt-4o");
     }
 }

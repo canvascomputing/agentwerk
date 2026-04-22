@@ -16,7 +16,6 @@ use crate::error::Result;
 pub struct LiteLlmProvider(OpenAiProvider);
 
 const DEFAULT_BASE_URL: &str = "http://localhost:4000";
-const DEFAULT_MODEL: &str = "claude-sonnet-4-20250514";
 
 impl LiteLlmProvider {
     pub fn new(api_key: impl Into<String>) -> Self {
@@ -27,16 +26,14 @@ impl LiteLlmProvider {
         Self(OpenAiProvider::raw(api_key, DEFAULT_BASE_URL, client, true))
     }
 
-    pub fn base_url(self, url: String) -> Self {
+    pub fn base_url(self, url: impl Into<String>) -> Self {
         Self(self.0.base_url(url))
     }
 
-    pub(crate) fn from_env_with_model() -> Result<(Self, String)> {
+    pub(crate) fn from_env() -> Result<Self> {
         use super::environment::env_or;
-        let provider = Self::new(env_or("LITELLM_API_KEY", ""))
-            .base_url(env_or("LITELLM_BASE_URL", DEFAULT_BASE_URL));
-        let model = env_or("LITELLM_MODEL", DEFAULT_MODEL);
-        Ok((provider, model))
+        Ok(Self::new(env_or("LITELLM_API_KEY", ""))
+            .base_url(env_or("LITELLM_BASE_URL", DEFAULT_BASE_URL)))
     }
 }
 

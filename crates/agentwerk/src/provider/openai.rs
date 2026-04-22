@@ -56,17 +56,15 @@ impl OpenAiProvider {
         }
     }
 
-    pub fn base_url(mut self, url: String) -> Self {
-        self.base_url = url;
+    pub fn base_url(mut self, url: impl Into<String>) -> Self {
+        self.base_url = url.into();
         self
     }
 
-    pub(crate) fn from_env_with_model() -> Result<(Self, String)> {
+    pub(crate) fn from_env() -> Result<Self> {
         use super::environment::{env_or, env_required};
-        let provider = Self::new(env_required("OPENAI_API_KEY")?)
-            .base_url(env_or("OPENAI_BASE_URL", "https://api.openai.com"));
-        let model = env_or("OPENAI_MODEL", "gpt-4o");
-        Ok((provider, model))
+        Ok(Self::new(env_required("OPENAI_API_KEY")?)
+            .base_url(env_or("OPENAI_BASE_URL", "https://api.openai.com")))
     }
 }
 
@@ -245,7 +243,7 @@ async fn stream_response(
     let mut stream = response.bytes_stream();
 
     while let Some(chunk) = stream.next().await {
-        let chunk = chunk.map_err(|e| ProviderError::ConnectionFailed {
+        let chunk = chunk.map_err(|e| ProviderError::StreamInterrupted {
             reason: e.to_string(),
         })?;
         for event in parser.push(&chunk) {

@@ -30,12 +30,10 @@ impl AnthropicProvider {
         }
     }
 
-    pub(crate) fn from_env_with_model() -> Result<(Self, String)> {
+    pub(crate) fn from_env() -> Result<Self> {
         use super::environment::{env_or, env_required};
-        let provider = Self::new(env_required("ANTHROPIC_API_KEY")?)
-            .base_url(env_or("ANTHROPIC_BASE_URL", "https://api.anthropic.com"));
-        let model = env_or("ANTHROPIC_MODEL", "claude-sonnet-4-20250514");
-        Ok((provider, model))
+        Ok(Self::new(env_required("ANTHROPIC_API_KEY")?)
+            .base_url(env_or("ANTHROPIC_BASE_URL", "https://api.anthropic.com")))
     }
 
     pub fn with_client(api_key: impl Into<String>, client: reqwest::Client) -> Self {
@@ -46,8 +44,8 @@ impl AnthropicProvider {
         }
     }
 
-    pub fn base_url(mut self, url: String) -> Self {
-        self.base_url = url;
+    pub fn base_url(mut self, url: impl Into<String>) -> Self {
+        self.base_url = url.into();
         self
     }
 
@@ -219,7 +217,7 @@ async fn stream_response(
     let mut stream = response.bytes_stream();
 
     while let Some(chunk) = stream.next().await {
-        let chunk = chunk.map_err(|e| ProviderError::ConnectionFailed {
+        let chunk = chunk.map_err(|e| ProviderError::StreamInterrupted {
             reason: e.to_string(),
         })?;
         for event in parser.push(&chunk) {

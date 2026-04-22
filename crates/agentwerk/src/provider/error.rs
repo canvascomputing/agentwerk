@@ -33,6 +33,10 @@ pub enum ProviderError {
     },
     /// Network / TLS / connection failure before any HTTP response.
     ConnectionFailed { reason: String },
+    /// The stream was cut off mid-body after headers arrived. Distinct from
+    /// `ConnectionFailed` (pre-response) and `InvalidResponse` (structurally
+    /// broken payload): the transport broke while chunks were still in flight.
+    StreamInterrupted { reason: String },
     /// The response arrived but its body couldn't be parsed — malformed
     /// JSON, unexpected shape, or a broken SSE frame.
     InvalidResponse { reason: String },
@@ -44,6 +48,7 @@ impl ProviderError {
             self,
             ProviderError::RateLimited { .. }
                 | ProviderError::ConnectionFailed { .. }
+                | ProviderError::StreamInterrupted { .. }
                 | ProviderError::UnexpectedStatus {
                     retryable: true,
                     ..
@@ -97,6 +102,9 @@ impl fmt::Display for ProviderError {
             ProviderError::ConnectionFailed { reason } => {
                 write!(f, "Connection failed: {reason}")
             }
+            ProviderError::StreamInterrupted { reason } => {
+                write!(f, "Stream interrupted: {reason}")
+            }
             ProviderError::InvalidResponse { reason } => {
                 write!(f, "Invalid response: {reason}")
             }
@@ -131,6 +139,16 @@ mod tests {
         };
         assert!(err.is_retryable());
         assert_eq!(err.retry_after_ms(), None);
+    }
+
+    #[test]
+    fn stream_interrupted_is_retryable() {
+        let err = ProviderError::StreamInterrupted {
+            reason: "error decoding response body".into(),
+        };
+        assert!(err.is_retryable());
+        assert_eq!(err.retry_after_ms(), None);
+        assert!(err.to_string().starts_with("Stream interrupted:"));
     }
 
     #[test]
@@ -208,6 +226,9 @@ mod tests {
             },
             ProviderError::ConnectionFailed {
                 reason: "dns".into(),
+            },
+            ProviderError::StreamInterrupted {
+                reason: "chunk read error".into(),
             },
             ProviderError::InvalidResponse {
                 reason: "bad json".into(),

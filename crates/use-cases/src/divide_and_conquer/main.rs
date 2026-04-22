@@ -35,7 +35,8 @@ units. Use the raw integer with no commas or spaces.";
 #[tokio::main]
 async fn main() {
     let args = parse_args();
-    let (provider, model) = agentwerk::provider::from_env().expect("LLM provider required");
+    let provider = agentwerk::provider::from_env().expect("LLM provider required");
+    let model = agentwerk::provider::model_from_env().expect("model name required");
     let style = Style::detect();
     let cancel = install_cancel_signal();
 

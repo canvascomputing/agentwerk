@@ -16,7 +16,6 @@ use crate::error::Result;
 pub struct MistralProvider(OpenAiProvider);
 
 const DEFAULT_BASE_URL: &str = "https://api.mistral.ai";
-const DEFAULT_MODEL: &str = "mistral-medium-2508";
 
 impl MistralProvider {
     pub fn new(api_key: impl Into<String>) -> Self {
@@ -32,16 +31,14 @@ impl MistralProvider {
         ))
     }
 
-    pub fn base_url(self, url: String) -> Self {
+    pub fn base_url(self, url: impl Into<String>) -> Self {
         Self(self.0.base_url(url))
     }
 
-    pub(crate) fn from_env_with_model() -> Result<(Self, String)> {
+    pub(crate) fn from_env() -> Result<Self> {
         use super::environment::{env_or, env_required};
-        let provider = Self::new(env_required("MISTRAL_API_KEY")?)
-            .base_url(env_or("MISTRAL_BASE_URL", DEFAULT_BASE_URL));
-        let model = env_or("MISTRAL_MODEL", DEFAULT_MODEL);
-        Ok((provider, model))
+        Ok(Self::new(env_required("MISTRAL_API_KEY")?)
+            .base_url(env_or("MISTRAL_BASE_URL", DEFAULT_BASE_URL)))
     }
 }
 
