@@ -1190,6 +1190,125 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn max_request_tokens_propagates_into_request() {
+        let provider = MockProvider::text("done");
+        let agent = simple_agent().max_request_tokens(512);
+        let harness = TestHarness::new(provider);
+        harness.run_agent(&agent, "go").await.unwrap();
+        let req = harness.provider().last_request().unwrap();
+        assert_eq!(req.max_request_tokens, Some(512));
+    }
+
+    #[tokio::test]
+    async fn input_budget_guard_fires_at_exact_limit() {
+        let mut first = tool_response("t", "c1", serde_json::json!({}));
+        first.usage = TokenUsage {
+            input_tokens: 4000,
+            output_tokens: 100,
+            ..Default::default()
+        };
+        let provider = MockProvider::new(vec![first, text_response("unused")]);
+
+        let agent = Agent::new()
+            .name("test")
+            .model("mock")
+            .identity_prompt("")
+            .max_input_tokens(4000)
+            .tool(MockTool::new("t", false, "ok"));
+
+        let harness = TestHarness::new(provider);
+        let output = harness.run_agent(&agent, "go").await.unwrap();
+        assert_eq!(
+            output.status,
+            AgentStatus::InputBudgetExhausted {
+                usage: 4000,
+                limit: 4000
+            }
+        );
+    }
+
+    #[tokio::test]
+    async fn output_budget_guard_fires_at_exact_limit() {
+        let mut first = tool_response("t", "c1", serde_json::json!({}));
+        first.usage = TokenUsage {
+            input_tokens: 100,
+            output_tokens: 4000,
+            ..Default::default()
+        };
+        let provider = MockProvider::new(vec![first, text_response("unused")]);
+
+        let agent = Agent::new()
+            .name("test")
+            .model("mock")
+            .identity_prompt("")
+            .max_output_tokens(4000)
+            .tool(MockTool::new("t", false, "ok"));
+
+        let harness = TestHarness::new(provider);
+        let output = harness.run_agent(&agent, "go").await.unwrap();
+        assert_eq!(
+            output.status,
+            AgentStatus::OutputBudgetExhausted {
+                usage: 4000,
+                limit: 4000
+            }
+        );
+    }
+
+    #[tokio::test]
+    async fn input_budget_event_not_emitted_when_budget_unset() {
+        let mut response = text_response("done");
+        response.usage = TokenUsage {
+            input_tokens: 9_999_999,
+            output_tokens: 9_999_999,
+            ..Default::default()
+        };
+        let provider = MockProvider::new(vec![response]);
+        let harness = TestHarness::new(provider);
+        harness.run_agent(&simple_agent(), "go").await.unwrap();
+
+        let saw_budget = harness.events().all().iter().any(|e| {
+            matches!(
+                e.kind,
+                EventKind::InputBudgetExhausted { .. } | EventKind::OutputBudgetExhausted { .. }
+            )
+        });
+        assert!(
+            !saw_budget,
+            "budget events must not fire when no budget is configured"
+        );
+    }
+
+    #[tokio::test]
+    async fn output_budget_trips_before_input_budget() {
+        let mut response = tool_response("t", "c1", serde_json::json!({}));
+        response.usage = TokenUsage {
+            input_tokens: 100,
+            output_tokens: 5000,
+            ..Default::default()
+        };
+        let provider = MockProvider::new(vec![response, text_response("unused")]);
+
+        let agent = Agent::new()
+            .name("test")
+            .model("mock")
+            .identity_prompt("")
+            .max_input_tokens(10_000)
+            .max_output_tokens(4000)
+            .tool(MockTool::new("t", false, "ok"));
+
+        let harness = TestHarness::new(provider);
+        let output = harness.run_agent(&agent, "go").await.unwrap();
+        assert_eq!(
+            output.status,
+            AgentStatus::OutputBudgetExhausted {
+                usage: 5000,
+                limit: 4000
+            }
+        );
+    }
+
+    #[tokio::test]
     async fn output_token_budget_guard() {
         let mut response = tool_response("t", "c1", serde_json::json!({}));
         response.usage = TokenUsage {

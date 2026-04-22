@@ -506,6 +506,14 @@ mod tests {
     }
 
     #[test]
+    fn serialize_request_omits_max_tokens_when_none() {
+        let mut req = simple_request();
+        req.max_request_tokens = None;
+        let body = provider().serialize_request(&req);
+        assert!(body.get("max_tokens").is_none());
+    }
+
+    #[test]
     fn serialize_request_excludes_system_from_messages() {
         let body = provider().serialize_request(&simple_request());
         let messages = body["messages"].as_array().unwrap();

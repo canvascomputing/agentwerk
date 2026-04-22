@@ -380,9 +380,7 @@ The following fields are inherited, shared or owned by the sub-agents:
 
 ### Batch
 
-Run many agents in parallel with a fixed concurrency cap. Yields results as
-each agent finishes; correlate each result to its input via
-[`AgentOutput.name`](#agentoutput).
+Run many agents in parallel with `batch`:
 
 ```rust
 use agentwerk::{batch, Agent, ReadFileTool};
@@ -407,11 +405,6 @@ for r in results {
     println!("{}: {}", out.name, out.response_raw);
 }
 ```
-
-`batch` accepts any `IntoIterator<Item = Agent>` and returns an
-`impl Stream<Item = Result<AgentOutput>>`. Use `StreamExt::collect` to gather
-every result, or combine with `for_each_concurrent` / `map` to process results
-as they arrive.
 
 ### Todo
 

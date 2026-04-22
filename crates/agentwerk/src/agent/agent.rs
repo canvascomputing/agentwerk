@@ -608,9 +608,15 @@ mod tests {
         let base = Agent::new().name("x").model("original").max_turns(3);
         let applied = base.apply_overrides(&serde_json::json!({
             "model": "overridden",
-            "max_turns": 7
+            "max_turns": 7,
+            "max_request_tokens": 256,
+            "max_input_tokens": 4000,
+            "max_output_tokens": 5000
         }));
         assert_eq!(applied.spec.max_turns, Some(7));
+        assert_eq!(applied.spec.max_request_tokens, Some(256));
+        assert_eq!(applied.spec.max_input_tokens, Some(4000));
+        assert_eq!(applied.spec.max_output_tokens, Some(5000));
         match &applied.spec.model {
             Some(m) => assert_eq!(m.id, "overridden"),
             None => panic!("expected a resolved model"),

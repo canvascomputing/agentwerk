@@ -614,6 +614,14 @@ mod tests {
     }
 
     #[test]
+    fn serialize_request_omits_max_tokens_when_none() {
+        let mut req = dummy_request();
+        req.max_request_tokens = None;
+        let body = serialize_request(&req);
+        assert!(body.get("max_tokens").is_none());
+    }
+
+    #[test]
     fn serialize_tools() {
         let request = CompletionRequest {
             model: "test".into(),

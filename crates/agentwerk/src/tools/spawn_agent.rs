@@ -385,6 +385,122 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn spawn_agent_propagates_max_input_tokens() {
+        use crate::provider::types::TokenUsage;
+        use crate::EventKind;
+
+        let sub = Agent::new()
+            .name("tight-budget")
+            .model("mock")
+            .identity_prompt("I do work.")
+            .tool(MockTool::new("t", false, "ok"));
+
+        let agent = Agent::new()
+            .name("orchestrator")
+            .model("mock")
+            .identity_prompt("")
+            .sub_agents([sub]);
+
+        let mut child_turn = tool_response("t", "c1", serde_json::json!({}));
+        child_turn.usage = TokenUsage {
+            input_tokens: 5000,
+            output_tokens: 0,
+            ..Default::default()
+        };
+
+        let provider = Arc::new(MockProvider::new(vec![
+            tool_response(
+                "spawn_agent",
+                "sa1",
+                serde_json::json!({
+                    "description": "tight",
+                    "instruction": "Do work",
+                    "agent": "tight-budget",
+                    "max_input_tokens": 4000,
+                }),
+            ),
+            child_turn,
+            text_response("done"),
+        ]));
+
+        let harness = TestHarness::with_provider(provider);
+        harness.run_agent(&agent, "go").await.unwrap();
+
+        let saw = harness.events().all().iter().any(|e| {
+            e.agent_name == "tight-budget"
+                && matches!(
+                    e.kind,
+                    EventKind::InputBudgetExhausted {
+                        limit: 4000,
+                        usage: 5000,
+                    }
+                )
+        });
+        assert!(
+            saw,
+            "max_input_tokens override must propagate to the spawned child"
+        );
+    }
+
+    #[tokio::test]
+    async fn spawn_agent_propagates_max_output_tokens() {
+        use crate::provider::types::TokenUsage;
+        use crate::EventKind;
+
+        let sub = Agent::new()
+            .name("tight-budget")
+            .model("mock")
+            .identity_prompt("I do work.")
+            .tool(MockTool::new("t", false, "ok"));
+
+        let agent = Agent::new()
+            .name("orchestrator")
+            .model("mock")
+            .identity_prompt("")
+            .sub_agents([sub]);
+
+        let mut child_turn = tool_response("t", "c1", serde_json::json!({}));
+        child_turn.usage = TokenUsage {
+            input_tokens: 0,
+            output_tokens: 5000,
+            ..Default::default()
+        };
+
+        let provider = Arc::new(MockProvider::new(vec![
+            tool_response(
+                "spawn_agent",
+                "sa1",
+                serde_json::json!({
+                    "description": "tight",
+                    "instruction": "Do work",
+                    "agent": "tight-budget",
+                    "max_output_tokens": 4000,
+                }),
+            ),
+            child_turn,
+            text_response("done"),
+        ]));
+
+        let harness = TestHarness::with_provider(provider);
+        harness.run_agent(&agent, "go").await.unwrap();
+
+        let saw = harness.events().all().iter().any(|e| {
+            e.agent_name == "tight-budget"
+                && matches!(
+                    e.kind,
+                    EventKind::OutputBudgetExhausted {
+                        limit: 4000,
+                        usage: 5000,
+                    }
+                )
+        });
+        assert!(
+            saw,
+            "max_output_tokens override must propagate to the spawned child"
+        );
+    }
+
+    #[tokio::test]
     async fn spawn_agent_unknown_agent_errors() {
         let agent = Agent::new()
             .name("orchestrator")
