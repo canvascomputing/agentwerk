@@ -18,7 +18,6 @@ pub enum AgentError {
     /// which policy tripped.
     PolicyViolated {
         kind: PolicyKind,
-        usage: u64,
         limit: u64,
     },
 }
@@ -29,14 +28,14 @@ impl fmt::Display for AgentError {
             AgentError::AgentCrashed { message } => {
                 write!(f, "agent crashed: {message}")
             }
-            AgentError::PolicyViolated { kind, usage, limit } => {
+            AgentError::PolicyViolated { kind, limit } => {
                 let label = match kind {
                     PolicyKind::Turns => "Turn limit reached",
                     PolicyKind::InputTokens => "Input token limit reached",
                     PolicyKind::OutputTokens => "Output token limit reached",
                     PolicyKind::SchemaRetries => "Schema retry limit reached",
                 };
-                write!(f, "{label}: {usage}/{limit}")
+                write!(f, "{label}: limit={limit}")
             }
         }
     }

@@ -445,7 +445,6 @@ async fn retry_exhaustion_returns_schema_exhausted() {
         output.errors.last(),
         Some(Error::Agent(agentwerk::agent::AgentError::PolicyViolated {
             kind: agentwerk::event::PolicyKind::SchemaRetries,
-            usage: 3,
             limit: 2,
         }))
     ));

@@ -120,8 +120,8 @@ impl Event {
                 EventKind::OutputTruncated { turn } => {
                     eprintln!("[{agent}] truncated turn={turn}");
                 }
-                EventKind::PolicyViolated { kind, usage, limit } => {
-                    eprintln!("[{agent}] policy violated: {kind:?} {usage}/{limit}");
+                EventKind::PolicyViolated { kind, limit } => {
+                    eprintln!("[{agent}] policy violated: {kind:?} limit={limit}");
                 }
                 EventKind::SchemaRetried {
                     attempt,
@@ -221,7 +221,6 @@ pub enum EventKind {
     /// `Outcome::Failed`.
     PolicyViolated {
         kind: PolicyKind,
-        usage: u64,
         limit: u64,
     },
     /// The model's terminal reply failed output-schema validation and the loop
@@ -320,7 +319,6 @@ mod tests {
             },
             EventKind::PolicyViolated {
                 kind: PolicyKind::Turns,
-                usage: 5,
                 limit: 5,
             },
             EventKind::SchemaRetried {

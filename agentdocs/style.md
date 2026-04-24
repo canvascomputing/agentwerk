@@ -45,7 +45,7 @@ Naming and comment rules, plus README structure. Skim the section matching what 
 **Tuple for one payload. Struct for multiple fields or a meaningful field name.**
 
 - Tuple form: `Provider(ProviderError)`, `TaskNotFound(String)`, `IoFailed(io::Error)`.
-- Struct form: `AgentError::PolicyViolated { kind, usage, limit }`.
+- Struct form: `AgentError::PolicyViolated { kind, limit }`.
 - Struct form is also used when a single field name carries meaning the type alone does not.
 - Two-arm result enums use one word per variant: `Success` / `Error`, with no `is_*` predicates.
 

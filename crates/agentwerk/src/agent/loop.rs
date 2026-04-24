@@ -139,35 +139,32 @@ pub(crate) fn run_loop(
             }
             if let Some(limit) = spec.max_turns {
                 if state.turns >= limit {
-                    let usage = u64::from(state.turns);
                     let limit = u64::from(limit);
                     let kind = PolicyKind::Turns;
                     state
                         .errors
-                        .push(AgentError::PolicyViolated { kind, usage, limit }.into());
-                    emit(EventKind::PolicyViolated { kind, usage, limit });
+                        .push(AgentError::PolicyViolated { kind, limit }.into());
+                    emit(EventKind::PolicyViolated { kind, limit });
                     break 'run Outcome::Failed;
                 }
             }
             if let Some(limit) = spec.max_input_tokens {
                 if state.usage.input_tokens >= limit {
-                    let usage = state.usage.input_tokens;
                     let kind = PolicyKind::InputTokens;
                     state
                         .errors
-                        .push(AgentError::PolicyViolated { kind, usage, limit }.into());
-                    emit(EventKind::PolicyViolated { kind, usage, limit });
+                        .push(AgentError::PolicyViolated { kind, limit }.into());
+                    emit(EventKind::PolicyViolated { kind, limit });
                     break 'run Outcome::Failed;
                 }
             }
             if let Some(limit) = spec.max_output_tokens {
                 if state.usage.output_tokens >= limit {
-                    let usage = state.usage.output_tokens;
                     let kind = PolicyKind::OutputTokens;
                     state
                         .errors
-                        .push(AgentError::PolicyViolated { kind, usage, limit }.into());
-                    emit(EventKind::PolicyViolated { kind, usage, limit });
+                        .push(AgentError::PolicyViolated { kind, limit }.into());
+                    emit(EventKind::PolicyViolated { kind, limit });
                     break 'run Outcome::Failed;
                 }
             }
@@ -432,21 +429,19 @@ pub(crate) fn run_loop(
                 None => None,
                 Some(Ok(value)) => Some(value),
                 Some(Err(detail)) => {
-                    state.schema_retries += 1;
-                    if let Some(limit) = spec
-                        .max_schema_retries
-                        .filter(|&l| state.schema_retries > l)
-                    {
-                        let usage = u64::from(state.schema_retries);
-                        let limit = u64::from(limit);
-                        let kind = PolicyKind::SchemaRetries;
-                        state
-                            .errors
-                            .push(AgentError::PolicyViolated { kind, usage, limit }.into());
-                        emit(EventKind::PolicyViolated { kind, usage, limit });
-                        emit(EventKind::TurnFinished { turn });
-                        break 'run Outcome::Failed;
+                    if let Some(limit) = spec.max_schema_retries {
+                        if state.schema_retries >= limit {
+                            let limit = u64::from(limit);
+                            let kind = PolicyKind::SchemaRetries;
+                            state
+                                .errors
+                                .push(AgentError::PolicyViolated { kind, limit }.into());
+                            emit(EventKind::PolicyViolated { kind, limit });
+                            emit(EventKind::TurnFinished { turn });
+                            break 'run Outcome::Failed;
+                        }
                     }
+                    state.schema_retries += 1;
                     let SchemaViolation { path, message } = &detail;
                     emit(EventKind::SchemaRetried {
                         attempt: state.schema_retries,
@@ -651,7 +646,6 @@ mod tests {
             output.errors.last(),
             Some(Error::Agent(AgentError::PolicyViolated {
                 kind: PolicyKind::Turns,
-                usage: 2,
                 limit: 2
             }))
         ));
@@ -843,7 +837,6 @@ mod tests {
             output.errors.last(),
             Some(Error::Agent(AgentError::PolicyViolated {
                 kind: PolicyKind::SchemaRetries,
-                usage: 4,
                 limit: 3
             }))
         ));
@@ -979,7 +972,6 @@ mod tests {
             output.errors.last(),
             Some(Error::Agent(AgentError::PolicyViolated {
                 kind: PolicyKind::InputTokens,
-                usage: 5000,
                 limit: 4000
             }))
         ));
@@ -1020,7 +1012,6 @@ mod tests {
             output.errors.last(),
             Some(Error::Agent(AgentError::PolicyViolated {
                 kind: PolicyKind::InputTokens,
-                usage: 4000,
                 limit: 4000
             }))
         ));
@@ -1050,7 +1041,6 @@ mod tests {
             output.errors.last(),
             Some(Error::Agent(AgentError::PolicyViolated {
                 kind: PolicyKind::OutputTokens,
-                usage: 4000,
                 limit: 4000
             }))
         ));
@@ -1109,7 +1099,6 @@ mod tests {
             output.errors.last(),
             Some(Error::Agent(AgentError::PolicyViolated {
                 kind: PolicyKind::OutputTokens,
-                usage: 5000,
                 limit: 4000
             }))
         ));
@@ -1139,7 +1128,6 @@ mod tests {
             output.errors.last(),
             Some(Error::Agent(AgentError::PolicyViolated {
                 kind: PolicyKind::OutputTokens,
-                usage: 5000,
                 limit: 4000
             }))
         ));
