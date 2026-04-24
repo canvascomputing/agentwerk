@@ -2,7 +2,7 @@
 
 Naming and comment rules, plus README structure. Skim the section matching what is being written.
 
-## 1. Crate root
+## Crate root
 
 **Only headline types live at the crate root.**
 
@@ -11,7 +11,7 @@ Naming and comment rules, plus README structure. Skim the section matching what 
 - Name collisions at the root are forbidden; `ToolResult` next to `Result` is not acceptable.
 - Every other type lives under its domain module.
 
-## 2. Where non-root types live
+## Where non-root types live
 
 **Types live next to the abstraction, owner, or protocol they belong to.**
 
@@ -21,7 +21,7 @@ Naming and comment rules, plus README structure. Skim the section matching what 
 - Wire-protocol types live with the protocol: `ModelRequest`, `Message`, `TokenUsage` under `provider::`.
 - Free functions live in their module: `tool()` is at `tools::tool`, never at the root.
 
-## 3. Name disambiguation
+## Name disambiguation
 
 **Names are disambiguated through content, not through redundant prefixes.**
 
@@ -30,7 +30,7 @@ Naming and comment rules, plus README structure. Skim the section matching what 
 - Acronyms follow Rust API guidelines: `OpenAi`, not `OpenAI`.
 - Two structs may not share a bare name within one module; both stay qualified.
 
-## 4. Failure variants
+## Failure variants
 
 **Failure variants use passive-voice past-participle: `<Subject><Verb-ed>`.**
 
@@ -40,7 +40,7 @@ Naming and comment rules, plus README structure. Skim the section matching what 
 - State-transition events use the same form: `AgentStarted`, `RequestRetried`, `ContextCompacted`.
 - Whether a failure is terminal is documented on the variant, not encoded in the name.
 
-## 5. Variant shape
+## Variant shape
 
 **Tuple for one payload. Struct for multiple fields or a meaningful field name.**
 
@@ -49,15 +49,15 @@ Naming and comment rules, plus README structure. Skim the section matching what 
 - Struct form is also used when a single field name carries meaning the type alone does not.
 - Two-arm result enums use one word per variant: `Success` / `Error`, with no `is_*` predicates.
 
-## 6. Payload fields
+## Payload fields
 
 **One vocabulary is used across every error type.**
 
-- Human-readable strings are named `message: String`, never `error`.
-- Wrapped underlying errors are named `source`, as in `FooFailed { source: io::Error }`.
+- Human-readable strings MUST be named `message: String`, never `error`.
+- Wrapped underlying errors MUST be named `source`, as in `FooFailed { source: io::Error }`.
 - Typed metadata uses descriptive names: `status`, `retryable`, `retry_delay`, `tool_name`, `retries`, `after_ms`.
 
-## 7. RAII guard fields
+## RAII guard fields
 
 **Fields held only for their `Drop` behavior use a plain name and `#[allow(dead_code)]`.**
 
@@ -65,24 +65,24 @@ Naming and comment rules, plus README structure. Skim the section matching what 
 - `rustc`'s `dead_code` lint flags such fields because neither `Clone` nor drop glue count as reads; the attribute acknowledges this on the one field that needs it.
 - `#[expect(dead_code)]` is preferred on Rust 1.81+: it self-removes if the field later does get read.
 
-## 8. Time-typed fields
+## Time-typed fields
 
-**Use `std::time::Duration`. The type is the unit.**
+**Public API fields MUST use `std::time::Duration`. The type is the unit.**
 
 - No `_ms`, `_MS`, or `_seconds` suffix on public API names.
 - Internal helpers and on-the-wire JSON may use raw integers where the protocol requires it.
 - Example: `timeout_ms` is acceptable inside a tool input schema because the schema is a wire protocol.
 
-## 9. Directory-path identifiers
+## Directory-path identifiers
 
 **Identifiers that name a directory path use `_dir`. The word `directory` is reserved for prose.**
 
 - Fields, parameters, and locals: `working_dir`, `session_dir`, `base_dir`, `data_dir`.
 - Matches the Rust standard library: `std::fs::read_dir`, `std::env::current_dir`, `std::fs::DirEntry`.
-- `folder` is never used; it has no std analog.
+- IMPORTANT: `folder` is never used; it has no std analog.
 - Doc comments and environment labels may still say "working directory" in English prose.
 
-## 10. Counter identifiers
+## Counter identifiers
 
 **Counters use a bare plural noun. No `_count` suffix on fields or on methods that return a count.**
 
@@ -91,28 +91,28 @@ Naming and comment rules, plus README structure. Skim the section matching what 
 - Accessor methods mirror the field form: `MockProvider::requests()` returns the count of captured requests.
 - The `_count` suffix is reserved for the rare case where the plural would clash with a sibling collection field on the same type.
 
-## 11. Builders
+## Builders
 
 **Builder methods are bare nouns. No `with_` prefix.**
 
 - Examples: `.name()`, `.model()`, `.tool()`, `.sub_agents()`, `.read_only()`.
 - The `with_` prefix is used only when a bare name clashes with a trait method, such as `with_description` on `BashTool`.
 
-## 12. Constructors
+## Constructors
 
 **`new()` for the primary path. Named constructors carry semantics.**
 
 - `new()` is the primary constructor.
 - Named constructors: `open()`, `unrestricted()`, `success()`, `error()`, `empty()`, `from_id()`, `from_env()`.
 
-## 13. Getters and setters
+## Getters and setters
 
 **Mutable accessors use `set_` and `get_` prefixes to distinguish them from builders.**
 
 - Example: `set_extension()`, `get_extension()`.
 - Builder methods remain unprefixed.
 
-## 14. Free functions and tool structs
+## Free functions and tool structs
 
 **Free functions are rare and snake_case. Tool structs follow `{Name}Tool`.**
 
@@ -120,7 +120,7 @@ Naming and comment rules, plus README structure. Skim the section matching what 
 - A free function is used only when no receiver type is natural.
 - Tool structs: `ReadFileTool`, `BashTool`, `SpawnAgentTool`.
 
-## 15. Doc comments (`///`)
+## Doc comments (`///`)
 
 **State the purpose in one sentence. No "This function…" or "Returns…".**
 
@@ -129,7 +129,7 @@ Naming and comment rules, plus README structure. Skim the section matching what 
 - Trivial getters, `Default::default`, `From` impls, and self-explanatory variants are left undocumented.
 - Within one type, coverage is all-or-none: every member has a real doc comment, or none does.
 
-## 16. Module docs (`//!`)
+## Module docs (`//!`)
 
 **Every file begins with a `//!` that states what the file contributes to the crate.**
 
@@ -138,7 +138,7 @@ Naming and comment rules, plus README structure. Skim the section matching what 
 - Do not list the contents of the file.
 - The `//!` stays even when the filename is already descriptive.
 
-## 17. Line comments (`//`)
+## Line comments (`//`)
 
 **Four reasons are allowed. Everything else is deleted.**
 
@@ -155,17 +155,17 @@ Not allowed:
 - Task, PR, issue, or changelog references.
 - Commented-out code.
 - Stub or aspirational markers; use `unimplemented!(...)` or return `Ok(())`.
-- `TODO`, `FIXME`, or `NOTE`.
+- IMPORTANT: no `TODO`, `FIXME`, or `NOTE`. Fix it or file an issue.
 - Decorative banners of any kind: `// ── Title`, `// ==== Title ====`, `// ----- Title -----`.
 
-## 18. Tests
+## Tests
 
 **Test names carry intent. Setup is not narrated.**
 
 - A comment is justified only to pin an architectural invariant the test guards.
 - A module-level `//!` describing the test file's scope is acceptable.
 
-## 19. Comment examples
+## Comment examples
 
 **Good and bad variants of each comment type.**
 
@@ -222,7 +222,7 @@ counter += 1;
 // ----- Core types -----
 ```
 
-## 20. README structure
+## README structure
 
 **Terse, example-driven, scannable.**
 
@@ -231,7 +231,7 @@ counter += 1;
 - Enumerations use bullets or grouped bullets; tables are not used.
 - Facts live in one place; other sections cross-link rather than repeat.
 
-## 21. README voice
+## README voice
 
 **Direct and neutral. No marketing language.**
 

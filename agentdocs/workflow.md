@@ -2,16 +2,16 @@
 
 Commands used to build, test, release, and run example agents.
 
-## 1. Build
+## Build
 
-**Every build runs with `-D warnings`.**
+**Every build MUST run with `-D warnings`.**
 
 - `make` compiles the crate.
 - `make fmt` formats the code.
 - `make clean` removes build artefacts.
 - Any warning fails the build.
 
-## 2. Test
+## Test
 
 **Unit tests use a mock provider; integration tests use a real one.**
 
@@ -21,7 +21,7 @@ Commands used to build, test, release, and run example agents.
 - Inline tests live in each module as `#[cfg(test)] mod tests`.
 - `MockProvider` and `TestHarness` are in `testutil.rs`.
 
-## 3. Release
+## Release
 
 **`make bump` runs the full release step in one command.**
 
@@ -30,7 +30,7 @@ Commands used to build, test, release, and run example agents.
 - `make bump part=major` bumps the major version.
 - Push the new tag with `git push --tags`.
 
-## 4. Use cases
+## Use cases
 
 **Example agents live in a separate crate and run through `make use_case`.**
 

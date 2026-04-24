@@ -2,7 +2,7 @@
 
 agentwerk is a Rust crate for building LLM agents. An agent reads input, calls a provider, optionally invokes tools, and returns an output. The six sections below list the design principles the rest of the crate is measured against.
 
-## 1. Library, not framework
+## Library, not framework
 
 **The crate provides building blocks. The caller composes them.**
 
@@ -11,7 +11,7 @@ agentwerk is a Rust crate for building LLM agents. An agent reads input, calls a
 - No required structure for the consuming application.
 - Every feature is optional.
 
-## 2. Minimal surface
+## Minimal surface
 
 **Each abstraction must remove more complexity than it adds.**
 
@@ -20,7 +20,7 @@ agentwerk is a Rust crate for building LLM agents. An agent reads input, calls a
 - Providers own a `reqwest::Client` directly.
 - Indirection without a concrete benefit is not added.
 
-## 3. Composable
+## Composable
 
 **Agents are cloned and modified, not registered.**
 
@@ -29,7 +29,7 @@ agentwerk is a Rust crate for building LLM agents. An agent reads input, calls a
 - `Batch` runs many clones of one template against different inputs.
 - `SpawnAgentTool` lets a running agent launch another.
 
-## 4. Provider-agnostic
+## Provider-agnostic
 
 **The same agent code runs against any supported provider.**
 
@@ -38,7 +38,7 @@ agentwerk is a Rust crate for building LLM agents. An agent reads input, calls a
 - All providers share one retry policy.
 - `Provider::from_env()` selects a provider from environment variables.
 
-## 5. Observe, do not prescribe
+## Observe, do not prescribe
 
 **The loop emits events. The caller decides what to do with them.**
 
@@ -47,11 +47,11 @@ agentwerk is a Rust crate for building LLM agents. An agent reads input, calls a
 - The event handler receives `Event { kind, ... }` at every lifecycle boundary.
 - The handler may log, stream, store, or discard each event.
 
-## 6. Correctness over convenience
+## Correctness over convenience
 
 **Zero warnings, typed errors, no silent fallbacks.**
 
-- The build fails on any warning (`RUSTFLAGS="-D warnings"`).
+- The build MUST pass with `RUSTFLAGS="-D warnings"`: any warning fails it.
 - Schema validation retries on mismatch, then fails explicitly.
-- No blanket `From<io::Error>` or `From<serde_json::Error>`.
+- IMPORTANT: no blanket `From<io::Error>` or `From<serde_json::Error>`. Every conversion is an explicit mapping into a typed variant.
 - Misconfigured builders panic at build time.

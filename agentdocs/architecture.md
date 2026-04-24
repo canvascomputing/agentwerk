@@ -2,7 +2,7 @@
 
 The invariants that shape how code fits together. Layout says where code lives; this file says why the seams are where they are.
 
-## 1. Builder, spec, loop
+## Builder, spec, loop
 
 **A run has three stages: build the `Agent`, compile an `AgentSpec`, drive it with `run_loop`.**
 
@@ -11,7 +11,7 @@ The invariants that shape how code fits together. Layout says where code lives; 
 - `run_loop` owns the turn-by-turn state machine and is the only code that mutates `LoopState`.
 - The loop never sees the builder; the builder never sees the loop's state.
 
-## 2. Runtime versus state
+## Runtime versus state
 
 **Each run has two buckets: externals in `LoopRuntime`, mutation in `LoopState`.**
 
@@ -20,7 +20,7 @@ The invariants that shape how code fits together. Layout says where code lives; 
 - `LoopRuntime` is shared behind an `Arc`; `LoopState` is owned by the loop and threaded through by `&mut`.
 - Sub-agents reuse the parent's runtime; they never share a state.
 
-## 3. Copy-on-write configuration
+## Copy-on-write configuration
 
 **`AgentSpec` is shared across clones. Builder methods mutate through `Arc::make_mut`.**
 
@@ -29,7 +29,7 @@ The invariants that shape how code fits together. Layout says where code lives; 
 - The template (tools, sub-agents, prompts, limits) is shared; the per-run fields (instruction, template variables, handlers) are not.
 - `AgentSpec` is `pub(crate)`; callers never touch it directly.
 
-## 4. Sub-agent inheritance
+## Sub-agent inheritance
 
 **A sub-agent is an `Agent` compiled against a parent's runtime. Inheritance is per-field.**
 
@@ -38,25 +38,25 @@ The invariants that shape how code fits together. Layout says where code lives; 
 - Tools and sub-agents are not inherited: each `AgentSpec` declares its own registry.
 - `SpawnAgentTool` is the only path that calls `Agent::run_child`; the public API never exposes the parent slot.
 
-## 5. One error at the crate boundary
+## One error at the crate boundary
 
 **`Result<T, Error>` is the one fallible surface. Domain sub-enums live with their domain.**
 
 - `Error::Provider`, `Error::Agent`, `Error::Tool` each wrap a domain-specific enum defined in that module.
 - `Error::is_retryable` and `Error::retry_delay` delegate to the provider variant; all other categories are terminal.
 - Tool failures flow two ways: `Err` bubbles as `Error::Tool`, `Ok(ToolResult::Error(...))` goes back to the model as text.
-- No blanket `From<io::Error>` or `From<serde_json::Error>`; each mapping is explicit.
+- IMPORTANT: no blanket `From<io::Error>` or `From<serde_json::Error>`. Each mapping MUST be explicit.
 
-## 6. Events observe, Output returns
+## Events observe, Output returns
 
 **Observation and return use separate channels. `Event` is out-of-band; `Output` is the run's value.**
 
 - Every lifecycle transition emits an `Event` through `runtime.event_handler`.
 - `AgentFinished` fires on every `Ok` termination path (`Completed`, `Cancelled`, `Failed`) and matches `Output.outcome`.
-- Pre-flight failures (missing provider, unreadable prompt, unset model) return `Err(...)` without ever starting the loop.
-- Handlers are cheap, non-blocking closures; the loop does not await them.
+- IMPORTANT: pre-flight failures (missing provider, unreadable prompt, unset model) return `Err(...)` without ever starting the loop. No `AgentStarted` or `AgentFinished` is emitted in that case.
+- Handlers MUST be cheap, non-blocking closures; the loop does not await them.
 
-## 7. Providers own their client
+## Providers own their client
 
 **Each concrete provider owns a `reqwest::Client` directly. There is no transport abstraction.**
 
@@ -65,7 +65,7 @@ The invariants that shape how code fits together. Layout says where code lives; 
 - HTTP error mapping is shared through `map_http_errors` + a provider-specific `classify` closure.
 - Retry and compaction are shared seams (`util::Retry`, `agent::compact`); vendor code does not retry.
 
-## 8. Cancellation is cooperative
+## Cancellation is cooperative
 
 **A run is cancelled by setting one shared `Arc<AtomicBool>`. Every waiter polls it.**
 
@@ -74,9 +74,9 @@ The invariants that shape how code fits together. Layout says where code lives; 
 - `AgentHandle` sets the flag explicitly; dropping the last handle sets it via `CancelGuard::drop`.
 - `Batch` installs its own signal on every submitted agent so `BatchHandle::cancel` reaches in-flight runs.
 
-## 9. Persistence stays internal
+## Persistence stays internal
 
-**`persistence/` is `pub(crate)`. Sessions and tasks are opt-in behaviors, never part of the public type surface.**
+**`persistence/` MUST stay `pub(crate)`. Sessions and tasks are opt-in behaviors, never part of the public type surface.**
 
 - `SessionStore` appends JSONL transcripts when `.session_dir(...)` is set; otherwise the loop writes nothing.
 - `TaskStore` is reached through `TaskTool`; agents coordinate through it without importing it.

@@ -2,7 +2,7 @@
 
 Where code lives and the rules that govern placement.
 
-## 1. Crates
+## Crates
 
 **Two crates: one library, one example set.**
 
@@ -10,7 +10,7 @@ Where code lives and the rules that govern placement.
 - `crates/use-cases/` holds runnable example agents that depend on the library.
 - Nothing in `use-cases` is re-exported by the library.
 
-## 2. Top-level files
+## Top-level files
 
 **Each top-level source file is one concern the caller observes directly.**
 
@@ -19,7 +19,7 @@ Where code lives and the rules that govern placement.
 - `config.rs` defines `ConfigError`.
 - `batch.rs`, `event.rs`, `output.rs` hold concerns the caller observes in their own right.
 
-## 3. The `agent/` module
+## The `agent/` module
 
 **Contains the builder, the compiled form, and the execution loop.**
 
@@ -29,7 +29,7 @@ Where code lives and the rules that govern placement.
 - `spawn.rs` holds `AgentHandle` and `OutputFuture`.
 - `prompts.rs`, `compact.rs`, and `queue.rs` hold prompt constants, the compaction hook, and the command queue.
 
-## 4. The `provider/` module
+## The `provider/` module
 
 **Contains every LLM provider plus the shared transport code.**
 
@@ -39,7 +39,7 @@ Where code lives and the rules that govern placement.
 - `environment.rs` implements `Provider::from_env()`.
 - `stream.rs` holds the SSE parser; the shared retry strategy lives in `util::Retry`.
 
-## 5. The `tools/` module
+## The `tools/` module
 
 **`tool.rs` holds the trait and registry; every other file is one built-in tool.**
 
@@ -49,15 +49,15 @@ Where code lives and the rules that govern placement.
 - `spawn_agent.rs`, `send_message.rs`, `task_tools.rs`, and `tool_search.rs` are orchestration tools.
 - `web_fetch.rs` is the web fetch tool.
 
-## 6. Internal modules
+## Internal modules
 
-**`persistence/` is `pub(crate)` and is never exposed to callers.**
+**`persistence/` MUST stay `pub(crate)` and never be exposed to callers.**
 
 - `session.rs` holds `SessionStore`, which appends JSONL transcripts.
 - `task.rs` holds `TaskStore`, which stores file-locked tasks.
 - `error.rs` holds `PersistenceError`.
 
-## 7. Tests
+## Tests
 
 **Unit tests, integration tests, and inline tests live in three separate locations.**
 
