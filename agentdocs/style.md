@@ -254,3 +254,12 @@ counter += 1;
 - Examples stay minimal; show the smallest snippet that demonstrates the feature.
 - Example models are `claude-haiku-4-5-20251001` or `claude-sonnet-4-20250514`.
 - Update triggers: a new builder method, a new tool, a new event kind, a new environment variable, or a changed default.
+
+## README example comments
+
+**Inline `//` comments in README code describe what the caller gets, not how it works inside.**
+
+- The reader may be new to agent concepts: write for them.
+- Accepted: `// run the task once and return the result`, `// keep the agent ready for more instructions`.
+- Rejected: `// drive the loop`, `// one-shot`, `// background task`, `// keep-alive`.
+- Jargon and internal terms are cut even when they are shorter.

@@ -93,7 +93,7 @@ let provider = OpenAiProvider::new(key);
 let provider = LiteLlmProvider::new(key);
 ```
 
-Point a provider at a custom endpoint with a custom timeout:
+Point an agent at a custom endpoint with a custom timeout:
 
 ```rust
 let provider = AnthropicProvider::new(key)
@@ -113,7 +113,7 @@ let output = Agent::new()
 
 ### Agents
 
-The `Agent` interface is the main entry point. Build with `Agent::new()`, chain configurations, then call `.run()`:
+The `Agent` interface is the main entry point. Use `run` to execute the agent and return its output:
 
 ```rust
 let output = Agent::new()
@@ -121,13 +121,13 @@ let output = Agent::new()
     .model_name("claude-sonnet-4-20250514")
     .instruction_prompt("Summarize src/main.rs")
     .tool(ReadFileTool)
-    .run()
+    .run() // start agent and wait for the results
     .await?;
 ```
 
 #### Keep Agents Alive
 
-Use `.spawn()` when you want to keep sending instructions to your agent:
+Use `spawn` when you want to keep sending instructions to your agent:
 
 ```rust
 let (agent, output) = Agent::new()
@@ -135,19 +135,15 @@ let (agent, output) = Agent::new()
     .model_name("claude-sonnet-4-20250514")
     .identity_prompt("Answer questions about the codebase.")
     .tool(ReadFileTool)
-    .spawn();
+    .spawn(); // start the agent and send more instructions later
 
 agent.send("What does src/main.rs do?");
 agent.send("Now summarize src/lib.rs.");
 
-agent.cancel();
-
-let output = output.await?;
+agent.cancel(); // stop the agent when there are no more instructions to send
 ```
 
 The agent waits for the next `send` after each reply. Call `cancel()` to stop it.
-
-Methods on the spawned agent:
 
 | Method | Description |
 |--------|-------------|
@@ -166,7 +162,7 @@ Agent::new().model_from_env()?
 Agent::new().model_name("claude-sonnet-4-20250514")
 ```
 
-If you have to set a custom context window size, e.g. due to compaction algorithms, you can set:
+Models from Anthropic, OpenAI, and Mistral come with a default context window size. Override it when needed, e.g. for custom model setups. The context window size is only relevant for calculating when messages need to be compacted:
 
 ```rust
 let model = Model::from_name("custom-model")
@@ -177,7 +173,7 @@ let agent = Agent::new().model(model);
 
 ### Prompting
 
-Prompts are the core ingredient of every agentic application. Here are different prompt types which can be used to drive your agent's behavior.
+Prompts are the core ingredient of every agentic application. Here are different prompt types which are important to drive your agent's work:
 
 ```rust
 use agentwerk::Agent;
@@ -198,7 +194,7 @@ The following methods on `Agent` configure prompts:
 |--------|-------------|
 | `.identity_prompt(_file)` | Persistent identity of the agent |
 | `.instruction_prompt(_file)` | Task for the current run |
-| `.context_prompt(_file)` | Additional context appended after environment metadata (working directory, platform, OS version, date) |
+| `.context_prompt(_file)` | Context information relevant for a task (defaults to working directory, platform, OS version, date) |
 | `.behavior_prompt(_file)` | Override the default behavioral directives (`DEFAULT_BEHAVIOR_PROMPT`) |
 
 ```rust
