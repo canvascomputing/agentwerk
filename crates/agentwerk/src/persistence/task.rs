@@ -120,7 +120,7 @@ impl TaskStore {
 
     pub(crate) fn delete(&self, id: &str) -> Result<()> {
         self.with_lock(|| {
-            let path = self.task_path(id);
+            let path = self.task_file(id);
             if !path.exists() {
                 return Ok(());
             }
@@ -169,18 +169,18 @@ impl TaskStore {
         self.base_dir.join("tasks").join(&self.list_id)
     }
 
-    fn task_path(&self, id: &str) -> PathBuf {
+    fn task_file(&self, id: &str) -> PathBuf {
         self.dir().join(format!("{id}.json"))
     }
 
     fn with_lock<T>(&self, f: impl FnOnce() -> Result<T>) -> Result<T> {
         fs::create_dir_all(self.dir())?;
-        let lock_path = self.dir().join(".lock");
-        with_file_lock(&lock_path, f)
+        let lock_file = self.dir().join(".lock");
+        with_file_lock(&lock_file, f)
     }
 
     fn read_task(&self, id: &str) -> Result<Option<Task>> {
-        let path = self.task_path(id);
+        let path = self.task_file(id);
         if !path.exists() {
             return Ok(None);
         }
@@ -196,7 +196,7 @@ impl TaskStore {
 
     fn write_task(&self, task: &Task) -> Result<()> {
         let json = serde_json::to_string_pretty(task)?;
-        fs::write(self.task_path(&task.id), json)?;
+        fs::write(self.task_file(&task.id), json)?;
         Ok(())
     }
 

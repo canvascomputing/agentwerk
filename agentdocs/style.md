@@ -73,12 +73,13 @@ Naming and comment rules, plus README structure. Skim the section matching what 
 - Internal helpers and on-the-wire JSON may use raw integers where the protocol requires it.
 - Example: `timeout_ms` is acceptable inside a tool input schema because the schema is a wire protocol.
 
-## Directory-path identifiers
+## Path identifiers
 
-**Identifiers that name a directory path use `_dir`. The word `directory` is reserved for prose.**
+**A directory path uses `_dir`. A file path uses `_file`. The bare suffix `_path` is used only when the value can be either.**
 
-- Fields, parameters, and locals: `working_dir`, `session_dir`, `base_dir`, `data_dir`.
-- Matches the Rust standard library: `std::fs::read_dir`, `std::env::current_dir`, `std::fs::DirEntry`.
+- Directories: `working_dir`, `session_dir`, `base_dir`, `data_dir`. Matches `std::fs::read_dir`, `std::env::current_dir`, `std::fs::DirEntry`.
+- Files: `transcript_file`, `task_file`, `lock_file`. The value is always a concrete file on disk.
+- `_path` is for genuinely ambiguous cases: input that could name either, or a value passed through as opaque.
 - IMPORTANT: `folder` is never used; it has no std analog.
 - Doc comments and environment labels may still say "working directory" in English prose.
 

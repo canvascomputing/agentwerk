@@ -106,21 +106,21 @@ impl SessionStore {
         Ok(result)
     }
 
-    fn session_dir(&self) -> PathBuf {
+    fn dir(&self) -> PathBuf {
         self.base_dir.join("sessions").join(&self.session_id)
     }
 
-    fn transcript_path(&self) -> PathBuf {
-        self.session_dir().join("transcript.jsonl")
+    fn transcript_file(&self) -> PathBuf {
+        self.dir().join("transcript.jsonl")
     }
 
     fn open_writer(&mut self) -> Result<&mut BufWriter<File>> {
         if self.writer.is_none() {
-            fs::create_dir_all(self.session_dir())?;
+            fs::create_dir_all(self.dir())?;
             let file = OpenOptions::new()
                 .create(true)
                 .append(true)
-                .open(self.transcript_path())?;
+                .open(self.transcript_file())?;
             self.writer = Some(BufWriter::new(file));
         }
         Ok(self.writer.as_mut().unwrap())
