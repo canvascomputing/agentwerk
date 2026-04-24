@@ -12,7 +12,8 @@ use super::types::{ModelResponse, Message, StreamEvent};
 use crate::tools::ToolDefinition;
 
 /// One request to a provider. Built by the agent loop from the agent's
-/// configuration and the running conversation; passed to [`Provider::respond`].
+/// configuration and the running conversation; passed to [`Provider::respond`]
+/// together with a streaming event callback.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ModelRequest {
     /// Model name (e.g. `claude-sonnet-4-20250514`).
@@ -70,28 +71,15 @@ pub enum ToolChoice {
 /// # });
 /// ```
 pub trait Provider: Send + Sync {
-    /// One-shot response. Sends the request, waits for the model to stop,
-    /// and returns the assembled reply.
+    /// Drive one model turn. Emits incremental [`StreamEvent`]s via the
+    /// callback as the model generates, then returns the assembled reply.
+    /// Callers that don't care about incremental events pass a no-op closure
+    /// and wait for the final [`ModelResponse`].
     fn respond(
         &self,
         request: ModelRequest,
-    ) -> Pin<Box<dyn Future<Output = ProviderResult<ModelResponse>> + Send + '_>>;
-
-    /// Streaming response. Emits incremental [`StreamEvent`]s via the
-    /// callback as the model generates, then returns the assembled reply.
-    /// Default implementation falls back to [`Self::respond`] and emits a
-    /// single `MessageDone`.
-    fn respond_streaming(
-        &self,
-        request: ModelRequest,
         on_event: Arc<dyn Fn(StreamEvent) + Send + Sync>,
-    ) -> Pin<Box<dyn Future<Output = ProviderResult<ModelResponse>> + Send + '_>> {
-        Box::pin(async move {
-            let response = self.respond(request).await?;
-            on_event(StreamEvent::MessageDone);
-            Ok(response)
-        })
-    }
+    ) -> Pin<Box<dyn Future<Output = ProviderResult<ModelResponse>> + Send + '_>>;
 
     /// Warm the TCP+TLS connection pool before the first request.
     ///

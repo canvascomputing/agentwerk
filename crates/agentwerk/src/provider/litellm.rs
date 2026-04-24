@@ -42,16 +42,9 @@ impl Provider for LiteLlmProvider {
     fn respond(
         &self,
         request: ModelRequest,
-    ) -> Pin<Box<dyn Future<Output = ProviderResult<ModelResponse>> + Send + '_>> {
-        self.0.respond(request)
-    }
-
-    fn respond_streaming(
-        &self,
-        request: ModelRequest,
         on_event: Arc<dyn Fn(StreamEvent) + Send + Sync>,
     ) -> Pin<Box<dyn Future<Output = ProviderResult<ModelResponse>> + Send + '_>> {
-        self.0.respond_streaming(request, on_event)
+        self.0.respond(request, on_event)
     }
 
     fn prewarm(&self) -> Pin<Box<dyn Future<Output = ()> + Send + '_>> {

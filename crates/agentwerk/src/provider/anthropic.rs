@@ -87,15 +87,6 @@ impl AnthropicProvider {
         body
     }
 
-    fn parse_response(&self, json: Value) -> ModelResponse {
-        ModelResponse {
-            content: parse_content(&json),
-            status: parse_status(&json),
-            usage: parse_usage(&json),
-            model: json["model"].as_str().unwrap_or("unknown").to_string(),
-        }
-    }
-
     async fn send_request(&self, body: Value) -> ProviderResult<reqwest::Response> {
         let url = format!("{}/v1/messages", self.base_url);
         let mut req = self.client.post(&url).json(&body);
@@ -176,24 +167,6 @@ impl Provider for AnthropicProvider {
     }
 
     fn respond(
-        &self,
-        request: ModelRequest,
-    ) -> Pin<Box<dyn Future<Output = ProviderResult<ModelResponse>> + Send + '_>> {
-        let body = self.serialize_request(&request);
-
-        Box::pin(async move {
-            let resp = self.send_request(body).await?;
-            let json: Value = resp
-                .json()
-                .await
-                .map_err(|e| ProviderError::ResponseMalformed {
-                    message: e.to_string(),
-                })?;
-            Ok(self.parse_response(json))
-        })
-    }
-
-    fn respond_streaming(
         &self,
         request: ModelRequest,
         on_event: Arc<dyn Fn(StreamEvent) + Send + Sync>,
@@ -430,30 +403,6 @@ fn serialize_tool_choice(choice: &ToolChoice) -> Value {
     }
 }
 
-fn parse_content(json: &Value) -> Vec<ContentBlock> {
-    let Some(blocks) = json["content"].as_array() else {
-        return Vec::new();
-    };
-    blocks
-        .iter()
-        .filter_map(|block| match block["type"].as_str()? {
-            "text" => Some(ContentBlock::Text {
-                text: block["text"].as_str().unwrap_or("").to_string(),
-            }),
-            "tool_use" => Some(ContentBlock::ToolUse {
-                id: block["id"].as_str().unwrap_or("").to_string(),
-                name: block["name"].as_str().unwrap_or("").to_string(),
-                input: block["input"].clone(),
-            }),
-            _ => None,
-        })
-        .collect()
-}
-
-fn parse_status(json: &Value) -> ResponseStatus {
-    parse_status_str(json["stop_reason"].as_str().unwrap_or("end_turn"))
-}
-
 fn parse_status_str(raw: &str) -> ResponseStatus {
     match raw {
         "end_turn" => ResponseStatus::EndTurn,
@@ -464,16 +413,6 @@ fn parse_status_str(raw: &str) -> ResponseStatus {
         "refusal" => ResponseStatus::Refused,
         "pause_turn" => ResponseStatus::PauseTurn,
         _ => ResponseStatus::EndTurn,
-    }
-}
-
-fn parse_usage(json: &Value) -> TokenUsage {
-    let usage = &json["usage"];
-    TokenUsage {
-        input_tokens: usage["input_tokens"].as_u64().unwrap_or(0),
-        output_tokens: usage["output_tokens"].as_u64().unwrap_or(0),
-        cache_read_input_tokens: usage["cache_read_input_tokens"].as_u64().unwrap_or(0),
-        cache_creation_input_tokens: usage["cache_creation_input_tokens"].as_u64().unwrap_or(0),
     }
 }
 
@@ -540,74 +479,6 @@ mod tests {
         let body = provider().serialize_request(&req);
         assert_eq!(body["tool_choice"]["type"], "tool");
         assert_eq!(body["tool_choice"]["name"], "read_file");
-    }
-
-    #[test]
-    fn parse_response_extracts_text() {
-        let json = serde_json::json!({
-            "content": [{"type": "text", "text": "Hello!"}],
-            "stop_reason": "end_turn",
-            "usage": {"input_tokens": 10, "output_tokens": 5},
-            "model": "claude-sonnet-4-20250514"
-        });
-        let resp = provider().parse_response(json);
-        assert_eq!(resp.content.len(), 1);
-        assert!(matches!(&resp.content[0], ContentBlock::Text { text } if text == "Hello!"));
-        assert_eq!(resp.status, ResponseStatus::EndTurn);
-        assert_eq!(resp.usage.input_tokens, 10);
-    }
-
-    #[test]
-    fn parse_response_extracts_tool_use() {
-        let json = serde_json::json!({
-            "content": [{"type": "tool_use", "id": "t1", "name": "read", "input": {"path": "/tmp"}}],
-            "stop_reason": "tool_use",
-            "usage": {"input_tokens": 0, "output_tokens": 0},
-            "model": "mock"
-        });
-        let resp = provider().parse_response(json);
-        assert_eq!(resp.status, ResponseStatus::ToolUse);
-        match &resp.content[0] {
-            ContentBlock::ToolUse { name, input, .. } => {
-                assert_eq!(name, "read");
-                assert_eq!(input["path"], "/tmp");
-            }
-            other => panic!("Expected ToolUse, got {other:?}"),
-        }
-    }
-
-    #[test]
-    fn parse_response_empty_content() {
-        let json = serde_json::json!({
-            "content": [],
-            "stop_reason": "end_turn",
-            "usage": {"input_tokens": 0, "output_tokens": 0},
-            "model": "mock"
-        });
-        let resp = provider().parse_response(json);
-        assert!(resp.content.is_empty());
-    }
-
-    #[test]
-    fn parse_response_maps_status() {
-        for (reason, expected) in [
-            ("end_turn", ResponseStatus::EndTurn),
-            ("stop_sequence", ResponseStatus::StopSequence),
-            ("tool_use", ResponseStatus::ToolUse),
-            ("max_tokens", ResponseStatus::OutputTruncated),
-            (
-                "model_context_window_exceeded",
-                ResponseStatus::ContextWindowExceeded,
-            ),
-            ("refusal", ResponseStatus::Refused),
-            ("pause_turn", ResponseStatus::PauseTurn),
-        ] {
-            let json = serde_json::json!({
-                "content": [], "stop_reason": reason,
-                "usage": {"input_tokens": 0, "output_tokens": 0}, "model": "m"
-            });
-            assert_eq!(provider().parse_response(json).status, expected);
-        }
     }
 
     fn invalid_request(message: &str) -> String {

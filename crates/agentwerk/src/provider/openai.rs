@@ -133,19 +133,6 @@ impl Provider for OpenAiProvider {
     fn respond(
         &self,
         request: ModelRequest,
-    ) -> Pin<Box<dyn Future<Output = ProviderResult<ModelResponse>> + Send + '_>> {
-        let body = serialize_request(&request);
-        let url = format!("{}/v1/chat/completions", self.base_url);
-
-        Box::pin(async move {
-            let json = self.send_json(&url, body).await?;
-            Ok(parse_response(json, self.cache_tokens))
-        })
-    }
-
-    fn respond_streaming(
-        &self,
-        request: ModelRequest,
         on_event: Arc<dyn Fn(StreamEvent) + Send + Sync>,
     ) -> Pin<Box<dyn Future<Output = ProviderResult<ModelResponse>> + Send + '_>> {
         let mut body = serialize_request(&request);
@@ -161,15 +148,6 @@ impl Provider for OpenAiProvider {
 }
 
 impl OpenAiProvider {
-    async fn send_json(&self, url: &str, body: Value) -> ProviderResult<Value> {
-        let resp = self.send_raw(url, body).await?;
-        resp.json()
-            .await
-            .map_err(|e| ProviderError::ResponseMalformed {
-                message: e.to_string(),
-            })
-    }
-
     async fn send_raw(&self, url: &str, body: Value) -> ProviderResult<reqwest::Response> {
         let resp = self
             .client
@@ -500,48 +478,6 @@ fn serialize_tool_choice(choice: &ToolChoice) -> Value {
     }
 }
 
-fn parse_response(json: Value, cache_tokens: bool) -> ModelResponse {
-    let choice = &json["choices"][0];
-    let message = &choice["message"];
-
-    ModelResponse {
-        content: parse_content(message),
-        status: parse_status(choice),
-        usage: parse_usage(&json, cache_tokens),
-        model: json["model"].as_str().unwrap_or("unknown").to_string(),
-    }
-}
-
-fn parse_content(message: &Value) -> Vec<ContentBlock> {
-    let mut content = Vec::new();
-
-    if let Some(text) = message["content"].as_str() {
-        if !text.is_empty() {
-            content.push(ContentBlock::Text {
-                text: text.to_string(),
-            });
-        }
-    }
-
-    if let Some(tool_calls) = message["tool_calls"].as_array() {
-        for call in tool_calls {
-            let arguments_str = call["function"]["arguments"].as_str().unwrap_or("{}");
-            content.push(ContentBlock::ToolUse {
-                id: call["id"].as_str().unwrap_or("").to_string(),
-                name: call["function"]["name"].as_str().unwrap_or("").to_string(),
-                input: serde_json::from_str(arguments_str)
-                    .unwrap_or(Value::Object(Default::default())),
-            });
-        }
-    }
-
-    content
-}
-
-fn parse_status(choice: &Value) -> ResponseStatus {
-    parse_status_str(choice["finish_reason"].as_str().unwrap_or("stop"))
-}
-
 fn parse_status_str(raw: &str) -> ResponseStatus {
     match raw {
         "stop" => ResponseStatus::EndTurn,
@@ -549,24 +485,6 @@ fn parse_status_str(raw: &str) -> ResponseStatus {
         "length" => ResponseStatus::OutputTruncated,
         "content_filter" => ResponseStatus::Refused,
         _ => ResponseStatus::EndTurn,
-    }
-}
-
-fn parse_usage(json: &Value, cache_tokens: bool) -> TokenUsage {
-    let usage = &json["usage"];
-    TokenUsage {
-        input_tokens: usage["prompt_tokens"].as_u64().unwrap_or(0),
-        output_tokens: usage["completion_tokens"].as_u64().unwrap_or(0),
-        cache_read_input_tokens: if cache_tokens {
-            usage["cache_read_input_tokens"].as_u64().unwrap_or(0)
-        } else {
-            0
-        },
-        cache_creation_input_tokens: if cache_tokens {
-            usage["cache_creation_input_tokens"].as_u64().unwrap_or(0)
-        } else {
-            0
-        },
     }
 }
 
@@ -658,111 +576,6 @@ mod tests {
         let body = serialize_request(&request);
         assert_eq!(body["tool_choice"]["type"], "function");
         assert_eq!(body["tool_choice"]["function"]["name"], "read_file");
-    }
-
-    #[test]
-    fn parse_text_response() {
-        let json = serde_json::json!({
-            "choices": [{"message": {"content": "Hello!"}, "finish_reason": "stop"}],
-            "usage": {"prompt_tokens": 10, "completion_tokens": 5},
-            "model": "gpt-4"
-        });
-        let resp = parse_response(json, false);
-        assert_eq!(resp.content.len(), 1);
-        assert!(matches!(&resp.content[0], ContentBlock::Text { text } if text == "Hello!"));
-        assert_eq!(resp.status, ResponseStatus::EndTurn);
-        assert_eq!(resp.usage.input_tokens, 10);
-        assert_eq!(resp.model, "gpt-4");
-    }
-
-    #[test]
-    fn parse_tool_call_response() {
-        let json = serde_json::json!({
-            "choices": [{
-                "message": {
-                    "content": null,
-                    "tool_calls": [{
-                        "id": "call_abc",
-                        "type": "function",
-                        "function": {"name": "read_file", "arguments": "{\"path\":\"/tmp\"}"}
-                    }]
-                },
-                "finish_reason": "tool_calls"
-            }],
-            "usage": {"prompt_tokens": 10, "completion_tokens": 5},
-            "model": "gpt-4"
-        });
-        let resp = parse_response(json, true);
-        assert_eq!(resp.status, ResponseStatus::ToolUse);
-        match &resp.content[0] {
-            ContentBlock::ToolUse { id, name, input } => {
-                assert_eq!(id, "call_abc");
-                assert_eq!(name, "read_file");
-                assert_eq!(input["path"], "/tmp");
-            }
-            other => panic!("Expected ToolUse, got {other:?}"),
-        }
-    }
-
-    #[test]
-    fn parse_finish_reason_mapping() {
-        for (reason, expected) in [
-            ("stop", ResponseStatus::EndTurn),
-            ("tool_calls", ResponseStatus::ToolUse),
-            ("length", ResponseStatus::OutputTruncated),
-            ("content_filter", ResponseStatus::Refused),
-        ] {
-            let json = serde_json::json!({
-                "choices": [{"message": {"content": "x"}, "finish_reason": reason}],
-                "usage": {"prompt_tokens": 0, "completion_tokens": 0},
-                "model": "m"
-            });
-            assert_eq!(
-                parse_response(json, false).status,
-                expected,
-                "Failed for {reason}"
-            );
-        }
-    }
-
-    #[test]
-    fn parse_null_content() {
-        let json = serde_json::json!({
-            "choices": [{"message": {"content": null}, "finish_reason": "stop"}],
-            "usage": {"prompt_tokens": 0, "completion_tokens": 0},
-            "model": "m"
-        });
-        assert!(parse_response(json, false).content.is_empty());
-    }
-
-    #[test]
-    fn parse_usage_with_cache_tokens() {
-        let json = serde_json::json!({
-            "choices": [{"message": {"content": "x"}, "finish_reason": "stop"}],
-            "usage": {
-                "prompt_tokens": 100, "completion_tokens": 50,
-                "cache_read_input_tokens": 20, "cache_creation_input_tokens": 10
-            },
-            "model": "m"
-        });
-        let resp = parse_response(json, true);
-        assert_eq!(resp.usage.cache_read_input_tokens, 20);
-        assert_eq!(resp.usage.cache_creation_input_tokens, 10);
-    }
-
-    #[test]
-    fn parse_usage_without_cache_tokens() {
-        let json = serde_json::json!({
-            "choices": [{"message": {"content": "x"}, "finish_reason": "stop"}],
-            "usage": {
-                "prompt_tokens": 100, "completion_tokens": 50,
-                "cache_read_input_tokens": 20, "cache_creation_input_tokens": 10
-            },
-            "model": "m"
-        });
-        let resp = parse_response(json, false);
-        assert_eq!(resp.usage.cache_read_input_tokens, 0);
-        assert_eq!(resp.usage.cache_creation_input_tokens, 0);
     }
 
     fn body_400(code: &str, message: &str) -> String {

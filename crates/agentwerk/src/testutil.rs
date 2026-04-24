@@ -81,25 +81,16 @@ impl Provider for MockProvider {
     fn respond(
         &self,
         request: ModelRequest,
+        on_event: Arc<dyn Fn(StreamEvent) + Send + Sync>,
     ) -> Pin<Box<dyn Future<Output = ProviderResult<ModelResponse>> + Send + '_>> {
         self.requests.lock().unwrap().push(request);
 
         Box::pin(async move {
-            self.results.lock().unwrap().pop_front().unwrap_or_else(|| {
+            let response = self.results.lock().unwrap().pop_front().unwrap_or_else(|| {
                 Err(ProviderError::ResponseMalformed {
                     message: "no more mock responses".into(),
                 })
-            })
-        })
-    }
-
-    fn respond_streaming(
-        &self,
-        request: ModelRequest,
-        on_event: Arc<dyn Fn(StreamEvent) + Send + Sync>,
-    ) -> Pin<Box<dyn Future<Output = ProviderResult<ModelResponse>> + Send + '_>> {
-        Box::pin(async move {
-            let response = self.respond(request).await?;
+            })?;
             for block in &response.content {
                 if let ContentBlock::Text { text } = block {
                     on_event(StreamEvent::TextDelta {

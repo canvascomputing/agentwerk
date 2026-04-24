@@ -387,7 +387,7 @@ async fn call_provider(
     tokio::select! {
         biased;
         _ = wait_for_cancel(&runtime.cancel_signal) => None,
-        result = runtime.provider.respond_streaming(request, on_event) => {
+        result = runtime.provider.respond(request, on_event) => {
             Some(result.map_err(Error::from))
         }
     }
