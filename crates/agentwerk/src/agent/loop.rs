@@ -1,6 +1,6 @@
 //! The agent execution loop. Drives one compiled `Agent` turn by turn until it returns an `Output`.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::future::Future;
 use std::path::{Path, PathBuf};
 use std::pin::Pin;
@@ -40,8 +40,7 @@ pub(crate) struct LoopRuntime {
     pub command_queue: Option<Arc<CommandQueue>>,
     pub session_store: Option<Arc<Mutex<SessionStore>>>,
     pub metadata: Option<String>,
-    pub discovered_tools: Arc<Mutex<HashSet<String>>>,
-    pub tools: Arc<ToolRegistry>,
+    pub tool_registry: Arc<ToolRegistry>,
     pub template_variables: HashMap<String, Value>,
 }
 
@@ -188,9 +187,7 @@ pub(crate) fn run_loop(
                     model: spec.model().name.clone(),
                     system_prompt: spec.system_prompt(&runtime.template_variables),
                     messages: state.messages.clone(),
-                    tools: runtime
-                        .tools
-                        .definitions(&runtime.discovered_tools.lock().unwrap()),
+                    tools: runtime.tool_registry.definitions(),
                     max_request_tokens: spec.max_request_tokens,
                     tool_choice: None,
                 };
@@ -330,10 +327,10 @@ pub(crate) fn run_loop(
                     });
                 }
                 let tool_ctx = ToolContext::new(runtime.working_directory.clone())
-                    .registry(Arc::clone(&runtime.tools))
+                    .registry(Arc::clone(&runtime.tool_registry))
                     .runtime(Arc::clone(&runtime))
                     .caller_spec(Arc::clone(&spec));
-                let raw = runtime.tools.execute(&tool_calls, &tool_ctx).await;
+                let raw = runtime.tool_registry.execute(&tool_calls, &tool_ctx).await;
                 let mut blocks = Vec::with_capacity(raw.len());
                 for (block, result, failure_kind) in raw {
                     if let ContentBlock::ToolResult { tool_use_id, .. } = &block {
@@ -897,8 +894,7 @@ mod tests {
             command_queue: None,
             session_store: None,
             metadata: Some(meta.to_string()),
-            discovered_tools: Arc::new(Mutex::new(HashSet::new())),
-            tools: Arc::new(ToolRegistry::new()),
+            tool_registry: Arc::new(ToolRegistry::new()),
             template_variables: HashMap::new(),
         }
     }

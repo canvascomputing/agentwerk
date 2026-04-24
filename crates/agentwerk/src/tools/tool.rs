@@ -5,7 +5,7 @@ use std::future::Future;
 use std::path::PathBuf;
 use std::pin::Pin;
 use std::sync::atomic::AtomicBool;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -71,11 +71,7 @@ impl ToolContext {
 
     pub(crate) fn mark_tool_discovered(&self, name: &str) {
         if let Some(runtime) = self.runtime.as_ref() {
-            runtime
-                .discovered_tools
-                .lock()
-                .unwrap()
-                .insert(name.to_string());
+            runtime.tool_registry.mark_discovered(name);
         }
     }
 }
@@ -175,9 +171,12 @@ pub trait ToolLike: Send + Sync {
     ) -> Pin<Box<dyn Future<Output = Result<ToolResult>> + Send + 'a>>;
 }
 
-/// Registry of tools available to an agent.
+/// Registry of tools available to an agent. Also owns the set of deferred
+/// tools discovered during the run: cloning the registry (e.g. when the spec
+/// registry is cloned into a fresh `LoopRuntime`) starts with an empty set.
 pub(crate) struct ToolRegistry {
     pub(crate) tools: Vec<Arc<dyn ToolLike>>,
+    pub(crate) discovered: Mutex<HashSet<String>>,
 }
 
 impl std::fmt::Debug for ToolRegistry {
@@ -191,7 +190,10 @@ impl std::fmt::Debug for ToolRegistry {
 
 impl ToolRegistry {
     pub(crate) fn new() -> Self {
-        Self { tools: Vec::new() }
+        Self {
+            tools: Vec::new(),
+            discovered: Mutex::new(HashSet::new()),
+        }
     }
 
     pub(crate) fn register(&mut self, tool: impl ToolLike + 'static) {
@@ -202,9 +204,14 @@ impl ToolRegistry {
         self.tools.iter().find(|t| t.name() == name).cloned()
     }
 
+    pub(crate) fn mark_discovered(&self, name: &str) {
+        self.discovered.lock().unwrap().insert(name.to_string());
+    }
+
     /// Tool definitions sent to the provider. Deferred tools that haven't
     /// been discovered yet get name-only stubs; all others get full definitions.
-    pub(crate) fn definitions(&self, discovered: &HashSet<String>) -> Vec<ToolDefinition> {
+    pub(crate) fn definitions(&self) -> Vec<ToolDefinition> {
+        let discovered = self.discovered.lock().unwrap();
         self.tools
             .iter()
             .map(|t| {
@@ -327,6 +334,7 @@ impl Clone for ToolRegistry {
     fn clone(&self) -> Self {
         Self {
             tools: self.tools.clone(),
+            discovered: Mutex::new(HashSet::new()),
         }
     }
 }
@@ -528,7 +536,7 @@ mod tests {
         registry.register(MockTool::new("read", true, "ok"));
         registry.register(MockTool::new("write", false, "ok"));
 
-        let defs = registry.definitions(&HashSet::new());
+        let defs = registry.definitions();
         assert_eq!(defs.len(), 2);
         assert_eq!(defs[0].name, "read");
         assert_eq!(defs[1].name, "write");
@@ -541,17 +549,15 @@ mod tests {
         registry.register(DeferredMockTool::new("deferred_tool"));
 
         // Without discovery: deferred tool has empty definition
-        let discovered = HashSet::new();
-        let defs = registry.definitions(&discovered);
+        let defs = registry.definitions();
         assert_eq!(defs.len(), 2);
         let deferred = defs.iter().find(|d| d.name == "deferred_tool").unwrap();
         assert!(deferred.description.is_empty());
         assert_eq!(deferred.input_schema, serde_json::json!({}));
 
         // With discovery: deferred tool has full definition
-        let mut discovered = HashSet::new();
-        discovered.insert("deferred_tool".to_string());
-        let defs = registry.definitions(&discovered);
+        registry.mark_discovered("deferred_tool");
+        let defs = registry.definitions();
         let deferred = defs.iter().find(|d| d.name == "deferred_tool").unwrap();
         assert!(!deferred.description.is_empty());
     }
@@ -572,7 +578,7 @@ mod tests {
         let mut registry = ToolRegistry::new();
         registry.register(MockTool::new("t", true, "ok"));
         let cloned = registry.clone();
-        assert_eq!(cloned.definitions(&HashSet::new()).len(), 1);
+        assert_eq!(cloned.definitions().len(), 1);
     }
 
     #[tokio::test]

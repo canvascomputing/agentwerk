@@ -219,7 +219,7 @@ mod tests {
             .await
             .unwrap();
 
-        let discovered = runtime.discovered_tools.lock().unwrap();
+        let discovered = runtime.tool_registry.discovered.lock().unwrap();
         assert!(discovered.contains("read_file"));
     }
 }

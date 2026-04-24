@@ -1,6 +1,6 @@
 //! The crate's central user-facing type and its builder. Carries prompts, tools, and tuning knobs into the execution loop.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, Mutex};
@@ -495,8 +495,7 @@ impl Agent {
             command_queue,
             session_store,
             metadata,
-            discovered_tools: Arc::new(Mutex::new(HashSet::new())),
-            tools: build_tools(spec),
+            tool_registry: build_tools(spec),
             template_variables: self.template_variables.clone(),
         }
     }
@@ -524,8 +523,7 @@ impl Agent {
             command_queue: parent.command_queue.clone(),
             session_store: parent.session_store.clone(),
             metadata: parent.metadata.clone(),
-            discovered_tools: parent.discovered_tools.clone(),
-            tools: build_tools(spec),
+            tool_registry: build_tools(spec),
             template_variables: self.template_variables.clone(),
         }
     }
