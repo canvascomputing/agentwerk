@@ -61,21 +61,6 @@ pub struct Output {
     pub errors: Vec<Error>,
 }
 
-impl Output {
-    /// An empty placeholder with default statistics and [`Outcome::Completed`].
-    /// Useful in tests and as a neutral fallback.
-    pub fn empty() -> Self {
-        Self {
-            name: String::new(),
-            response: None,
-            response_raw: String::new(),
-            statistics: Statistics::default(),
-            outcome: Outcome::Completed,
-            errors: Vec::new(),
-        }
-    }
-}
-
 /// Per-attempt schema mismatch carried between [`OutputSchema::validate`] and
 /// the agent loop. Internal: the model-visible consequence flows through
 /// [`EventKind::SchemaRetried`](crate::event::EventKind::SchemaRetried) per
@@ -125,7 +110,7 @@ impl OutputSchema {
     /// fence so the most common formatting mistake doesn't force a retry
     /// round-trip.
     pub(crate) fn validate(&self, text: &str) -> SchemaResult<Value> {
-        let body = strip_code_fences(text.trim());
+        let body = strip_code_fences(text);
         let value: Value = serde_json::from_str(body).map_err(|e| SchemaViolation {
             path: String::new(),
             message: format!("not valid JSON: {e}"),
@@ -148,6 +133,7 @@ impl OutputSchema {
 }
 
 fn strip_code_fences(s: &str) -> &str {
+    let s = s.trim();
     let s = s
         .strip_prefix("```json")
         .or_else(|| s.strip_prefix("```"))
