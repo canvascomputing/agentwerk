@@ -29,17 +29,14 @@ pub enum PolicyKind {
     SchemaRetries,
 }
 
-/// Classification of a [`EventKind::ToolCallFailed`].
+/// Categorical discriminant for [`EventKind::ToolCallFailed`]. One variant
+/// per [`ToolError`](crate::ToolError) case, payloads stripped.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ToolFailureKind {
-    /// The tool returned `Ok(ToolResult::Error(...))`, or the registry could
-    /// not find a tool by that name. The error message is visible to the
-    /// model, which may recover by adjusting its arguments or picking a
-    /// different tool.
-    InBand,
-    /// The tool's `call` raised `Err(...)` — a structural / harness-level
-    /// failure the model cannot recover from by retrying.
-    Infrastructure,
+    /// The registry had no tool with that name.
+    ToolNotFound,
+    /// The tool was invoked but its execution raised an error.
+    ExecutionFailed,
 }
 
 /// Observation emitted during an agent run.
@@ -279,14 +276,14 @@ mod tests {
             EventKind::ToolCallFailed {
                 tool_name: "glob".into(),
                 call_id: "c1".into(),
-                message: "boom".into(),
-                kind: ToolFailureKind::InBand,
+                message: "Unknown tool: glob".into(),
+                kind: ToolFailureKind::ToolNotFound,
             },
             EventKind::ToolCallFailed {
                 tool_name: "glob".into(),
                 call_id: "c2".into(),
                 message: "panic".into(),
-                kind: ToolFailureKind::Infrastructure,
+                kind: ToolFailureKind::ExecutionFailed,
             },
             EventKind::TokensReported {
                 model: "m".into(),

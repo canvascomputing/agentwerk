@@ -29,7 +29,11 @@ fn route(err: PersistenceError) -> Result<ToolResult> {
             "Task {task_id} blocked by unfinished task {blocker_id}"
         ))),
         err @ PersistenceError::LockFailed { .. } | err @ PersistenceError::IoFailed(_) => {
-            Err(ToolError::new("task", err.to_string()).into())
+            Err(ToolError::ExecutionFailed {
+                tool_name: "task".into(),
+                message: err.to_string(),
+            }
+            .into())
         }
     }
 }

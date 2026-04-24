@@ -16,7 +16,7 @@ use crate::output::{Outcome, Output, OutputSchema, SchemaViolation, Statistics};
 use crate::persistence::session::{SessionStore, TranscriptEntry};
 use crate::provider::types::{ContentBlock, Message, ResponseStatus, StreamEvent, TokenUsage};
 use crate::provider::{ModelRequest, Provider, ProviderError, RequestErrorKind};
-use crate::tools::{ToolCall, ToolContext, ToolRegistry, ToolResult};
+use crate::tools::{ToolCall, ToolContext, ToolRegistry};
 use crate::util::{
     cancellable_sleep, format_current_date, now_millis, wait_for_cancel, ExponentialRetry, Retry,
     Retryable,
@@ -326,25 +326,24 @@ pub(crate) fn run_loop(
                     .caller_spec(Arc::clone(&spec));
                 let raw = runtime.tool_registry.execute(&tool_calls, &tool_ctx).await;
                 let mut blocks = Vec::with_capacity(raw.len());
-                for (block, result, failure_kind) in raw {
+                for (block, outcome) in raw {
                     if let ContentBlock::ToolResult { tool_use_id, .. } = &block {
                         let tool_name = tool_calls
                             .iter()
                             .find(|c| c.id == *tool_use_id)
                             .map(|c| c.name.clone())
                             .unwrap_or_default();
-                        match result {
-                            ToolResult::Success(output) => emit(EventKind::ToolCallFinished {
+                        match outcome {
+                            Ok(output) => emit(EventKind::ToolCallFinished {
                                 tool_name,
                                 call_id: tool_use_id.clone(),
                                 output,
                             }),
-                            ToolResult::Error(message) => emit(EventKind::ToolCallFailed {
+                            Err(err) => emit(EventKind::ToolCallFailed {
                                 tool_name,
                                 call_id: tool_use_id.clone(),
-                                message,
-                                kind: failure_kind
-                                    .expect("Error result must carry a ToolFailureKind"),
+                                message: err.message(),
+                                kind: (&err).into(),
                             }),
                         }
                     }

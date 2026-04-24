@@ -140,7 +140,11 @@ mod tests {
 
     #[test]
     fn from_tool_error() {
-        let err: Error = ToolError::new("send_message", "no runtime").into();
+        let err: Error = ToolError::ExecutionFailed {
+            tool_name: "send_message".into(),
+            message: "no runtime".into(),
+        }
+        .into();
         assert!(matches!(err, Error::Tool(_)));
     }
 
@@ -158,8 +162,13 @@ mod tests {
             Error::Agent(AgentError::AgentCrashed {
                 message: "panic".into(),
             }),
-            Error::Tool(ToolError::new("t", "m")),
-            Error::Tool(ToolError::new("task", "lock contention")),
+            Error::Tool(ToolError::ToolNotFound {
+                tool_name: "t".into(),
+            }),
+            Error::Tool(ToolError::ExecutionFailed {
+                tool_name: "task".into(),
+                message: "lock contention".into(),
+            }),
         ];
         for variant in &variants {
             let display = format!("{variant}");

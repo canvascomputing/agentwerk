@@ -147,18 +147,17 @@ impl ToolLike for SpawnAgentTool {
             let runtime = ctx
                 .runtime
                 .as_ref()
-                .ok_or_else(|| {
-                    ToolError::new("spawn_agent", "LoopRuntime not available in ToolContext")
+                .ok_or_else(|| ToolError::ExecutionFailed {
+                    tool_name: "spawn_agent".into(),
+                    message: "LoopRuntime not available in ToolContext".into(),
                 })?
                 .clone();
             let caller = ctx
                 .caller_spec
                 .as_ref()
-                .ok_or_else(|| {
-                    ToolError::new(
-                        "spawn_agent",
-                        "caller LoopSpec not available in ToolContext",
-                    )
+                .ok_or_else(|| ToolError::ExecutionFailed {
+                    tool_name: "spawn_agent".into(),
+                    message: "caller LoopSpec not available in ToolContext".into(),
                 })?
                 .clone();
 

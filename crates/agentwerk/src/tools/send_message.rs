@@ -116,7 +116,10 @@ impl ToolLike for SendMessageTool {
 }
 
 fn tool_err(message: impl Into<String>) -> ToolError {
-    ToolError::new(NAME, message)
+    ToolError::ExecutionFailed {
+        tool_name: NAME.into(),
+        message: message.into(),
+    }
 }
 
 #[cfg(test)]

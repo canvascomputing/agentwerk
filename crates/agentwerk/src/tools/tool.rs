@@ -11,9 +11,9 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::agent::{AgentSpec, LoopRuntime};
-use crate::error::Result;
-use crate::event::ToolFailureKind;
+use crate::error::{Error, Result};
 use crate::provider::types::ContentBlock;
+use crate::tools::error::ToolError;
 
 /// Context passed to tool execution. `runtime` and `caller_spec` are ambient
 /// internals: `SpawnAgentTool` and `ToolSearchTool` read them to reach the
@@ -235,17 +235,15 @@ impl ToolRegistry {
     /// Execute tool calls with concurrent read-only batching and serial write
     /// execution.
     ///
-    /// Returns `(ContentBlock, ToolResult, Option<ToolFailureKind>)` triples
-    /// so the caller can read both the model-visible result block and the
-    /// failure classification (`InBand` for `ToolResult::Error`, `Infrastructure`
-    /// for an `Err` raised by the tool or an unknown-tool lookup).
+    /// Returns `(ContentBlock, Result<String, ToolError>)` pairs so the caller
+    /// can read both the model-visible result block and the typed verdict.
     pub(crate) async fn execute(
         &self,
         calls: &[ToolCall],
         ctx: &ToolContext,
-    ) -> Vec<(ContentBlock, ToolResult, Option<ToolFailureKind>)> {
+    ) -> Vec<(ContentBlock, std::result::Result<String, ToolError>)> {
         let batches = partition_tool_calls(calls, self);
-        let mut results: Vec<(ContentBlock, ToolResult, Option<ToolFailureKind>)> = Vec::new();
+        let mut results: Vec<(ContentBlock, std::result::Result<String, ToolError>)> = Vec::new();
         let semaphore = Arc::new(tokio::sync::Semaphore::new(10));
 
         for batch in batches {
@@ -262,24 +260,23 @@ impl ToolRegistry {
 
                         set.spawn(async move {
                             let _permit = sem.acquire().await.unwrap();
-                            let (result, failure_kind) =
-                                invoke(tool_arc, &call_name, input, &ctx).await;
-                            (call_id, result, failure_kind)
+                            let outcome = invoke(tool_arc, &call_name, input, &ctx).await;
+                            (call_id, outcome)
                         });
                     }
 
                     while let Some(join_result) = set.join_next().await {
-                        if let Ok((id, result, failure_kind)) = join_result {
-                            let block = content_block_for(&id, &result);
-                            results.push((block, result, failure_kind));
+                        if let Ok((id, outcome)) = join_result {
+                            let block = content_block_for(&id, &outcome);
+                            results.push((block, outcome));
                         }
                     }
                 }
                 ToolBatch::Serial(call) => {
-                    let (result, failure_kind) =
+                    let outcome =
                         invoke(self.get(&call.name), &call.name, call.input.clone(), ctx).await;
-                    let block = content_block_for(&call.id, &result);
-                    results.push((block, result, failure_kind));
+                    let block = content_block_for(&call.id, &outcome);
+                    results.push((block, outcome));
                 }
             }
         }
@@ -457,27 +454,33 @@ async fn invoke(
     name: &str,
     input: Value,
     ctx: &ToolContext,
-) -> (ToolResult, Option<ToolFailureKind>) {
-    match tool {
-        Some(t) => match t.call(input, ctx).await {
-            Ok(r @ ToolResult::Success(_)) => (r, None),
-            Ok(r @ ToolResult::Error(_)) => (r, Some(ToolFailureKind::InBand)),
-            Err(e) => (
-                ToolResult::error(format!("Tool error: {e}")),
-                Some(ToolFailureKind::Infrastructure),
-            ),
-        },
-        None => (
-            ToolResult::error(format!("Unknown tool: {name}")),
-            Some(ToolFailureKind::InBand),
-        ),
+) -> std::result::Result<String, ToolError> {
+    let Some(t) = tool else {
+        return Err(ToolError::ToolNotFound {
+            tool_name: name.into(),
+        });
+    };
+    match t.call(input, ctx).await {
+        Ok(ToolResult::Success(s)) => Ok(s),
+        Ok(ToolResult::Error(s)) => Err(ToolError::ExecutionFailed {
+            tool_name: name.into(),
+            message: s,
+        }),
+        Err(Error::Tool(e)) => Err(e),
+        Err(e) => Err(ToolError::ExecutionFailed {
+            tool_name: name.into(),
+            message: e.to_string(),
+        }),
     }
 }
 
-fn content_block_for(tool_use_id: &str, result: &ToolResult) -> ContentBlock {
-    let (content, is_error) = match result {
-        ToolResult::Success(s) => (s.clone(), false),
-        ToolResult::Error(s) => (s.clone(), true),
+fn content_block_for(
+    tool_use_id: &str,
+    outcome: &std::result::Result<String, ToolError>,
+) -> ContentBlock {
+    let (content, is_error) = match outcome {
+        Ok(s) => (s.clone(), false),
+        Err(e) => (e.message(), true),
     };
     ContentBlock::ToolResult {
         tool_use_id: tool_use_id.to_string(),
