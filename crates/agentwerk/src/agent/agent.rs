@@ -351,7 +351,7 @@ impl Agent {
         let runtime = Arc::new(runtime);
         let instruction = self.interpolate(&self.instruction_prompt);
         let context_prompt =
-            build_context_prompt(&spec.context_prompts, runtime.metadata.as_deref());
+            build_context_prompt(&spec.context_prompts, runtime.environment.as_deref());
         let state = LoopState::initial(context_prompt, instruction);
         run_loop(runtime, spec, state).await
     }
@@ -368,7 +368,7 @@ impl Agent {
         let runtime = Arc::new(runtime);
         let instruction = self.interpolate(&self.instruction_prompt);
         let context_prompt =
-            build_context_prompt(&spec.context_prompts, runtime.metadata.as_deref());
+            build_context_prompt(&spec.context_prompts, runtime.environment.as_deref());
         let state = LoopState::initial(context_prompt, instruction);
         run_loop(runtime, spec, state).await
     }
@@ -485,7 +485,7 @@ impl Agent {
             Arc::new(Mutex::new(store))
         });
 
-        let metadata = Some(LoopRuntime::environment(&working_directory));
+        let environment = Some(LoopRuntime::environment(&working_directory));
 
         LoopRuntime {
             provider,
@@ -494,7 +494,7 @@ impl Agent {
             working_directory,
             command_queue,
             session_store,
-            metadata,
+            environment,
             tool_registry: build_tools(spec),
             template_variables: self.template_variables.clone(),
         }
@@ -522,7 +522,7 @@ impl Agent {
                 .unwrap_or_else(|| parent.working_directory.clone()),
             command_queue: parent.command_queue.clone(),
             session_store: parent.session_store.clone(),
-            metadata: parent.metadata.clone(),
+            environment: parent.environment.clone(),
             tool_registry: build_tools(spec),
             template_variables: self.template_variables.clone(),
         }

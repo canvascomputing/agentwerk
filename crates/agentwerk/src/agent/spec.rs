@@ -108,17 +108,17 @@ pub(crate) fn interpolate(template: &str, vars: &HashMap<String, Value>) -> Stri
     result
 }
 
-/// Compose the optional initial "context" user message: environment metadata
+/// Compose the optional initial "context" user message: the environment block
 /// (when present) followed by each user-supplied `context_prompts` entry
 /// wrapped in `<context>…</context>` tags. Returns `None` if both inputs are
 /// empty — caller shouldn't push a message at all in that case.
 pub(crate) fn build_context_prompt(
     context_prompts: &[String],
-    metadata: Option<&str>,
+    environment: Option<&str>,
 ) -> Option<String> {
     let mut parts: Vec<String> = Vec::new();
-    if let Some(meta) = metadata {
-        parts.push(meta.to_string());
+    if let Some(env) = environment {
+        parts.push(env.to_string());
     }
     for block in context_prompts {
         parts.push(format!("<context>\n{block}\n</context>"));

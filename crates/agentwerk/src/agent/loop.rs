@@ -37,9 +37,9 @@ pub(crate) struct LoopRuntime {
     pub event_handler: Arc<dyn Fn(Event) + Send + Sync>,
     pub cancel_signal: Arc<AtomicBool>,
     pub working_directory: PathBuf,
+    pub environment: Option<String>,
     pub command_queue: Option<Arc<CommandQueue>>,
     pub session_store: Option<Arc<Mutex<SessionStore>>>,
-    pub metadata: Option<String>,
     pub tool_registry: Arc<ToolRegistry>,
     pub template_variables: HashMap<String, Value>,
 }
@@ -65,13 +65,13 @@ impl LoopRuntime {
 #[derive(Default)]
 pub(crate) struct LoopState {
     pub messages: Vec<Message>,
+    pub errors: Vec<Error>,
     pub total_usage: TokenUsage,
     pub request_count: u64,
     pub tool_call_count: u64,
     pub turn: u32,
     pub schema_retries: u32,
     pub is_idle: bool,
-    pub errors: Vec<Error>,
 }
 
 impl LoopState {
@@ -885,7 +885,7 @@ mod tests {
     }
 
     #[allow(dead_code)]
-    fn runtime_with_metadata(meta: &str) -> LoopRuntime {
+    fn runtime_with_environment(env: &str) -> LoopRuntime {
         LoopRuntime {
             provider: Arc::new(MockProvider::text("ok")),
             event_handler: Arc::new(|_| {}),
@@ -893,7 +893,7 @@ mod tests {
             working_directory: PathBuf::from("/tmp"),
             command_queue: None,
             session_store: None,
-            metadata: Some(meta.to_string()),
+            environment: Some(env.to_string()),
             tool_registry: Arc::new(ToolRegistry::new()),
             template_variables: HashMap::new(),
         }
