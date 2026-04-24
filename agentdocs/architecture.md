@@ -47,14 +47,24 @@ The invariants that shape how code fits together. Layout says where code lives; 
 - Tool failures flow two ways: `Err` bubbles as `Error::Tool`, `Ok(ToolResult::Error(...))` goes back to the model as text.
 - IMPORTANT: no blanket `From<io::Error>` or `From<serde_json::Error>`. Each mapping MUST be explicit.
 
-## Events observe, Output returns
+## Events observe state, errors return failures
 
-**Observation and return use separate channels. `Event` is out-of-band; `Output` is the run's value.**
+**`Event` reports state. `Error` reports a failed contract. The two channels carry independent information.**
 
-- Every lifecycle transition emits an `Event` through `runtime.event_handler`.
-- `AgentFinished` fires on every `Ok` termination path (`Completed`, `Cancelled`, `Failed`) and matches `Output.outcome`.
-- IMPORTANT: pre-flight failures (missing provider, unreadable prompt, unset model) return `Err(...)` without ever starting the loop. No `AgentStarted` or `AgentFinished` is emitted in that case.
+- State transitions exist only as `Event` (`AgentStarted`, `TurnStarted`, `ContextCompacted`); failures exist as `Error` first (`ProviderError`, `AgentError`, `ToolError`).
+- An observable failure fires both: the `Error` is the machine-readable truth, the matching `Event` mirrors its kind and message (`RequestFailed`, `ToolCallFailed`, `PolicyViolated`).
+- `Output.errors` is emission-ordered; on `Outcome::Failed` the last entry is the terminal cause, earlier entries are retried transients. Tool failures never land there: they go to the model and fire `ToolCallFailed`.
+- IMPORTANT: pre-flight failures (missing provider, unreadable prompt, unset model) return `Err(...)` without starting the loop. No `AgentStarted` or `AgentFinished` fires.
 - Handlers MUST be cheap, non-blocking closures; the loop does not await them.
+
+## New observables pick a channel
+
+**Each new signal lands on `Event`, `Error`, or both. Pick by what the signal describes.**
+
+- Reached a state: `Event` only.
+- Could not fulfil a contract: `Error` in the matching domain sub-enum.
+- Both at once (retry, terminal request failure, policy trip): define both. Share the payload type when observer-friendly (`PolicyKind`); introduce a stripped `Kind` enum when the `Error` carries observer-hostile detail (`RequestErrorKind` for `ProviderError`, `ToolFailureKind` for `ToolError`).
+- Model-fixable failure (wrong args, non-zero exit, file missing): use `ToolResult::Error(String)`; it still fires `ToolCallFailed` but stays out of `Output.errors`.
 
 ## Providers own their client
 
