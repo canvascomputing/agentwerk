@@ -8,18 +8,9 @@ use std::path::{Path, PathBuf};
 use crate::persistence::error::PersistenceResult as Result;
 use crate::provider::types::{Message, TokenUsage};
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub(crate) enum TranscriptEntryType {
-    UserMessage,
-    AssistantMessage,
-    ToolResult,
-    SystemEvent,
-}
-
 #[derive(Debug, Serialize, Deserialize)]
 pub(crate) struct TranscriptEntry {
     pub(crate) recorded_at: u64,
-    pub(crate) entry_type: TranscriptEntryType,
     pub(crate) message: Message,
     pub(crate) usage: Option<TokenUsage>,
     pub(crate) model: Option<String>,
@@ -66,7 +57,7 @@ impl SessionStore {
         if let Some(ref mut writer) = self.writer {
             writer.flush()?;
         }
-        self.write_metadata()
+        Ok(())
     }
 
     /// Load all entries from a transcript file.
@@ -95,7 +86,7 @@ impl SessionStore {
         Ok(entries)
     }
 
-    /// List available sessions with metadata.
+    /// List available sessions with metadata derived from each transcript.
     pub(crate) fn list_sessions(base_dir: &Path) -> Result<Vec<SessionMetadata>> {
         let sessions_dir = base_dir.join("sessions");
         if !sessions_dir.exists() {
@@ -108,14 +99,8 @@ impl SessionStore {
             if !entry.file_type()?.is_dir() {
                 continue;
             }
-
             let session_id = entry.file_name().to_string_lossy().to_string();
-            if let Some(meta) = Self::load_metadata(&entry.path()) {
-                result.push(meta);
-            } else {
-                let meta = Self::metadata_from_transcript(base_dir, session_id)?;
-                result.push(meta);
-            }
+            result.push(Self::metadata_from_transcript(base_dir, &session_id)?);
         }
 
         Ok(result)
@@ -127,10 +112,6 @@ impl SessionStore {
 
     fn transcript_path(&self) -> PathBuf {
         self.session_dir().join("transcript.jsonl")
-    }
-
-    fn metadata_path(&self) -> PathBuf {
-        self.session_dir().join("metadata.json")
     }
 
     fn open_writer(&mut self) -> Result<&mut BufWriter<File>> {
@@ -145,27 +126,14 @@ impl SessionStore {
         Ok(self.writer.as_mut().unwrap())
     }
 
-    fn load_metadata(session_dir: &Path) -> Option<SessionMetadata> {
-        let content = fs::read_to_string(session_dir.join("metadata.json")).ok()?;
-        serde_json::from_str(&content).ok()
-    }
-
-    fn metadata_from_transcript(base_dir: &Path, session_id: String) -> Result<SessionMetadata> {
-        let entries = Self::load(base_dir, &session_id)?;
+    fn metadata_from_transcript(base_dir: &Path, session_id: &str) -> Result<SessionMetadata> {
+        let entries = Self::load(base_dir, session_id)?;
         Ok(SessionMetadata {
+            session_id: session_id.to_string(),
             created_at: entries.first().map(|e| e.recorded_at).unwrap_or(0),
             last_active_at: entries.last().map(|e| e.recorded_at).unwrap_or(0),
             message_count: entries.len() as u64,
-
-            session_id,
         })
-    }
-
-    fn write_metadata(&self) -> Result<()> {
-        let meta = Self::metadata_from_transcript(&self.base_dir, self.session_id.clone())?;
-        let json = serde_json::to_string_pretty(&meta)?;
-        fs::write(self.metadata_path(), json)?;
-        Ok(())
     }
 }
 
@@ -175,18 +143,13 @@ mod tests {
     use crate::provider::types::{ContentBlock, Message};
     use std::time::{SystemTime, UNIX_EPOCH};
 
-    fn make_entry(entry_type: TranscriptEntryType, text: &str) -> TranscriptEntry {
+    fn make_entry(message: Message) -> TranscriptEntry {
         TranscriptEntry {
             recorded_at: SystemTime::now()
                 .duration_since(UNIX_EPOCH)
                 .unwrap()
                 .as_millis() as u64,
-            entry_type,
-            message: Message::User {
-                content: vec![ContentBlock::Text {
-                    text: text.to_string(),
-                }],
-            },
+            message,
             usage: Some(TokenUsage {
                 input_tokens: 100,
                 output_tokens: 50,
@@ -201,17 +164,18 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
 
         let mut store = SessionStore::new(tmp.path(), "test-session");
+        store.record(make_entry(Message::user("hello"))).unwrap();
         store
-            .record(make_entry(TranscriptEntryType::UserMessage, "hello"))
+            .record(make_entry(Message::assistant("hi there")))
             .unwrap();
         store
-            .record(make_entry(
-                TranscriptEntryType::AssistantMessage,
-                "hi there",
-            ))
-            .unwrap();
-        store
-            .record(make_entry(TranscriptEntryType::ToolResult, "tool output"))
+            .record(make_entry(Message::User {
+                content: vec![ContentBlock::ToolResult {
+                    tool_use_id: "call_1".into(),
+                    content: "tool output".into(),
+                    is_error: false,
+                }],
+            }))
             .unwrap();
         store.flush().unwrap();
 
@@ -227,18 +191,12 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
 
         let mut store1 = SessionStore::new(tmp.path(), "session-a");
-        store1
-            .record(make_entry(TranscriptEntryType::UserMessage, "a"))
-            .unwrap();
+        store1.record(make_entry(Message::user("a"))).unwrap();
         store1.flush().unwrap();
 
         let mut store2 = SessionStore::new(tmp.path(), "session-b");
-        store2
-            .record(make_entry(TranscriptEntryType::UserMessage, "b1"))
-            .unwrap();
-        store2
-            .record(make_entry(TranscriptEntryType::UserMessage, "b2"))
-            .unwrap();
+        store2.record(make_entry(Message::user("b1"))).unwrap();
+        store2.record(make_entry(Message::user("b2"))).unwrap();
         store2.flush().unwrap();
 
         let sessions = SessionStore::list_sessions(tmp.path()).unwrap();

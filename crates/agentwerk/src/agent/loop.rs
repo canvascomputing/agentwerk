@@ -13,7 +13,7 @@ use serde_json::Value;
 use crate::error::{Error, Result};
 use crate::event::{Event, EventKind, PolicyKind};
 use crate::output::{Outcome, Output, OutputSchema, SchemaViolation, Statistics};
-use crate::persistence::session::{SessionStore, TranscriptEntry, TranscriptEntryType};
+use crate::persistence::session::{SessionStore, TranscriptEntry};
 use crate::provider::retry::compute_delay;
 use crate::provider::types::{ContentBlock, Message, ResponseStatus, StreamEvent, TokenUsage};
 use crate::provider::{ModelRequest, Provider, ProviderError, RequestErrorKind};
@@ -104,16 +104,13 @@ pub(crate) fn run_loop(
         let emit = |kind: EventKind| {
             (runtime.event_handler)(Event::new(spec.name.clone(), kind));
         };
-        let transcribe = |entry_type: TranscriptEntryType,
-                          message: &Message,
-                          usage_and_model: Option<(&TokenUsage, &str)>| {
+        let transcribe = |message: &Message, usage_and_model: Option<(&TokenUsage, &str)>| {
             if let Some(store) = runtime.session_store.as_ref() {
                 store
                     .lock()
                     .unwrap()
                     .record(TranscriptEntry {
                         recorded_at: now_millis(),
-                        entry_type,
                         message: message.clone(),
                         usage: usage_and_model.map(|(u, _)| u.clone()),
                         model: usage_and_model.map(|(_, m)| m.to_string()),
@@ -123,11 +120,7 @@ pub(crate) fn run_loop(
         };
 
         runtime.provider.prewarm().await;
-        transcribe(
-            TranscriptEntryType::UserMessage,
-            state.messages.last().unwrap(),
-            None,
-        );
+        transcribe(state.messages.last().unwrap(), None);
         emit(EventKind::AgentStarted);
 
         let outcome = 'run: loop {
@@ -294,7 +287,6 @@ pub(crate) fn run_loop(
                 content: response.content.clone(),
             });
             transcribe(
-                TranscriptEntryType::AssistantMessage,
                 state.messages.last().unwrap(),
                 Some((&response.usage, &response.model)),
             );
@@ -354,11 +346,7 @@ pub(crate) fn run_loop(
                     blocks.push(block);
                 }
                 state.messages.push(Message::User { content: blocks });
-                transcribe(
-                    TranscriptEntryType::ToolResult,
-                    state.messages.last().unwrap(),
-                    None,
-                );
+                transcribe(state.messages.last().unwrap(), None);
                 if let Some(queue) = runtime.command_queue.as_ref() {
                     while let Some(cmd) =
                         queue.dequeue_if(Some(&spec.name), |c| c.priority != QueuePriority::Later)
