@@ -204,7 +204,7 @@ Agent::new()
     .behavior_prompt_file("prompts/behavior.md")
 ```
 
-Use `{key}` placeholders in the identity prompt and fill them with `template_variable`:
+Use `{key}` placeholders in the identity prompt and fill them with template variables:
 
 ```rust
 Agent::new()
@@ -229,10 +229,8 @@ let greet = Tool::new("greet", "Say hello")
     }));
 ```
 
-> For tools with state, implement the `ToolLike` trait on your own type.
-
-> Use `.read_only(true)` when a tool has no side effects. 
-> If set, the the execution loop will run tools in parallel.
+> You can configure `.read_only(true)` when a tool has no side effects as an optional optimization.
+> If set, the tool will run parallelized.
 
 #### Built-in tools
 
@@ -277,7 +275,7 @@ let agent = Agent::new()
 
 ### Events
 
-You can inspect what your agent is doing and how the LLM provider API is used:
+You can inspect what your agent is doing through events:
 
 ```rust
 use agentwerk::event::EventKind;
@@ -297,9 +295,6 @@ let handler = Arc::new(|event: Event| match &event.kind {
 });
 ```
 
-> When `.event_handler(...)` is not set, agents log tool activity and lifecycle events to
-> stderr via `Event::default_logger()`. You can call `.silent()` on the agent to silence the output.
-
 | | Kind | Description |
 |-|------|-------------|
 | **Agent** | `AgentStarted` | Agent run began |
@@ -310,8 +305,8 @@ let handler = Arc::new(|event: Event| match &event.kind {
 | | `AgentResumed` | Keep-alive agent resumed after being paused |
 | **Provider** | `RequestStarted` | Provider request began |
 | | `RequestFinished` | Provider request finished |
-| | `RequestRetried` | Transient provider error triggered a retry (carries typed `kind: RequestErrorKind`) |
-| | `RequestFailed` | Provider request failed after exhausting retries (carries typed `kind: RequestErrorKind`) |
+| | `RequestRetried` | Transient provider error triggered a retry |
+| | `RequestFailed` | Provider request failed after exhausting retries |
 | | `TextChunkReceived` | Streamed text token arrived |
 | | `TokensReported` | Provider reported token counts for the last request |
 | **Context** | `OutputTruncated` | Response was cut off at the configured length cap |
@@ -320,7 +315,10 @@ let handler = Arc::new(|event: Event| match &event.kind {
 | | `SchemaRetried` | Structured-output validation failed and the loop is asking the model to retry |
 | **Tool** | `ToolCallStarted` | Tool invocation began |
 | | `ToolCallFinished` | Tool invocation succeeded |
-| | `ToolCallFailed` | Tool invocation failed (carries `kind: ToolFailureKind` — `InBand` is model-fixable, `Infrastructure` is harness-level; the run continues either way) |
+| | `ToolCallFailed` | Tool invocation failed; the run continues |
+
+> When `.event_handler(...)` is not set, agents log tool activity and lifecycle events to
+> stderr via `Event::default_logger()`. You can call `.silent()` on the agent to silence the output.
 
 ### Policies
 
@@ -338,46 +336,43 @@ For protecting your budget or data, you can define clear execution rules for typ
 
 ### Output
 
-The result of running an agent.
-
 ```rust
-output.response_raw            // Raw LLM output
-output.response                // validated with schema
-
-output.statistics.input_tokens // total input tokens
-output.statistics.output_tokens// total output tokens
-output.statistics.requests     // number of LLM requests
-output.statistics.tool_calls   // number of tool calls
-output.statistics.turns        // number of loop turns
+let output = agent.run().await?;
+println!("{}", output.response_raw);
 ```
 
-With an output schema, the agent returns validated JSON:
+You can enforce validation of your response with an output schema:
 
 ```rust
 let output = Agent::new()
-    .output_schema(json!({
-        "type": "object",
-        "properties": { "category": { "type": "string" } },
-        "required": ["category"]
-    }))
-    .max_schema_retries(3)
+    .output_schema(json!({ "type": "object", "properties": { "category": { "type": "string" } } }))
     .run().await?;
 
-output.response.unwrap()["category"]
+println!("{}", output.response.unwrap()["category"]);
 ```
 
-Or load the schema from a file:
+You can also load the output schema from a file:
 
 ```rust
-let output = Agent::new()
-    .output_schema_file("schemas/category.json")
-    .run().await?;
+Agent::new().output_schema_file("schemas/category.json")
+```
+
+#### Statistics
+
+Each run reports statistics about what happened:
+
+```rust
+output.statistics.input_tokens   // total input tokens
+output.statistics.output_tokens  // total output tokens
+output.statistics.requests       // number of provider requests
+output.statistics.tool_calls     // number of tool calls
+output.statistics.turns          // number of agent turns
 ```
 
 ### Sub-agents
 
-Sub-agents let an orchestrator launch its own workers.
-Orchestrator agents automatically have access to `SpawnAgentTool`.
+You can allow your agent to spawn its own colleagues.
+Internally agents have access to a `SpawnAgentTool` if you add a sub-agent.
 
 ```rust
 let researcher_base = Agent::new()
@@ -410,11 +405,7 @@ The following fields are inherited, shared or owned by the sub-agents:
 
 ### Batches
 
-Run many agents in parallel with `Batch`.
-
-#### Static Batch
-
-Wait for the execution of all agents in a fixed sized pool. Results arrive in submission order:
+Run many agents in parallel with `Batch`. Wait for the execution of all agents in a fixed sized pool. Results arrive in *submission order*:
 
 ```rust
 use agentwerk::tools::ReadFileTool;
@@ -445,7 +436,7 @@ for (doc, result) in docs.iter().zip(results.iter()) {
 
 #### Dynamic Number of Agents
 
-Start a dynamic pool of agents, which might grow over time. Results stream back in completion order:
+Start a dynamic pool of agents, which might grow over time. Results are reported in *completion order*:
 
 ```rust
 let (pool, mut results) = Batch::new()
@@ -454,12 +445,9 @@ let (pool, mut results) = Batch::new()
 
 let docs = ["document A", "document B"];
 for doc in &docs {
-    pool.submit(
-        template
-            .clone()
-            .instruction_prompt(format!("Summarize {doc}")),
-    );
+    pool.submit(template.clone().instruction_prompt(format!("Summarize {doc}")));
 }
+
 pool.drain();
 
 while let Some((i, result)) = results.next().await {
@@ -468,13 +456,11 @@ while let Some((i, result)) = results.next().await {
 }
 ```
 
-`BatchHandle::submit` returns the index it assigned, so dynamic callers can keep a parallel map of index → context.
-
 | Method | Description |
 |--------|-------------|
 | `.submit(agent)` | Enqueue another agent |
 | `.drain()` | Stop adding new agents and let running agents finish |
-| `.cancel()` | Interrupt in-flight agents and close the pool |
+| `.cancel()` | Interrupt all agents work and drain the pool |
 | `.is_cancelled()` | Check if the pool was cancelled |
 | `.clone()` | Get another handle to the same pool |
 
@@ -482,8 +468,8 @@ while let Some((i, result)) = results.next().await {
 
 Planned additions to the crate:
 
-- Context compression: summarize older messages when a conversation exceeds the LLM context window
-- Session state handling: resume and persist agent sessions across runs
+- **Context compression**: summarize older messages when a conversation exceeds the model's context window size
+- **Session handling**: resume and persist agent sessions across runs
 
 ## Development
 

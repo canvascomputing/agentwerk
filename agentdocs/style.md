@@ -255,11 +255,12 @@ counter += 1;
 - Example models are `claude-haiku-4-5-20251001` or `claude-sonnet-4-20250514`.
 - Update triggers: a new builder method, a new tool, a new event kind, a new environment variable, or a changed default.
 
-## README example comments
+## README descriptions
 
-**Inline `//` comments in README code describe what the caller gets, not how it works inside.**
+**In README table cells, bullet descriptions, and inline `//` comments, describe what the caller gets, not how it works inside.**
 
 - The reader may be new to agent concepts: write for them.
-- Accepted: `// run the task once and return the result`, `// keep the agent ready for more instructions`.
-- Rejected: `// drive the loop`, `// one-shot`, `// background task`, `// keep-alive`.
+- The README is an abstraction: internal type names, private field names, and enum variant names do not belong there. The reference lives in the API docs.
+- Accepted: `// run the task once and return the result`, "Transient provider error triggered a retry".
+- Rejected: `// drive the loop`, `// one-shot`, "(carries typed `kind: RequestErrorKind`)", "`InBand` is model-fixable, `Infrastructure` is harness-level".
 - Jargon and internal terms are cut even when they are shorter.
