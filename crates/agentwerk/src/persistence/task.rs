@@ -1,11 +1,11 @@
 //! File-based task store with per-task locking. Survives process restarts and lets peer agents coordinate through shared task records.
 
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
-use std::fs::{self, File, OpenOptions};
+use std::fs;
 use std::path::{Path, PathBuf};
 
 use crate::persistence::error::{PersistenceError, PersistenceResult as Result};
+use crate::persistence::lock::with_file_lock;
 use crate::util::now_millis;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -17,7 +17,6 @@ pub(crate) struct Task {
     pub(crate) owner: Option<String>,
     pub(crate) blocks: Vec<String>,
     pub(crate) blocked_by: Vec<String>,
-    pub(crate) metadata: HashMap<String, serde_json::Value>,
     pub(crate) created_at: u64,
     pub(crate) updated_at: u64,
 }
@@ -33,9 +32,6 @@ pub(crate) enum TaskStatus {
 pub(crate) struct TaskUpdate {
     pub(crate) status: Option<TaskStatus>,
     pub(crate) subject: Option<String>,
-    pub(crate) description: Option<String>,
-    pub(crate) owner: Option<Option<String>>,
-    pub(crate) metadata: Option<HashMap<String, serde_json::Value>>,
 }
 
 /// Persists tasks to disk as individual JSON files.
@@ -67,12 +63,11 @@ impl TaskStore {
                 owner: None,
                 blocks: Vec::new(),
                 blocked_by: Vec::new(),
-                metadata: HashMap::new(),
                 created_at: now,
                 updated_at: now,
             };
 
-            // Write mark BEFORE task file — crash-safe
+            // Write mark BEFORE task file: crash-safe.
             self.write_high_water_mark(next_id)?;
             self.write_task(&task)?;
             Ok(task)
@@ -92,7 +87,8 @@ impl TaskStore {
         let mut tasks = Vec::new();
         for entry in fs::read_dir(&dir)? {
             let entry = entry?;
-            let name = entry.file_name().to_string_lossy().to_string();
+            let name = entry.file_name();
+            let Some(name) = name.to_str() else { continue };
             let Some(id) = name.strip_suffix(".json") else {
                 continue;
             };
@@ -114,15 +110,6 @@ impl TaskStore {
             }
             if let Some(subject) = update.subject {
                 task.subject = subject;
-            }
-            if let Some(description) = update.description {
-                task.description = description;
-            }
-            if let Some(owner) = update.owner {
-                task.owner = owner;
-            }
-            if let Some(metadata) = update.metadata {
-                task.metadata = metadata;
             }
             task.updated_at = now_millis();
 
@@ -165,10 +152,10 @@ impl TaskStore {
             let mut from_task = self.require_task(from)?;
             let mut to_task = self.require_task(to)?;
 
-            if !from_task.blocks.contains(&to.to_string()) {
+            if !from_task.blocks.iter().any(|b| b == to) {
                 from_task.blocks.push(to.to_string());
             }
-            if !to_task.blocked_by.contains(&from.to_string()) {
+            if !to_task.blocked_by.iter().any(|b| b == from) {
                 to_task.blocked_by.push(from.to_string());
             }
 
@@ -228,23 +215,17 @@ impl TaskStore {
     }
 
     fn highest_task_id_on_disk(&self) -> u64 {
-        let dir = self.dir();
-        if !dir.exists() {
+        let Ok(entries) = fs::read_dir(self.dir()) else {
             return 0;
-        }
-        fs::read_dir(&dir)
-            .ok()
-            .map(|entries| {
-                entries
-                    .flatten()
-                    .filter_map(|e| {
-                        let name = e.file_name().to_string_lossy().to_string();
-                        name.strip_suffix(".json")
-                            .and_then(|s| s.parse::<u64>().ok())
-                    })
-                    .max()
-                    .unwrap_or(0)
+        };
+        entries
+            .flatten()
+            .filter_map(|e| {
+                let name = e.file_name();
+                let name = name.to_str()?;
+                name.strip_suffix(".json")?.parse::<u64>().ok()
             })
+            .max()
             .unwrap_or(0)
     }
 
@@ -271,7 +252,8 @@ impl TaskStore {
 
         for entry in fs::read_dir(&dir)? {
             let entry = entry?;
-            let name = entry.file_name().to_string_lossy().to_string();
+            let name = entry.file_name();
+            let Some(name) = name.to_str() else { continue };
             let Some(id) = name.strip_suffix(".json") else {
                 continue;
             };
@@ -282,81 +264,15 @@ impl TaskStore {
                 continue;
             };
 
-            let references_deleted = task.blocks.contains(&deleted_id.to_string())
-                || task.blocked_by.contains(&deleted_id.to_string());
-            if !references_deleted {
-                continue;
-            }
-
+            let before = task.blocks.len() + task.blocked_by.len();
             task.blocks.retain(|b| b != deleted_id);
             task.blocked_by.retain(|b| b != deleted_id);
-            self.write_task(&task)?;
+            if task.blocks.len() + task.blocked_by.len() != before {
+                self.write_task(&task)?;
+            }
         }
         Ok(())
     }
-}
-
-const MAX_LOCK_RETRIES: u32 = 30;
-const MIN_BACKOFF_MS: u64 = 5;
-const MAX_BACKOFF_MS: u64 = 100;
-
-fn with_file_lock<T>(lock_path: &Path, f: impl FnOnce() -> Result<T>) -> Result<T> {
-    let file = OpenOptions::new()
-        .create(true)
-        .write(true)
-        .truncate(false)
-        .open(lock_path)?;
-
-    let mut backoff_ms = MIN_BACKOFF_MS;
-    for _ in 0..MAX_LOCK_RETRIES {
-        if try_lock_exclusive(&file)? {
-            let result = f();
-            unlock(&file)?;
-            return result;
-        }
-        std::thread::sleep(std::time::Duration::from_millis(backoff_ms));
-        backoff_ms = (backoff_ms * 2).min(MAX_BACKOFF_MS);
-    }
-
-    Err(PersistenceError::LockFailed {
-        attempts: MAX_LOCK_RETRIES,
-    })
-}
-
-#[cfg(unix)]
-fn try_lock_exclusive(file: &File) -> Result<bool> {
-    use std::os::unix::io::AsRawFd;
-    let ret = unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) };
-    if ret == 0 {
-        return Ok(true);
-    }
-    let err = std::io::Error::last_os_error();
-    if err.raw_os_error() == Some(libc::EWOULDBLOCK) {
-        Ok(false)
-    } else {
-        Err(PersistenceError::IoFailed(err))
-    }
-}
-
-#[cfg(unix)]
-fn unlock(file: &File) -> Result<()> {
-    use std::os::unix::io::AsRawFd;
-    let ret = unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_UN) };
-    if ret == 0 {
-        Ok(())
-    } else {
-        Err(PersistenceError::IoFailed(std::io::Error::last_os_error()))
-    }
-}
-
-#[cfg(not(unix))]
-fn try_lock_exclusive(_file: &File) -> Result<bool> {
-    Ok(true)
-}
-
-#[cfg(not(unix))]
-fn unlock(_file: &File) -> Result<()> {
-    Ok(())
 }
 
 #[cfg(test)]
