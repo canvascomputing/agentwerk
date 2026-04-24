@@ -3,16 +3,13 @@
 use std::collections::VecDeque;
 use std::sync::{Arc, Mutex};
 
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
-#[allow(dead_code)] // All variants are part of the priority API; some used only in tests today.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub(crate) enum QueuePriority {
-    Now = 0,
-    Next = 1,
-    Later = 2,
+    Next = 0,
+    Later = 1,
 }
 
 #[derive(Debug, Clone)]
-#[allow(dead_code)] // Fields read during dequeue; `source` reserved for future routing.
 pub(crate) struct QueuedCommand {
     pub(crate) content: String,
     pub(crate) priority: QueuePriority,
@@ -49,12 +46,9 @@ impl QueuedCommand {
 }
 
 #[derive(Debug, Clone)]
-#[allow(dead_code)] // UserInput used in tests; others used by in-crate tools.
 pub(crate) enum CommandSource {
     UserInput,
-    TaskNotification {
-        task_id: String,
-    },
+    TaskNotification,
     PeerMessage {
         from: String,
         summary: Option<String>,
@@ -81,40 +75,26 @@ impl CommandQueue {
         self.enqueue(QueuedCommand {
             content: format!("Task {task_id} completed: {summary}"),
             priority: QueuePriority::Later,
-            source: CommandSource::TaskNotification {
-                task_id: task_id.to_string(),
-            },
+            source: CommandSource::TaskNotification,
             agent_name: None,
         });
     }
 
     /// Dequeue the highest-priority command visible to the given agent that also
-    /// satisfies `pred`. Commands failing the predicate are skipped (not removed).
+    /// satisfies `pred`. Ties break by insertion order. Commands failing the
+    /// predicate are skipped (not removed).
     pub(crate) fn dequeue_if<F>(&self, agent_name: Option<&str>, pred: F) -> Option<QueuedCommand>
     where
         F: Fn(&QueuedCommand) -> bool,
     {
         let mut queue = self.inner.lock().unwrap();
-        let mut best: Option<(usize, QueuePriority)> = None;
-
-        for (i, cmd) in queue.iter().enumerate() {
-            if !cmd.is_visible_to(agent_name) {
-                continue;
-            }
-            if !pred(cmd) {
-                continue;
-            }
-            if best.as_ref().is_some_and(|(_, p)| *p <= cmd.priority) {
-                continue;
-            }
-
-            best = Some((i, cmd.priority.clone()));
-            if cmd.priority == QueuePriority::Now {
-                break;
-            }
-        }
-
-        best.and_then(|(i, _)| queue.remove(i))
+        let idx = queue
+            .iter()
+            .enumerate()
+            .filter(|(_, c)| c.is_visible_to(agent_name) && pred(c))
+            .min_by_key(|(i, c)| (c.priority, *i))?
+            .0;
+        queue.remove(idx)
     }
 }
 
@@ -175,13 +155,12 @@ mod tests {
     fn dequeue_if_prefers_higher_priority_among_visible_items() {
         let q = CommandQueue::new();
         q.enqueue(cmd(Some("alice"), QueuePriority::Later));
-        q.enqueue(cmd(Some("alice"), QueuePriority::Now));
         q.enqueue(cmd(Some("alice"), QueuePriority::Next));
 
         let first = q.dequeue_if(Some("alice"), |_| true).unwrap();
-        assert_eq!(first.priority, QueuePriority::Now);
+        assert_eq!(first.priority, QueuePriority::Next);
         let second = q.dequeue_if(Some("alice"), |_| true).unwrap();
-        assert_eq!(second.priority, QueuePriority::Next);
+        assert_eq!(second.priority, QueuePriority::Later);
     }
 
     #[test]

@@ -758,9 +758,7 @@ mod tests {
         queue.enqueue(QueuedCommand {
             content: "later task".into(),
             priority: QueuePriority::Later,
-            source: CommandSource::TaskNotification {
-                task_id: "42".into(),
-            },
+            source: CommandSource::TaskNotification,
             agent_name: Some("test".into()),
         });
 
@@ -1159,9 +1157,7 @@ mod tests {
         QueuedCommand {
             content: content.into(),
             priority: QueuePriority::Next,
-            source: CommandSource::TaskNotification {
-                task_id: "task-1".into(),
-            },
+            source: CommandSource::TaskNotification,
             agent_name: target.map(|s| s.into()),
         }
     }
