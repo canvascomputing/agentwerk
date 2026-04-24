@@ -14,11 +14,13 @@ use crate::error::{Error, Result};
 use crate::event::{Event, EventKind, PolicyKind};
 use crate::output::{Outcome, Output, OutputSchema, SchemaViolation, Statistics};
 use crate::persistence::session::{SessionStore, TranscriptEntry};
-use crate::provider::retry::compute_delay;
 use crate::provider::types::{ContentBlock, Message, ResponseStatus, StreamEvent, TokenUsage};
 use crate::provider::{ModelRequest, Provider, ProviderError, RequestErrorKind};
 use crate::tools::{ToolCall, ToolContext, ToolRegistry, ToolResult};
-use crate::util::{cancellable_sleep, format_current_date, now_millis, wait_for_cancel};
+use crate::util::{
+    cancellable_sleep, format_current_date, now_millis, wait_for_cancel, ExponentialRetry, Retry,
+    Retryable,
+};
 
 use super::compact;
 use super::error::AgentError;
@@ -169,6 +171,10 @@ pub(crate) fn run_loop(
             });
 
             // Provider call, retrying transient failures
+            let retry = ExponentialRetry {
+                base_delay: spec.request_retry_delay,
+                max_attempts: spec.max_request_retries,
+            };
             let mut attempt = 0u32;
             let response = 'fetch: loop {
                 let request = ModelRequest {
@@ -218,9 +224,8 @@ pub(crate) fn run_loop(
                             }));
                         break 'run Outcome::Failed;
                     }
-                    Some(Err(e)) if e.is_retryable() && attempt < spec.max_request_retries => {
-                        let delay =
-                            compute_delay(spec.request_retry_delay, attempt, e.retry_delay());
+                    Some(Err(e)) if e.is_retryable() && attempt < retry.max_attempts() => {
+                        let delay = retry.delay(attempt, e.retry_delay());
                         if !cancellable_sleep(delay, &runtime.cancel_signal).await {
                             state.errors.push(e);
                             break 'run Outcome::Cancelled;
@@ -232,7 +237,7 @@ pub(crate) fn run_loop(
                         };
                         emit(EventKind::RequestRetried {
                             attempt,
-                            max_attempts: spec.max_request_retries,
+                            max_attempts: retry.max_attempts(),
                             kind,
                             message: format!("{e}"),
                         });

@@ -7,7 +7,6 @@ mod litellm;
 mod mistral;
 pub(crate) mod model;
 mod openai;
-pub(crate) mod retry;
 pub(crate) mod stream;
 mod r#trait;
 pub mod types;

@@ -37,7 +37,7 @@ Where code lives and the rules that govern placement.
 - `types.rs` defines `Message`, `ContentBlock`, `TokenUsage`, `ModelResponse`, and `StreamEvent`.
 - `anthropic.rs`, `openai.rs`, `litellm.rs`, and `mistral.rs` are concrete providers.
 - `environment.rs` implements `Provider::from_env()`.
-- `stream.rs` and `retry.rs` hold the SSE parser and the shared backoff policy.
+- `stream.rs` holds the SSE parser; the shared retry strategy lives in `util::Retry`.
 
 ## 5. The `tools/` module
 

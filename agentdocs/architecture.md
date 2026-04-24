@@ -63,7 +63,7 @@ The invariants that shape how code fits together. Layout says where code lives; 
 - The `Provider` trait has two methods: `respond` (drive one turn) and `prewarm` (warm TCP+TLS).
 - `ModelRequest` and `ModelResponse` are the wire-shaped types every provider converts to and from.
 - HTTP error mapping is shared through `map_http_errors` + a provider-specific `classify` closure.
-- Retry and compaction are shared seams (`provider::retry::compute_delay`, `agent::compact`); vendor code does not retry.
+- Retry and compaction are shared seams (`util::Retry`, `agent::compact`); vendor code does not retry.
 
 ## 8. Cancellation is cooperative
 

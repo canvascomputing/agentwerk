@@ -6,6 +6,7 @@ use std::time::Duration;
 use crate::agent::error::AgentError;
 use crate::provider::ProviderError;
 use crate::tools::ToolError;
+use crate::util::Retryable;
 
 pub type Result<T> = std::result::Result<T, Error>;
 
@@ -24,16 +25,12 @@ pub enum Error {
     Tool(ToolError),
 }
 
-impl Error {
-    /// Whether the error should be retried with backoff. Delegates to
-    /// [`ProviderError::is_retryable`]; all other categories are terminal.
-    pub fn is_retryable(&self) -> bool {
+impl Retryable for Error {
+    fn is_retryable(&self) -> bool {
         matches!(self, Error::Provider(p) if p.is_retryable())
     }
 
-    /// Server-suggested retry delay (e.g. `Retry-After`), if present.
-    /// Delegates to [`ProviderError::retry_delay`].
-    pub fn retry_delay(&self) -> Option<Duration> {
+    fn retry_delay(&self) -> Option<Duration> {
         match self {
             Error::Provider(p) => p.retry_delay(),
             _ => None,
