@@ -353,18 +353,16 @@ impl Agent {
         let context_prompt =
             build_context_prompt(&spec.context_prompts, runtime.metadata.as_deref());
         let state = LoopState::initial(context_prompt, instruction);
-        run_loop(runtime, spec, state, None).await
+        run_loop(runtime, spec, state).await
     }
 
     /// Crate-internal: run this agent as a child under a parent's run-tree.
     /// The `parent_spec` supplies the model fallback for `model: None`
-    /// (id *and* context window size both inherit). `description` becomes the
-    /// `AgentStart` event's human-readable label.
+    /// (id *and* context window size both inherit).
     pub(crate) async fn run_child(
         &self,
         parent_spec: &AgentSpec,
         parent_runtime: &LoopRuntime,
-        description: Option<String>,
     ) -> Result<Output> {
         let (spec, runtime) = self.compile(Some((parent_spec, parent_runtime)));
         let runtime = Arc::new(runtime);
@@ -372,7 +370,7 @@ impl Agent {
         let context_prompt =
             build_context_prompt(&spec.context_prompts, runtime.metadata.as_deref());
         let state = LoopState::initial(context_prompt, instruction);
-        run_loop(runtime, spec, state, description).await
+        run_loop(runtime, spec, state).await
     }
 
     /// Apply LLM-supplied JSON overrides for any Agent field a tool can

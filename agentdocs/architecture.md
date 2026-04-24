@@ -1,104 +1,84 @@
 # Architecture
 
-Core data structures, how they interact, and the decisions that constrain them.
+The invariants that shape how code fits together. Layout says where code lives; this file says why the seams are where they are.
 
-## 1. Core types
+## 1. Builder, spec, loop
 
-**Every agent run routes through the same set of types.**
+**A run has three stages: build the `Agent`, compile an `AgentSpec`, drive it with `run_loop`.**
 
-- `Agent` is the mutable builder the caller configures.
-- `AgentSpec` (held as `Arc`) is the immutable compiled snapshot of an agent.
-- `LoopRuntime` holds the externals the loop needs: provider, event handler, session store, command queue.
-- `LoopState` holds the mutable per-run state: messages, token usage, turn counter, pending tool calls.
-- `run_loop` is the turn-by-turn execution function; it takes a runtime and a state.
+- The builder carries per-run fields (provider, instruction, cancel signal) and a copy-on-write `Arc<AgentSpec>`.
+- `Agent::compile` resolves the model, fills externals, and hands the loop a frozen `(Arc<AgentSpec>, LoopRuntime)` pair.
+- `run_loop` owns the turn-by-turn state machine and is the only code that mutates `LoopState`.
+- The loop never sees the builder; the builder never sees the loop's state.
 
-## 2. Transport and tools
+## 2. Runtime versus state
 
-**Two traits every call goes through.**
+**Each run has two buckets: externals in `LoopRuntime`, mutation in `LoopState`.**
 
-- `Provider` completes a `ModelRequest` into a `ModelResponse` or a `StreamEvent` stream.
-- `ToolLike` is the interface for any function the model can call.
-- `ToolRegistry` dispatches a tool call by name.
-- `ToolContext` is a read-only handle into the loop, used only by `SpawnAgentTool` and `ToolSearchTool`.
+- `LoopRuntime` holds the provider, event handler, cancel signal, command queue, session store, tool registry, and working directory.
+- `LoopState` holds messages, token counters, turn number, schema retries, and collected errors.
+- `LoopRuntime` is shared behind an `Arc`; `LoopState` is owned by the loop and threaded through by `&mut`.
+- Sub-agents reuse the parent's runtime; they never share a state.
 
-## 3. Observation and result
+## 3. Copy-on-write configuration
 
-**The loop speaks to the caller through events and one final `Output`.**
+**`AgentSpec` is shared across clones. Builder methods mutate through `Arc::make_mut`.**
 
-- `Event { kind }` is emitted at every lifecycle boundary.
-- `EventKind` lists what happened (`AgentStarted`, `ToolCallFinished`, `RequestRetried`, and so on).
-- `Output` carries `outcome`, `errors`, `statistics`, and `messages`.
-- `Batch`, `BatchHandle`, and `BatchOutputStream` run many agents against different inputs.
-- `CommandQueue` carries messages that other agents push through `SendMessageTool`.
+- Cloning an `Agent` clones a handful of small per-run fields and bumps one `Arc` refcount.
+- A builder method mutating the spec forks the `Arc` only if other clones exist; otherwise it mutates in place.
+- The template (tools, sub-agents, prompts, limits) is shared; the per-run fields (instruction, template variables, handlers) are not.
+- `AgentSpec` is `pub(crate)`; callers never touch it directly.
 
-## 4. Running one agent
+## 4. Sub-agent inheritance
 
-**The lifecycle of one run is always the same.**
+**A sub-agent is an `Agent` compiled against a parent's runtime. Inheritance is per-field.**
 
-- `.run()` or `.spawn()` invokes `Agent::compile`, producing `Arc<AgentSpec>`.
-- `run_loop` builds a `LoopRuntime` and an initial `LoopState`.
-- Each turn sends the current messages to the provider and appends the response.
-- Tool calls in the response go through `ToolRegistry::execute` and their results are appended as messages.
-- The loop returns `Output` when the model ends, a limit is reached, or the caller cancels.
+- `Agent::compile(Some(parent))` fills the child's `model: None` with the parent's resolved model and reuses the parent's externals.
+- Child per-run fields (cancel signal, event handler, working directory) override the inherited values when set.
+- Tools and sub-agents are not inherited: each `AgentSpec` declares its own registry.
+- `SpawnAgentTool` is the only path that calls `Agent::run_child`; the public API never exposes the parent slot.
 
-## 5. Spawning sub-agents
+## 5. One error at the crate boundary
 
-**`SpawnAgentTool` is the only consumer of `ToolContext` that may read the runtime.**
+**`Result<T, Error>` is the one fallible surface. Domain sub-enums live with their domain.**
 
-- It inherits model, prompts, and tool set from `caller_spec` unless overridden.
-- It shares `runtime` so provider, event handler, and command queue are the same.
-- It returns an `AgentHandle` whose `OutputFuture` resolves to an `Output`.
-- `.spawn()` catches panics at the tokio boundary and surfaces them as `AgentError::AgentCrashed`.
+- `Error::Provider`, `Error::Agent`, `Error::Tool` each wrap a domain-specific enum defined in that module.
+- `Error::is_retryable` and `Error::retry_delay` delegate to the provider variant; all other categories are terminal.
+- Tool failures flow two ways: `Err` bubbles as `Error::Tool`, `Ok(ToolResult::Error(...))` goes back to the model as text.
+- No blanket `From<io::Error>` or `From<serde_json::Error>`; each mapping is explicit.
 
-## 6. Peer messaging
+## 6. Events observe, Output returns
 
-**Agents send messages by pushing onto each other's `CommandQueue`.**
+**Observation and return use separate channels. `Event` is out-of-band; `Output` is the run's value.**
 
-- `SendMessageTool` pushes a `QueuedCommand` with a priority.
-- Each `run_loop` drains its queue at turn boundaries.
-- The queue sits on `LoopRuntime`, so any tool with access to the runtime can push.
+- Every lifecycle transition emits an `Event` through `runtime.event_handler`.
+- `AgentFinished` fires on every `Ok` termination path (`Completed`, `Cancelled`, `Failed`) and matches `Output.outcome`.
+- Pre-flight failures (missing provider, unreadable prompt, unset model) return `Err(...)` without ever starting the loop.
+- Handlers are cheap, non-blocking closures; the loop does not await them.
 
-## 7. Running many agents
+## 7. Providers own their client
 
-**`Batch` clones one template per input and runs them together.**
+**Each concrete provider owns a `reqwest::Client` directly. There is no transport abstraction.**
 
-- `.run(...)` awaits every clone and returns `Vec<Output>`.
-- `.spawn(...)` returns a `BatchHandle` and a `BatchOutputStream` that yields each `Output` as it completes.
-- The template is cloned, not shared, so per-input modifications are safe.
+- The `Provider` trait has two methods: `respond` (drive one turn) and `prewarm` (warm TCP+TLS).
+- `ModelRequest` and `ModelResponse` are the wire-shaped types every provider converts to and from.
+- HTTP error mapping is shared through `map_http_errors` + a provider-specific `classify` closure.
+- Retry and compaction are shared seams (`provider::retry::compute_delay`, `agent::compact`); vendor code does not retry.
 
-## 8. Error model
+## 8. Cancellation is cooperative
 
-**`Error` is categorical. Three variants wrap the domain sub-enums.**
+**A run is cancelled by setting one shared `Arc<AtomicBool>`. Every waiter polls it.**
 
-- `Provider(ProviderError)` covers transport failures.
-- `Agent(AgentError)` covers run-lifecycle and builder failures.
-- `Tool(ToolError)` is a flat struct (`tool_name`, `message`) for infrastructure-level tool failures.
-- Most tool failures surface as `ToolResult::Error` on the message channel, not as `ToolError`.
-- Internal-only errors (`PersistenceError`, `SchemaViolation`) stay `pub(crate)` and are routed into the public error types by their consumer.
+- `check_guards` reads the flag at every turn boundary; tools read it via `ToolContext::wait_for_cancel`.
+- `tokio::select!` pairs provider calls and tool futures with `wait_for_cancel` so a cancel drops the losing branch promptly.
+- `AgentHandle` sets the flag explicitly; dropping the last handle sets it via `LifeToken::drop`.
+- `Batch` installs its own signal on every submitted agent so `BatchHandle::cancel` reaches in-flight runs.
 
-## 9. Termination contract
+## 9. Persistence stays internal
 
-**Once the loop starts, every termination returns `Ok(Output)`.**
+**`persistence/` is `pub(crate)`. Sessions and tasks are opt-in behaviors, never part of the public type surface.**
 
-- `Output.outcome` is `Completed`, `Cancelled`, or `Failed`.
-- `Output.errors` logs every failure seen during the run; on `Failed` the last entry is the cause.
-- Builder misconfiguration panics at build time, never inside `.run()`.
-- Budget and turn limits land as `AgentError::PolicyViolated { kind, usage, limit }` where `kind` is `Turns`, `InputTokens`, `OutputTokens`, or `SchemaRetries`.
-
-## 10. Persistence
-
-**Both stores are `pub(crate)` and support observability, not callers.**
-
-- `SessionStore` appends a JSONL entry per turn; runs remain inspectable after the process exits.
-- `TaskStore` uses file locks per task.
-- `TaskStore` writes the mark-file before the payload-file so partial writes are recoverable.
-
-## 11. Critical decisions
-
-**Non-obvious choices. Propose a plan before deviating.**
-
-- No new dependencies without asking.
-- No ad-hoc changes to `Agent`, `ToolContext`, `Event`, `ToolLike`, `ModelRequest`, `Output`, or `Batch`.
-- Tools capture dependencies at construction; `ToolContext` is not used by new tools.
-- Prompt and schema files resolve eagerly; missing files panic at build time.
-- No blanket `From<io::Error>` or `From<serde_json::Error>`; each domain declares its own conversion.
+- `SessionStore` appends JSONL transcripts when `.session_dir(...)` is set; otherwise the loop writes nothing.
+- `TaskStore` is reached through `TaskTool`; agents coordinate through it without importing it.
+- No persistence type appears in `Output`, `Event`, or any public signature.
+- Swapping the backend is a crate-internal change; callers do not break.

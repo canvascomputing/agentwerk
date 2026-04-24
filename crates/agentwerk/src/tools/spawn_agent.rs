@@ -183,19 +183,13 @@ impl ToolLike for SpawnAgentTool {
                 .apply_overrides(&input)
                 .instruction_prompt(&args.instruction);
 
-            let description = Some(args.description.clone());
-
             if args.background.unwrap_or(false) {
                 let id = generate_agent_name(&args.description);
                 let queue = runtime.command_queue.clone();
                 let agent_id = id.clone();
                 let caller_for_child = caller.clone();
-                let description_for_child = description.clone();
                 tokio::spawn(async move {
-                    let summary = match agent
-                        .run_child(&caller_for_child, &runtime, description_for_child)
-                        .await
-                    {
+                    let summary = match agent.run_child(&caller_for_child, &runtime).await {
                         Ok(o) => o.response_raw,
                         Err(e) => format!("Failed: {e}"),
                     };
@@ -208,7 +202,7 @@ impl ToolLike for SpawnAgentTool {
                     args.description
                 )))
             } else {
-                match agent.run_child(&caller, &runtime, description).await {
+                match agent.run_child(&caller, &runtime).await {
                     Ok(o) => Ok(ToolResult::success(o.response_raw)),
                     Err(e) => Ok(ToolResult::error(format!("Agent error: {e}"))),
                 }

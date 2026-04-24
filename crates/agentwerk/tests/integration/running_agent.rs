@@ -166,10 +166,7 @@ where
 /// streaming/usage events that would flood the log.
 fn format_event(e: &Event) -> Option<String> {
     match &e.kind {
-        EventKind::AgentStarted { description } => Some(match description {
-            Some(d) => format!("start  ({d})"),
-            None => "start".into(),
-        }),
+        EventKind::AgentStarted => Some("start".into()),
         EventKind::AgentFinished { turns, outcome } => {
             Some(format!("end    ({turns} turns, {outcome:?})"))
         }

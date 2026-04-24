@@ -88,10 +88,8 @@ impl Event {
         Arc::new(|event: Event| {
             let agent = &event.agent_name;
             match &event.kind {
-                EventKind::AgentStarted {
-                    description: Some(d),
-                } => {
-                    eprintln!("[{agent}] start: {d}");
+                EventKind::AgentStarted => {
+                    eprintln!("[{agent}] start");
                 }
                 EventKind::AgentFinished { turns, outcome } => {
                     eprintln!("[{agent}] done ({turns} turns, {outcome:?})");
@@ -157,9 +155,8 @@ impl Event {
 /// `ContextCompacted`, `*PolicyViolated`), and pause/resume.
 #[derive(Debug, Clone)]
 pub enum EventKind {
-    /// Agent run began. `description` is set for sub-agents (the parent's
-    /// human-readable label for the spawn) and `None` for root runs.
-    AgentStarted { description: Option<String> },
+    /// Agent run began.
+    AgentStarted,
     /// Agent run finished on an `Ok` path. `turns` is the loop iteration
     /// count; `outcome` is the exit reason.
     AgentFinished { turns: u32, outcome: Outcome },
@@ -266,10 +263,7 @@ mod tests {
     fn default_logger_handles_every_variant() {
         let logger = Event::default_logger();
         let every: Vec<EventKind> = vec![
-            EventKind::AgentStarted {
-                description: Some("desc".into()),
-            },
-            EventKind::AgentStarted { description: None },
+            EventKind::AgentStarted,
             EventKind::AgentFinished {
                 turns: 3,
                 outcome: Outcome::Completed,
@@ -343,7 +337,7 @@ mod tests {
         // compile and the test list above must be extended.
         for kind in &every {
             match kind {
-                EventKind::AgentStarted { .. }
+                EventKind::AgentStarted
                 | EventKind::AgentFinished { .. }
                 | EventKind::TurnStarted { .. }
                 | EventKind::TurnFinished { .. }

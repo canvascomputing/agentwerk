@@ -1,4 +1,4 @@
-//! The execution kernel. Runs a compiled `Agent` turn by turn until it yields an `Output` or hits a guard.
+//! The agent execution loop. Drives one compiled `Agent` turn by turn until it returns an `Output`.
 
 use std::collections::{HashMap, HashSet};
 use std::future::Future;
@@ -16,7 +16,7 @@ use crate::output::{Outcome, Output, OutputSchema, SchemaViolation, Statistics};
 use crate::persistence::session::{SessionStore, TranscriptEntry, TranscriptEntryType};
 use crate::provider::retry::compute_delay;
 use crate::provider::types::{
-    ModelResponse, ContentBlock, Message, ResponseStatus, StreamEvent, TokenUsage,
+    ContentBlock, Message, ResponseStatus, StreamEvent, TokenUsage,
 };
 use crate::provider::{ModelRequest, Provider, ProviderError, RequestErrorKind};
 use crate::tools::{ToolCall, ToolContext, ToolRegistry, ToolResult};
@@ -28,12 +28,11 @@ use super::prompts::{self as prompts};
 use super::queue::{CommandQueue, QueuePriority};
 use super::spec::AgentSpec;
 
-/// Per-run externals and resolved runtime values. Shared as `Arc<LoopRuntime>`.
-/// The fields under "externals" inherit tree-wide (a child sub-agent reuses the
-/// parent's provider, handlers, queue, etc.); `tools` and `template_variables`
-/// are per-agent resolutions produced by `Agent::compile`.
+/// Externals plus per-agent resolutions shared by the loop. Externals
+/// (provider, handlers, queue, store) inherit tree-wide so a child sub-agent
+/// reuses the parent's; `tools` and `template_variables` are per-agent
+/// resolutions produced by `Agent::compile`.
 pub(crate) struct LoopRuntime {
-    // Externals — inherited across sub-agents.
     pub provider: Arc<dyn Provider>,
     pub event_handler: Arc<dyn Fn(Event) + Send + Sync>,
     pub cancel_signal: Arc<AtomicBool>,
@@ -42,15 +41,12 @@ pub(crate) struct LoopRuntime {
     pub session_store: Option<Arc<Mutex<SessionStore>>>,
     pub metadata: Option<String>,
     pub discovered_tools: Arc<Mutex<HashSet<String>>>,
-
-    // Per-agent resolutions. `tools` has `SpawnAgentTool` auto-wired when the agent
-    // declared sub_agents; `template_variables` is a snapshot taken at compile time.
     pub tools: Arc<ToolRegistry>,
     pub template_variables: HashMap<String, Value>,
 }
 
 impl LoopRuntime {
-    /// Build the environment metadata block prepended to the first user message.
+    /// Build the environment block prepended to the first user message.
     pub(crate) fn environment(working_directory: &Path) -> String {
         let working_directory = working_directory.display();
         let platform = std::env::consts::OS;
@@ -66,7 +62,7 @@ impl LoopRuntime {
     }
 }
 
-/// Everything the loop mutates. Created fresh for each agent run.
+/// Per-run mutable state of the loop. Created fresh for each agent run.
 #[derive(Default)]
 pub(crate) struct LoopState {
     pub messages: Vec<Message>,
@@ -80,8 +76,8 @@ pub(crate) struct LoopState {
 }
 
 impl LoopState {
-    /// Build the initial state. Both `context_prompt` and `instruction` are precomputed by the
-    /// caller because assembling them needs `Agent`'s per-run fields, which this module does not see.
+    /// Build the initial state from precomputed prompts. Assembling them needs
+    /// `Agent`'s per-run fields, which this module cannot see.
     pub(crate) fn initial(context_prompt: Option<String>, instruction: String) -> Self {
         let mut messages = Vec::new();
         if let Some(cp) = context_prompt {
@@ -95,696 +91,439 @@ impl LoopState {
     }
 }
 
-/// The agent execution loop — one turn per iteration.
+/// Drive one compiled agent to completion: provider call, tool calls, queue
+/// drain, schema check, repeat. The body below is the recipe.
 ///
-/// Each turn sends the conversation to the model and processes the reply.
-/// The loop **continues** when more work is needed and **exits** when the
-/// agent has nothing left to do.
+/// Always resolves to `Ok(Output)`. The `outcome` is `Completed`, `Cancelled`,
+/// or `Failed`; on `Failed` the cause is the last entry of `output.errors`.
 ///
-/// Continues when:
-/// - the model called tools (run them and feed results back)
-/// - the reply was truncated (ask the model to keep going)
-/// - a peer agent or background task queued a message
-/// - the agent was parked idle and a message woke it
-/// - a required output schema wasn't met (retry)
-///
-/// Exits when:
-/// - the model stopped and any required schema validates — return the
-///   final answer
-/// - a guard fired (cancel, turn limit, input-token budget) — return a
-///   partial output with the reason attached
-///
-/// Context-window overflow is handled transparently: compaction is
-/// triggered proactively when the estimated next request would overflow,
-/// and reactively when the provider reports overflow mid-turn.
+/// Boxed because `SpawnAgentTool` re-enters this function for sub-agents.
 pub(crate) fn run_loop(
     runtime: Arc<LoopRuntime>,
     spec: Arc<AgentSpec>,
     mut state: LoopState,
-    description: Option<String>,
 ) -> Pin<Box<dyn Future<Output = Result<Output>> + Send>> {
     Box::pin(async move {
+        let emit = |kind: EventKind| {
+            (runtime.event_handler)(Event::new(spec.name.clone(), kind));
+        };
+        let transcribe = |entry_type: TranscriptEntryType,
+                          message: &Message,
+                          usage_and_model: Option<(&TokenUsage, &str)>| {
+            if let Some(store) = runtime.session_store.as_ref() {
+                store
+                    .lock()
+                    .unwrap()
+                    .record(TranscriptEntry {
+                        recorded_at: now_millis(),
+                        entry_type,
+                        message: message.clone(),
+                        usage: usage_and_model.map(|(u, _)| u.clone()),
+                        model: usage_and_model.map(|(_, m)| m.to_string()),
+                    })
+                    .ok();
+            }
+        };
+
         runtime.provider.prewarm().await;
-        record_transcript(
-            &runtime,
+        transcribe(
             TranscriptEntryType::UserMessage,
             state.messages.last().unwrap(),
             None,
         );
-        emit_agent_started(&runtime, &spec, description);
+        emit(EventKind::AgentStarted);
 
-        loop {
-            if let Some(outcome) = check_guards(&runtime, &spec, &mut state) {
-                return Ok(finish_early(&runtime, &spec, &mut state, outcome));
+        let outcome = 'run: loop {
+            // ── Guards: cancel, turn limit, token budgets ──────────────────
+            if runtime.cancel_signal.load(Ordering::Relaxed) {
+                break 'run Outcome::Cancelled;
+            }
+            if let Some(limit) = spec.max_turns {
+                if state.turn >= limit {
+                    let usage = u64::from(state.turn);
+                    let limit = u64::from(limit);
+                    let kind = PolicyKind::Turns;
+                    state
+                        .errors
+                        .push(AgentError::PolicyViolated { kind, usage, limit }.into());
+                    emit(EventKind::PolicyViolated { kind, usage, limit });
+                    break 'run Outcome::Failed;
+                }
+            }
+            if let Some(limit) = spec.max_input_tokens {
+                if state.total_usage.input_tokens >= limit {
+                    let usage = state.total_usage.input_tokens;
+                    let kind = PolicyKind::InputTokens;
+                    state
+                        .errors
+                        .push(AgentError::PolicyViolated { kind, usage, limit }.into());
+                    emit(EventKind::PolicyViolated { kind, usage, limit });
+                    break 'run Outcome::Failed;
+                }
+            }
+            if let Some(limit) = spec.max_output_tokens {
+                if state.total_usage.output_tokens >= limit {
+                    let usage = state.total_usage.output_tokens;
+                    let kind = PolicyKind::OutputTokens;
+                    state
+                        .errors
+                        .push(AgentError::PolicyViolated { kind, usage, limit }.into());
+                    emit(EventKind::PolicyViolated { kind, usage, limit });
+                    break 'run Outcome::Failed;
+                }
             }
 
+            // ── New turn ───────────────────────────────────────────────────
             state.turn += 1;
             let turn = state.turn;
+            emit(EventKind::TurnStarted { turn });
+            emit(EventKind::RequestStarted {
+                model: spec.model().name.clone(),
+            });
 
-            emit_turn_started(&runtime, &spec, turn);
-            emit_request_started(&runtime, &spec);
-
-            let Some(response) = call_provider_with_retry(&runtime, &spec, &mut state, turn).await
-            else {
-                let outcome = if runtime.cancel_signal.load(Ordering::Relaxed) {
-                    Outcome::Cancelled
-                } else {
-                    Outcome::Failed
+            // ── Provider call, retrying transient failures ─────────────────
+            let mut attempt = 0u32;
+            let response = 'fetch: loop {
+                let request = ModelRequest {
+                    model: spec.model().name.clone(),
+                    system_prompt: spec.system_prompt(&runtime.template_variables),
+                    messages: state.messages.clone(),
+                    tools: runtime
+                        .tools
+                        .definitions(&runtime.discovered_tools.lock().unwrap()),
+                    max_request_tokens: spec.max_request_tokens,
+                    tool_choice: None,
                 };
-                return Ok(finish_early(&runtime, &spec, &mut state, outcome));
+                let on_event: Arc<dyn Fn(StreamEvent) + Send + Sync> = {
+                    let event_handler = runtime.event_handler.clone();
+                    let agent_name = spec.name.clone();
+                    Arc::new(move |event| {
+                        if let StreamEvent::TextDelta { text, .. } = &event {
+                            event_handler(Event::new(
+                                agent_name.clone(),
+                                EventKind::TextChunkReceived {
+                                    content: text.clone(),
+                                },
+                            ));
+                        }
+                    })
+                };
+
+                let call = tokio::select! {
+                    biased;
+                    _ = wait_for_cancel(&runtime.cancel_signal) => None,
+                    r = runtime.provider.respond(request, on_event) => Some(r.map_err(Error::from)),
+                };
+
+                match call {
+                    None => break 'run Outcome::Cancelled,
+                    Some(Ok(response)) => break 'fetch response,
+                    Some(Err(Error::Provider(ProviderError::ContextWindowExceeded { message })))
+                        if spec.model().context_window_size.is_some() =>
+                    {
+                        if let Err(compact_err) =
+                            compact::trigger_reactive(&runtime, &spec, &mut state, turn).await
+                        {
+                            state.errors.push(compact_err);
+                        }
+                        state.errors.push(Error::Provider(
+                            ProviderError::ContextWindowExceeded { message },
+                        ));
+                        break 'run Outcome::Failed;
+                    }
+                    Some(Err(e)) if e.is_retryable() && attempt < spec.max_request_retries => {
+                        let delay =
+                            compute_delay(spec.request_retry_delay, attempt, e.retry_delay());
+                        if !cancellable_sleep(delay, &runtime.cancel_signal).await {
+                            state.errors.push(e);
+                            break 'run Outcome::Cancelled;
+                        }
+                        attempt += 1;
+                        let kind = match &e {
+                            Error::Provider(pe) => pe.kind(),
+                            _ => RequestErrorKind::StatusUnclassified,
+                        };
+                        emit(EventKind::RequestRetried {
+                            attempt,
+                            max_attempts: spec.max_request_retries,
+                            kind,
+                            message: format!("{e}"),
+                        });
+                        state.errors.push(e);
+                    }
+                    Some(Err(e)) => {
+                        // Cancellation mid-flight surfaces as `None` above, not an
+                        // error here — the signal check guards the rare race
+                        // where the request itself errors out as cancel propagates.
+                        if runtime.cancel_signal.load(Ordering::Relaxed) {
+                            break 'run Outcome::Cancelled;
+                        }
+                        let kind = match &e {
+                            Error::Provider(pe) => pe.kind(),
+                            _ => RequestErrorKind::StatusUnclassified,
+                        };
+                        emit(EventKind::RequestFailed {
+                            kind,
+                            message: format!("{e}"),
+                        });
+                        state.errors.push(e);
+                        break 'run Outcome::Failed;
+                    }
+                }
             };
 
-            emit_request_finished(&runtime, &spec);
-            record_usage(&runtime, &spec, &mut state, &response);
+            emit(EventKind::RequestFinished {
+                model: spec.model().name.clone(),
+            });
+            state.total_usage += &response.usage;
+            state.request_count += 1;
+            emit(EventKind::TokensReported {
+                model: response.model.clone(),
+                usage: response.usage.clone(),
+            });
 
-            let (text, tool_calls) = parse_response(&response);
+            // ── Parse the reply, append the assistant message ──────────────
+            let mut text = String::new();
+            let mut tool_calls: Vec<ToolCall> = Vec::new();
+            for block in &response.content {
+                match block {
+                    ContentBlock::Text { text: chunk } => text.push_str(chunk),
+                    ContentBlock::ToolUse { id, name, input } => tool_calls.push(ToolCall {
+                        id: id.clone(),
+                        name: name.clone(),
+                        input: input.clone(),
+                    }),
+                    _ => {}
+                }
+            }
             state.messages.push(Message::Assistant {
                 content: response.content.clone(),
             });
-            record_transcript(
-                &runtime,
+            transcribe(
                 TranscriptEntryType::AssistantMessage,
                 state.messages.last().unwrap(),
                 Some((&response.usage, &response.model)),
             );
 
-            // Mid-generation overflow: same reactive seam as the pre-flight error.
+            // ── Compaction: reactive on mid-generation overflow, then proactive ─
             if response.status == ResponseStatus::ContextWindowExceeded
                 && spec.model().context_window_size.is_some()
             {
                 if let Err(e) = compact::trigger_reactive(&runtime, &spec, &mut state, turn).await {
                     state.errors.push(e);
-                    return Ok(finish_early(&runtime, &spec, &mut state, Outcome::Failed));
+                    break 'run Outcome::Failed;
                 }
             }
-
             if let Err(e) = compact::trigger_if_over_threshold(&runtime, &spec, &mut state).await {
                 state.errors.push(e);
-                return Ok(finish_early(&runtime, &spec, &mut state, Outcome::Failed));
+                break 'run Outcome::Failed;
             }
 
-            let tool_use_ready =
-                response.status == ResponseStatus::ToolUse && !tool_calls.is_empty();
-            let response_truncated =
-                response.status == ResponseStatus::OutputTruncated && tool_calls.is_empty();
-
-            if tool_use_ready {
-                let results = execute_tools(&runtime, &spec, &mut state, &tool_calls).await;
-                state.messages.push(Message::User { content: results });
-                record_transcript(
-                    &runtime,
+            // ── Tool calls: run them, append results, drain the queue ──────
+            if response.status == ResponseStatus::ToolUse && !tool_calls.is_empty() {
+                state.tool_call_count += tool_calls.len() as u64;
+                for call in &tool_calls {
+                    emit(EventKind::ToolCallStarted {
+                        tool_name: call.name.clone(),
+                        call_id: call.id.clone(),
+                        input: call.input.clone(),
+                    });
+                }
+                let tool_ctx = ToolContext::new(runtime.working_directory.clone())
+                    .registry(Arc::clone(&runtime.tools))
+                    .runtime(Arc::clone(&runtime))
+                    .caller_spec(Arc::clone(&spec));
+                let raw = runtime.tools.execute(&tool_calls, &tool_ctx).await;
+                let mut blocks = Vec::with_capacity(raw.len());
+                for (block, result, failure_kind) in raw {
+                    if let ContentBlock::ToolResult { tool_use_id, .. } = &block {
+                        let tool_name = tool_calls
+                            .iter()
+                            .find(|c| c.id == *tool_use_id)
+                            .map(|c| c.name.clone())
+                            .unwrap_or_default();
+                        match result {
+                            ToolResult::Success(output) => emit(EventKind::ToolCallFinished {
+                                tool_name,
+                                call_id: tool_use_id.clone(),
+                                output,
+                            }),
+                            ToolResult::Error(message) => emit(EventKind::ToolCallFailed {
+                                tool_name,
+                                call_id: tool_use_id.clone(),
+                                message,
+                                kind: failure_kind
+                                    .expect("Error result must carry a ToolFailureKind"),
+                            }),
+                        }
+                    }
+                    blocks.push(block);
+                }
+                state.messages.push(Message::User { content: blocks });
+                transcribe(
                     TranscriptEntryType::ToolResult,
                     state.messages.last().unwrap(),
                     None,
                 );
-                drain_command_queue(&runtime, &spec, &mut state);
-                emit_turn_finished(&runtime, &spec, turn);
+                if let Some(queue) = runtime.command_queue.as_ref() {
+                    while let Some(cmd) = queue
+                        .dequeue_if(Some(&spec.name), |c| c.priority != QueuePriority::Later)
+                    {
+                        state.messages.push(Message::user(cmd.as_user_message()));
+                    }
+                }
+                emit(EventKind::TurnFinished { turn });
                 continue;
             }
 
-            if response_truncated {
-                emit_output_truncated(&runtime, &spec, turn);
+            // ── Truncated output: ask the model to keep going ──────────────
+            if response.status == ResponseStatus::OutputTruncated && tool_calls.is_empty() {
+                emit(EventKind::OutputTruncated { turn });
                 state
                     .messages
                     .push(Message::user(prompts::MAX_TOKENS_CONTINUATION));
-                emit_turn_finished(&runtime, &spec, turn);
+                emit(EventKind::TurnFinished { turn });
                 continue;
             }
 
-            let drain_found_messages = drain_pending_messages(&runtime, &spec, &mut state);
-            if drain_found_messages {
-                emit_turn_finished(&runtime, &spec, turn);
+            // ── Drain queued messages even without tool use ────────────────
+            let before = state.messages.len();
+            if let Some(queue) = runtime.command_queue.as_ref() {
+                while let Some(cmd) =
+                    queue.dequeue_if(Some(&spec.name), |c| c.priority != QueuePriority::Later)
+                {
+                    state.messages.push(Message::user(cmd.as_user_message()));
+                }
+            }
+            if state.messages.len() > before {
+                emit(EventKind::TurnFinished { turn });
                 continue;
             }
 
-            // Short-circuit: idle_until_message only runs when keep_alive is
-            // enabled, preserving its side effects (emit Idle/Resumed).
-            let idle_found_message =
-                spec.keep_alive && idle_until_message(&runtime, &spec, &mut state).await;
-            if idle_found_message {
-                emit_turn_finished(&runtime, &spec, turn);
-                continue;
+            // ── Park as idle and poll the queue when keep_alive is set ─────
+            if spec.keep_alive {
+                state.is_idle = true;
+                emit(EventKind::AgentPaused);
+                const POLL_INTERVAL: Duration = Duration::from_millis(100);
+                let woken = loop {
+                    if runtime.cancel_signal.load(Ordering::Relaxed) {
+                        break false;
+                    }
+                    let before = state.messages.len();
+                    if let Some(queue) = runtime.command_queue.as_ref() {
+                        while let Some(cmd) = queue
+                            .dequeue_if(Some(&spec.name), |c| c.priority != QueuePriority::Later)
+                        {
+                            state.messages.push(Message::user(cmd.as_user_message()));
+                        }
+                    }
+                    if state.messages.len() > before {
+                        break true;
+                    }
+                    tokio::time::sleep(POLL_INTERVAL).await;
+                };
+                state.is_idle = false;
+                emit(EventKind::AgentResumed);
+                if woken {
+                    emit(EventKind::TurnFinished { turn });
+                    continue;
+                }
             }
 
-            let output_validation = match &spec.output_schema {
-                None => Ok(None),
-                Some(schema) => schema.validate(&text).map(Some),
+            // ── Schema validation: retry on violation, succeed otherwise ───
+            let validated = match spec.output_schema.as_ref().map(|s| s.validate(&text)) {
+                None => None,
+                Some(Ok(value)) => Some(value),
+                Some(Err(detail)) => {
+                    state.schema_retries += 1;
+                    if let Some(limit) = spec
+                        .max_schema_retries
+                        .filter(|&l| state.schema_retries > l)
+                    {
+                        let usage = u64::from(state.schema_retries);
+                        let limit = u64::from(limit);
+                        let kind = PolicyKind::SchemaRetries;
+                        state
+                            .errors
+                            .push(AgentError::PolicyViolated { kind, usage, limit }.into());
+                        emit(EventKind::PolicyViolated { kind, usage, limit });
+                        emit(EventKind::TurnFinished { turn });
+                        break 'run Outcome::Failed;
+                    }
+                    let SchemaViolation { path, message } = &detail;
+                    emit(EventKind::SchemaRetried {
+                        attempt: state.schema_retries,
+                        max_attempts: spec.max_schema_retries.unwrap_or(u32::MAX),
+                        path: path.clone(),
+                        message: message.clone(),
+                    });
+                    state
+                        .messages
+                        .push(Message::user(OutputSchema::retry_message(&detail)));
+                    emit(EventKind::TurnFinished { turn });
+                    continue;
+                }
             };
 
-            if let Err(detail) = output_validation.as_ref() {
-                state.schema_retries += 1;
-
-                let retry_limit_exceeded = spec
-                    .max_schema_retries
-                    .filter(|&limit| state.schema_retries > limit);
-                if let Some(limit) = retry_limit_exceeded {
-                    let usage = u64::from(state.schema_retries);
-                    record_policy_violated(
-                        &runtime,
-                        &spec,
-                        &mut state,
-                        PolicyKind::SchemaRetries,
-                        usage,
-                        u64::from(limit),
-                    );
-                    emit_turn_finished(&runtime, &spec, turn);
-                    return Ok(finish_early(&runtime, &spec, &mut state, Outcome::Failed));
-                }
-
-                let SchemaViolation { path, message } = detail;
-                emit_schema_retried(
-                    &runtime,
-                    &spec,
-                    state.schema_retries,
-                    spec.max_schema_retries.unwrap_or(u32::MAX),
-                    path.clone(),
-                    message.clone(),
-                );
-
-                let retry_prompt = OutputSchema::retry_message(detail);
-                state.messages.push(Message::user(retry_prompt));
-                emit_turn_finished(&runtime, &spec, turn);
-                continue;
-            }
-
-            let validated = output_validation.expect("Err handled above");
-            emit(
-                &runtime,
-                &spec,
-                EventKind::AgentFinished {
+            // ── Done: model stopped and any schema validates ───────────────
+            emit(EventKind::AgentFinished {
+                turns: state.turn,
+                outcome: Outcome::Completed,
+            });
+            emit(EventKind::TurnFinished { turn });
+            return Ok(Output {
+                name: spec.name.clone(),
+                response: validated,
+                response_raw: text,
+                statistics: Statistics {
+                    input_tokens: state.total_usage.input_tokens,
+                    output_tokens: state.total_usage.output_tokens,
+                    requests: state.request_count,
+                    tool_calls: state.tool_call_count,
                     turns: state.turn,
-                    outcome: Outcome::Completed,
                 },
-            );
-            emit_turn_finished(&runtime, &spec, turn);
-            return Ok(build_output(
-                &spec,
-                &mut state,
-                text,
-                validated,
-                Outcome::Completed,
-            ));
-        }
-    })
-}
+                outcome: Outcome::Completed,
+                errors: std::mem::take(&mut state.errors),
+            });
+        };
 
-fn finish_early(
-    runtime: &LoopRuntime,
-    spec: &AgentSpec,
-    state: &mut LoopState,
-    outcome: Outcome,
-) -> Output {
-    let text = last_assistant_text(&state.messages);
-    emit(
-        runtime,
-        spec,
-        EventKind::AgentFinished {
+        // ── Common early-exit path: build output from the last assistant text ──
+        let response_raw = state
+            .messages
+            .iter()
+            .rev()
+            .find_map(|m| match m {
+                Message::Assistant { content } => Some(
+                    content
+                        .iter()
+                        .filter_map(|b| match b {
+                            ContentBlock::Text { text } => Some(text.as_str()),
+                            _ => None,
+                        })
+                        .collect::<String>(),
+                ),
+                _ => None,
+            })
+            .unwrap_or_default();
+        emit(EventKind::AgentFinished {
             turns: state.turn,
             outcome,
-        },
-    );
-    build_output(spec, state, text, None, outcome)
-}
-
-/// Check termination guards. Cancellation returns `Outcome::Cancelled` cleanly.
-/// Turn-limit and budget hits push the corresponding `AgentError` onto
-/// `state.errors`, emit `EventKind::PolicyViolated`, and return `Outcome::Failed`.
-fn check_guards(runtime: &LoopRuntime, spec: &AgentSpec, state: &mut LoopState) -> Option<Outcome> {
-    if runtime.cancel_signal.load(Ordering::Relaxed) {
-        return Some(Outcome::Cancelled);
-    }
-    if let Some(limit) = spec.max_turns {
-        if state.turn >= limit {
-            let usage = u64::from(state.turn);
-            let limit_u64 = u64::from(limit);
-            record_policy_violated(runtime, spec, state, PolicyKind::Turns, usage, limit_u64);
-            return Some(Outcome::Failed);
-        }
-    }
-    if let Some(limit) = spec.max_input_tokens {
-        if state.total_usage.input_tokens >= limit {
-            let usage = state.total_usage.input_tokens;
-            record_policy_violated(runtime, spec, state, PolicyKind::InputTokens, usage, limit);
-            return Some(Outcome::Failed);
-        }
-    }
-    if let Some(limit) = spec.max_output_tokens {
-        if state.total_usage.output_tokens >= limit {
-            let usage = state.total_usage.output_tokens;
-            record_policy_violated(runtime, spec, state, PolicyKind::OutputTokens, usage, limit);
-            return Some(Outcome::Failed);
-        }
-    }
-    None
-}
-
-fn record_policy_violated(
-    runtime: &LoopRuntime,
-    spec: &AgentSpec,
-    state: &mut LoopState,
-    kind: PolicyKind,
-    usage: u64,
-    limit: u64,
-) {
-    state
-        .errors
-        .push(AgentError::PolicyViolated { kind, usage, limit }.into());
-    emit_policy_violated(runtime, spec, kind, usage, limit);
-}
-
-/// Call the provider once. `None` means cancellation fired during the request;
-/// the caller detects it via `runtime.cancel_signal` and produces `Outcome::Cancelled`.
-async fn call_provider(
-    runtime: &LoopRuntime,
-    spec: &AgentSpec,
-    state: &LoopState,
-) -> Option<Result<ModelResponse>> {
-    let tool_defs = runtime
-        .tools
-        .definitions(&runtime.discovered_tools.lock().unwrap());
-    let request = ModelRequest {
-        model: spec.model().name.clone(),
-        system_prompt: spec.system_prompt(&runtime.template_variables),
-        messages: state.messages.clone(),
-        tools: tool_defs,
-        max_request_tokens: spec.max_request_tokens,
-        tool_choice: None,
-    };
-
-    let event_handler = runtime.event_handler.clone();
-    let agent_name = spec.name.clone();
-    let on_event = Arc::new(move |event: StreamEvent| {
-        if let StreamEvent::TextDelta { text, .. } = &event {
-            event_handler(Event::new(
-                agent_name.clone(),
-                EventKind::TextChunkReceived {
-                    content: text.clone(),
-                },
-            ));
-        }
-    });
-
-    tokio::select! {
-        biased;
-        _ = wait_for_cancel(&runtime.cancel_signal) => None,
-        result = runtime.provider.respond(request, on_event) => {
-            Some(result.map_err(Error::from))
-        }
-    }
-}
-
-/// One turn's provider call with two built-in resilience seams:
-/// - transient errors (429, 529, 5xx) retry up to `spec.max_request_retries`
-/// - a provider-reported `ContextWindowExceeded` fires
-///   [`compact::trigger_reactive`] before propagating the original error
-/// Call the provider, retrying transient failures. Returns `Some(response)`
-/// on success. Returns `None` when the call can't be completed — the terminal
-/// error (and any retried errors along the way) are pushed onto `state.errors`
-/// so the caller can finish the run with `Outcome::Failed` / `Outcome::Cancelled`.
-async fn call_provider_with_retry(
-    runtime: &LoopRuntime,
-    spec: &AgentSpec,
-    state: &mut LoopState,
-    turn: u32,
-) -> Option<ModelResponse> {
-    for attempt in 0..=spec.max_request_retries {
-        let outcome = match call_provider(runtime, spec, state).await {
-            None => return None,
-            Some(result) => result,
-        };
-        match outcome {
-            Ok(response) => return Some(response),
-            Err(Error::Provider(ProviderError::ContextWindowExceeded { message }))
-                if spec.model().context_window_size.is_some() =>
-            {
-                if let Err(compact_err) =
-                    compact::trigger_reactive(runtime, spec, state, turn).await
-                {
-                    state.errors.push(compact_err);
-                }
-                state
-                    .errors
-                    .push(Error::Provider(ProviderError::ContextWindowExceeded {
-                        message,
-                    }));
-                return None;
-            }
-            Err(e) if e.is_retryable() && attempt < spec.max_request_retries => {
-                let delay = compute_delay(spec.request_retry_delay, attempt, e.retry_delay());
-                if !cancellable_sleep(delay, &runtime.cancel_signal).await {
-                    state.errors.push(e);
-                    return None;
-                }
-                emit_request_retried(runtime, spec, attempt + 1, spec.max_request_retries, &e);
-                state.errors.push(e);
-            }
-            Err(e) => {
-                // Cancellation mid-flight surfaces as `None` above, not an
-                // error here — so the signal check guards the rare race
-                // where the request itself errors out as cancel propagates.
-                if runtime.cancel_signal.load(Ordering::Relaxed) {
-                    return None;
-                }
-                emit_request_failed(runtime, spec, &e);
-                state.errors.push(e);
-                return None;
-            }
-        }
-    }
-    // Retries exhausted. The last retried error was already pushed in the
-    // retry arm above; surface it as a terminal RequestFailed event.
-    if let Some(last) = state.errors.last() {
-        emit_request_failed(runtime, spec, last);
-    }
-    None
-}
-
-fn record_usage(
-    runtime: &LoopRuntime,
-    spec: &AgentSpec,
-    state: &mut LoopState,
-    response: &ModelResponse,
-) {
-    state.total_usage += &response.usage;
-    state.request_count += 1;
-    emit(
-        runtime,
-        spec,
-        EventKind::TokensReported {
-            model: response.model.clone(),
-            usage: response.usage.clone(),
-        },
-    );
-}
-
-fn parse_response(response: &ModelResponse) -> (String, Vec<ToolCall>) {
-    let mut text = String::new();
-    let mut tool_calls = Vec::new();
-    for block in &response.content {
-        match block {
-            ContentBlock::Text { text: chunk } => text.push_str(chunk),
-            ContentBlock::ToolUse { id, name, input } => tool_calls.push(ToolCall {
-                id: id.clone(),
-                name: name.clone(),
-                input: input.clone(),
-            }),
-            _ => {}
-        }
-    }
-    (text, tool_calls)
-}
-
-async fn execute_tools(
-    runtime: &Arc<LoopRuntime>,
-    spec: &Arc<AgentSpec>,
-    state: &mut LoopState,
-    calls: &[ToolCall],
-) -> Vec<ContentBlock> {
-    state.tool_call_count += calls.len() as u64;
-    for call in calls {
-        emit(
-            runtime,
-            spec,
-            EventKind::ToolCallStarted {
-                tool_name: call.name.clone(),
-                call_id: call.id.clone(),
-                input: call.input.clone(),
+        });
+        Ok(Output {
+            name: spec.name.clone(),
+            response: None,
+            response_raw,
+            statistics: Statistics {
+                input_tokens: state.total_usage.input_tokens,
+                output_tokens: state.total_usage.output_tokens,
+                requests: state.request_count,
+                tool_calls: state.tool_call_count,
+                turns: state.turn,
             },
-        );
-    }
-
-    let tool_ctx = ToolContext::new(runtime.working_directory.clone())
-        .registry(Arc::clone(&runtime.tools))
-        .runtime(Arc::clone(runtime))
-        .caller_spec(Arc::clone(spec));
-
-    let raw = runtime.tools.execute(calls, &tool_ctx).await;
-    let mut blocks = Vec::with_capacity(raw.len());
-    for (block, result, failure_kind) in raw {
-        if let ContentBlock::ToolResult { tool_use_id, .. } = &block {
-            let tool_name = calls
-                .iter()
-                .find(|c| c.id == *tool_use_id)
-                .map(|c| c.name.clone())
-                .unwrap_or_default();
-            let event = match result {
-                ToolResult::Success(output) => EventKind::ToolCallFinished {
-                    tool_name,
-                    call_id: tool_use_id.clone(),
-                    output,
-                },
-                ToolResult::Error(message) => EventKind::ToolCallFailed {
-                    tool_name,
-                    call_id: tool_use_id.clone(),
-                    message,
-                    kind: failure_kind.expect("Error result must carry a ToolFailureKind"),
-                },
-            };
-            emit(runtime, spec, event);
-        }
-
-        blocks.push(block);
-    }
-    blocks
-}
-
-fn drain_command_queue(runtime: &LoopRuntime, spec: &AgentSpec, state: &mut LoopState) {
-    let Some(queue) = runtime.command_queue.as_ref() else {
-        return;
-    };
-    while let Some(cmd) = queue.dequeue_if(Some(&spec.name), |c| c.priority != QueuePriority::Later)
-    {
-        state.messages.push(Message::user(cmd.as_user_message()));
-    }
-}
-
-/// Drain the command queue into `state.messages` and report whether anything
-/// arrived. Used by `run_loop` to decide whether to continue the loop without
-/// a new LLM request when the model gave no actionable output.
-fn drain_pending_messages(runtime: &LoopRuntime, spec: &AgentSpec, state: &mut LoopState) -> bool {
-    let before = state.messages.len();
-    drain_command_queue(runtime, spec, state);
-    state.messages.len() > before
-}
-
-/// Park the agent as idle, poll for incoming messages, then emit the resume
-/// event. Returns `true` if a message arrived (loop should continue),
-/// `false` on timeout or cancel (loop should finalize).
-async fn idle_until_message(
-    runtime: &LoopRuntime,
-    spec: &AgentSpec,
-    state: &mut LoopState,
-) -> bool {
-    state.is_idle = true;
-    emit_agent_paused(runtime, spec);
-    let woken = wait_for_message(runtime, spec, state).await;
-    state.is_idle = false;
-    emit_agent_resumed(runtime, spec);
-    woken
-}
-
-/// Park the agent between turn chains, polling the command queue for messages
-/// visible to `spec.name`. Returns `true` if a message arrived (agent should
-/// resume), `false` on cancel (agent should finalize).
-///
-/// Only called via `idle_until_message` when `spec.keep_alive` is true.
-async fn wait_for_message(runtime: &LoopRuntime, spec: &AgentSpec, state: &mut LoopState) -> bool {
-    const POLL_INTERVAL: Duration = Duration::from_millis(100);
-    loop {
-        if runtime.cancel_signal.load(Ordering::Relaxed) {
-            return false;
-        }
-        let before = state.messages.len();
-        drain_command_queue(runtime, spec, state);
-        if state.messages.len() > before {
-            return true;
-        }
-        tokio::time::sleep(POLL_INTERVAL).await;
-    }
-}
-
-fn emit(runtime: &LoopRuntime, spec: &AgentSpec, kind: EventKind) {
-    (runtime.event_handler)(Event::new(spec.name.clone(), kind));
-}
-
-fn emit_agent_started(runtime: &LoopRuntime, spec: &AgentSpec, description: Option<String>) {
-    emit(runtime, spec, EventKind::AgentStarted { description });
-}
-
-fn emit_turn_started(runtime: &LoopRuntime, spec: &AgentSpec, turn: u32) {
-    emit(runtime, spec, EventKind::TurnStarted { turn });
-}
-
-fn emit_turn_finished(runtime: &LoopRuntime, spec: &AgentSpec, turn: u32) {
-    emit(runtime, spec, EventKind::TurnFinished { turn });
-}
-
-fn emit_request_started(runtime: &LoopRuntime, spec: &AgentSpec) {
-    emit(
-        runtime,
-        spec,
-        EventKind::RequestStarted {
-            model: spec.model().name.clone(),
-        },
-    );
-}
-
-fn emit_request_finished(runtime: &LoopRuntime, spec: &AgentSpec) {
-    emit(
-        runtime,
-        spec,
-        EventKind::RequestFinished {
-            model: spec.model().name.clone(),
-        },
-    );
-}
-
-fn emit_request_retried(
-    runtime: &LoopRuntime,
-    spec: &AgentSpec,
-    attempt: u32,
-    max_attempts: u32,
-    error: &Error,
-) {
-    emit(
-        runtime,
-        spec,
-        EventKind::RequestRetried {
-            attempt,
-            max_attempts,
-            kind: request_error_kind(error),
-            message: format!("{error}"),
-        },
-    );
-}
-
-fn emit_request_failed(runtime: &LoopRuntime, spec: &AgentSpec, error: &Error) {
-    emit(
-        runtime,
-        spec,
-        EventKind::RequestFailed {
-            kind: request_error_kind(error),
-            message: format!("{error}"),
-        },
-    );
-}
-
-fn request_error_kind(error: &Error) -> RequestErrorKind {
-    match error {
-        Error::Provider(pe) => pe.kind(),
-        _ => RequestErrorKind::StatusUnclassified,
-    }
-}
-
-fn emit_output_truncated(runtime: &LoopRuntime, spec: &AgentSpec, turn: u32) {
-    emit(runtime, spec, EventKind::OutputTruncated { turn });
-}
-
-fn emit_policy_violated(
-    runtime: &LoopRuntime,
-    spec: &AgentSpec,
-    kind: PolicyKind,
-    usage: u64,
-    limit: u64,
-) {
-    emit(
-        runtime,
-        spec,
-        EventKind::PolicyViolated { kind, usage, limit },
-    );
-}
-
-fn emit_schema_retried(
-    runtime: &LoopRuntime,
-    spec: &AgentSpec,
-    attempt: u32,
-    max_attempts: u32,
-    path: String,
-    message: String,
-) {
-    emit(
-        runtime,
-        spec,
-        EventKind::SchemaRetried {
-            attempt,
-            max_attempts,
-            path,
-            message,
-        },
-    );
-}
-
-fn emit_agent_paused(runtime: &LoopRuntime, spec: &AgentSpec) {
-    emit(runtime, spec, EventKind::AgentPaused);
-}
-
-fn emit_agent_resumed(runtime: &LoopRuntime, spec: &AgentSpec) {
-    emit(runtime, spec, EventKind::AgentResumed);
-}
-
-fn record_transcript(
-    runtime: &LoopRuntime,
-    entry_type: TranscriptEntryType,
-    message: &Message,
-    usage_and_model: Option<(&TokenUsage, &str)>,
-) {
-    let Some(ref store) = runtime.session_store else {
-        return;
-    };
-    store
-        .lock()
-        .unwrap()
-        .record(TranscriptEntry {
-            recorded_at: now_millis(),
-            entry_type,
-            message: message.clone(),
-            usage: usage_and_model.map(|(u, _)| u.clone()),
-            model: usage_and_model.map(|(_, m)| m.to_string()),
+            outcome,
+            errors: std::mem::take(&mut state.errors),
         })
-        .ok();
-}
-
-fn build_output(
-    spec: &AgentSpec,
-    state: &mut LoopState,
-    text: String,
-    response: Option<Value>,
-    outcome: Outcome,
-) -> Output {
-    Output {
-        name: spec.name.clone(),
-        response,
-        response_raw: text,
-        statistics: Statistics {
-            input_tokens: state.total_usage.input_tokens,
-            output_tokens: state.total_usage.output_tokens,
-            requests: state.request_count,
-            tool_calls: state.tool_call_count,
-            turns: state.turn,
-        },
-        outcome,
-        errors: std::mem::take(&mut state.errors),
-    }
-}
-
-fn last_assistant_text(messages: &[Message]) -> String {
-    messages
-        .iter()
-        .rev()
-        .find_map(|m| match m {
-            Message::Assistant { content } => {
-                let text: String = content
-                    .iter()
-                    .filter_map(|b| match b {
-                        ContentBlock::Text { text } => Some(text.as_str()),
-                        _ => None,
-                    })
-                    .collect();
-                Some(text)
-            }
-            _ => None,
-        })
-        .unwrap_or_default()
+    })
 }
 
 #[cfg(test)]
