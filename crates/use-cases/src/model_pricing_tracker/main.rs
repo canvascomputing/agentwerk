@@ -80,7 +80,7 @@ async fn main() {
         .expect("model name required")
         .role(ORCHESTRATOR_PROMPT)
         .hire(pricing_researcher)
-        .output_schema(output_schema())
+        .schema(output_schema())
         .max_turns(10)
         .instruction("Gather current model pricing from all supported providers.")
         .event_handler(Arc::new(|event| log_event(&event)))

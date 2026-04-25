@@ -28,7 +28,7 @@ pub(crate) struct AgentSpec {
     pub context: Option<String>,
     pub tool_registry: ToolRegistry,
     pub hires: Vec<Agent>,
-    pub output_schema: Option<OutputSchema>,
+    pub schema: Option<OutputSchema>,
     pub max_request_tokens: Option<u32>,
     pub max_input_tokens: Option<u64>,
     pub max_output_tokens: Option<u64>,
@@ -49,7 +49,7 @@ impl Default for AgentSpec {
             context: None,
             tool_registry: ToolRegistry::new(),
             hires: Vec::new(),
-            output_schema: None,
+            schema: None,
             max_request_tokens: None,
             max_input_tokens: None,
             max_output_tokens: None,
@@ -81,14 +81,14 @@ impl AgentSpec {
 
     /// Build the provider's `system` field from `role` (with `vars`
     /// interpolated), `behavior`, and a JSON-output directive when
-    /// `output_schema` is set.
+    /// `schema` is set.
     pub(crate) fn system_prompt(&self, vars: &HashMap<String, Value>) -> String {
         let mut s = Self::interpolate(&self.role, vars);
         if !self.behavior.is_empty() {
             s.push_str("\n\n");
             s.push_str(&self.behavior);
         }
-        if self.output_schema.is_some() {
+        if self.schema.is_some() {
             s.push_str(prompts::STRUCTURED_OUTPUT_INSTRUCTION);
         }
         s

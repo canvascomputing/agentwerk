@@ -356,7 +356,7 @@ You can enforce validation of your response with an output schema:
 
 ```rust
 let output = Agent::new()
-    .output_schema(json!({ "type": "object", "properties": { "category": { "type": "string" } } }))
+    .schema(json!({ "type": "object", "properties": { "category": { "type": "string" } } }))
     .work().await?;
 
 println!("{}", output.response.unwrap()["category"]);
@@ -365,7 +365,7 @@ println!("{}", output.response.unwrap()["category"]);
 You can also load the output schema from a file:
 
 ```rust
-Agent::new().output_schema_file("schemas/category.json")
+Agent::new().schema_file("schemas/category.json")
 ```
 
 #### Statistics
@@ -413,7 +413,7 @@ The following fields are inherited, shared or owned by the sub-agents:
 |---|---|
 | Inherited | `provider`, `model`, `working_dir`, `event_handler`, `cancel_signal` |
 | Shared | `command_queue`, `session_store` |
-| Per sub-agent | `role`, `instruction`, `behavior`, `context`, `tools`, `output_schema`, `max_turns`, `max_request_tokens`, `max_input_tokens`, `max_output_tokens`, `max_schema_retries`, `max_request_retries`, `request_retry_delay` |
+| Per sub-agent | `role`, `instruction`, `behavior`, `context`, `tools`, `schema`, `max_turns`, `max_request_tokens`, `max_input_tokens`, `max_output_tokens`, `max_schema_retries`, `max_request_retries`, `request_retry_delay` |
 
 ### Werke
 

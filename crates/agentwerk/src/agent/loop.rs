@@ -399,7 +399,7 @@ pub(crate) fn run_loop(
             }
 
             // Schema validation: retry on violation, succeed otherwise
-            let validated = match spec.output_schema.as_ref().map(|s| s.validate(&text)) {
+            let validated = match spec.schema.as_ref().map(|s| s.validate(&text)) {
                 None => None,
                 Some(Ok(value)) => Some(value),
                 Some(Err(detail)) => {
@@ -772,7 +772,7 @@ mod tests {
             .name("classifier")
             .model_name("mock")
             .role("Classify.")
-            .output_schema(serde_json::json!({
+            .schema(serde_json::json!({
                 "type": "object",
                 "properties": { "category": {"type": "string"}, "priority": {"type": "string"} },
                 "required": ["category", "priority"]
@@ -797,7 +797,7 @@ mod tests {
             .name("test")
             .model_name("mock")
             .role("")
-            .output_schema(serde_json::json!({
+            .schema(serde_json::json!({
                 "type": "object",
                 "properties": {"x": {"type": "string"}},
                 "required": ["x"]

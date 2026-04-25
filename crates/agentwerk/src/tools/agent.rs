@@ -112,7 +112,7 @@ impl ToolLike for AgentTool {
                     "type": "integer",
                     "description": "Override structured-output retry count for this spawn."
                 },
-                "output_schema": {
+                "schema": {
                     "type": "object",
                     "description": "JSON Schema (object) the spawned agent's final reply must conform to. The validated JSON is returned as this tool's result."
                 },
@@ -315,7 +315,7 @@ mod tests {
                     "identity": "You answer with JSON.",
                     "model": "mock",
                     "background": true,
-                    "output_schema": {
+                    "schema": {
                         "type": "object",
                         "properties": { "answer": { "type": "integer" } },
                         "required": ["answer"]

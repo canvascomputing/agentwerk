@@ -16,18 +16,19 @@ Where code lives and the rules that govern placement.
 
 - `lib.rs` holds public re-exports only.
 - `error.rs` defines the categorical `Error` and the `Result` alias.
-- `config.rs` defines `ConfigError`.
-- `werk.rs`, `event.rs`, `output.rs` hold concerns the caller observes in their own right.
+- `event.rs` and `output.rs` hold the observation and result types the loop emits.
+- `werk.rs` holds `Werk`, `WerkProducing`, and `WerkOutputStream`: the parallel-execution surface.
+- `util.rs` and `testutil.rs` hold shared helpers and the mock provider plus test harness.
 
 ## The `agent/` module
 
 **Contains the builder, the compiled form, and the execution loop.**
 
-- `agent.rs` holds the `Agent` builder.
-- `spec.rs` holds the compiled `AgentSpec`.
+- `agent.rs` holds the `Agent` builder, including `.hire(...)`, `.work()`, and the `compile` step.
+- `spec.rs` holds the compiled `AgentSpec`, including the `hires: Vec<Agent>` field.
 - `loop.rs` holds `run_loop`, `LoopRuntime`, and `LoopState`.
-- `retain.rs` holds `AgentWorking` and `OutputFuture`.
-- `prompts.rs`, `compact.rs`, and `queue.rs` hold prompt constants, the compaction hook, and the command queue.
+- `retain.rs` holds `AgentWorking`, `OutputFuture`, and the `Agent::retain` entry point.
+- `prompts.rs`, `compact.rs`, and `queue.rs` hold prompt constants, the compaction hook, and the `CommandQueue`.
 
 ## The `provider/` module
 

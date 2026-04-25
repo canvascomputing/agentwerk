@@ -165,15 +165,15 @@ impl Agent {
     }
 
     /// Register a structured output schema. Panics if the schema is invalid.
-    pub fn output_schema(self, schema: Value) -> Self {
+    pub fn schema(self, value: Value) -> Self {
         let schema =
-            OutputSchema::new(schema).unwrap_or_else(|e| panic!("invalid output schema: {e}"));
-        self.with_spec(|c| c.output_schema = Some(schema))
+            OutputSchema::new(value).unwrap_or_else(|e| panic!("invalid output schema: {e}"));
+        self.with_spec(|c| c.schema = Some(schema))
     }
 
     /// Load a structured output schema from a JSON file.
-    pub fn output_schema_file(self, path: impl Into<PathBuf>) -> Self {
-        self.output_schema(load_json_file(path.into()))
+    pub fn schema_file(self, path: impl Into<PathBuf>) -> Self {
+        self.schema(load_json_file(path.into()))
     }
 
     /// Maximum retries for structured output compliance. Default is 10.
@@ -380,8 +380,8 @@ impl Agent {
         if let Some(ms) = overrides.get("request_retry_delay").and_then(Value::as_u64) {
             self = self.request_retry_delay(Duration::from_millis(ms));
         }
-        if let Some(schema) = overrides.get("output_schema").cloned() {
-            self = self.output_schema(schema);
+        if let Some(schema) = overrides.get("schema").cloned() {
+            self = self.schema(schema);
         }
         self
     }
@@ -569,7 +569,7 @@ mod tests {
     }
 
     #[test]
-    fn output_schema_file_loads_valid_schema() {
+    fn schema_file_loads_valid_schema() {
         let dir = std::env::temp_dir().join("agentwerk_test_werk_schema");
         let path = dir.join("schema.json");
         std::fs::create_dir_all(&dir).unwrap();
@@ -579,8 +579,8 @@ mod tests {
         )
         .unwrap();
 
-        let agent = Agent::new().output_schema_file(&path);
-        assert!(agent.spec.output_schema.is_some());
+        let agent = Agent::new().schema_file(&path);
+        assert!(agent.spec.schema.is_some());
 
         std::fs::remove_file(&path).ok();
         std::fs::remove_dir(&dir).ok();
@@ -588,17 +588,17 @@ mod tests {
 
     #[test]
     #[should_panic(expected = "failed to read prompt file")]
-    fn output_schema_file_missing_file_panics() {
-        let _ = Agent::new().output_schema_file("/nonexistent/schema.json");
+    fn schema_file_missing_file_panics() {
+        let _ = Agent::new().schema_file("/nonexistent/schema.json");
     }
 
     #[test]
     #[should_panic(expected = "invalid output schema")]
-    fn invalid_output_schema_panics() {
+    fn invalid_schema_panics() {
         let _ = Agent::new()
             .name("test")
             .role("")
-            .output_schema(serde_json::json!({"type": "string"}));
+            .schema(serde_json::json!({"type": "string"}));
     }
 
     #[tokio::test]

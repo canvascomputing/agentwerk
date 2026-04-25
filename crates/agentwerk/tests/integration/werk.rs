@@ -23,7 +23,7 @@ async fn test() -> std::result::Result<(), Box<dyn std::error::Error>> {
     let summarizer = Agent::new()
         .model_name(&model)
         .tool(ReadFileTool)
-        .output_schema(output_schema)
+        .schema(output_schema)
         .max_turns(5);
 
     let files = ["Cargo.toml", "README.md", "CLAUDE.md"];

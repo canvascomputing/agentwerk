@@ -219,7 +219,7 @@ fn build_worker(
         .role(WORKER_PROMPT)
         .instruction(format!("Compute S = sum_{{k={lo}}}^{{{hi}}} k^2."))
         .tool(python_tool())
-        .output_schema(schema)
+        .schema(schema)
         .max_turns(max_turns)
         .event_handler(event_handler)
 }

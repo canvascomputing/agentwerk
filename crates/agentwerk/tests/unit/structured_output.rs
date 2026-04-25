@@ -82,7 +82,7 @@ fn report_agent() -> Agent {
         .model_name("mock")
         .role("You are a code reviewer. Reply with a structured report.")
         .behavior("")
-        .output_schema(report_schema())
+        .schema(report_schema())
 }
 
 const INVALID_REPORT_JSON: &str = r#"{"category":"security","priority":"high","findings":[]}"#;
@@ -541,7 +541,7 @@ async fn sub_agent_with_schema_returns_json_in_tool_result() {
         .model_name("mock")
         .role("You are a code reviewer. Reply with a structured report.")
         .behavior("")
-        .output_schema(report_schema());
+        .schema(report_schema());
 
     let parent = Agent::new()
         .name("orchestrator")
@@ -595,7 +595,7 @@ async fn ad_hoc_spawned_agent_declares_schema_via_overrides() {
         .tool(AgentTool);
 
     let provider = MockProvider::new(vec![
-        // parent turn 1: ad-hoc spawn with output_schema in args
+        // parent turn 1: ad-hoc spawn with schema in args
         tool_response(
             "agent",
             "sa1",
@@ -604,7 +604,7 @@ async fn ad_hoc_spawned_agent_declares_schema_via_overrides() {
                 "instruction": "Reply with the answer.",
                 "identity": "You answer with JSON.",
                 "model": "mock",
-                "output_schema": answer_schema(),
+                "schema": answer_schema(),
             }),
         ),
         // child turn 1: invalid → triggers schema retry inside the child
@@ -787,7 +787,7 @@ fn schema_agent() -> Agent {
         .model_name("mock")
         .role("You answer with JSON.")
         .behavior("")
-        .output_schema(answer_schema())
+        .schema(answer_schema())
 }
 
 /// Render a ModelRequest as plain text. Mirrors `context_window_events.rs`'s

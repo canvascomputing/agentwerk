@@ -63,3 +63,30 @@ How every file under `agentdocs/` is written. This file is itself an example of 
 - IMPORTANT: prefixes a bullet that a reader skimming would miss and regret later.
 - Most rules need neither: the bold one-liner is already the rule.
 - SHOULD, MAY, and CAN are not used: RFC-2119 without the full spec is noise.
+
+## Code grounding
+
+**Rules name identifiers that exist in the crate. No invented vocabulary.**
+
+- A type, function, field, or method named in a rule MUST be greppable in `crates/agentwerk/src/`.
+- Verbs describe what the code does, not how it feels: avoid "wires", "magic", "ergonomic", "seamless".
+- A rule that cannot point at code is opinion, not architecture: drop it or move it to the consuming application.
+- When a name changes in code, the docs change in the same commit.
+
+## Cross-linking
+
+**Each fact lives in one file. Other files link to it.**
+
+- Commands belong in `workflow.md`; other files link to it rather than restating commands.
+- File and module placement belongs in `layout.md`; `architecture.md` describes invariants and assumes placement is known.
+- Naming and comment rules belong in `style.md`; `testing.md` covers test-specific naming and links out for the rest.
+- A duplicated fact is a future inconsistency: when two files would say the same thing, one of them links instead.
+
+## Length
+
+**If agentdocs are getting too long, consolidate them. Information loss is acceptable.**
+
+- Drop sections that restate what a careful reader of the code would already see.
+- Merge two short, overlapping sections before splitting one long section.
+- A rule that has not earned its line is cut, not rewritten shorter.
+- Skim cost matters more than completeness: a forgotten file teaches nothing.

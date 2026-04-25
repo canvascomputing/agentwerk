@@ -85,7 +85,7 @@ async fn main() {
         .instruction("Find all files worth reading to understand this project.")
         .tool(ListDirectoryTool)
         .tool(GlobTool)
-        .output_schema(discovery_schema())
+        .schema(discovery_schema())
         .template("dir_path", json!(config.dir.display().to_string()))
         .working_dir(config.dir.clone())
         .cancel_signal(cancel.clone())
@@ -148,7 +148,7 @@ async fn main() {
         .model_name(&model)
         .role(SUMMARIZE_PROMPT)
         .tool(ReadFileTool)
-        .output_schema(summarize_schema())
+        .schema(summarize_schema())
         .max_turns(5);
 
     let total = files.len();

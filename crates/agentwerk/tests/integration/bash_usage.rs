@@ -43,7 +43,7 @@ async fn test() -> std::result::Result<(), Box<dyn std::error::Error>> {
         .tool(ls)
         .tool(cat)
         .tool(wc)
-        .output_schema(output_schema)
+        .schema(output_schema)
         .max_turns(10)
         .work()
         .await?;

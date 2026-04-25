@@ -40,7 +40,7 @@ async fn main() {
         .expect("model name required")
         .role(REPORT_WRITER_PROMPT)
         .hire_all(researchers)
-        .output_schema(output_schema())
+        .schema(output_schema())
         .max_turns(10)
         .instruction(question)
         .event_handler(Arc::new(|event| log_event(&event)))

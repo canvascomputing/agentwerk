@@ -39,7 +39,7 @@ pub struct Statistics {
 /// The result of an agent run.
 ///
 /// `response_raw` always holds the model's final reply text. `response` is
-/// `Some` only when an [`Agent::output_schema`](crate::Agent::output_schema)
+/// `Some` only when an [`Agent::schema`](crate::Agent::schema)
 /// was set and the reply parsed and validated against it. `errors` captures
 /// every error observed during the run: retried transient failures,
 /// tool-call failures bubbled as `Err`, schema-retry misses, budget hits. On
