@@ -219,7 +219,7 @@ fn build_worker(
         .role(WORKER_PROMPT)
         .task(format!("Compute S = sum_{{k={lo}}}^{{{hi}}} k^2."))
         .tool(python_tool())
-        .schema(schema)
+        .contract(schema)
         .max_turns(max_turns)
         .event_handler(event_handler)
 }
@@ -231,7 +231,7 @@ fn python_tool() -> Tool {
          `python3 -c`. Return value is the snippet's stdout, trimmed. Use this \
          for exact integer arithmetic.",
     )
-    .schema(json!({
+    .contract(json!({
         "type": "object",
         "properties": {
             "code": {

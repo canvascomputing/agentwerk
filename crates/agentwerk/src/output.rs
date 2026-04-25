@@ -39,10 +39,10 @@ pub struct Statistics {
 /// The result of an agent run.
 ///
 /// `response_raw` always holds the model's final reply text. `response` is
-/// `Some` only when an [`Agent::schema`](crate::Agent::schema)
+/// `Some` only when an [`Agent::contract`](crate::Agent::contract)
 /// was set and the reply parsed and validated against it. `errors` captures
 /// every error observed during the run: retried transient failures,
-/// tool-call failures bubbled as `Err`, schema-retry misses, budget hits. On
+/// tool-call failures bubbled as `Err`, contract misses, budget hits. On
 /// `Outcome::Failed` the last entry is the cause; on `Completed` / `Cancelled`
 /// the list may still contain non-terminal errors.
 #[derive(Debug)]
@@ -63,9 +63,9 @@ pub struct Output {
 
 /// Per-attempt schema mismatch carried between [`OutputSchema::validate`] and
 /// the agent loop. Internal: the model-visible consequence flows through
-/// [`EventKind::SchemaRetried`](crate::event::EventKind::SchemaRetried) per
+/// [`EventKind::ContractMissed`](crate::event::EventKind::ContractMissed) per
 /// attempt, and on exhaustion as [`AgentError::PolicyViolated`](crate::agent::AgentError::PolicyViolated)
-/// with `kind: PolicyKind::SchemaRetries`.
+/// with `kind: PolicyKind::ContractMisses`.
 #[derive(Debug)]
 pub(crate) struct SchemaViolation {
     /// Dotted field path of the violation (empty string = the whole value).

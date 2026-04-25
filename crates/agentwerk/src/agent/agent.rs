@@ -166,21 +166,21 @@ impl Agent {
         self.with_spec(|c| c.tool_registry.register(tool))
     }
 
-    /// Register a structured output schema. Panics if the schema is invalid.
-    pub fn schema(self, value: Value) -> Self {
-        let schema =
-            OutputSchema::new(value).unwrap_or_else(|e| panic!("invalid output schema: {e}"));
-        self.with_spec(|c| c.schema = Some(schema))
+    /// Register a structured output contract (JSON Schema). Panics if invalid.
+    pub fn contract(self, value: Value) -> Self {
+        let contract =
+            OutputSchema::new(value).unwrap_or_else(|e| panic!("invalid output contract: {e}"));
+        self.with_spec(|c| c.contract = Some(contract))
     }
 
-    /// Load a structured output schema from a JSON file.
-    pub fn schema_file(self, path: impl Into<PathBuf>) -> Self {
-        self.schema(load_json_file(path.into()))
+    /// Load a structured output contract (JSON Schema) from a file.
+    pub fn contract_file(self, path: impl Into<PathBuf>) -> Self {
+        self.contract(load_json_file(path.into()))
     }
 
     /// Maximum retries for structured output compliance. Default is 10.
-    pub fn max_schema_retries(self, n: u32) -> Self {
-        self.with_spec(|c| c.max_schema_retries = Some(n))
+    pub fn max_contract_retries(self, n: u32) -> Self {
+        self.with_spec(|c| c.max_contract_retries = Some(n))
     }
 
     /// Maximum retries for transient API errors (429, 529, network failures).
@@ -374,8 +374,11 @@ impl Agent {
         if let Some(mt) = overrides.get("max_turns").and_then(Value::as_u64) {
             self = self.max_turns(mt as u32);
         }
-        if let Some(sr) = overrides.get("max_schema_retries").and_then(Value::as_u64) {
-            self = self.max_schema_retries(sr as u32);
+        if let Some(sr) = overrides
+            .get("max_contract_retries")
+            .and_then(Value::as_u64)
+        {
+            self = self.max_contract_retries(sr as u32);
         }
         if let Some(rr) = overrides.get("max_request_retries").and_then(Value::as_u64) {
             self = self.max_request_retries(rr as u32);
@@ -383,8 +386,8 @@ impl Agent {
         if let Some(ms) = overrides.get("request_retry_delay").and_then(Value::as_u64) {
             self = self.request_retry_delay(Duration::from_millis(ms));
         }
-        if let Some(schema) = overrides.get("schema").cloned() {
-            self = self.schema(schema);
+        if let Some(contract) = overrides.get("contract").cloned() {
+            self = self.contract(contract);
         }
         self
     }
@@ -584,9 +587,9 @@ mod tests {
     }
 
     #[test]
-    fn schema_file_loads_valid_schema() {
-        let dir = std::env::temp_dir().join("agentwerk_test_werk_schema");
-        let path = dir.join("schema.json");
+    fn contract_file_loads_valid_schema() {
+        let dir = std::env::temp_dir().join("agentwerk_test_werk_contract");
+        let path = dir.join("contract.json");
         std::fs::create_dir_all(&dir).unwrap();
         std::fs::write(
             &path,
@@ -594,8 +597,8 @@ mod tests {
         )
         .unwrap();
 
-        let agent = Agent::new().schema_file(&path);
-        assert!(agent.spec.schema.is_some());
+        let agent = Agent::new().contract_file(&path);
+        assert!(agent.spec.contract.is_some());
 
         std::fs::remove_file(&path).ok();
         std::fs::remove_dir(&dir).ok();
@@ -603,17 +606,17 @@ mod tests {
 
     #[test]
     #[should_panic(expected = "failed to read prompt file")]
-    fn schema_file_missing_file_panics() {
-        let _ = Agent::new().schema_file("/nonexistent/schema.json");
+    fn contract_file_missing_file_panics() {
+        let _ = Agent::new().contract_file("/nonexistent/contract.json");
     }
 
     #[test]
-    #[should_panic(expected = "invalid output schema")]
-    fn invalid_schema_panics() {
+    #[should_panic(expected = "invalid output contract")]
+    fn invalid_contract_panics() {
         let _ = Agent::new()
             .name("test")
             .role("")
-            .schema(serde_json::json!({"type": "string"}));
+            .contract(serde_json::json!({"type": "string"}));
     }
 
     #[tokio::test]

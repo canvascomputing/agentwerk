@@ -75,7 +75,7 @@ make use_case name=<name>    # run one
 - [Events](#events): agent and provider activity
 - [Policies](#policies): retries, token caps, and turn limits
 - [Output](#output): validated, schema-based responses
-- [Coworkers](#coworkers): agents hire crew
+- [Coworkers](#coworkers): agents hire staff
 - [Werk](#werk): parallel execution
 - [Todo](#todo): planned work
 
@@ -117,7 +117,7 @@ The `Agent` interface is the main entry point. Configure it with the builder, th
 ```rust
 let output = Agent::new()
     .provider(provider)
-    .model_name("claude-sonnet-4-20250514")
+    .model_name("mistral-medium-2508")
     .tool(ReadFileTool)
     .task("Summarize src/main.rs")
     .await?;
@@ -129,7 +129,7 @@ You can configure each agent to use a single model:
 
 ```rust
 Agent::new().model_from_env()?
-Agent::new().model_name("claude-sonnet-4-20250514")
+Agent::new().model_name("mistral-medium-2508")
 ```
 
 Models from Anthropic, OpenAI, and Mistral come with a default context window size. Override it when needed, e.g. for custom model setups. The context window size is only relevant for calculating when messages need to be compacted:
@@ -150,7 +150,7 @@ use agentwerk::Agent;
 
 let output = Agent::new()
     .provider(provider)
-    .model_name("claude-sonnet-4-20250514")
+    .model_name("mistral-medium-2508")
     .role("You are a helpful assistant.")
     .tool(ReadFileTool)
     .task("What does src/main.rs do?")
@@ -200,7 +200,7 @@ Use `retain` when you want to keep sending instructions to your agent:
 ```rust
 let (agent, output) = Agent::new()
     .provider(provider)
-    .model_name("claude-sonnet-4-20250514")
+    .model_name("mistral-medium-2508")
     .role("You are a codebase Q&A assistant.")
     .tool(ReadFileTool)
     .retain(); // start the agent and send more instructions later
@@ -230,7 +230,7 @@ use agentwerk::tools::ToolResult;
 use agentwerk::Tool;
 
 let greet = Tool::new("greet", "Say hello")
-    .schema(json!({...}))
+    .contract(json!({...}))
     .read_only(true)
     .handler(|input, ctx| Box::pin(async move {
         Ok(ToolResult::success("Hello!"))
@@ -320,8 +320,8 @@ let handler = Arc::new(|event: Event| match &event.kind {
 | | `TokensReported` | Provider reported token counts for the last request |
 | **Context** | `OutputTruncated` | Response was cut off at the configured length cap |
 | | `ContextCompacted` | Conversation history was compacted to stay within the model's window |
-| | `PolicyViolated` | A configured policy (`max_turns`, `max_input_tokens`, `max_output_tokens`, `max_schema_retries`) was exceeded |
-| | `SchemaRetried` | Structured-output validation failed and the loop is asking the model to retry |
+| | `PolicyViolated` | A configured policy (`max_turns`, `max_input_tokens`, `max_output_tokens`, `max_contract_retries`) was exceeded |
+| | `ContractMissed` | Structured-output validation failed and the loop is asking the model to retry |
 | **Tool** | `ToolCallStarted` | Tool invocation began |
 | | `ToolCallFinished` | Tool invocation succeeded |
 | | `ToolCallFailed` | Tool invocation failed; the run continues |
@@ -339,7 +339,7 @@ For protecting your budget or data, you can define clear execution rules for typ
 | `Agent::max_request_tokens(...)` | provider default | Cap output tokens per LLM request |
 | `Agent::max_input_tokens(...)` | no limit | Cap cumulative input tokens across the whole run |
 | `Agent::max_output_tokens(...)` | no limit | Cap cumulative output tokens across the whole run |
-| `Agent::max_schema_retries(...)` | 10 | Retry structured output compliance |
+| `Agent::max_contract_retries(...)` | 10 | Retry structured output compliance |
 | `Agent::max_request_retries(...)` | 10 | Retry on API errors (429, 529, 5xx) |
 | `Agent::request_retry_delay(...)` | 500ms | Base delay for exponential backoff between request retries |
 
@@ -350,21 +350,21 @@ let output = agent.task("Summarize src/main.rs").await?;
 println!("{}", output.response_raw);
 ```
 
-You can enforce validation of your response with an output schema:
+You can enforce a contract (JSON Schema) on the agent's structured response:
 
 ```rust
 let output = Agent::new()
-    .schema(json!({ "type": "object", "properties": { "category": { "type": "string" } } }))
+    .contract(json!({ "type": "object", "properties": { "category": { "type": "string" } } }))
     .task("Classify this issue.")
     .await?;
 
 println!("{}", output.response.unwrap()["category"]);
 ```
 
-You can also load the output schema from a file:
+You can also load the contract from a file:
 
 ```rust
-Agent::new().schema_file("schemas/category.json")
+Agent::new().contract_file("contracts/category.json")
 ```
 
 #### Statistics
@@ -386,7 +386,7 @@ Internally agents have access to a `AgentTool` if you hire a coworker.
 
 ```rust
 let researcher_base = Agent::new()
-    .model_name("claude-haiku-4-5-20251001")
+    .model_name("mistral-medium-2508")
     .role("You are a research assistant.")
     .tool(brave_search_tool())
     .max_turns(3);
@@ -416,7 +416,7 @@ The following fields are inherited, shared or owned by the coworkers:
 |---|---|
 | Inherited | `provider`, `model`, `working_dir`, `event_handler`, `interrupt_signal` |
 | Shared | `command_queue`, `session_store` |
-| Per coworker | `role`, `task`, `behavior`, `context`, `tools`, `schema`, `max_turns`, `max_request_tokens`, `max_input_tokens`, `max_output_tokens`, `max_schema_retries`, `max_request_retries`, `request_retry_delay` |
+| Per coworker | `role`, `task`, `behavior`, `context`, `tools`, `contract`, `max_turns`, `max_request_tokens`, `max_input_tokens`, `max_output_tokens`, `max_contract_retries`, `max_request_retries`, `request_retry_delay` |
 
 ### Werk
 
@@ -428,7 +428,7 @@ use agentwerk::{Agent, Werk};
 
 let template = Agent::new()
     .provider(provider)
-    .model_name("claude-haiku-4-5-20251001")
+    .model_name("mistral-medium-2508")
     .tool(ReadFileTool);
 
 let docs = ["document A", "document B"];
@@ -453,7 +453,7 @@ for (doc, result) in docs.iter().zip(results.iter()) {
 | `Werk::lines(n)` | Number of assembly lines |
 | `Werk::open()` | Open the Werk for hiring; returns `WerkProducing` |
 | `Werk::hire_and_fire(workers)` | Put every worker on the line, returns a list of `Output` |
-| `Werk::interrupt_signal(...)` | Share an external cancel signal with the workshop |
+| `Werk::interrupt_signal(...)` | Share an external cancel signal with the Werk |
 
 #### Hiring on the Fly
 
@@ -481,10 +481,10 @@ while let Some((i, result)) = results.next().await {
 |--------|-------------|
 | `WerkProducing::hire(...)` | Hire another worker |
 | `WerkProducing::hire_all(...)` | Hire many workers at once |
-| `WerkProducing::clone()` | Get another handle to the same workshop |
+| `WerkProducing::clone()` | Get another handle to the same Werk |
 | `WerkProducing::close()` | Stop hiring; let the current shift finish |
-| `WerkProducing::interrupt()` | Pull everyone off the line and shut the workshop |
-| `WerkProducing::is_interrupted()` | Check if the workshop was interrupted |
+| `WerkProducing::interrupt()` | Pull everyone off the line and shut the Werk |
+| `WerkProducing::is_interrupted()` | Check if the Werk was interrupted |
 
 ### Todo
 

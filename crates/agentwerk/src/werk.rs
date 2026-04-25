@@ -280,7 +280,7 @@ mod tests {
 
     fn agent_with_delay(name: &str, delay_ms: u64, text: &str) -> Agent {
         let slow_tool = Tool::new("slow", "simulates work")
-            .schema(serde_json::json!({"type": "object", "properties": {}}))
+            .contract(serde_json::json!({"type": "object", "properties": {}}))
             .handler(move |_, _| {
                 Box::pin(async move {
                     tokio::time::sleep(Duration::from_millis(delay_ms)).await;
@@ -433,7 +433,7 @@ mod tests {
             let r = running.clone();
             let m = max_concurrent.clone();
             let slow_tool = Tool::new("slow", "work")
-                .schema(serde_json::json!({"type": "object", "properties": {}}))
+                .contract(serde_json::json!({"type": "object", "properties": {}}))
                 .handler(move |_, _| {
                     let r = r.clone();
                     let m = m.clone();

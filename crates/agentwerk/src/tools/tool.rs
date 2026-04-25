@@ -137,7 +137,7 @@ impl ToolResult {
 ///
 /// Implement this on any type you want an agent to be able to invoke. For
 /// ad-hoc tools defined inline, use the [`Tool`] struct's builder
-/// (`Tool::new(name, description).schema(...).handler(...)`).
+/// (`Tool::new(name, description).contract(...).handler(...)`).
 pub trait ToolLike: Send + Sync {
     /// Unique name the model uses to call the tool.
     fn name(&self) -> &str;
@@ -347,7 +347,7 @@ type ToolHandler = Box<
 /// Chain builder methods to configure, then hand the tool to an agent:
 /// ```ignore
 /// let greet = Tool::new("greet", "Say hello")
-///     .schema(serde_json::json!({"type": "object", "properties": {}}))
+///     .contract(serde_json::json!({"type": "object", "properties": {}}))
 ///     .handler(|_input, _ctx| Box::pin(async {
 ///         Ok(ToolResult::success("hi"))
 ///     }));
@@ -361,29 +361,29 @@ type ToolHandler = Box<
 pub struct Tool {
     name: String,
     description: String,
-    schema: Value,
+    contract: Value,
     read_only: bool,
     defer: bool,
     handler: Option<ToolHandler>,
 }
 
 impl Tool {
-    /// A new tool with an empty-object input schema and no handler. Set the
+    /// A new tool with an empty-object input contract and no handler. Set the
     /// handler with [`Tool::handler`] before handing the tool to an agent.
     pub fn new(name: impl Into<String>, description: impl Into<String>) -> Self {
         Self {
             name: name.into(),
             description: description.into(),
-            schema: serde_json::json!({"type": "object", "properties": {}}),
+            contract: serde_json::json!({"type": "object", "properties": {}}),
             read_only: false,
             defer: false,
             handler: None,
         }
     }
 
-    /// Replace the input schema. Defaults to an empty-object schema.
-    pub fn schema(mut self, schema: Value) -> Self {
-        self.schema = schema;
+    /// Replace the input contract (JSON Schema). Defaults to an empty-object schema.
+    pub fn contract(mut self, contract: Value) -> Self {
+        self.contract = contract;
         self
     }
 
@@ -425,7 +425,7 @@ impl ToolLike for Tool {
     }
 
     fn input_schema(&self) -> Value {
-        self.schema.clone()
+        self.contract.clone()
     }
 
     fn is_read_only(&self) -> bool {
@@ -660,7 +660,7 @@ mod tests {
     #[test]
     fn tool_basic() {
         let tool = Tool::new("echo", "Echoes input")
-            .schema(
+            .contract(
                 serde_json::json!({"type": "object", "properties": {"text": {"type": "string"}}}),
             )
             .read_only(true)

@@ -25,8 +25,8 @@ pub enum PolicyKind {
     InputTokens,
     /// `max_output_tokens` — cumulative reply-side token cap.
     OutputTokens,
-    /// `max_schema_retries` — structured-output validation retry cap.
-    SchemaRetries,
+    /// `max_contract_retries` — structured-output validation retry cap.
+    ContractMisses,
 }
 
 /// Categorical discriminant for [`EventKind::ToolCallFailed`]. One variant
@@ -119,13 +119,15 @@ pub fn default_logger() -> Arc<dyn Fn(Event) + Send + Sync> {
             EventKind::PolicyViolated { kind, limit } => {
                 eprintln!("[{agent}] policy violated: {kind:?} limit={limit}");
             }
-            EventKind::SchemaRetried {
+            EventKind::ContractMissed {
                 attempt,
                 max_attempts,
                 path,
                 message,
             } => {
-                eprintln!("[{agent}] ↻ schema retry {attempt}/{max_attempts} at {path}: {message}");
+                eprintln!(
+                    "[{agent}] ↻ contract miss {attempt}/{max_attempts} at {path}: {message}"
+                );
             }
             EventKind::RequestRetried {
                 attempt,
@@ -210,14 +212,14 @@ pub enum EventKind {
         reason: CompactReason,
     },
     /// A configured policy (`max_turns`, `max_input_tokens`, `max_output_tokens`,
-    /// `max_schema_retries`) was exceeded; the run is about to terminate with
+    /// `max_contract_retries`) was exceeded; the run is about to terminate with
     /// `Outcome::Failed`.
     PolicyViolated { kind: PolicyKind, limit: u64 },
     /// The model's terminal reply failed output-schema validation and the loop
     /// is sending a corrective message. `attempt` is the upcoming attempt
     /// number out of `max_attempts`; `path` and `message` come from the
     /// validator.
-    SchemaRetried {
+    ContractMissed {
         attempt: u32,
         max_attempts: u32,
         path: String,
@@ -311,7 +313,7 @@ mod tests {
                 kind: PolicyKind::Turns,
                 limit: 5,
             },
-            EventKind::SchemaRetried {
+            EventKind::ContractMissed {
                 attempt: 1,
                 max_attempts: 3,
                 path: "root.answer".into(),
@@ -341,7 +343,7 @@ mod tests {
                 | EventKind::OutputTruncated { .. }
                 | EventKind::ContextCompacted { .. }
                 | EventKind::PolicyViolated { .. }
-                | EventKind::SchemaRetried { .. }
+                | EventKind::ContractMissed { .. }
                 | EventKind::AgentPaused
                 | EventKind::AgentResumed => {}
             }

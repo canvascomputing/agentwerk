@@ -39,7 +39,7 @@ async fn test() -> std::result::Result<(), Box<dyn std::error::Error>> {
         .tool(ls)
         .tool(cat)
         .tool(wc)
-        .schema(output_schema)
+        .contract(output_schema)
         .max_turns(10)
         .task(
             "List the files in the current directory, read the Cargo.toml file, \

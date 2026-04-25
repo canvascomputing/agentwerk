@@ -108,11 +108,11 @@ impl ToolLike for AgentTool {
                     "type": "integer",
                     "description": "Cap cumulative output tokens across the whole run for this spawn."
                 },
-                "max_schema_retries": {
+                "max_contract_retries": {
                     "type": "integer",
                     "description": "Override structured-output retry count for this spawn."
                 },
-                "schema": {
+                "contract": {
                     "type": "object",
                     "description": "JSON Schema (object) the spawned agent's final reply must conform to. The validated JSON is returned as this tool's result."
                 },
@@ -315,7 +315,7 @@ mod tests {
                     "identity": "You answer with JSON.",
                     "model": "mock",
                     "background": true,
-                    "schema": {
+                    "contract": {
                         "type": "object",
                         "properties": { "answer": { "type": "integer" } },
                         "required": ["answer"]

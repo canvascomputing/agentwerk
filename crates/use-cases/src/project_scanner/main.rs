@@ -84,7 +84,7 @@ async fn main() {
         .role(DISCOVERY_PROMPT)
         .tool(ListDirectoryTool)
         .tool(GlobTool)
-        .schema(discovery_schema())
+        .contract(discovery_schema())
         .template("dir_path", json!(config.dir.display().to_string()))
         .working_dir(config.dir.clone())
         .interrupt_signal(cancel.clone())
@@ -147,7 +147,7 @@ async fn main() {
         .model_name(&model)
         .role(SUMMARIZE_PROMPT)
         .tool(ReadFileTool)
-        .schema(summarize_schema())
+        .contract(summarize_schema())
         .max_turns(5);
 
     let total = files.len();

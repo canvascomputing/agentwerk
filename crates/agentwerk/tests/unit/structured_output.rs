@@ -82,7 +82,7 @@ fn report_agent() -> Agent {
         .model_name("mock")
         .role("You are a code reviewer. Reply with a structured report.")
         .behavior("")
-        .schema(report_schema())
+        .contract(report_schema())
 }
 
 const INVALID_REPORT_JSON: &str = r#"{"category":"security","priority":"high","findings":[]}"#;
@@ -436,7 +436,7 @@ async fn retry_exhaustion_returns_schema_exhausted() {
         text_response("still nope"),
         text_response("never going to be json"),
     ]);
-    let agent = schema_agent().max_schema_retries(2);
+    let agent = schema_agent().max_contract_retries(2);
     let harness = TestHarness::new(provider);
     let output = harness.run_agent(&agent, "go").await.unwrap();
 
@@ -444,7 +444,7 @@ async fn retry_exhaustion_returns_schema_exhausted() {
     assert!(matches!(
         output.errors.last(),
         Some(Error::Agent(agentwerk::agent::AgentError::PolicyViolated {
-            kind: agentwerk::event::PolicyKind::SchemaRetries,
+            kind: agentwerk::event::PolicyKind::ContractMisses,
             limit: 2,
         }))
     ));
@@ -541,7 +541,7 @@ async fn sub_agent_with_schema_returns_json_in_tool_result() {
         .model_name("mock")
         .role("You are a code reviewer. Reply with a structured report.")
         .behavior("")
-        .schema(report_schema());
+        .contract(report_schema());
 
     let parent = Agent::new()
         .name("orchestrator")
@@ -604,7 +604,7 @@ async fn ad_hoc_spawned_agent_declares_schema_via_overrides() {
                 "task": "Reply with the answer.",
                 "identity": "You answer with JSON.",
                 "model": "mock",
-                "schema": answer_schema(),
+                "contract": answer_schema(),
             }),
         ),
         // child turn 1: invalid → triggers schema retry inside the child
@@ -643,7 +643,7 @@ async fn schema_retry_emits_retried_event_per_attempt() {
         text_response("still nope"),
         text_response(VALID_JSON),
     ]);
-    let agent = schema_agent().max_schema_retries(5);
+    let agent = schema_agent().max_contract_retries(5);
     let harness = TestHarness::new(provider);
     let output = harness.run_agent(&agent, "go").await.unwrap();
 
@@ -654,7 +654,7 @@ async fn schema_retry_emits_retried_event_per_attempt() {
         .all()
         .into_iter()
         .filter_map(|e| match e.kind {
-            EventKind::SchemaRetried {
+            EventKind::ContractMissed {
                 attempt,
                 max_attempts,
                 ..
@@ -787,7 +787,7 @@ fn schema_agent() -> Agent {
         .model_name("mock")
         .role("You answer with JSON.")
         .behavior("")
-        .schema(answer_schema())
+        .contract(answer_schema())
 }
 
 /// Render a ModelRequest as plain text. Mirrors `context_window_events.rs`'s

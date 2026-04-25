@@ -40,7 +40,7 @@ async fn main() {
         .expect("model name required")
         .role(REPORT_WRITER_PROMPT)
         .hire_all(researchers)
-        .schema(output_schema())
+        .contract(output_schema())
         .max_turns(10)
         .event_handler(Arc::new(|event| log_event(&event)))
         .interrupt_signal(setup_interrupt_signal())
@@ -125,7 +125,7 @@ fn brave_search_tool(api_key: String) -> impl agentwerk::tools::ToolLike {
         "brave_search",
         "Search the web. Returns titles, URLs, and descriptions.",
     )
-    .schema(serde_json::json!({
+    .contract(serde_json::json!({
         "type": "object",
         "properties": {
             "query": { "type": "string", "description": "Search query" },

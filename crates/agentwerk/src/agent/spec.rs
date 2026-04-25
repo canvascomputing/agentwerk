@@ -28,12 +28,12 @@ pub(crate) struct AgentSpec {
     pub context: Option<String>,
     pub tool_registry: ToolRegistry,
     pub hires: Vec<Agent>,
-    pub schema: Option<OutputSchema>,
+    pub contract: Option<OutputSchema>,
     pub max_request_tokens: Option<u32>,
     pub max_input_tokens: Option<u64>,
     pub max_output_tokens: Option<u64>,
     pub max_turns: Option<u32>,
-    pub max_schema_retries: Option<u32>,
+    pub max_contract_retries: Option<u32>,
     pub max_request_retries: u32,
     pub request_retry_delay: Duration,
     pub keep_alive: bool,
@@ -49,12 +49,12 @@ impl Default for AgentSpec {
             context: None,
             tool_registry: ToolRegistry::new(),
             hires: Vec::new(),
-            schema: None,
+            contract: None,
             max_request_tokens: None,
             max_input_tokens: None,
             max_output_tokens: None,
             max_turns: None,
-            max_schema_retries: Some(10),
+            max_contract_retries: Some(10),
             max_request_retries: AgentSpec::DEFAULT_MAX_REQUEST_RETRIES,
             request_retry_delay: AgentSpec::DEFAULT_REQUEST_RETRY_DELAY,
             keep_alive: false,
@@ -81,14 +81,14 @@ impl AgentSpec {
 
     /// Build the provider's `system` field from `role` (with `vars`
     /// interpolated), `behavior`, and a JSON-output directive when
-    /// `schema` is set.
+    /// `contract` is set.
     pub(crate) fn system_prompt(&self, vars: &HashMap<String, Value>) -> String {
         let mut s = Self::interpolate(&self.role, vars);
         if !self.behavior.is_empty() {
             s.push_str("\n\n");
             s.push_str(&self.behavior);
         }
-        if self.schema.is_some() {
+        if self.contract.is_some() {
             s.push_str(prompts::STRUCTURED_OUTPUT_INSTRUCTION);
         }
         s

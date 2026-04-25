@@ -52,7 +52,7 @@ pub(crate) struct LoopState {
     pub requests: u64,
     pub tool_calls: u64,
     pub turns: u32,
-    pub schema_retries: u32,
+    pub contract_retries: u32,
     pub is_idle: bool,
 }
 
@@ -399,14 +399,14 @@ pub(crate) fn run_loop(
             }
 
             // Schema validation: retry on violation, succeed otherwise
-            let validated = match spec.schema.as_ref().map(|s| s.validate(&text)) {
+            let validated = match spec.contract.as_ref().map(|s| s.validate(&text)) {
                 None => None,
                 Some(Ok(value)) => Some(value),
                 Some(Err(detail)) => {
-                    if let Some(limit) = spec.max_schema_retries {
-                        if state.schema_retries >= limit {
+                    if let Some(limit) = spec.max_contract_retries {
+                        if state.contract_retries >= limit {
                             let limit = u64::from(limit);
-                            let kind = PolicyKind::SchemaRetries;
+                            let kind = PolicyKind::ContractMisses;
                             state
                                 .errors
                                 .push(AgentError::PolicyViolated { kind, limit }.into());
@@ -415,11 +415,11 @@ pub(crate) fn run_loop(
                             break 'run Outcome::Failed;
                         }
                     }
-                    state.schema_retries += 1;
+                    state.contract_retries += 1;
                     let SchemaViolation { path, message } = &detail;
-                    emit(EventKind::SchemaRetried {
-                        attempt: state.schema_retries,
-                        max_attempts: spec.max_schema_retries.unwrap_or(u32::MAX),
+                    emit(EventKind::ContractMissed {
+                        attempt: state.contract_retries,
+                        max_attempts: spec.max_contract_retries.unwrap_or(u32::MAX),
                         path: path.clone(),
                         message: message.clone(),
                     });
@@ -772,7 +772,7 @@ mod tests {
             .name("classifier")
             .model_name("mock")
             .role("Classify.")
-            .schema(serde_json::json!({
+            .contract(serde_json::json!({
                 "type": "object",
                 "properties": { "category": {"type": "string"}, "priority": {"type": "string"} },
                 "required": ["category", "priority"]
@@ -797,12 +797,12 @@ mod tests {
             .name("test")
             .model_name("mock")
             .role("")
-            .schema(serde_json::json!({
+            .contract(serde_json::json!({
                 "type": "object",
                 "properties": {"x": {"type": "string"}},
                 "required": ["x"]
             }))
-            .max_schema_retries(3);
+            .max_contract_retries(3);
 
         let harness = TestHarness::new(provider);
         let output = harness.run_agent(&agent, "go").await.unwrap();
@@ -810,7 +810,7 @@ mod tests {
         assert!(matches!(
             output.errors.last(),
             Some(Error::Agent(AgentError::PolicyViolated {
-                kind: PolicyKind::SchemaRetries,
+                kind: PolicyKind::ContractMisses,
                 limit: 3
             }))
         ));
@@ -1516,7 +1516,7 @@ mod retry_and_events_tests {
             EventKind::OutputTruncated { .. } => "OutputTruncated",
             EventKind::ContextCompacted { .. } => "ContextCompacted",
             EventKind::PolicyViolated { .. } => "PolicyViolated",
-            EventKind::SchemaRetried { .. } => "SchemaRetried",
+            EventKind::ContractMissed { .. } => "ContractMissed",
             EventKind::AgentPaused => "AgentPaused",
             EventKind::AgentResumed => "AgentResumed",
         }
