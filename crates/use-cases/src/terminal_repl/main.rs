@@ -41,7 +41,7 @@ async fn main() {
         .model_from_env()
         .expect("model name required")
         .role(IDENTITY)
-        .instruction(first)
+        .task(first)
         .tool(GlobTool)
         .tool(GrepTool)
         .tool(ListDirectoryTool)
@@ -76,7 +76,7 @@ async fn main() {
             break;
         }
         announce_assistant(&style);
-        running.work(line);
+        running.task(line);
     }
 
     running.interrupt();

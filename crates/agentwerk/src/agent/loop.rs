@@ -847,7 +847,7 @@ mod tests {
             .name("test")
             .model_name("mock")
             .role("x")
-            .instruction("do");
+            .task("do");
         let _ = agent.work().await;
     }
 
@@ -1346,7 +1346,7 @@ mod tests {
         let agent = Agent::new()
             .model_name("mock")
             .provider(Arc::new(MockProvider::text("x")))
-            .instruction("")
+            .task("")
             .cancel_signal(cancel.clone())
             .command_queue(queue.clone());
 
@@ -1367,7 +1367,7 @@ mod tests {
         let agent = Agent::new()
             .model_name("mock")
             .provider(Arc::new(MockProvider::text("x")))
-            .instruction("");
+            .task("");
 
         let (_spec, rt) = agent.compile(None);
         assert!(
@@ -1848,7 +1848,7 @@ mod retry_and_events_tests {
             .max_request_retries(3)
             .request_retry_delay(Duration::from_millis(1_000))
             .event_handler(handler)
-            .instruction("go");
+            .task("go");
 
         let run_fut = agent.work();
         let check_fut = async {
@@ -1911,7 +1911,7 @@ mod retry_and_events_tests {
             .max_request_retries(3)
             .request_retry_delay(Duration::from_millis(2_000))
             .event_handler(handler)
-            .instruction("go");
+            .task("go");
 
         let drain = || async {
             for _ in 0..20 {
@@ -1989,7 +1989,7 @@ mod retry_and_events_tests {
             .max_request_retries(4)
             .request_retry_delay(Duration::from_millis(30_000))
             .cancel_signal(cancel.clone())
-            .instruction("go");
+            .task("go");
 
         let cancel_setter = {
             let c = cancel.clone();
@@ -2034,7 +2034,7 @@ mod retry_and_events_tests {
             .max_request_retries(3)
             .request_retry_delay(Duration::from_millis(1))
             .event_handler(handler)
-            .instruction("go");
+            .task("go");
 
         let output = agent.work().await.unwrap();
         assert_eq!(output.outcome, Outcome::Failed);

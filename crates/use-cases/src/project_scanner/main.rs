@@ -82,7 +82,6 @@ async fn main() {
         .provider(provider.clone())
         .model_name(&model)
         .role(DISCOVERY_PROMPT)
-        .instruction("Find all files worth reading to understand this project.")
         .tool(ListDirectoryTool)
         .tool(GlobTool)
         .schema(discovery_schema())
@@ -111,7 +110,7 @@ async fn main() {
             }
             _ => {}
         }))
-        .work()
+        .task("Find all files worth reading to understand this project.")
         .await;
 
     let files: Vec<String> = match discovery {
@@ -160,7 +159,7 @@ async fn main() {
         summarizer
             .clone()
             .name(format!("summarize-{file}"))
-            .instruction(format!("Read and summarize: {file}"))
+            .task(format!("Read and summarize: {file}"))
             .working_dir(config.dir.clone())
             .event_handler(Arc::new(move |event| match &event.kind {
                 EventKind::ToolCallFailed { message, .. } => {

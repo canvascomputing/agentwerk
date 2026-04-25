@@ -355,7 +355,7 @@ impl TestHarness {
         let mut prepared = agent
             .clone()
             .provider(self.provider.clone())
-            .instruction(input)
+            .task(input)
             .working_dir(self.working_dir.clone())
             .event_handler(self.events.callback())
             .cancel_signal(self.cancel_signal.clone());

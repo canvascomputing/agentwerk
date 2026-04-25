@@ -41,11 +41,11 @@ pub struct AgentWorking {
 }
 
 impl AgentWorking {
-    /// Hand the running agent a new piece of work. Picked up at the next
-    /// turn boundary, or immediately if the agent is parked idle.
-    pub fn work(&self, instruction: impl Into<String>) {
+    /// Hand the running agent a new task. Picked up at the next turn
+    /// boundary, or immediately if the agent is parked idle.
+    pub fn task(&self, task: impl Into<String>) {
         self.queue.enqueue(QueuedCommand {
-            content: instruction.into(),
+            content: task.into(),
             priority: QueuePriority::Next,
             source: CommandSource::UserInput,
             agent_name: None,
@@ -107,12 +107,14 @@ impl Agent {
     /// The loop idles after each terminal output as long as any handle is
     /// alive. Dropping the last handle calls [`AgentWorking::interrupt`] for you
     /// (RAII safety); an explicit `.interrupt()` does the same thing. For a
-    /// pure one-shot run without a handle, use [`Agent::work`] instead: a
+    /// pure one-shot run without a handle, use [`Agent::task`] instead: a
     /// `let (_, out) = agent.retain(); out.await?` pattern will interrupt
     /// before the first turn completes.
     ///
     /// Requires a running tokio runtime (`tokio::spawn` is invoked
-    /// synchronously). Requires `.provider()` and `.instruction()`.
+    /// synchronously). Requires `.provider()` and either an initial
+    /// `.task(...)` set in the builder or follow-up
+    /// [`AgentWorking::task`] calls on the returned handle.
     pub fn retain(self) -> (AgentWorking, OutputFuture) {
         let queue = Arc::new(CommandQueue::new());
         let cancel = Arc::new(AtomicBool::new(false));
@@ -175,9 +177,9 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn work_enqueues_user_input_command() {
+    async fn task_enqueues_user_input_command() {
         let (handle, output) = one_shot_agent("done");
-        handle.work("hi");
+        handle.task("hi");
         let cmd = handle
             .queue
             .dequeue_if(Some("anyone"), |_| true)
@@ -191,7 +193,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn work_reaches_next_provider_request() {
+    async fn task_reaches_next_provider_request() {
         let events = EventLog::new();
         let (provider, handle, output) = keep_alive_agent_with_provider(
             vec![text_response("first"), text_response("second")],
@@ -201,7 +203,7 @@ mod tests {
         events
             .wait_for(|e| matches!(e.kind, EventKind::AgentPaused))
             .await;
-        handle.work("follow-up");
+        handle.task("follow-up");
         wait_until(|| provider.requests() >= 2).await;
 
         let second = provider.last_request().expect("second request");
@@ -223,7 +225,7 @@ mod tests {
     async fn clone_shares_queue() {
         let (handle, output) = one_shot_agent("done");
         let other = handle.clone();
-        other.work("relay");
+        other.task("relay");
         let cmd = handle
             .queue
             .dequeue_if(Some("anyone"), |_| true)
@@ -332,7 +334,7 @@ mod tests {
         events
             .wait_for(|e| matches!(e.kind, EventKind::AgentPaused))
             .await;
-        handle.work("wake up");
+        handle.task("wake up");
         wait_until(|| provider.requests() >= 2).await;
         events
             .wait_for(|e| matches!(e.kind, EventKind::AgentResumed))
@@ -347,7 +349,7 @@ mod tests {
             .model_name("mock")
             .provider(Arc::new(MockProvider::text(text)))
             .role("")
-            .instruction("x")
+            .task("x")
             .retain()
     }
 
@@ -369,7 +371,7 @@ mod tests {
             .model_name("mock")
             .provider(provider.clone())
             .role("")
-            .instruction("initial")
+            .task("initial")
             .event_handler(events.handler())
             .retain();
         (provider, h, o)

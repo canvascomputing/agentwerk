@@ -42,10 +42,9 @@ async fn main() {
         .hire_all(researchers)
         .schema(output_schema())
         .max_turns(10)
-        .instruction(question)
         .event_handler(Arc::new(|event| log_event(&event)))
         .cancel_signal(setup_cancel_signal())
-        .work()
+        .task(question)
         .await
     {
         Ok(output) => output,

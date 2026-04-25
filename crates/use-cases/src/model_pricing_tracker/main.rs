@@ -32,7 +32,7 @@ One line per model. Nothing else.";
 const ORCHESTRATOR_PROMPT: &str = "\
 You coordinate pricing research. You MUST use the agent tool with the 'agent' parameter.\n\n\
 Step 1: Call agent with {\"agent\": \"pricing_researcher\", \"description\": \"fetch pricing\", \
-\"instruction\": \"Fetch current model pricing from all provider websites\"}.\n\n\
+\"task\": \"Fetch current model pricing from all provider websites\"}.\n\n\
 Step 2: After it returns, produce your structured output listing every model found. \
 Include provider, model_id, input_per_million, output_per_million for each.\n\n\
 CRITICAL: Always set the 'agent' field to 'pricing_researcher'. \
@@ -82,10 +82,9 @@ async fn main() {
         .hire(pricing_researcher)
         .schema(output_schema())
         .max_turns(10)
-        .instruction("Gather current model pricing from all supported providers.")
         .event_handler(Arc::new(|event| log_event(&event)))
         .cancel_signal(setup_cancel_signal())
-        .work()
+        .task("Gather current model pricing from all supported providers.")
         .await
     {
         Ok(out) => out,

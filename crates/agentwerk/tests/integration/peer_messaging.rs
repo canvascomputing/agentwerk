@@ -57,24 +57,23 @@ async fn orchestrator_sends_message_to_backgrounded_worker(
     let orchestrator_identity = format!(
         "You coordinate work. Do exactly these two steps in order:\n\
          1. Call agent with agent=\"worker\", background=true, \
-            description=\"worker\", instruction=\"wait for a message\".\n\
+            description=\"worker\", task=\"wait for a message\".\n\
          2. Call send_message with to=\"worker\", message=\"the secret is {secret}\".\n\
          Then end your turn with a short confirmation."
     );
-    let orchestrator_instruction = format!("Start the worker and send it the secret {secret}.");
+    let orchestrator_task = format!("Start the worker and send it the secret {secret}.");
 
     let output = Agent::new()
         .provider(provider)
         .model_name(&model)
         .name("orchestrator")
         .role(orchestrator_identity)
-        .instruction(orchestrator_instruction)
         .hire(worker)
         .tool(SendMessageTool)
         .cancel_signal(cancel.clone())
         .max_turns(6)
         .event_handler(event_handler)
-        .work()
+        .task(orchestrator_task)
         .await?;
 
     common::print_result(&output);

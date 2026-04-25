@@ -26,7 +26,7 @@ pub struct AgentTool;
 #[derive(Deserialize)]
 struct SpawnArgs {
     description: String,
-    instruction: String,
+    task: String,
     #[serde(default)]
     agent: Option<String>,
     #[serde(default)]
@@ -76,7 +76,7 @@ impl ToolLike for AgentTool {
                     "type": "string",
                     "description": "Short label for the spawned agent — shown in events."
                 },
-                "instruction": {
+                "task": {
                     "type": "string",
                     "description": "The user-level task for the agent to perform."
                 },
@@ -129,7 +129,7 @@ impl ToolLike for AgentTool {
                     "description": "Run in background (default: false). Returns immediately with an agent id; posts completion to the command queue."
                 }
             },
-            "required": ["description", "instruction"]
+            "required": ["description", "task"]
         })
     }
 
@@ -181,7 +181,7 @@ impl ToolLike for AgentTool {
                     .max_turns(10),
             };
 
-            let agent = base.apply_overrides(&input).instruction(&args.instruction);
+            let agent = base.apply_overrides(&input).task(&args.task);
 
             if args.background.unwrap_or(false) {
                 let id = generate_agent_name(&args.description);
@@ -232,7 +232,7 @@ mod tests {
                 "sa1",
                 serde_json::json!({
                     "description": "researcher",
-                    "instruction": "Research topic X"
+                    "task": "Research topic X"
                 }),
             ),
             text_response("research findings"),
@@ -259,7 +259,7 @@ mod tests {
                 "sa1",
                 serde_json::json!({
                     "description": "bg-worker",
-                    "instruction": "Do work",
+                    "task": "Do work",
                     "background": true
                 }),
             ),
@@ -311,7 +311,7 @@ mod tests {
                 "sa1",
                 serde_json::json!({
                     "description": "bg-classifier",
-                    "instruction": "Answer.",
+                    "task": "Answer.",
                     "identity": "You answer with JSON.",
                     "model": "mock",
                     "background": true,
@@ -361,7 +361,7 @@ mod tests {
                 "sa1",
                 serde_json::json!({
                     "description": "use specialist",
-                    "instruction": "Do specialized work",
+                    "task": "Do specialized work",
                     "agent": "specialist"
                 }),
             ),
@@ -407,7 +407,7 @@ mod tests {
                 "sa1",
                 serde_json::json!({
                     "description": "tight",
-                    "instruction": "Do work",
+                    "task": "Do work",
                     "agent": "tight-budget",
                     "max_input_tokens": 4000,
                 }),
@@ -465,7 +465,7 @@ mod tests {
                 "sa1",
                 serde_json::json!({
                     "description": "tight",
-                    "instruction": "Do work",
+                    "task": "Do work",
                     "agent": "tight-budget",
                     "max_output_tokens": 4000,
                 }),
@@ -507,7 +507,7 @@ mod tests {
                 "sa1",
                 serde_json::json!({
                     "description": "use unknown",
-                    "instruction": "Do work",
+                    "task": "Do work",
                     "agent": "nonexistent"
                 }),
             ),

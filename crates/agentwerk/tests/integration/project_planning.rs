@@ -21,7 +21,9 @@ async fn test() -> std::result::Result<(), Box<dyn std::error::Error>> {
              The task tool supports these actions: create, update, list, get, delete, claim, add_dependency. \
              Be concise. Always use the task tool, never simulate results.",
         )
-        .instruction(
+        .tool(TaskTool::new(tmp.path()))
+        .max_turns(15)
+        .task(
             "Do the following steps in order:\n\
              1. Create three tasks: 'Design API', 'Write tests', 'Deploy'\n\
              2. Add a dependency: 'Design API' blocks 'Write tests'\n\
@@ -32,9 +34,6 @@ async fn test() -> std::result::Result<(), Box<dyn std::error::Error>> {
              7. Get details of 'Write tests' by ID\n\
              8. Summarize what you did",
         )
-        .tool(TaskTool::new(tmp.path()))
-        .max_turns(15)
-        .work()
         .await?;
 
     common::print_result(&output);

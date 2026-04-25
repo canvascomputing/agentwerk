@@ -36,16 +36,15 @@ async fn test() -> std::result::Result<(), Box<dyn std::error::Error>> {
             "You have three shell tools: ls, cat, and wc. \
              No other tools are available. Use them to accomplish the task.",
         )
-        .instruction(
-            "List the files in the current directory, read the Cargo.toml file, \
-             and count its lines. Report the result.",
-        )
         .tool(ls)
         .tool(cat)
         .tool(wc)
         .schema(output_schema)
         .max_turns(10)
-        .work()
+        .task(
+            "List the files in the current directory, read the Cargo.toml file, \
+             and count its lines. Report the result.",
+        )
         .await?;
 
     common::print_result(&output);

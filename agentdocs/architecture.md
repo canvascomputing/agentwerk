@@ -99,7 +99,7 @@ The invariants that shape how code fits together. Layout says where code lives; 
 **`Agent::retain` spawns the loop on tokio and returns `(AgentWorking, OutputFuture)`. The loop idles between instructions while any handle is alive.**
 
 - `retain` flips `keep_alive: true` on the spec and installs a fresh `CommandQueue` plus `cancel_signal` before calling `work` on a `tokio::spawn`.
-- `AgentWorking::work(instr)` enqueues a follow-up instruction; the loop picks it up at its next idle poll or turn boundary.
+- `AgentWorking::task(s)` enqueues a follow-up task; the loop picks it up at its next idle poll or turn boundary.
 - `OutputFuture` resolves once the loop exits; awaiting it does not keep the loop alive: only `AgentWorking` clones do.
 - `CancelGuard` flips the cancel flag when the last `AgentWorking` clone drops, so an abandoned handle still unblocks the loop.
 
@@ -117,7 +117,7 @@ The invariants that shape how code fits together. Layout says where code lives; 
 **`CommandQueue` is a per-run inbox. The loop drains it between turns; `AgentWorking` and orchestration tools enqueue.**
 
 - The queue lives on `LoopRuntime` and is shared by the parent and every sub-agent in the run-tree.
-- `AgentWorking::work` enqueues with `QueuePriority::Next` so the next turn picks it up before any backlog.
+- `AgentWorking::task` enqueues with `QueuePriority::Next` so the next turn picks it up before any backlog.
 - Background sub-agents use the queue to post notifications back to the parent; routing by `agent_name` keeps the inbox per-agent.
 - The queue is `pub(crate)` only: the public API exposes it through `AgentWorking` and the orchestration tools, never directly.
 

@@ -39,9 +39,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let output = Agent::new()
         .provider_from_env()?
         .model_name("mistral-large-2512")
-        .instruction("Find all Rust source files.")
         .tool(GlobTool)
-        .work()
+        .task("Find all Rust source files.")
         .await?;
 
     println!("{}", output.response_raw);
@@ -107,21 +106,20 @@ Or pick a provider for your agent from environment variables (see [Environment](
 let output = Agent::new()
     .provider_from_env()?
     .model_name("mistral-small-2603")
-    .instruction("...")
-    .work().await?;
+    .task("...")
+    .await?;
 ```
 
 ### Agents
 
-The `Agent` interface is the main entry point. Use `run` to execute the agent and return its output:
+The `Agent` interface is the main entry point. Configure it with the builder, then end the chain with `.task(...).await` to run it:
 
 ```rust
 let output = Agent::new()
     .provider(provider)
     .model_name("claude-sonnet-4-20250514")
-    .instruction("Summarize src/main.rs")
     .tool(ReadFileTool)
-    .work() // start agent and wait for the results
+    .task("Summarize src/main.rs")
     .await?;
 ```
 
@@ -137,17 +135,17 @@ let (agent, output) = Agent::new()
     .tool(ReadFileTool)
     .retain(); // start the agent and send more instructions later
 
-agent.work("What does src/main.rs do?");
-agent.work("Now summarize src/lib.rs.");
+agent.task("What does src/main.rs do?");
+agent.task("Now summarize src/lib.rs.");
 
 agent.interrupt(); // stop the agent when there are no more instructions to send
 ```
 
-The agent waits for the next `work` call after each reply. Call `interrupt()` to stop it.
+The agent waits for the next `task` call after each reply. Call `interrupt()` to stop it.
 
 | Method | Description |
 |--------|-------------|
-| `AgentWorking::work(...)` | Hand the agent a new piece of work |
+| `AgentWorking::task(...)` | Hand the agent a new task |
 | `AgentWorking::interrupt()` | Stop the agent |
 | `AgentWorking::is_interrupted()` | Check if the agent was interrupted |
 | `AgentWorking::clone()` | Get another handle to the same agent |
@@ -182,9 +180,8 @@ let output = Agent::new()
     .provider(provider)
     .model_name("claude-sonnet-4-20250514")
     .role("You are a helpful assistant.")
-    .instruction("What does src/main.rs do?")
     .tool(ReadFileTool)
-    .work()
+    .task("What does src/main.rs do?")
     .await?;
 ```
 
@@ -194,8 +191,8 @@ The following methods on `Agent` configure prompts:
 |--------|-------------|
 | `Agent::role(...)` | Persistent identity of the agent |
 | `Agent::role_file(...)` | Read the identity prompt from a file |
-| `Agent::instruction(...)` | Task for the current run |
-| `Agent::instruction_file(...)` | Read the instruction prompt from a file |
+| `Agent::task(...)` | Task for the current run |
+| `Agent::task_file(...)` | Read the task from a file |
 | `Agent::context(...)` | Override the context prompt (default: `Agent::default_context()`, containing working directory, platform, OS version, date) |
 | `Agent::context_file(...)` | Read the context prompt from a file |
 | `Agent::behavior(...)` | Override the default behavioral directives (`DEFAULT_BEHAVIOR`) |
@@ -268,7 +265,7 @@ use agentwerk::tools::{
     SendMessageTool, TaskTool, ToolSearchTool,
 };
 
-let agent = Agent::new()
+let output = Agent::new()
     .tool(ReadFileTool)
     .tool(WriteFileTool)
     .tool(EditFileTool)
@@ -281,7 +278,8 @@ let agent = Agent::new()
     .tool(SendMessageTool)
     .tool(TaskTool::new(Path::new("/tmp/tasks")))
     .tool(ToolSearchTool)
-    .work().await?;
+    .task("Explore the repo and summarize what you find.")
+    .await?;
 ```
 
 ### Events
@@ -348,7 +346,7 @@ For protecting your budget or data, you can define clear execution rules for typ
 ### Output
 
 ```rust
-let output = agent.work().await?;
+let output = agent.task("Summarize src/main.rs").await?;
 println!("{}", output.response_raw);
 ```
 
@@ -357,7 +355,8 @@ You can enforce validation of your response with an output schema:
 ```rust
 let output = Agent::new()
     .schema(json!({ "type": "object", "properties": { "category": { "type": "string" } } }))
-    .work().await?;
+    .task("Classify this issue.")
+    .await?;
 
 println!("{}", output.response.unwrap()["category"]);
 ```
@@ -400,8 +399,7 @@ let output = Agent::new()
     .role("You are a research orchestrator.")
     .hire(r1)
     .hire(r2)
-    .instruction("Research the economic impact of quantum computing.")
-    .work()
+    .task("Research the economic impact of quantum computing.")
     .await?;
 ```
 
@@ -413,7 +411,7 @@ The following fields are inherited, shared or owned by the sub-agents:
 |---|---|
 | Inherited | `provider`, `model`, `working_dir`, `event_handler`, `cancel_signal` |
 | Shared | `command_queue`, `session_store` |
-| Per sub-agent | `role`, `instruction`, `behavior`, `context`, `tools`, `schema`, `max_turns`, `max_request_tokens`, `max_input_tokens`, `max_output_tokens`, `max_schema_retries`, `max_request_retries`, `request_retry_delay` |
+| Per sub-agent | `role`, `task`, `behavior`, `context`, `tools`, `schema`, `max_turns`, `max_request_tokens`, `max_input_tokens`, `max_output_tokens`, `max_schema_retries`, `max_request_retries`, `request_retry_delay` |
 
 ### Werke
 
@@ -432,7 +430,7 @@ let docs = ["document A", "document B"];
 let workers = docs.iter().map(|doc| {
     template
         .clone()
-        .instruction(format!("Summarize {doc}"))
+        .task(format!("Summarize {doc}"))
 });
 
 let results = Werk::new()
@@ -457,7 +455,7 @@ let (producing, mut results) = Werk::new()
 
 let docs = ["document A", "document B"];
 for doc in &docs {
-    producing.hire(template.clone().instruction(format!("Summarize {doc}")));
+    producing.hire(template.clone().task(format!("Summarize {doc}")));
 }
 
 producing.close();

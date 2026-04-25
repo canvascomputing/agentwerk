@@ -5,8 +5,8 @@
 //! interacts with it through two values:
 //!
 //! - [`AgentWorking`] — cheap to clone. Public surface:
-//!   - `work(instruction)` — hand the agent a new piece of work; picked up
-//!     at the next turn boundary or immediately if the agent is parked idle.
+//!   - `task(s)` — hand the agent a new task; picked up at the next turn
+//!     boundary or immediately if the agent is parked idle.
 //!   - `interrupt()` — flip the shared cancel signal.
 //!   - `is_interrupted()` — read that signal.
 //!   - Dropping the last handle auto-interrupts (RAII leak protection).
@@ -38,7 +38,7 @@ async fn output_resolves_with_final_text_after_interrupt() {
         .model_name("mock")
         .provider(Arc::new(MockProvider::text("hello world")))
         .role("")
-        .instruction("greet")
+        .task("greet")
         .event_handler(events.handler())
         .retain();
 
@@ -54,7 +54,7 @@ async fn output_resolves_with_final_text_after_interrupt() {
 }
 
 #[tokio::test]
-async fn work_injects_an_instruction_into_the_next_turn() {
+async fn task_injects_into_the_next_turn() {
     let events = EventLog::new();
     let (provider, handle, output) = retain_agent(
         vec![text_response("first"), text_response("second")],
@@ -64,7 +64,7 @@ async fn work_injects_an_instruction_into_the_next_turn() {
     events
         .wait_for(|e| matches!(e.kind, EventKind::AgentPaused))
         .await;
-    handle.work("follow-up");
+    handle.task("follow-up");
     wait_until(|| provider.requests() >= 2).await;
 
     let second = provider.last_request().expect("second request");
@@ -84,7 +84,7 @@ async fn is_interrupted_returns_true_after_interrupt() {
         .model_name("mock")
         .provider(Arc::new(MockProvider::text("done")))
         .role("")
-        .instruction("x")
+        .task("x")
         .retain();
 
     assert!(!handle.is_interrupted());
@@ -110,7 +110,7 @@ async fn interrupt_breaks_an_idle_agent_out_of_its_wait() {
 }
 
 #[tokio::test]
-async fn work_and_interrupt_on_a_clone_reach_the_original_task() {
+async fn task_and_interrupt_on_a_clone_reach_the_original_task() {
     let events = EventLog::new();
     let (provider, original, output) = retain_agent(
         vec![text_response("first"), text_response("second")],
@@ -122,7 +122,7 @@ async fn work_and_interrupt_on_a_clone_reach_the_original_task() {
     events
         .wait_for(|e| matches!(e.kind, EventKind::AgentPaused))
         .await;
-    worker.work("via-clone");
+    worker.task("via-clone");
     wait_until(|| provider.requests() >= 2).await;
 
     let second = provider.last_request().expect("second request");
@@ -162,7 +162,7 @@ fn retain_agent(
         .model_name("mock")
         .provider(provider.clone())
         .role("")
-        .instruction("initial")
+        .task("initial")
         .event_handler(events.handler())
         .retain();
     (provider, h, o)

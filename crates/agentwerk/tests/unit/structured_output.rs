@@ -557,7 +557,7 @@ async fn sub_agent_with_schema_returns_json_in_tool_result() {
             "sa1",
             serde_json::json!({
                 "description": "ask reviewer",
-                "instruction": "Review the auth module.",
+                "task": "Review the auth module.",
                 "agent": "reviewer"
             }),
         ),
@@ -601,7 +601,7 @@ async fn ad_hoc_spawned_agent_declares_schema_via_overrides() {
             "sa1",
             serde_json::json!({
                 "description": "ad-hoc classifier",
-                "instruction": "Reply with the answer.",
+                "task": "Reply with the answer.",
                 "identity": "You answer with JSON.",
                 "model": "mock",
                 "schema": answer_schema(),

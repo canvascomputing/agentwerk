@@ -217,7 +217,7 @@ fn build_worker(
         .provider(provider)
         .model_name(model)
         .role(WORKER_PROMPT)
-        .instruction(format!("Compute S = sum_{{k={lo}}}^{{{hi}}} k^2."))
+        .task(format!("Compute S = sum_{{k={lo}}}^{{{hi}}} k^2."))
         .tool(python_tool())
         .schema(schema)
         .max_turns(max_turns)

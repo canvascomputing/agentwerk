@@ -60,7 +60,7 @@ async fn external_sender_delivers_two_instructions_and_clone_cancels(
              2. Otherwise, reply with exactly the single word 'ready' and end your turn. \
                 Do not invent numbers. Do not echo any example. Do not restate the rules.",
         )
-        .instruction("wait")
+        .task("wait")
         .max_turns(10)
         .event_handler(event_handler)
         .retain();
@@ -71,7 +71,7 @@ async fn external_sender_delivers_two_instructions_and_clone_cancels(
     .await?;
 
     eprintln!("[test] sending secret_a={secret_a} via original handle");
-    agent.work(format!("the secret is {secret_a}"));
+    agent.task(format!("the secret is {secret_a}"));
     wait_for(&events, |all| {
         listener_text(all).contains(&secret_a.to_string())
     })
@@ -79,7 +79,7 @@ async fn external_sender_delivers_two_instructions_and_clone_cancels(
 
     let via_clone = agent.clone();
     eprintln!("[test] sending secret_b={secret_b} via cloned handle");
-    via_clone.work(format!("the secret is {secret_b}"));
+    via_clone.task(format!("the secret is {secret_b}"));
     wait_for(&events, |all| {
         listener_text(all).contains(&secret_b.to_string())
     })

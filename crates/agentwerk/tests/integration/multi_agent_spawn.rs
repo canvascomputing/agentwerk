@@ -41,11 +41,10 @@ async fn test() -> std::result::Result<(), Box<dyn std::error::Error>> {
             "You coordinate research tasks. Use agent with agent: \"researcher\" to delegate questions. \
              Summarize the results. Be concise.",
         )
-        .instruction("What is the capital of France? Use the researcher agent to find out, then tell me.")
         .hire(researcher)
         .max_turns(10)
         .event_handler(event_handler)
-        .work()
+        .task("What is the capital of France? Use the researcher agent to find out, then tell me.")
         .await?;
 
     common::print_result(&output);

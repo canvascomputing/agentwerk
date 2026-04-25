@@ -258,7 +258,7 @@ async fn sub_agent_compaction_uses_own_model_window() {
         "sa1",
         serde_json::json!({
             "description": "delegate",
-            "instruction": "go",
+            "task": "go",
             "agent": "child"
         }),
     );

@@ -1,7 +1,9 @@
 //! The crate's central user-facing type and its builder. Carries prompts, tools, and tuning knobs into the execution loop.
 
 use std::collections::HashMap;
+use std::future::{Future, IntoFuture};
 use std::path::PathBuf;
+use std::pin::Pin;
 use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -38,7 +40,7 @@ use super::spec::AgentSpec;
 ///     .model_name("claude-sonnet-4-20250514")
 ///     .role("You are a helpful assistant.");
 ///
-/// let first = agent.clone().instruction("Greet me.").work().await.unwrap();
+/// let first = agent.clone().task("Greet me.").await.unwrap();
 /// assert_eq!(first.response_raw, "Hello!");
 /// # });
 /// ```
@@ -46,7 +48,7 @@ use super::spec::AgentSpec;
 pub struct Agent {
     pub(crate) spec: Arc<AgentSpec>,
     pub(crate) provider: Option<Arc<dyn Provider>>,
-    pub(crate) instruction: String,
+    pub(crate) task: String,
     pub(crate) templates: HashMap<String, Value>,
     pub(crate) working_dir: Option<PathBuf>,
     pub(crate) event_handler: Option<Arc<dyn Fn(Event) + Send + Sync>>,
@@ -60,7 +62,7 @@ impl Default for Agent {
         Self {
             spec: Arc::new(AgentSpec::default()),
             provider: None,
-            instruction: String::new(),
+            task: String::new(),
             event_handler: None,
             command_queue: None,
             cancel_signal: None,
@@ -266,14 +268,14 @@ impl Agent {
     }
 
     /// The task for this run — what to do right now.
-    pub fn instruction(mut self, p: impl Into<String>) -> Self {
-        self.instruction = p.into();
+    pub fn task(mut self, p: impl Into<String>) -> Self {
+        self.task = p.into();
         self
     }
 
-    /// Load the instruction prompt from a file.
-    pub fn instruction_file(mut self, path: impl Into<PathBuf>) -> Self {
-        self.instruction = load_prompt_file(path.into());
+    /// Load the task from a file.
+    pub fn task_file(mut self, path: impl Into<PathBuf>) -> Self {
+        self.task = load_prompt_file(path.into());
         self
     }
 
@@ -324,16 +326,17 @@ impl Agent {
         &self.spec.name
     }
 
-    /// Drive the loop to completion and return the agent's output.
+    /// Drive the loop to completion and return the agent's output. Awaiting an
+    /// `Agent` (via the [`IntoFuture`] impl) is the public entry point.
     ///
     /// Requires `.provider()` (or [`Agent::provider_from_env`]), `.model_name()`
-    /// (or [`Agent::model_from_env`]), and `.instruction()`.
-    pub async fn work(&self) -> Result<Output> {
+    /// (or [`Agent::model_from_env`]), and `.task()`.
+    pub(crate) async fn work(&self) -> Result<Output> {
         let (spec, runtime) = self.compile(None);
         let runtime = Arc::new(runtime);
-        let instruction = self.interpolate(&self.instruction);
+        let task = self.interpolate(&self.task);
         let context = spec.context(&runtime.default_context);
-        let state = LoopState::initial(context, instruction);
+        let state = LoopState::initial(context, task);
         run_loop(runtime, spec, state).await
     }
 
@@ -345,9 +348,9 @@ impl Agent {
     ) -> Result<Output> {
         let (spec, runtime) = self.compile(Some((parent_spec, parent_runtime)));
         let runtime = Arc::new(runtime);
-        let instruction = self.interpolate(&self.instruction);
+        let task = self.interpolate(&self.task);
         let context = spec.context(&runtime.default_context);
-        let state = LoopState::initial(context, instruction);
+        let state = LoopState::initial(context, task);
         run_loop(runtime, spec, state).await
     }
 
@@ -398,7 +401,7 @@ impl Agent {
             (Some(m), _) => m.clone(),
             (None, Some((parent_spec, _))) => parent_spec.model().clone(),
             (None, None) => panic!(
-                "Agent::work() requires .model() / .model_name() on root agents (sub-agents inherit)"
+                "Agent::task(...).await requires .model() / .model_name() on root agents (sub-agents inherit)"
             ),
         };
 
@@ -416,7 +419,7 @@ impl Agent {
     /// Build the root `LoopRuntime`. Requires `self.provider` to be set.
     fn build_runtime(&self, spec: &AgentSpec) -> LoopRuntime {
         let provider = self.provider.clone().unwrap_or_else(|| {
-            panic!("Agent::work() requires .provider() (or .provider_from_env()) on root agents")
+            panic!("Agent::task(...).await requires .provider() (or .provider_from_env()) on root agents")
         });
 
         let working_dir = self
@@ -485,6 +488,18 @@ impl Agent {
             tool_registry: build_tools(spec),
             templates: self.templates.clone(),
         }
+    }
+}
+
+/// `Agent` is awaitable: `agent.await` drives the loop and yields the
+/// [`Output`]. This is the public terminal — the chain ends on
+/// `.task(...).await`.
+impl IntoFuture for Agent {
+    type Output = Result<Output>;
+    type IntoFuture = Pin<Box<dyn Future<Output = Result<Output>> + Send>>;
+
+    fn into_future(self) -> Self::IntoFuture {
+        Box::pin(async move { self.work().await })
     }
 }
 
@@ -623,12 +638,12 @@ mod tests {
 
     #[tokio::test]
     #[should_panic(expected = ".provider()")]
-    async fn missing_provider_panics_on_work() {
+    async fn missing_provider_panics_on_await() {
         let agent = Agent::new()
             .name("test")
             .model_name("mock")
             .role("x")
-            .instruction("do");
-        let _ = agent.work().await;
+            .task("do");
+        let _ = agent.await;
     }
 }
