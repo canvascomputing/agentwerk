@@ -123,9 +123,9 @@ The invariants that shape how code fits together. Layout says where code lives; 
 
 ## Persistence stays internal
 
-**`persistence/` MUST stay `pub(crate)`. Sessions and tasks are opt-in behaviors, never part of the public type surface.**
+**`persistence/` MUST stay `pub(crate)`. Sessions and todo lists are opt-in behaviors, never part of the public type surface.**
 
 - `SessionStore` appends JSONL transcripts when `.session_dir(...)` is set; otherwise the loop writes nothing.
-- `TaskStore` is reached through `TaskTool`; agents coordinate through it without importing it.
+- `TodoList` is reached through `TodoListTool`; agents coordinate through it without importing it.
 - No persistence type appears in `Output`, `Event`, or any public signature.
 - Swapping the backend is a crate-internal change; callers do not break.

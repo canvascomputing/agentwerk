@@ -254,7 +254,7 @@ let greet = Tool::new("greet", "Say hello")
 | **Utility** | `BashTool` | Run shell commands on the floor, matching a glob pattern |
 | | `AgentTool` | Hand a job off to a coworker |
 | | `SendMessageTool` | Pass a memo to coworkers |
-| | `TaskTool` | Keep the work-order book |
+| | `TodoListTool` | Keep a persistent todo list of items |
 | | `ToolSearchTool` | Browse the toolbox by keyword |
 
 ```rust
@@ -262,7 +262,7 @@ use agentwerk::tools::{
     ReadFileTool, WriteFileTool, EditFileTool,
     GlobTool, GrepTool, ListDirectoryTool,
     WebFetchTool, AgentTool, BashTool,
-    SendMessageTool, TaskTool, ToolSearchTool,
+    SendMessageTool, TodoListTool, ToolSearchTool,
 };
 
 let output = Agent::new()
@@ -276,7 +276,7 @@ let output = Agent::new()
     .tool(AgentTool)
     .tool(BashTool::new("git", "git *"))
     .tool(SendMessageTool)
-    .tool(TaskTool::new(Path::new("/tmp/tasks")))
+    .tool(TodoListTool::new(Path::new("/tmp/todos")))
     .tool(ToolSearchTool)
     .task("Explore the repo and summarize what you find.")
     .await?;

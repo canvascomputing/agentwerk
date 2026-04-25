@@ -1,4 +1,4 @@
-//! File-based task store with per-task locking. Survives process restarts and lets peer agents coordinate through shared task records.
+//! File-based todo list with per-item locking. Survives process restarts and lets peer agents coordinate through shared item records.
 
 use serde::{Deserialize, Serialize};
 use std::fs;
@@ -9,11 +9,11 @@ use crate::persistence::lock::with_file_lock;
 use crate::util::now_millis;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub(crate) struct Task {
+pub(crate) struct TodoItem {
     pub(crate) id: String,
     pub(crate) subject: String,
     pub(crate) description: String,
-    pub(crate) status: TaskStatus,
+    pub(crate) status: TodoItemStatus,
     pub(crate) owner: Option<String>,
     pub(crate) blocks: Vec<String>,
     pub(crate) blocked_by: Vec<String>,
@@ -22,25 +22,25 @@ pub(crate) struct Task {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub(crate) enum TaskStatus {
+pub(crate) enum TodoItemStatus {
     Pending,
     InProgress,
     Completed,
 }
 
 #[derive(Debug, Default)]
-pub(crate) struct TaskUpdate {
-    pub(crate) status: Option<TaskStatus>,
+pub(crate) struct TodoItemUpdate {
+    pub(crate) status: Option<TodoItemStatus>,
     pub(crate) subject: Option<String>,
 }
 
-/// Persists tasks to disk as individual JSON files.
-pub(crate) struct TaskStore {
+/// Persists items to disk as individual JSON files.
+pub(crate) struct TodoList {
     base_dir: PathBuf,
     list_id: String,
 }
 
-impl TaskStore {
+impl TodoList {
     pub(crate) fn new(base_dir: &Path, list_id: &str) -> Self {
         Self {
             base_dir: base_dir.to_path_buf(),
@@ -48,18 +48,18 @@ impl TaskStore {
         }
     }
 
-    pub(crate) fn create(&self, subject: &str, description: &str) -> Result<Task> {
+    pub(crate) fn create(&self, subject: &str, description: &str) -> Result<TodoItem> {
         self.with_lock(|| {
             let mark = self.read_high_water_mark();
-            let from_files = self.highest_task_id_on_disk();
+            let from_files = self.highest_item_id_on_disk();
             let next_id = mark.max(from_files) + 1;
 
             let now = now_millis();
-            let task = Task {
+            let item = TodoItem {
                 id: next_id.to_string(),
                 subject: subject.to_string(),
                 description: description.to_string(),
-                status: TaskStatus::Pending,
+                status: TodoItemStatus::Pending,
                 owner: None,
                 blocks: Vec::new(),
                 blocked_by: Vec::new(),
@@ -67,24 +67,24 @@ impl TaskStore {
                 updated_at: now,
             };
 
-            // Write mark BEFORE task file: crash-safe.
+            // Write mark BEFORE item file: crash-safe.
             self.write_high_water_mark(next_id)?;
-            self.write_task(&task)?;
-            Ok(task)
+            self.write_item(&item)?;
+            Ok(item)
         })
     }
 
-    pub(crate) fn get(&self, id: &str) -> Result<Option<Task>> {
-        self.read_task(id)
+    pub(crate) fn get(&self, id: &str) -> Result<Option<TodoItem>> {
+        self.read_item(id)
     }
 
-    pub(crate) fn list(&self) -> Result<Vec<Task>> {
+    pub(crate) fn list(&self) -> Result<Vec<TodoItem>> {
         let dir = self.dir();
         if !dir.exists() {
             return Ok(Vec::new());
         }
 
-        let mut tasks = Vec::new();
+        let mut items = Vec::new();
         for entry in fs::read_dir(&dir)? {
             let entry = entry?;
             let name = entry.file_name();
@@ -92,35 +92,35 @@ impl TaskStore {
             let Some(id) = name.strip_suffix(".json") else {
                 continue;
             };
-            if let Some(task) = self.read_task(id)? {
-                tasks.push(task);
+            if let Some(item) = self.read_item(id)? {
+                items.push(item);
             }
         }
 
-        tasks.sort_by_key(|t| t.id.parse::<u64>().unwrap_or(0));
-        Ok(tasks)
+        items.sort_by_key(|t| t.id.parse::<u64>().unwrap_or(0));
+        Ok(items)
     }
 
-    pub(crate) fn update(&self, id: &str, update: TaskUpdate) -> Result<Task> {
+    pub(crate) fn update(&self, id: &str, update: TodoItemUpdate) -> Result<TodoItem> {
         self.with_lock(|| {
-            let mut task = self.require_task(id)?;
+            let mut item = self.require_item(id)?;
 
             if let Some(status) = update.status {
-                task.status = status;
+                item.status = status;
             }
             if let Some(subject) = update.subject {
-                task.subject = subject;
+                item.subject = subject;
             }
-            task.updated_at = now_millis();
+            item.updated_at = now_millis();
 
-            self.write_task(&task)?;
-            Ok(task)
+            self.write_item(&item)?;
+            Ok(item)
         })
     }
 
     pub(crate) fn delete(&self, id: &str) -> Result<()> {
         self.with_lock(|| {
-            let path = self.task_file(id);
+            let path = self.item_file(id);
             if !path.exists() {
                 return Ok(());
             }
@@ -130,46 +130,46 @@ impl TaskStore {
         })
     }
 
-    pub(crate) fn claim(&self, id: &str, agent_name: &str) -> Result<Task> {
+    pub(crate) fn claim(&self, id: &str, agent_name: &str) -> Result<TodoItem> {
         self.with_lock(|| {
-            let mut task = self.require_task(id)?;
+            let mut item = self.require_item(id)?;
 
-            if task.status == TaskStatus::Completed {
-                return Err(PersistenceError::TaskAlreadyCompleted(id.into()));
+            if item.status == TodoItemStatus::Completed {
+                return Err(PersistenceError::TodoItemAlreadyCompleted(id.into()));
             }
-            self.check_not_blocked(id, &task.blocked_by)?;
+            self.check_not_blocked(id, &item.blocked_by)?;
 
-            task.status = TaskStatus::InProgress;
-            task.owner = Some(agent_name.to_string());
-            task.updated_at = now_millis();
-            self.write_task(&task)?;
-            Ok(task)
+            item.status = TodoItemStatus::InProgress;
+            item.owner = Some(agent_name.to_string());
+            item.updated_at = now_millis();
+            self.write_item(&item)?;
+            Ok(item)
         })
     }
 
     pub(crate) fn add_dependency(&self, from: &str, to: &str) -> Result<()> {
         self.with_lock(|| {
-            let mut from_task = self.require_task(from)?;
-            let mut to_task = self.require_task(to)?;
+            let mut from_item = self.require_item(from)?;
+            let mut to_item = self.require_item(to)?;
 
-            if !from_task.blocks.iter().any(|b| b == to) {
-                from_task.blocks.push(to.to_string());
+            if !from_item.blocks.iter().any(|b| b == to) {
+                from_item.blocks.push(to.to_string());
             }
-            if !to_task.blocked_by.iter().any(|b| b == from) {
-                to_task.blocked_by.push(from.to_string());
+            if !to_item.blocked_by.iter().any(|b| b == from) {
+                to_item.blocked_by.push(from.to_string());
             }
 
-            self.write_task(&from_task)?;
-            self.write_task(&to_task)?;
+            self.write_item(&from_item)?;
+            self.write_item(&to_item)?;
             Ok(())
         })
     }
 
     fn dir(&self) -> PathBuf {
-        self.base_dir.join("tasks").join(&self.list_id)
+        self.base_dir.join("items").join(&self.list_id)
     }
 
-    fn task_file(&self, id: &str) -> PathBuf {
+    fn item_file(&self, id: &str) -> PathBuf {
         self.dir().join(format!("{id}.json"))
     }
 
@@ -179,24 +179,24 @@ impl TaskStore {
         with_file_lock(&lock_file, f)
     }
 
-    fn read_task(&self, id: &str) -> Result<Option<Task>> {
-        let path = self.task_file(id);
+    fn read_item(&self, id: &str) -> Result<Option<TodoItem>> {
+        let path = self.item_file(id);
         if !path.exists() {
             return Ok(None);
         }
         let content = fs::read_to_string(&path)?;
-        let task: Task = serde_json::from_str(&content)?;
-        Ok(Some(task))
+        let item: TodoItem = serde_json::from_str(&content)?;
+        Ok(Some(item))
     }
 
-    fn require_task(&self, id: &str) -> Result<Task> {
-        self.read_task(id)?
-            .ok_or_else(|| PersistenceError::TaskNotFound(id.into()))
+    fn require_item(&self, id: &str) -> Result<TodoItem> {
+        self.read_item(id)?
+            .ok_or_else(|| PersistenceError::TodoItemNotFound(id.into()))
     }
 
-    fn write_task(&self, task: &Task) -> Result<()> {
-        let json = serde_json::to_string_pretty(task)?;
-        fs::write(self.task_file(&task.id), json)?;
+    fn write_item(&self, item: &TodoItem) -> Result<()> {
+        let json = serde_json::to_string_pretty(item)?;
+        fs::write(self.item_file(&item.id), json)?;
         Ok(())
     }
 
@@ -214,7 +214,7 @@ impl TaskStore {
         Ok(())
     }
 
-    fn highest_task_id_on_disk(&self) -> u64 {
+    fn highest_item_id_on_disk(&self) -> u64 {
         let Ok(entries) = fs::read_dir(self.dir()) else {
             return 0;
         };
@@ -229,14 +229,14 @@ impl TaskStore {
             .unwrap_or(0)
     }
 
-    fn check_not_blocked(&self, task_id: &str, blocked_by: &[String]) -> Result<()> {
+    fn check_not_blocked(&self, item_id: &str, blocked_by: &[String]) -> Result<()> {
         for blocker_id in blocked_by {
-            let Some(blocker) = self.read_task(blocker_id)? else {
+            let Some(blocker) = self.read_item(blocker_id)? else {
                 continue;
             };
-            if blocker.status != TaskStatus::Completed {
-                return Err(PersistenceError::TaskBlocked {
-                    task_id: task_id.into(),
+            if blocker.status != TodoItemStatus::Completed {
+                return Err(PersistenceError::TodoItemBlocked {
+                    item_id: item_id.into(),
                     blocker_id: blocker_id.clone(),
                 });
             }
@@ -260,15 +260,15 @@ impl TaskStore {
             if id == deleted_id {
                 continue;
             }
-            let Some(mut task) = self.read_task(id)? else {
+            let Some(mut item) = self.read_item(id)? else {
                 continue;
             };
 
-            let before = task.blocks.len() + task.blocked_by.len();
-            task.blocks.retain(|b| b != deleted_id);
-            task.blocked_by.retain(|b| b != deleted_id);
-            if task.blocks.len() + task.blocked_by.len() != before {
-                self.write_task(&task)?;
+            let before = item.blocks.len() + item.blocked_by.len();
+            item.blocks.retain(|b| b != deleted_id);
+            item.blocked_by.retain(|b| b != deleted_id);
+            if item.blocks.len() + item.blocked_by.len() != before {
+                self.write_item(&item)?;
             }
         }
         Ok(())
@@ -279,20 +279,20 @@ impl TaskStore {
 mod tests {
     use super::*;
 
-    fn test_store() -> (tempfile::TempDir, TaskStore) {
+    fn test_store() -> (tempfile::TempDir, TodoList) {
         let tmp = tempfile::tempdir().unwrap();
-        let store = TaskStore::new(tmp.path(), "test");
+        let store = TodoList::new(tmp.path(), "test");
         (tmp, store)
     }
 
     #[test]
     fn create_and_get() {
         let (_tmp, store) = test_store();
-        let task = store.create("Design API", "Define endpoints").unwrap();
-        assert_eq!(task.subject, "Design API");
-        assert_eq!(task.status, TaskStatus::Pending);
-        assert!(task.owner.is_none());
-        assert_eq!(task.id, "1");
+        let item = store.create("Design API", "Define endpoints").unwrap();
+        assert_eq!(item.subject, "Design API");
+        assert_eq!(item.status, TodoItemStatus::Pending);
+        assert!(item.owner.is_none());
+        assert_eq!(item.id, "1");
 
         let loaded = store.get("1").unwrap().unwrap();
         assert_eq!(loaded.subject, "Design API");
@@ -300,34 +300,34 @@ mod tests {
     }
 
     #[test]
-    fn list_returns_all_tasks() {
+    fn list_returns_all_items() {
         let (_tmp, store) = test_store();
-        store.create("Task 1", "desc 1").unwrap();
-        store.create("Task 2", "desc 2").unwrap();
-        store.create("Task 3", "desc 3").unwrap();
+        store.create("Item 1", "desc 1").unwrap();
+        store.create("Item 2", "desc 2").unwrap();
+        store.create("Item 3", "desc 3").unwrap();
 
-        let tasks = store.list().unwrap();
-        assert_eq!(tasks.len(), 3);
+        let items = store.list().unwrap();
+        assert_eq!(items.len(), 3);
     }
 
     #[test]
     fn update_status() {
         let (_tmp, store) = test_store();
-        store.create("Task", "desc").unwrap();
+        store.create("Item", "desc").unwrap();
 
         let updated = store
             .update(
                 "1",
-                TaskUpdate {
-                    status: Some(TaskStatus::InProgress),
+                TodoItemUpdate {
+                    status: Some(TodoItemStatus::InProgress),
                     ..Default::default()
                 },
             )
             .unwrap();
-        assert_eq!(updated.status, TaskStatus::InProgress);
+        assert_eq!(updated.status, TodoItemStatus::InProgress);
 
         let loaded = store.get("1").unwrap().unwrap();
-        assert_eq!(loaded.status, TaskStatus::InProgress);
+        assert_eq!(loaded.status, TodoItemStatus::InProgress);
     }
 
     #[test]
@@ -337,9 +337,9 @@ mod tests {
     }
 
     #[test]
-    fn delete_removes_task() {
+    fn delete_removes_item() {
         let (_tmp, store) = test_store();
-        store.create("Task", "desc").unwrap();
+        store.create("Item", "desc").unwrap();
         store.delete("1").unwrap();
         assert!(store.get("1").unwrap().is_none());
     }
@@ -347,29 +347,29 @@ mod tests {
     #[test]
     fn ids_never_reused_after_delete() {
         let (_tmp, store) = test_store();
-        store.create("Task 1", "").unwrap();
-        store.create("Task 2", "").unwrap();
-        store.create("Task 3", "").unwrap();
+        store.create("Item 1", "").unwrap();
+        store.create("Item 2", "").unwrap();
+        store.create("Item 3", "").unwrap();
         store.delete("2").unwrap();
 
-        let task = store.create("Task 4", "").unwrap();
-        assert_eq!(task.id, "4");
+        let item = store.create("Item 4", "").unwrap();
+        assert_eq!(item.id, "4");
     }
 
     #[test]
     fn high_water_mark_survives_all_deletions() {
         let (_tmp, store) = test_store();
-        store.create("Task 1", "").unwrap();
-        store.create("Task 2", "").unwrap();
+        store.create("Item 1", "").unwrap();
+        store.create("Item 2", "").unwrap();
         store.delete("1").unwrap();
         store.delete("2").unwrap();
 
-        let task = store.create("Task 3", "").unwrap();
-        assert_eq!(task.id, "3");
+        let item = store.create("Item 3", "").unwrap();
+        assert_eq!(item.id, "3");
     }
 
     #[test]
-    fn claim_blocked_task_fails() {
+    fn claim_blocked_item_fails() {
         let (_tmp, store) = test_store();
         let a = store.create("A", "").unwrap();
         let b = store.create("B", "").unwrap();
@@ -389,15 +389,15 @@ mod tests {
         store
             .update(
                 &a.id,
-                TaskUpdate {
-                    status: Some(TaskStatus::Completed),
+                TodoItemUpdate {
+                    status: Some(TodoItemStatus::Completed),
                     ..Default::default()
                 },
             )
             .unwrap();
 
         let claimed = store.claim(&b.id, "agent_2").unwrap();
-        assert_eq!(claimed.status, TaskStatus::InProgress);
+        assert_eq!(claimed.status, TodoItemStatus::InProgress);
         assert_eq!(claimed.owner, Some("agent_2".into()));
     }
 
@@ -415,14 +415,14 @@ mod tests {
     }
 
     #[test]
-    fn claim_completed_task_fails() {
+    fn claim_completed_item_fails() {
         let (_tmp, store) = test_store();
-        store.create("Task", "").unwrap();
+        store.create("Item", "").unwrap();
         store
             .update(
                 "1",
-                TaskUpdate {
-                    status: Some(TaskStatus::Completed),
+                TodoItemUpdate {
+                    status: Some(TodoItemStatus::Completed),
                     ..Default::default()
                 },
             )
@@ -441,8 +441,8 @@ mod tests {
             .map(|i| {
                 let base = base.clone();
                 std::thread::spawn(move || {
-                    let store = TaskStore::new(&base, "concurrent");
-                    store.create(&format!("Task {i}"), "").unwrap()
+                    let store = TodoList::new(&base, "concurrent");
+                    store.create(&format!("Item {i}"), "").unwrap()
                 })
             })
             .collect();

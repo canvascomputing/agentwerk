@@ -1,4 +1,4 @@
-//! Task-management tools (create, update, list, claim, …) that let an agent coordinate work with peers through the durable `TaskStore`.
+//! Todo-list tool (create, update, list, claim items, …) that lets an agent coordinate work with peers through the durable `TodoList`.
 
 use std::future::Future;
 use std::path::Path;
@@ -9,28 +9,28 @@ use serde_json::Value;
 
 use crate::error::Result;
 use crate::persistence::error::PersistenceError;
-use crate::persistence::task::{TaskStatus, TaskStore, TaskUpdate};
+use crate::persistence::todo::{TodoItemStatus, TodoItemUpdate, TodoList};
 use crate::tools::error::ToolError;
 use crate::tools::tool::{ToolContext, ToolLike, ToolResult};
 
-/// Routes a task-store failure: in-band problems (not found, already
-/// completed, blocked) become `ToolResult::Error` so the model can retry;
-/// structural failures (lock contention, I/O) become `ToolError`.
+/// Routes a store failure: in-band problems (not found, already completed,
+/// blocked) become `ToolResult::Error` so the model can retry; structural
+/// failures (lock contention, I/O) become `ToolError`.
 fn route(err: PersistenceError) -> Result<ToolResult> {
     match err {
-        PersistenceError::TaskNotFound(id) => Ok(ToolResult::error(format!("Task {id} not found"))),
-        PersistenceError::TaskAlreadyCompleted(id) => {
-            Ok(ToolResult::error(format!("Task {id} already completed")))
+        PersistenceError::TodoItemNotFound(id) => Ok(ToolResult::error(format!("Item {id} not found"))),
+        PersistenceError::TodoItemAlreadyCompleted(id) => {
+            Ok(ToolResult::error(format!("Item {id} already completed")))
         }
-        PersistenceError::TaskBlocked {
-            task_id,
+        PersistenceError::TodoItemBlocked {
+            item_id,
             blocker_id,
         } => Ok(ToolResult::error(format!(
-            "Task {task_id} blocked by unfinished task {blocker_id}"
+            "Item {item_id} blocked by unfinished item {blocker_id}"
         ))),
         err @ PersistenceError::LockFailed { .. } | err @ PersistenceError::IoFailed(_) => {
             Err(ToolError::ExecutionFailed {
-                tool_name: "task".into(),
+                tool_name: "todo_list".into(),
                 message: err.to_string(),
             }
             .into())
@@ -38,29 +38,29 @@ fn route(err: PersistenceError) -> Result<ToolResult> {
     }
 }
 
-/// Persistent task management backed by a directory on disk. Lets an agent
-/// create, update, list, and claim tasks; tasks survive process restarts and
+/// A persistent todo list backed by a directory on disk. Lets an agent
+/// create, update, list, and claim items; items survive process restarts and
 /// can be shared across peers pointing at the same directory.
-pub struct TaskTool {
-    store: Arc<Mutex<TaskStore>>,
+pub struct TodoListTool {
+    store: Arc<Mutex<TodoList>>,
 }
 
-impl TaskTool {
-    /// A new task tool storing entries under `data_dir/tasks`.
+impl TodoListTool {
+    /// A new todo-list tool storing entries under `data_dir/items`.
     pub fn new(data_dir: &Path) -> Self {
         Self {
-            store: Arc::new(Mutex::new(TaskStore::new(data_dir, "tasks"))),
+            store: Arc::new(Mutex::new(TodoList::new(data_dir, "items"))),
         }
     }
 }
 
-impl ToolLike for TaskTool {
+impl ToolLike for TodoListTool {
     fn name(&self) -> &str {
-        "task"
+        "todo_list"
     }
 
     fn description(&self) -> &str {
-        "Manage persistent tasks: create, update, list, or get by ID."
+        "Manage a persistent todo list: create, update, list, or get items by ID."
     }
 
     fn input_schema(&self) -> Value {
@@ -72,17 +72,17 @@ impl ToolLike for TaskTool {
                     "enum": ["create", "update", "list", "get", "delete", "claim", "add_dependency"],
                     "description": "The action to perform"
                 },
-                "id": { "type": "string", "description": "Task ID (for get/update/delete/claim)" },
-                "subject": { "type": "string", "description": "Task title (for create/update)" },
-                "description": { "type": "string", "description": "Task details (for create)" },
+                "id": { "type": "string", "description": "Item ID (for get/update/delete/claim)" },
+                "subject": { "type": "string", "description": "Item title (for create/update)" },
+                "description": { "type": "string", "description": "Item details (for create)" },
                 "status": {
                     "type": "string",
                     "enum": ["Pending", "InProgress", "Completed"],
                     "description": "New status (for update)"
                 },
-                "agent_name": { "type": "string", "description": "Agent claiming the task (for claim)" },
-                "from": { "type": "string", "description": "Blocking task ID (for add_dependency)" },
-                "to": { "type": "string", "description": "Blocked task ID (for add_dependency)" }
+                "agent_name": { "type": "string", "description": "Agent claiming the item (for claim)" },
+                "from": { "type": "string", "description": "Blocking item ID (for add_dependency)" },
+                "to": { "type": "string", "description": "Blocked item ID (for add_dependency)" }
             },
             "required": ["action"]
         })
@@ -104,8 +104,8 @@ impl ToolLike for TaskTool {
                     let subject = input["subject"].as_str().unwrap_or("");
                     let description = input["description"].as_str().unwrap_or("");
                     match self.store.lock().unwrap().create(subject, description) {
-                        Ok(task) => Ok(ToolResult::success(
-                            serde_json::to_string_pretty(&task).unwrap(),
+                        Ok(item) => Ok(ToolResult::success(
+                            serde_json::to_string_pretty(&item).unwrap(),
                         )),
                         Err(e) => route(e),
                     }
@@ -113,29 +113,29 @@ impl ToolLike for TaskTool {
                 "update" => {
                     let id = input["id"].as_str().unwrap_or("");
                     let status = input["status"].as_str().and_then(|s| match s {
-                        "Pending" => Some(TaskStatus::Pending),
-                        "InProgress" => Some(TaskStatus::InProgress),
-                        "Completed" => Some(TaskStatus::Completed),
+                        "Pending" => Some(TodoItemStatus::Pending),
+                        "InProgress" => Some(TodoItemStatus::InProgress),
+                        "Completed" => Some(TodoItemStatus::Completed),
                         _ => None,
                     });
                     let subject = input["subject"].as_str().map(|s| s.to_string());
                     match self.store.lock().unwrap().update(
                         id,
-                        TaskUpdate {
+                        TodoItemUpdate {
                             status,
                             subject,
                             ..Default::default()
                         },
                     ) {
-                        Ok(task) => Ok(ToolResult::success(
-                            serde_json::to_string_pretty(&task).unwrap(),
+                        Ok(item) => Ok(ToolResult::success(
+                            serde_json::to_string_pretty(&item).unwrap(),
                         )),
                         Err(e) => route(e),
                     }
                 }
                 "list" => match self.store.lock().unwrap().list() {
-                    Ok(tasks) => Ok(ToolResult::success(
-                        serde_json::to_string_pretty(&tasks).unwrap(),
+                    Ok(items) => Ok(ToolResult::success(
+                        serde_json::to_string_pretty(&items).unwrap(),
                     )),
                     Err(e) => route(e),
                 },
@@ -145,14 +145,14 @@ impl ToolLike for TaskTool {
                         Ok(Some(t)) => Ok(ToolResult::success(
                             serde_json::to_string_pretty(&t).unwrap(),
                         )),
-                        Ok(None) => Ok(ToolResult::error(format!("Task {id} not found"))),
+                        Ok(None) => Ok(ToolResult::error(format!("Item {id} not found"))),
                         Err(e) => route(e),
                     }
                 }
                 "delete" => {
                     let id = input["id"].as_str().unwrap_or("");
                     match self.store.lock().unwrap().delete(id) {
-                        Ok(()) => Ok(ToolResult::success(format!("Task {id} deleted"))),
+                        Ok(()) => Ok(ToolResult::success(format!("Item {id} deleted"))),
                         Err(e) => route(e),
                     }
                 }
@@ -160,8 +160,8 @@ impl ToolLike for TaskTool {
                     let id = input["id"].as_str().unwrap_or("");
                     let agent_name = input["agent_name"].as_str().unwrap_or("");
                     match self.store.lock().unwrap().claim(id, agent_name) {
-                        Ok(task) => Ok(ToolResult::success(
-                            serde_json::to_string_pretty(&task).unwrap(),
+                        Ok(item) => Ok(ToolResult::success(
+                            serde_json::to_string_pretty(&item).unwrap(),
                         )),
                         Err(e) => route(e),
                     }
@@ -191,10 +191,10 @@ mod tests {
         ToolContext::new(PathBuf::from("."))
     }
 
-    fn test_tool() -> TaskTool {
+    fn test_tool() -> TodoListTool {
         let tmp = tempfile::tempdir().unwrap();
         let path = tmp.keep();
-        TaskTool::new(&path)
+        TodoListTool::new(&path)
     }
 
     #[tokio::test]
@@ -240,7 +240,7 @@ mod tests {
     async fn get_returns_details() {
         let tool = test_tool();
         tool.call(
-            serde_json::json!({"action": "create", "subject": "My task", "description": "desc"}),
+            serde_json::json!({"action": "create", "subject": "My item", "description": "desc"}),
             &test_ctx(),
         )
         .await
@@ -252,14 +252,14 @@ mod tests {
             .unwrap();
         let (ToolResult::Success(content) | ToolResult::Error(content)) = &result;
         let parsed: Value = serde_json::from_str(content).unwrap();
-        assert_eq!(parsed["subject"], "My task");
+        assert_eq!(parsed["subject"], "My item");
     }
 
     #[tokio::test]
     async fn update_changes_status() {
         let tool = test_tool();
         tool.call(
-            serde_json::json!({"action": "create", "subject": "Task", "description": ""}),
+            serde_json::json!({"action": "create", "subject": "Item", "description": ""}),
             &test_ctx(),
         )
         .await
