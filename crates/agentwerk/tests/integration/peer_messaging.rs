@@ -46,7 +46,7 @@ async fn orchestrator_sends_message_to_backgrounded_worker(
     let worker = Agent::new()
         .name("worker")
         .model_name(&model)
-        .identity_prompt(
+        .role(
             "You are a worker waiting for a message. Your conversation will \
              include one message of the form '[message from orchestrator: ...] \
              the secret is N'. Respond with exactly the number N and end your turn.",
@@ -67,8 +67,8 @@ async fn orchestrator_sends_message_to_backgrounded_worker(
         .provider(provider)
         .model_name(&model)
         .name("orchestrator")
-        .identity_prompt(orchestrator_identity)
-        .instruction_prompt(orchestrator_instruction)
+        .role(orchestrator_identity)
+        .instruction(orchestrator_instruction)
         .sub_agents([worker])
         .tool(SendMessageTool)
         .cancel_signal(cancel.clone())

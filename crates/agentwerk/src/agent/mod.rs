@@ -11,7 +11,7 @@ pub(crate) mod spec;
 
 pub use agent::Agent;
 pub use error::AgentError;
-pub use prompts::DEFAULT_BEHAVIOR_PROMPT;
+pub use prompts::DEFAULT_BEHAVIOR;
 pub(crate) use r#loop::LoopRuntime;
 pub use retain::{AgentWorking, OutputFuture};
 pub(crate) use spec::AgentSpec;

@@ -37,8 +37,8 @@ async fn output_resolves_with_final_text_after_interrupt() {
         .name("demo")
         .model_name("mock")
         .provider(Arc::new(MockProvider::text("hello world")))
-        .identity_prompt("")
-        .instruction_prompt("greet")
+        .role("")
+        .instruction("greet")
         .event_handler(events.handler())
         .retain();
 
@@ -83,8 +83,8 @@ async fn is_interrupted_returns_true_after_interrupt() {
     let (handle, output) = Agent::new()
         .model_name("mock")
         .provider(Arc::new(MockProvider::text("done")))
-        .identity_prompt("")
-        .instruction_prompt("x")
+        .role("")
+        .instruction("x")
         .retain();
 
     assert!(!handle.is_interrupted());
@@ -161,8 +161,8 @@ fn retain_agent(
         .name("root")
         .model_name("mock")
         .provider(provider.clone())
-        .identity_prompt("")
-        .instruction_prompt("initial")
+        .role("")
+        .instruction("initial")
         .event_handler(events.handler())
         .retain();
     (provider, h, o)

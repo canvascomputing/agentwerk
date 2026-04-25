@@ -101,9 +101,9 @@ async fn state_machine_advances_one_turn_at_a_time() {
     let agent = Agent::new()
         .name("demo")
         .model_name("mock")
-        .identity_prompt("You are Ada, a concise assistant.")
-        .behavior_prompt("Be terse.")
-        .context_prompt("Working directory: /tmp/demo")
+        .role("You are Ada, a concise assistant.")
+        .behavior("Be terse.")
+        .context("Working directory: /tmp/demo")
         .tool(MockTool::new("lookup", true, "answer=42"));
 
     // Run the machine to completion; every input state lands in
@@ -144,7 +144,7 @@ async fn proactive_compact_fires_when_threshold_crossed() {
     let agent = Agent::new()
         .name("demo")
         .model(Model::from_name("mock").context_window_size(CONTEXT_WINDOW_SIZE))
-        .identity_prompt("");
+        .role("");
 
     let harness = TestHarness::new(MockProvider::new(vec![response]));
     let _ = harness.run_agent(&agent, "hi").await;
@@ -171,10 +171,7 @@ async fn proactive_compact_suppressed_when_model_has_no_window() {
         cache_creation_input_tokens: 0,
     };
 
-    let agent = Agent::new()
-        .name("demo")
-        .model_name("mock")
-        .identity_prompt("");
+    let agent = Agent::new().name("demo").model_name("mock").role("");
 
     let harness = TestHarness::new(MockProvider::new(vec![response]));
     let output = harness.run_agent(&agent, "hi").await.unwrap();
@@ -197,7 +194,7 @@ async fn reactive_compact_fires_on_context_window_exceeded_error() {
     let agent = Agent::new()
         .name("demo")
         .model(Model::from_name("mock").context_window_size(200_000))
-        .identity_prompt("");
+        .role("");
 
     let harness = TestHarness::with_provider(provider);
     let _ = harness.run_agent(&agent, "hi").await;
@@ -220,7 +217,7 @@ async fn reactive_compact_fires_on_mid_generation_context_window_exceeded() {
     let agent = Agent::new()
         .name("demo")
         .model(Model::from_name("mock").context_window_size(200_000))
-        .identity_prompt("");
+        .role("");
 
     let harness = TestHarness::new(MockProvider::new(vec![response]));
     let _ = harness.run_agent(&agent, "hi").await;
@@ -244,12 +241,12 @@ async fn sub_agent_compaction_uses_own_model_window() {
     let child = Agent::new()
         .name("child")
         .model(Model::from_name("child-mock").context_window_size(50_000))
-        .identity_prompt("");
+        .role("");
 
     let parent = Agent::new()
         .name("parent")
         .model(Model::from_name("parent-mock").context_window_size(200_000))
-        .identity_prompt("")
+        .role("")
         .sub_agents([child]);
 
     // Response script (shared across parent + child runs via the same mock):
@@ -330,7 +327,7 @@ async fn registry_populates_context_window_for_known_model_name() {
     let agent = Agent::new()
         .name("claude-agent")
         .model_name("claude-sonnet-4-20250514")
-        .identity_prompt("");
+        .role("");
 
     let harness = TestHarness::new(MockProvider::new(vec![response]));
     let _ = harness.run_agent(&agent, "hi").await;
@@ -356,7 +353,7 @@ async fn explicit_context_window_size_bypasses_registry() {
     let agent = Agent::new()
         .name("custom")
         .model(Model::from_name("custom-proxy").context_window_size(30_000))
-        .identity_prompt("");
+        .role("");
 
     let harness = TestHarness::new(MockProvider::new(vec![response]));
     let _ = harness.run_agent(&agent, "hi").await;
@@ -376,10 +373,7 @@ async fn reactive_compact_suppressed_when_model_has_no_window() {
 
     // "mock" has no known window — reactive seam stays dormant and the
     // ContextWindowExceeded error propagates as-is.
-    let agent = Agent::new()
-        .name("demo")
-        .model_name("mock")
-        .identity_prompt("");
+    let agent = Agent::new().name("demo").model_name("mock").role("");
 
     let harness = TestHarness::with_provider(provider);
     let output = harness.run_agent(&agent, "hi").await.unwrap();

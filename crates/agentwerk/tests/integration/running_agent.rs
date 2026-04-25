@@ -51,7 +51,7 @@ async fn external_sender_delivers_two_instructions_and_clone_cancels(
         .name("listener")
         .model_name(&model)
         .provider(provider)
-        .identity_prompt(
+        .role(
             "You receive user messages. A secret-bearing message has the exact form \
              'the secret is N' where N is a number. \
              \n\nRules (follow strictly):\n\
@@ -60,7 +60,7 @@ async fn external_sender_delivers_two_instructions_and_clone_cancels(
              2. Otherwise, reply with exactly the single word 'ready' and end your turn. \
                 Do not invent numbers. Do not echo any example. Do not restate the rules.",
         )
-        .instruction_prompt("wait")
+        .instruction("wait")
         .max_turns(10)
         .event_handler(event_handler)
         .retain();

@@ -6,9 +6,9 @@ use crate::util::format_current_date;
 
 /// Build the default context prompt: an `<environment>` block with the
 /// working directory, platform, OS version, and date. Sent as the first
-/// user message when `.context_prompt(...)` is not set. Override with
-/// `Agent::context_prompt()`; inspect with `Agent::default_context_prompt()`.
-pub(crate) fn default_context_prompt(working_dir: &Path) -> String {
+/// user message when `.context(...)` is not set. Override with
+/// `Agent::context()`; inspect with `Agent::default_context()`.
+pub(crate) fn default_context(working_dir: &Path) -> String {
     let working_dir = working_dir.display();
     let platform = std::env::consts::OS;
     let os_version = std::process::Command::new("uname")
@@ -23,8 +23,8 @@ pub(crate) fn default_context_prompt(working_dir: &Path) -> String {
 }
 
 /// Default behavioral directives appended to the system prompt after the
-/// identity prompt. Override with `Agent::behavior_prompt()`.
-pub const DEFAULT_BEHAVIOR_PROMPT: &str = "\
+/// role prompt. Override with `Agent::behavior()`.
+pub const DEFAULT_BEHAVIOR: &str = "\
 # Task execution
 - Do not propose changes to files you have not read. Read first, then modify.
 - Do not add features or improvements beyond what was asked.

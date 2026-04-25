@@ -32,11 +32,11 @@ async fn test() -> std::result::Result<(), Box<dyn std::error::Error>> {
     let output = Agent::new()
         .provider(provider)
         .model_name(&model)
-        .identity_prompt(
+        .role(
             "You have three shell tools: ls, cat, and wc. \
              No other tools are available. Use them to accomplish the task.",
         )
-        .instruction_prompt(
+        .instruction(
             "List the files in the current directory, read the Cargo.toml file, \
              and count its lines. Report the result.",
         )

@@ -29,18 +29,18 @@ use super::spec::AgentSpec;
 
 /// Externals plus per-agent resolutions shared by the loop. Externals
 /// (provider, handlers, queue, store) inherit tree-wide so a child sub-agent
-/// reuses the parent's; `tools` and `template_variables` are per-agent
+/// reuses the parent's; `tools` and `templates` are per-agent
 /// resolutions produced by `Agent::compile`.
 pub(crate) struct LoopRuntime {
     pub provider: Arc<dyn Provider>,
     pub event_handler: Arc<dyn Fn(Event) + Send + Sync>,
     pub cancel_signal: Arc<AtomicBool>,
     pub working_dir: PathBuf,
-    pub default_context_prompt: String,
+    pub default_context: String,
     pub command_queue: Option<Arc<CommandQueue>>,
     pub session_store: Option<Arc<Mutex<SessionStore>>>,
     pub tool_registry: Arc<ToolRegistry>,
-    pub template_variables: HashMap<String, Value>,
+    pub templates: HashMap<String, Value>,
 }
 
 /// Per-run mutable state of the loop. Created fresh for each agent run.
@@ -59,9 +59,9 @@ pub(crate) struct LoopState {
 impl LoopState {
     /// Build the initial state from precomputed prompts. Assembling them needs
     /// `Agent`'s per-run fields, which this module cannot see.
-    pub(crate) fn initial(context_prompt: Option<String>, instruction: String) -> Self {
+    pub(crate) fn initial(context: Option<String>, instruction: String) -> Self {
         let mut messages = Vec::new();
-        if let Some(cp) = context_prompt {
+        if let Some(cp) = context {
             messages.push(Message::user(cp));
         }
         messages.push(Message::user(instruction));
@@ -161,7 +161,7 @@ pub(crate) fn run_loop(
             let response = 'fetch: loop {
                 let request = ModelRequest {
                     model: spec.model().name.clone(),
-                    system_prompt: spec.system_prompt(&runtime.template_variables),
+                    system_prompt: spec.system_prompt(&runtime.templates),
                     messages: state.messages.clone(),
                     tools: runtime.tool_registry.definitions(),
                     max_request_tokens: spec.max_request_tokens,
@@ -507,7 +507,7 @@ mod tests {
         Agent::new()
             .name("test-agent")
             .model_name("mock-model")
-            .identity_prompt("You are a test assistant.")
+            .role("You are a test assistant.")
     }
 
     fn assert_lifecycle_events(harness: &TestHarness, output: &Output) {
@@ -563,7 +563,7 @@ mod tests {
         let agent = Agent::new()
             .name("test")
             .model_name("mock")
-            .identity_prompt("")
+            .role("")
             .tool(MockTool::error("boom", false, "disk full"));
 
         let harness = TestHarness::new(provider);
@@ -591,7 +591,7 @@ mod tests {
         let agent = Agent::new()
             .name("test-agent")
             .model_name("mock-model")
-            .identity_prompt("You are helpful.")
+            .role("You are helpful.")
             .tool(MockTool::new("echo_tool", false, "pong"));
 
         let harness = TestHarness::new(provider);
@@ -610,7 +610,7 @@ mod tests {
         let agent = Agent::new()
             .name("test")
             .model_name("mock")
-            .identity_prompt("")
+            .role("")
             .max_turns(2)
             .tool(MockTool::new("t", false, "ok"));
 
@@ -637,7 +637,7 @@ mod tests {
         let agent = Agent::new()
             .name("test")
             .model_name("mock")
-            .identity_prompt("")
+            .role("")
             .tool(MockTool::new("t", false, "ok"));
 
         let harness = TestHarness::new(provider);
@@ -648,12 +648,12 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn template_variable_interpolates_in_system_prompt() {
+    async fn template_interpolates_in_system_prompt() {
         let provider = MockProvider::text("Answer about rust");
         let agent = Agent::new()
             .name("test")
             .model_name("mock")
-            .identity_prompt("You are an expert on {topic}.");
+            .role("You are an expert on {topic}.");
 
         let harness = TestHarness::new(provider).with_state("topic", serde_json::json!("rust"));
         harness.run_agent(&agent, "Tell me").await.unwrap();
@@ -668,7 +668,7 @@ mod tests {
         let agent = Agent::new()
             .name("assistant")
             .model_name("mock")
-            .identity_prompt("")
+            .role("")
             .tool(MockTool::new("read", true, "file contents"));
 
         let harness = TestHarness::new(provider);
@@ -691,7 +691,7 @@ mod tests {
         let agent = Agent::new()
             .name("test")
             .model_name("mock")
-            .identity_prompt("")
+            .role("")
             .tool(MockTool::new("t", false, "ok"));
 
         let queue = Arc::new(CommandQueue::new());
@@ -727,7 +727,7 @@ mod tests {
         let agent = Agent::new()
             .name("test")
             .model_name("mock")
-            .identity_prompt("")
+            .role("")
             .tool(MockTool::new("t", false, "ok"));
 
         let queue = Arc::new(CommandQueue::new());
@@ -752,7 +752,7 @@ mod tests {
         let agent = Agent::new()
             .name("test")
             .model_name("mock")
-            .identity_prompt("")
+            .role("")
             .tool(MockTool::new("always", true, "ok"))
             .tool(DeferredMockTool::new("deferred"));
 
@@ -771,7 +771,7 @@ mod tests {
         let agent = Agent::new()
             .name("classifier")
             .model_name("mock")
-            .identity_prompt("Classify.")
+            .role("Classify.")
             .output_schema(serde_json::json!({
                 "type": "object",
                 "properties": { "category": {"type": "string"}, "priority": {"type": "string"} },
@@ -796,7 +796,7 @@ mod tests {
         let agent = Agent::new()
             .name("test")
             .model_name("mock")
-            .identity_prompt("")
+            .role("")
             .output_schema(serde_json::json!({
                 "type": "object",
                 "properties": {"x": {"type": "string"}},
@@ -821,13 +821,13 @@ mod tests {
         let sub = Agent::new()
             .name("helper")
             .model_name("mock")
-            .identity_prompt("I help.");
+            .role("I help.");
 
         let provider = MockProvider::text("ok");
         let agent = Agent::new()
             .name("parent")
             .model_name("mock")
-            .identity_prompt("I coordinate.")
+            .role("I coordinate.")
             .sub_agents([sub]);
 
         let harness = TestHarness::new(provider);
@@ -846,8 +846,8 @@ mod tests {
         let agent = Agent::new()
             .name("test")
             .model_name("mock")
-            .identity_prompt("x")
-            .instruction_prompt("do");
+            .role("x")
+            .instruction("do");
         let _ = agent.run().await;
     }
 
@@ -860,9 +860,9 @@ mod tests {
             working_dir: PathBuf::from("/tmp"),
             command_queue: None,
             session_store: None,
-            default_context_prompt: env.to_string(),
+            default_context: env.to_string(),
             tool_registry: Arc::new(ToolRegistry::new()),
-            template_variables: HashMap::new(),
+            templates: HashMap::new(),
         }
     }
 
@@ -935,7 +935,7 @@ mod tests {
         let agent = Agent::new()
             .name("test")
             .model_name("mock")
-            .identity_prompt("")
+            .role("")
             .max_input_tokens(4000)
             .tool(MockTool::new("t", false, "ok"));
 
@@ -975,7 +975,7 @@ mod tests {
         let agent = Agent::new()
             .name("test")
             .model_name("mock")
-            .identity_prompt("")
+            .role("")
             .max_input_tokens(4000)
             .tool(MockTool::new("t", false, "ok"));
 
@@ -1004,7 +1004,7 @@ mod tests {
         let agent = Agent::new()
             .name("test")
             .model_name("mock")
-            .identity_prompt("")
+            .role("")
             .max_output_tokens(4000)
             .tool(MockTool::new("t", false, "ok"));
 
@@ -1061,7 +1061,7 @@ mod tests {
         let agent = Agent::new()
             .name("test")
             .model_name("mock")
-            .identity_prompt("")
+            .role("")
             .max_input_tokens(10_000)
             .max_output_tokens(4000)
             .tool(MockTool::new("t", false, "ok"));
@@ -1091,7 +1091,7 @@ mod tests {
         let agent = Agent::new()
             .name("test")
             .model_name("mock")
-            .identity_prompt("")
+            .role("")
             .max_output_tokens(4000)
             .tool(MockTool::new("t", false, "ok"));
 
@@ -1346,7 +1346,7 @@ mod tests {
         let agent = Agent::new()
             .model_name("mock")
             .provider(Arc::new(MockProvider::text("x")))
-            .instruction_prompt("")
+            .instruction("")
             .cancel_signal(cancel.clone())
             .command_queue(queue.clone());
 
@@ -1367,7 +1367,7 @@ mod tests {
         let agent = Agent::new()
             .model_name("mock")
             .provider(Arc::new(MockProvider::text("x")))
-            .instruction_prompt("");
+            .instruction("");
 
         let (_spec, rt) = agent.compile(None);
         assert!(
@@ -1430,7 +1430,7 @@ mod retry_and_events_tests {
         let agent = Agent::new()
             .name("test")
             .model_name("mock")
-            .identity_prompt("")
+            .role("")
             .max_request_retries(3)
             .request_retry_delay(Duration::from_millis(10));
 
@@ -1448,7 +1448,7 @@ mod retry_and_events_tests {
         let agent = Agent::new()
             .name("test")
             .model_name("mock")
-            .identity_prompt("")
+            .role("")
             .max_request_retries(3)
             .request_retry_delay(Duration::from_millis(10));
 
@@ -1468,7 +1468,7 @@ mod retry_and_events_tests {
         let agent = Agent::new()
             .name("test")
             .model_name("mock")
-            .identity_prompt("")
+            .role("")
             .tool(MockTool::new("read", true, "file contents"));
 
         let harness = TestHarness::new(provider);
@@ -1532,7 +1532,7 @@ mod retry_and_events_tests {
         let agent = Agent::new()
             .name("test")
             .model_name("mock")
-            .identity_prompt("")
+            .role("")
             .max_request_retries(4)
             .request_retry_delay(Duration::from_millis(1));
 
@@ -1570,7 +1570,7 @@ mod retry_and_events_tests {
         let agent = Agent::new()
             .name("test")
             .model_name("mock")
-            .identity_prompt("")
+            .role("")
             .max_request_retries(3)
             .request_retry_delay(Duration::from_millis(1));
 
@@ -1607,7 +1607,7 @@ mod retry_and_events_tests {
         let agent = Agent::new()
             .name("test")
             .model_name("mock")
-            .identity_prompt("")
+            .role("")
             .max_request_retries(2)
             .request_retry_delay(Duration::from_millis(1));
 
@@ -1627,10 +1627,7 @@ mod retry_and_events_tests {
     #[tokio::test]
     async fn happy_path_emits_no_request_failed() {
         let provider = MockProvider::text("done");
-        let agent = Agent::new()
-            .name("test")
-            .model_name("mock")
-            .identity_prompt("");
+        let agent = Agent::new().name("test").model_name("mock").role("");
 
         let harness = TestHarness::new(provider);
         harness.run_agent(&agent, "go").await.unwrap();
@@ -1648,7 +1645,7 @@ mod retry_and_events_tests {
             let agent = Agent::new()
                 .name("test")
                 .model_name("mock")
-                .identity_prompt("")
+                .role("")
                 .max_request_retries(max_retries)
                 .request_retry_delay(Duration::from_millis(1));
 
@@ -1678,7 +1675,7 @@ mod retry_and_events_tests {
         let agent = Agent::new()
             .name("test")
             .model_name("mock")
-            .identity_prompt("")
+            .role("")
             .max_request_retries(0)
             .request_retry_delay(Duration::from_millis(1));
 
@@ -1702,7 +1699,7 @@ mod retry_and_events_tests {
         let agent = Agent::new()
             .name("test")
             .model_name("mock")
-            .identity_prompt("")
+            .role("")
             .max_request_retries(3)
             .request_retry_delay(Duration::from_millis(1));
 
@@ -1759,7 +1756,7 @@ mod retry_and_events_tests {
             let agent = Agent::new()
                 .name("test")
                 .model_name("mock")
-                .identity_prompt("")
+                .role("")
                 .max_request_retries(3)
                 .request_retry_delay(Duration::from_millis(1));
 
@@ -1788,7 +1785,7 @@ mod retry_and_events_tests {
         let agent = Agent::new()
             .name("test")
             .model(Model::from_name("mock").context_window_size(100_000))
-            .identity_prompt("")
+            .role("")
             .max_request_retries(3)
             .request_retry_delay(Duration::from_millis(1));
 
@@ -1814,7 +1811,7 @@ mod retry_and_events_tests {
         let agent = Agent::new()
             .name("test")
             .model_name("mock")
-            .identity_prompt("")
+            .role("")
             .max_request_retries(3)
             .request_retry_delay(Duration::from_millis(1));
 
@@ -1847,11 +1844,11 @@ mod retry_and_events_tests {
             .name("test")
             .model_name("mock")
             .provider(Arc::new(provider))
-            .identity_prompt("")
+            .role("")
             .max_request_retries(3)
             .request_retry_delay(Duration::from_millis(1_000))
             .event_handler(handler)
-            .instruction_prompt("go");
+            .instruction("go");
 
         let run_fut = agent.run();
         let check_fut = async {
@@ -1910,11 +1907,11 @@ mod retry_and_events_tests {
             .name("test")
             .model_name("mock")
             .provider(Arc::new(provider))
-            .identity_prompt("")
+            .role("")
             .max_request_retries(3)
             .request_retry_delay(Duration::from_millis(2_000))
             .event_handler(handler)
-            .instruction_prompt("go");
+            .instruction("go");
 
         let drain = || async {
             for _ in 0..20 {
@@ -1988,11 +1985,11 @@ mod retry_and_events_tests {
             .name("test")
             .model_name("mock")
             .provider(Arc::new(provider))
-            .identity_prompt("")
+            .role("")
             .max_request_retries(4)
             .request_retry_delay(Duration::from_millis(30_000))
             .cancel_signal(cancel.clone())
-            .instruction_prompt("go");
+            .instruction("go");
 
         let cancel_setter = {
             let c = cancel.clone();
@@ -2033,11 +2030,11 @@ mod retry_and_events_tests {
             .name("test")
             .model_name("mock")
             .provider(Arc::new(provider))
-            .identity_prompt("")
+            .role("")
             .max_request_retries(3)
             .request_retry_delay(Duration::from_millis(1))
             .event_handler(handler)
-            .instruction_prompt("go");
+            .instruction("go");
 
         let output = agent.run().await.unwrap();
         assert_eq!(output.outcome, Outcome::Failed);

@@ -23,9 +23,9 @@ use super::prompts;
 pub(crate) struct AgentSpec {
     pub name: String,
     pub model: Option<Model>,
-    pub identity_prompt: String,
-    pub behavior_prompt: String,
-    pub context_prompt: Option<String>,
+    pub role: String,
+    pub behavior: String,
+    pub context: Option<String>,
     pub tool_registry: ToolRegistry,
     pub sub_agents: Vec<Agent>,
     pub output_schema: Option<OutputSchema>,
@@ -44,9 +44,9 @@ impl Default for AgentSpec {
         Self {
             name: crate::util::generate_agent_name("agent"),
             model: None,
-            identity_prompt: String::new(),
-            behavior_prompt: prompts::DEFAULT_BEHAVIOR_PROMPT.to_string(),
-            context_prompt: None,
+            role: String::new(),
+            behavior: prompts::DEFAULT_BEHAVIOR.to_string(),
+            context: None,
             tool_registry: ToolRegistry::new(),
             sub_agents: Vec::new(),
             output_schema: None,
@@ -79,14 +79,14 @@ impl AgentSpec {
             .expect("AgentSpec::model() called on unresolved spec; Agent::compile must run first")
     }
 
-    /// Build the provider's `system` field from `identity_prompt` (with `vars`
-    /// interpolated), `behavior_prompt`, and a JSON-output directive when
+    /// Build the provider's `system` field from `role` (with `vars`
+    /// interpolated), `behavior`, and a JSON-output directive when
     /// `output_schema` is set.
     pub(crate) fn system_prompt(&self, vars: &HashMap<String, Value>) -> String {
-        let mut s = Self::interpolate(&self.identity_prompt, vars);
-        if !self.behavior_prompt.is_empty() {
+        let mut s = Self::interpolate(&self.role, vars);
+        if !self.behavior.is_empty() {
             s.push_str("\n\n");
-            s.push_str(&self.behavior_prompt);
+            s.push_str(&self.behavior);
         }
         if self.output_schema.is_some() {
             s.push_str(prompts::STRUCTURED_OUTPUT_INSTRUCTION);
@@ -98,8 +98,8 @@ impl AgentSpec {
     /// means "use the runtime default"; `Some("")` is an explicit opt-out
     /// (returns `None` here so the loop skips the message); `Some(s)` is a
     /// full override sent verbatim.
-    pub(crate) fn context_prompt(&self, default: &str) -> Option<String> {
-        match self.context_prompt.as_deref() {
+    pub(crate) fn context(&self, default: &str) -> Option<String> {
+        match self.context.as_deref() {
             None => Some(default.to_string()),
             Some("") => None,
             Some(s) => Some(s.to_string()),
@@ -127,22 +127,22 @@ mod tests {
     const DEFAULT: &str = "<environment>\ndefault\n</environment>";
 
     #[test]
-    fn unset_context_prompt_uses_runtime_default() {
+    fn unset_context_uses_runtime_default() {
         let spec = AgentSpec::default();
-        assert_eq!(spec.context_prompt(DEFAULT), Some(DEFAULT.to_string()));
+        assert_eq!(spec.context(DEFAULT), Some(DEFAULT.to_string()));
     }
 
     #[test]
-    fn custom_context_prompt_replaces_default() {
+    fn custom_context_replaces_default() {
         let mut spec = AgentSpec::default();
-        spec.context_prompt = Some("only this".to_string());
-        assert_eq!(spec.context_prompt(DEFAULT), Some("only this".to_string()));
+        spec.context = Some("only this".to_string());
+        assert_eq!(spec.context(DEFAULT), Some("only this".to_string()));
     }
 
     #[test]
-    fn empty_context_prompt_opts_out() {
+    fn empty_context_opts_out() {
         let mut spec = AgentSpec::default();
-        spec.context_prompt = Some(String::new());
-        assert_eq!(spec.context_prompt(DEFAULT), None);
+        spec.context = Some(String::new());
+        assert_eq!(spec.context(DEFAULT), None);
     }
 }

@@ -81,12 +81,12 @@ async fn main() {
     let discovery = Agent::new()
         .provider(provider.clone())
         .model_name(&model)
-        .identity_prompt(DISCOVERY_PROMPT)
-        .instruction_prompt("Find all files worth reading to understand this project.")
+        .role(DISCOVERY_PROMPT)
+        .instruction("Find all files worth reading to understand this project.")
         .tool(ListDirectoryTool)
         .tool(GlobTool)
         .output_schema(discovery_schema())
-        .template_variable("dir_path", json!(config.dir.display().to_string()))
+        .template("dir_path", json!(config.dir.display().to_string()))
         .working_dir(config.dir.clone())
         .cancel_signal(cancel.clone())
         .max_turns(20)
@@ -146,7 +146,7 @@ async fn main() {
     let summarizer = Agent::new()
         .provider(provider.clone())
         .model_name(&model)
-        .identity_prompt(SUMMARIZE_PROMPT)
+        .role(SUMMARIZE_PROMPT)
         .tool(ReadFileTool)
         .output_schema(summarize_schema())
         .max_turns(5);
@@ -160,7 +160,7 @@ async fn main() {
         summarizer
             .clone()
             .name(format!("summarize-{file}"))
-            .instruction_prompt(format!("Read and summarize: {file}"))
+            .instruction(format!("Read and summarize: {file}"))
             .working_dir(config.dir.clone())
             .event_handler(Arc::new(move |event| match &event.kind {
                 EventKind::ToolCallFailed { message, .. } => {

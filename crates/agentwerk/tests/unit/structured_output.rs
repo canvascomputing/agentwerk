@@ -80,8 +80,8 @@ fn report_agent() -> Agent {
     Agent::new()
         .name("reviewer")
         .model_name("mock")
-        .identity_prompt("You are a code reviewer. Reply with a structured report.")
-        .behavior_prompt("")
+        .role("You are a code reviewer. Reply with a structured report.")
+        .behavior("")
         .output_schema(report_schema())
 }
 
@@ -539,15 +539,15 @@ async fn sub_agent_with_schema_returns_json_in_tool_result() {
     let child = Agent::new()
         .name("reviewer")
         .model_name("mock")
-        .identity_prompt("You are a code reviewer. Reply with a structured report.")
-        .behavior_prompt("")
+        .role("You are a code reviewer. Reply with a structured report.")
+        .behavior("")
         .output_schema(report_schema());
 
     let parent = Agent::new()
         .name("orchestrator")
         .model_name("mock")
-        .identity_prompt("Coordinate.")
-        .behavior_prompt("")
+        .role("Coordinate.")
+        .behavior("")
         .sub_agents([child]);
 
     let provider = MockProvider::new(vec![
@@ -590,8 +590,8 @@ async fn ad_hoc_spawned_agent_declares_schema_via_overrides() {
     let parent = Agent::new()
         .name("orchestrator")
         .model_name("mock")
-        .identity_prompt("")
-        .behavior_prompt("")
+        .role("")
+        .behavior("")
         .tool(SpawnAgentTool);
 
     let provider = MockProvider::new(vec![
@@ -681,8 +681,8 @@ async fn output_truncation_emits_event_and_keeps_outcome_completed() {
     let agent = Agent::new()
         .name("plain")
         .model_name("mock")
-        .identity_prompt("")
-        .behavior_prompt("");
+        .role("")
+        .behavior("");
     let harness = TestHarness::new(provider);
     let output = harness.run_agent(&agent, "go").await.unwrap();
 
@@ -718,8 +718,8 @@ async fn turn_limit_emits_policy_violated_event() {
     let agent = Agent::new()
         .name("capped")
         .model_name("mock")
-        .identity_prompt("")
-        .behavior_prompt("")
+        .role("")
+        .behavior("")
         .max_turns(1);
     let harness = TestHarness::new(provider);
     let output = harness.run_agent(&agent, "go").await.unwrap();
@@ -761,8 +761,8 @@ async fn cancel_before_run_does_not_emit_request_failed() {
     let agent = Agent::new()
         .name("ghost")
         .model_name("mock")
-        .identity_prompt("")
-        .behavior_prompt("");
+        .role("")
+        .behavior("");
     let output = harness.run_agent(&agent, "go").await.unwrap();
 
     assert_eq!(output.outcome, agentwerk::output::Outcome::Cancelled);
@@ -785,8 +785,8 @@ fn schema_agent() -> Agent {
     Agent::new()
         .name("classifier")
         .model_name("mock")
-        .identity_prompt("You answer with JSON.")
-        .behavior_prompt("")
+        .role("You answer with JSON.")
+        .behavior("")
         .output_schema(answer_schema())
 }
 

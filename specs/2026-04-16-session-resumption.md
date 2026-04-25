@@ -75,7 +75,7 @@ AgentBuilder::new()
     .model("claude-sonnet-4-20250514")
     .session_dir(PathBuf::from("./data"))
     .resume_session("session_abc123")           // ← new
-    .instruction_prompt("Continue where we left off.")
+    .instruction("Continue where we left off.")
     .run()
     .await?;
 ```

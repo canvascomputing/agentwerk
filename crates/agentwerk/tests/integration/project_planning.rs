@@ -16,12 +16,12 @@ async fn test() -> std::result::Result<(), Box<dyn std::error::Error>> {
     let output = Agent::new()
         .provider(provider)
         .model_name(&model)
-        .identity_prompt(
+        .role(
             "You are a project planner. Use the task tool to manage work items. \
              The task tool supports these actions: create, update, list, get, delete, claim, add_dependency. \
              Be concise. Always use the task tool, never simulate results.",
         )
-        .instruction_prompt(
+        .instruction(
             "Do the following steps in order:\n\
              1. Create three tasks: 'Design API', 'Write tests', 'Deploy'\n\
              2. Add a dependency: 'Design API' blocks 'Write tests'\n\

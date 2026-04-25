@@ -19,7 +19,7 @@
 //! let output = Agent::new()
 //!     .provider(provider)
 //!     .model_name("claude-sonnet-4-20250514")
-//!     .instruction_prompt("Find all Rust source files.")
+//!     .instruction("Find all Rust source files.")
 //!     .run()
 //!     .await
 //!     .unwrap();

@@ -204,7 +204,7 @@ mod tests {
         let agent = Agent::new()
             .name("t")
             .model_name("mock")
-            .identity_prompt("")
+            .role("")
             .provider(Arc::new(crate::testutil::MockProvider::text("ok")));
         let (_spec, runtime) = agent.compile(None);
         let runtime = Arc::new(runtime);

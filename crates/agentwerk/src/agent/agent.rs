@@ -36,9 +36,9 @@ use super::spec::AgentSpec;
 /// let agent = Agent::new()
 ///     .provider(provider)
 ///     .model_name("claude-sonnet-4-20250514")
-///     .identity_prompt("You are a helpful assistant.");
+///     .role("You are a helpful assistant.");
 ///
-/// let first = agent.clone().instruction_prompt("Greet me.").run().await.unwrap();
+/// let first = agent.clone().instruction("Greet me.").run().await.unwrap();
 /// assert_eq!(first.response_raw, "Hello!");
 /// # });
 /// ```
@@ -46,8 +46,8 @@ use super::spec::AgentSpec;
 pub struct Agent {
     pub(crate) spec: Arc<AgentSpec>,
     pub(crate) provider: Option<Arc<dyn Provider>>,
-    pub(crate) instruction_prompt: String,
-    pub(crate) template_variables: HashMap<String, Value>,
+    pub(crate) instruction: String,
+    pub(crate) templates: HashMap<String, Value>,
     pub(crate) working_dir: Option<PathBuf>,
     pub(crate) event_handler: Option<Arc<dyn Fn(Event) + Send + Sync>>,
     pub(crate) cancel_signal: Option<Arc<AtomicBool>>,
@@ -60,13 +60,13 @@ impl Default for Agent {
         Self {
             spec: Arc::new(AgentSpec::default()),
             provider: None,
-            instruction_prompt: String::new(),
+            instruction: String::new(),
             event_handler: None,
             command_queue: None,
             cancel_signal: None,
             working_dir: None,
             session_dir: None,
-            template_variables: HashMap::new(),
+            templates: HashMap::new(),
         }
     }
 }
@@ -100,10 +100,10 @@ impl Agent {
         self
     }
 
-    /// Replace `{key}` placeholders in `template` with this agent's template variables.
+    /// Replace `{key}` placeholders in `template` with this agent's templates.
     pub(crate) fn interpolate(&self, template: &str) -> String {
         let mut result = template.to_string();
-        for (key, value) in &self.template_variables {
+        for (key, value) in &self.templates {
             let replacement = match value {
                 Value::String(s) => s.clone(),
                 other => other.to_string(),
@@ -128,15 +128,15 @@ impl Agent {
         self.with_spec(|c| c.model = Some(model))
     }
 
-    /// The agent's persistent identity — who it is and how it behaves.
-    pub fn identity_prompt(self, p: impl Into<String>) -> Self {
-        self.with_spec(|c| c.identity_prompt = p.into())
+    /// The agent's persistent role — who it is and how it behaves.
+    pub fn role(self, p: impl Into<String>) -> Self {
+        self.with_spec(|c| c.role = p.into())
     }
 
-    /// Load the identity prompt from a file.
-    pub fn identity_prompt_file(self, path: impl Into<PathBuf>) -> Self {
+    /// Load the role prompt from a file.
+    pub fn role_file(self, path: impl Into<PathBuf>) -> Self {
         let s = load_prompt_file(path.into());
-        self.with_spec(|c| c.identity_prompt = s)
+        self.with_spec(|c| c.role = s)
     }
 
     /// Maximum output tokens per request (`max_tokens` on the wire).
@@ -200,38 +200,38 @@ impl Agent {
     }
 
     /// Override the default behavior prompt.
-    pub fn behavior_prompt(self, content: impl Into<String>) -> Self {
+    pub fn behavior(self, content: impl Into<String>) -> Self {
         let content = content.into();
-        self.with_spec(|c| c.behavior_prompt = content)
+        self.with_spec(|c| c.behavior = content)
     }
 
     /// Load a behavior prompt override from a file.
-    pub fn behavior_prompt_file(self, path: impl Into<PathBuf>) -> Self {
+    pub fn behavior_file(self, path: impl Into<PathBuf>) -> Self {
         let content = load_prompt_file(path.into());
-        self.with_spec(|c| c.behavior_prompt = content)
+        self.with_spec(|c| c.behavior = content)
     }
 
     /// Override the context prompt sent as the first user message.
     ///
     /// Passing a non-empty string replaces the default environment block verbatim;
     /// passing `""` opts out of the context message entirely. Compose on top of
-    /// the default via [`Agent::default_context_prompt`].
-    pub fn context_prompt(self, content: impl Into<String>) -> Self {
-        self.with_spec(|c| c.context_prompt = Some(content.into()))
+    /// the default via [`Agent::default_context`].
+    pub fn context(self, content: impl Into<String>) -> Self {
+        self.with_spec(|c| c.context = Some(content.into()))
     }
 
     /// Load a context prompt override from a file.
-    pub fn context_prompt_file(self, path: impl Into<PathBuf>) -> Self {
+    pub fn context_file(self, path: impl Into<PathBuf>) -> Self {
         let content = load_prompt_file(path.into());
-        self.with_spec(|c| c.context_prompt = Some(content))
+        self.with_spec(|c| c.context = Some(content))
     }
 
     /// The default context prompt: environment metadata (working directory,
     /// platform, OS version, date) wrapped in an `<environment>` block.
-    /// Uses the process cwd. Override with [`Agent::context_prompt`].
-    pub fn default_context_prompt() -> String {
+    /// Uses the process cwd. Override with [`Agent::context`].
+    pub fn default_context() -> String {
         let cwd = std::env::current_dir().unwrap_or_default();
-        prompts::default_context_prompt(&cwd)
+        prompts::default_context(&cwd)
     }
 
     /// Register agents callable by name as sub-agents.
@@ -259,20 +259,20 @@ impl Agent {
     }
 
     /// The task for this run — what to do right now.
-    pub fn instruction_prompt(mut self, p: impl Into<String>) -> Self {
-        self.instruction_prompt = p.into();
+    pub fn instruction(mut self, p: impl Into<String>) -> Self {
+        self.instruction = p.into();
         self
     }
 
     /// Load the instruction prompt from a file.
-    pub fn instruction_prompt_file(mut self, path: impl Into<PathBuf>) -> Self {
-        self.instruction_prompt = load_prompt_file(path.into());
+    pub fn instruction_file(mut self, path: impl Into<PathBuf>) -> Self {
+        self.instruction = load_prompt_file(path.into());
         self
     }
 
     /// Bind `{key}` to `value` for placeholder substitution in all prompts before the run.
-    pub fn template_variable(mut self, key: impl Into<String>, value: Value) -> Self {
-        self.template_variables.insert(key.into(), value);
+    pub fn template(mut self, key: impl Into<String>, value: Value) -> Self {
+        self.templates.insert(key.into(), value);
         self
     }
 
@@ -320,13 +320,13 @@ impl Agent {
     /// Drive the loop to completion and return the agent's output.
     ///
     /// Requires `.provider()` (or [`Agent::provider_from_env`]), `.model_name()`
-    /// (or [`Agent::model_from_env`]), and `.instruction_prompt()`.
+    /// (or [`Agent::model_from_env`]), and `.instruction()`.
     pub async fn run(&self) -> Result<Output> {
         let (spec, runtime) = self.compile(None);
         let runtime = Arc::new(runtime);
-        let instruction = self.interpolate(&self.instruction_prompt);
-        let context_prompt = spec.context_prompt(&runtime.default_context_prompt);
-        let state = LoopState::initial(context_prompt, instruction);
+        let instruction = self.interpolate(&self.instruction);
+        let context = spec.context(&runtime.default_context);
+        let state = LoopState::initial(context, instruction);
         run_loop(runtime, spec, state).await
     }
 
@@ -338,9 +338,9 @@ impl Agent {
     ) -> Result<Output> {
         let (spec, runtime) = self.compile(Some((parent_spec, parent_runtime)));
         let runtime = Arc::new(runtime);
-        let instruction = self.interpolate(&self.instruction_prompt);
-        let context_prompt = spec.context_prompt(&runtime.default_context_prompt);
-        let state = LoopState::initial(context_prompt, instruction);
+        let instruction = self.interpolate(&self.instruction);
+        let context = spec.context(&runtime.default_context);
+        let state = LoopState::initial(context, instruction);
         run_loop(runtime, spec, state).await
     }
 
@@ -350,7 +350,7 @@ impl Agent {
             self = self.model_name(m);
         }
         if let Some(i) = overrides.get("identity").and_then(Value::as_str) {
-            self = self.identity_prompt(i);
+            self = self.role(i);
         }
         if let Some(t) = overrides.get("max_request_tokens").and_then(Value::as_u64) {
             self = self.max_request_tokens(t as u32);
@@ -438,7 +438,7 @@ impl Agent {
             Arc::new(Mutex::new(store))
         });
 
-        let default_context_prompt = prompts::default_context_prompt(&working_dir);
+        let default_context = prompts::default_context(&working_dir);
 
         LoopRuntime {
             provider,
@@ -447,9 +447,9 @@ impl Agent {
             working_dir,
             command_queue,
             session_store,
-            default_context_prompt,
+            default_context,
             tool_registry: build_tools(spec),
-            template_variables: self.template_variables.clone(),
+            templates: self.templates.clone(),
         }
     }
 
@@ -474,9 +474,9 @@ impl Agent {
                 .unwrap_or_else(|| parent.working_dir.clone()),
             command_queue: parent.command_queue.clone(),
             session_store: parent.session_store.clone(),
-            default_context_prompt: parent.default_context_prompt.clone(),
+            default_context: parent.default_context.clone(),
             tool_registry: build_tools(spec),
-            template_variables: self.template_variables.clone(),
+            templates: self.templates.clone(),
         }
     }
 }
@@ -515,26 +515,27 @@ mod tests {
 
     #[test]
     fn default_logger_is_used_when_no_handler_is_set() {
-        let agent = Agent::new()
-            .name("t")
-            .model_name("mock")
-            .identity_prompt("")
-            .provider(std::sync::Arc::new(crate::testutil::MockProvider::text(
-                "ok",
-            )));
+        let agent =
+            Agent::new()
+                .name("t")
+                .model_name("mock")
+                .role("")
+                .provider(std::sync::Arc::new(crate::testutil::MockProvider::text(
+                    "ok",
+                )));
         assert!(agent.event_handler.is_none());
         let _ = agent.compile(None);
     }
 
     #[test]
-    fn identity_prompt_file_loads_content() {
-        let dir = std::env::temp_dir().join("agentwerk_test_werk_identity");
-        let path = dir.join("identity.txt");
+    fn role_file_loads_content() {
+        let dir = std::env::temp_dir().join("agentwerk_test_werk_role");
+        let path = dir.join("role.txt");
         std::fs::create_dir_all(&dir).unwrap();
         std::fs::write(&path, "You are a test agent").unwrap();
 
-        let agent = Agent::new().identity_prompt_file(&path);
-        assert_eq!(agent.spec.identity_prompt, "You are a test agent");
+        let agent = Agent::new().role_file(&path);
+        assert_eq!(agent.spec.role, "You are a test agent");
 
         std::fs::remove_file(&path).ok();
         std::fs::remove_dir(&dir).ok();
@@ -543,7 +544,7 @@ mod tests {
     #[test]
     #[should_panic(expected = "failed to read prompt file")]
     fn missing_prompt_file_panics() {
-        let _ = Agent::new().identity_prompt_file("/nonexistent/xxx.txt");
+        let _ = Agent::new().role_file("/nonexistent/xxx.txt");
     }
 
     #[test]
@@ -575,7 +576,7 @@ mod tests {
     fn invalid_output_schema_panics() {
         let _ = Agent::new()
             .name("test")
-            .identity_prompt("")
+            .role("")
             .output_schema(serde_json::json!({"type": "string"}));
     }
 
@@ -605,8 +606,8 @@ mod tests {
         let agent = Agent::new()
             .name("test")
             .model_name("mock")
-            .identity_prompt("x")
-            .instruction_prompt("do");
+            .role("x")
+            .instruction("do");
         let _ = agent.run().await;
     }
 }

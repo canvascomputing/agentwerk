@@ -177,13 +177,11 @@ impl ToolLike for SpawnAgentTool {
                 },
                 None => Agent::new()
                     .name(&args.description)
-                    .identity_prompt(DEFAULT_IDENTITY)
+                    .role(DEFAULT_IDENTITY)
                     .max_turns(10),
             };
 
-            let agent = base
-                .apply_overrides(&input)
-                .instruction_prompt(&args.instruction);
+            let agent = base.apply_overrides(&input).instruction(&args.instruction);
 
             if args.background.unwrap_or(false) {
                 let id = generate_agent_name(&args.description);
@@ -225,7 +223,7 @@ mod tests {
         let agent = Agent::new()
             .name("orchestrator")
             .model_name("mock")
-            .identity_prompt("Coordinate work.")
+            .role("Coordinate work.")
             .tool(SpawnAgentTool);
 
         let harness = TestHarness::new(MockProvider::new(vec![
@@ -250,7 +248,7 @@ mod tests {
         let agent = Agent::new()
             .name("orchestrator")
             .model_name("mock")
-            .identity_prompt("")
+            .role("")
             .tool(SpawnAgentTool);
 
         let queue = Arc::new(CommandQueue::new());
@@ -296,7 +294,7 @@ mod tests {
         let agent = Agent::new()
             .name("orchestrator")
             .model_name("mock")
-            .identity_prompt("")
+            .role("")
             .tool(SpawnAgentTool);
 
         let queue = Arc::new(CommandQueue::new());
@@ -349,12 +347,12 @@ mod tests {
         let sub = Agent::new()
             .name("specialist")
             .model_name("mock")
-            .identity_prompt("I am a specialist.");
+            .role("I am a specialist.");
 
         let agent = Agent::new()
             .name("orchestrator")
             .model_name("mock")
-            .identity_prompt("")
+            .role("")
             .sub_agents([sub]);
 
         let provider = Arc::new(MockProvider::new(vec![
@@ -387,13 +385,13 @@ mod tests {
         let sub = Agent::new()
             .name("tight-budget")
             .model_name("mock")
-            .identity_prompt("I do work.")
+            .role("I do work.")
             .tool(MockTool::new("t", false, "ok"));
 
         let agent = Agent::new()
             .name("orchestrator")
             .model_name("mock")
-            .identity_prompt("")
+            .role("")
             .sub_agents([sub]);
 
         let mut child_turn = tool_response("t", "c1", serde_json::json!({}));
@@ -445,13 +443,13 @@ mod tests {
         let sub = Agent::new()
             .name("tight-budget")
             .model_name("mock")
-            .identity_prompt("I do work.")
+            .role("I do work.")
             .tool(MockTool::new("t", false, "ok"));
 
         let agent = Agent::new()
             .name("orchestrator")
             .model_name("mock")
-            .identity_prompt("")
+            .role("")
             .sub_agents([sub]);
 
         let mut child_turn = tool_response("t", "c1", serde_json::json!({}));
@@ -500,7 +498,7 @@ mod tests {
         let agent = Agent::new()
             .name("orchestrator")
             .model_name("mock")
-            .identity_prompt("")
+            .role("")
             .tool(SpawnAgentTool);
 
         let provider = Arc::new(MockProvider::new(vec![

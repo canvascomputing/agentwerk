@@ -18,7 +18,7 @@ use crate::tools::ToolDefinition;
 pub struct ModelRequest {
     /// Model name (e.g. `claude-sonnet-4-20250514`).
     pub model: String,
-    /// System prompt assembled from identity, behavior, and environment.
+    /// System prompt assembled from role, behavior, and environment.
     pub system_prompt: String,
     /// Conversation history including the latest user input.
     pub messages: Vec<Message>,
@@ -62,7 +62,7 @@ pub enum ToolChoice {
 ///     .unwrap()
 ///     .model_from_env()
 ///     .unwrap()
-///     .instruction_prompt("Summarize the project.")
+///     .instruction("Summarize the project.")
 ///     .run()
 ///     .await
 ///     .unwrap();

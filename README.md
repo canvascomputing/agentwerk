@@ -39,7 +39,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let output = Agent::new()
         .provider_from_env()?
         .model_name("mistral-large-2512")
-        .instruction_prompt("Find all Rust source files.")
+        .instruction("Find all Rust source files.")
         .tool(GlobTool)
         .run()
         .await?;
@@ -107,7 +107,7 @@ Or pick a provider for your agent from environment variables (see [Environment](
 let output = Agent::new()
     .provider_from_env()?
     .model_name("mistral-small-2603")
-    .instruction_prompt("...")
+    .instruction("...")
     .run().await?;
 ```
 
@@ -119,7 +119,7 @@ The `Agent` interface is the main entry point. Use `run` to execute the agent an
 let output = Agent::new()
     .provider(provider)
     .model_name("claude-sonnet-4-20250514")
-    .instruction_prompt("Summarize src/main.rs")
+    .instruction("Summarize src/main.rs")
     .tool(ReadFileTool)
     .run() // start agent and wait for the results
     .await?;
@@ -133,7 +133,7 @@ Use `retain` when you want to keep sending instructions to your agent:
 let (agent, output) = Agent::new()
     .provider(provider)
     .model_name("claude-sonnet-4-20250514")
-    .identity_prompt("Answer questions about the codebase.")
+    .role("You are a codebase Q&A assistant.")
     .tool(ReadFileTool)
     .retain(); // start the agent and send more instructions later
 
@@ -181,8 +181,8 @@ use agentwerk::Agent;
 let output = Agent::new()
     .provider(provider)
     .model_name("claude-sonnet-4-20250514")
-    .identity_prompt("You are a helpful assistant.")
-    .instruction_prompt("What does src/main.rs do?")
+    .role("You are a helpful assistant.")
+    .instruction("What does src/main.rs do?")
     .tool(ReadFileTool)
     .run()
     .await?;
@@ -192,36 +192,36 @@ The following methods on `Agent` configure prompts:
 
 | Method | Description |
 |--------|-------------|
-| `Agent::identity_prompt(...)` | Persistent identity of the agent |
-| `Agent::identity_prompt_file(...)` | Read the identity prompt from a file |
-| `Agent::instruction_prompt(...)` | Task for the current run |
-| `Agent::instruction_prompt_file(...)` | Read the instruction prompt from a file |
-| `Agent::context_prompt(...)` | Override the context prompt (default: `Agent::default_context_prompt()`, containing working directory, platform, OS version, date) |
-| `Agent::context_prompt_file(...)` | Read the context prompt from a file |
-| `Agent::behavior_prompt(...)` | Override the default behavioral directives (`DEFAULT_BEHAVIOR_PROMPT`) |
-| `Agent::behavior_prompt_file(...)` | Read the behavior prompt from a file |
+| `Agent::role(...)` | Persistent identity of the agent |
+| `Agent::role_file(...)` | Read the identity prompt from a file |
+| `Agent::instruction(...)` | Task for the current run |
+| `Agent::instruction_file(...)` | Read the instruction prompt from a file |
+| `Agent::context(...)` | Override the context prompt (default: `Agent::default_context()`, containing working directory, platform, OS version, date) |
+| `Agent::context_file(...)` | Read the context prompt from a file |
+| `Agent::behavior(...)` | Override the default behavioral directives (`DEFAULT_BEHAVIOR`) |
+| `Agent::behavior_file(...)` | Read the behavior prompt from a file |
 
 Compose a custom context prompt:
 
 ```rust
-let default = Agent::default_context_prompt();
-Agent::new().context_prompt(format!("{default}\n\nExtra notes."));
+let default = Agent::default_context();
+Agent::new().context(format!("{default}\n\nExtra notes."));
 ```
 
 Read identity prompt from a file:
 
 ```rust
 Agent::new()
-    .identity_prompt_file("prompts/identity.md")
+    .role_file("prompts/identity.md")
 ```
 
 Use `{key}` placeholders in the identity prompt and fill them with template variables:
 
 ```rust
 Agent::new()
-    .identity_prompt("You are {role}. Respond in {language}.")
-    .template_variable("role", json!("a code reviewer"))
-    .template_variable("language", json!("German"))
+    .role("You are {role}. Respond in {language}.")
+    .template("role", json!("a code reviewer"))
+    .template("language", json!("German"))
 ```
 
 ### Tools
@@ -388,7 +388,7 @@ Internally agents have access to a `SpawnAgentTool` if you add a sub-agent.
 ```rust
 let researcher_base = Agent::new()
     .model_name("claude-haiku-4-5-20251001")
-    .identity_prompt("Research this topic.")
+    .role("You are a research assistant.")
     .tool(brave_search_tool())
     .max_turns(3);
 
@@ -397,9 +397,9 @@ let r2 = researcher_base.clone().name("researcher_2");
 
 let output = Agent::new()
     .name("orchestrator")
-    .identity_prompt("Coordinate research.")
+    .role("You are a research orchestrator.")
     .sub_agents([r1, r2])
-    .instruction_prompt("Research the economic impact of quantum computing.")
+    .instruction("Research the economic impact of quantum computing.")
     .run()
     .await?;
 ```
@@ -412,7 +412,7 @@ The following fields are inherited, shared or owned by the sub-agents:
 |---|---|
 | Inherited | `provider`, `model`, `working_dir`, `event_handler`, `cancel_signal` |
 | Shared | `command_queue`, `session_store` |
-| Per sub-agent | `identity_prompt`, `instruction_prompt`, `behavior_prompt`, `context_prompt`, `tools`, `output_schema`, `max_turns`, `max_request_tokens`, `max_input_tokens`, `max_output_tokens`, `max_schema_retries`, `max_request_retries`, `request_retry_delay` |
+| Per sub-agent | `role`, `instruction`, `behavior`, `context`, `tools`, `output_schema`, `max_turns`, `max_request_tokens`, `max_input_tokens`, `max_output_tokens`, `max_schema_retries`, `max_request_retries`, `request_retry_delay` |
 
 ### Werke
 
@@ -431,7 +431,7 @@ let docs = ["document A", "document B"];
 let workers = docs.iter().map(|doc| {
     template
         .clone()
-        .instruction_prompt(format!("Summarize {doc}"))
+        .instruction(format!("Summarize {doc}"))
 });
 
 let results = Werk::new()
@@ -456,7 +456,7 @@ let (producing, mut results) = Werk::new()
 
 let docs = ["document A", "document B"];
 for doc in &docs {
-    producing.hire(template.clone().instruction_prompt(format!("Summarize {doc}")));
+    producing.hire(template.clone().instruction(format!("Summarize {doc}")));
 }
 
 producing.close();

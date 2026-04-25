@@ -112,7 +112,7 @@ impl Agent {
     /// before the first turn completes.
     ///
     /// Requires a running tokio runtime (`tokio::spawn` is invoked
-    /// synchronously). Requires `.provider()` and `.instruction_prompt()`.
+    /// synchronously). Requires `.provider()` and `.instruction()`.
     pub fn retain(self) -> (AgentWorking, OutputFuture) {
         let queue = Arc::new(CommandQueue::new());
         let cancel = Arc::new(AtomicBool::new(false));
@@ -346,8 +346,8 @@ mod tests {
             .name("demo")
             .model_name("mock")
             .provider(Arc::new(MockProvider::text(text)))
-            .identity_prompt("")
-            .instruction_prompt("x")
+            .role("")
+            .instruction("x")
             .retain()
     }
 
@@ -368,8 +368,8 @@ mod tests {
             .name("root")
             .model_name("mock")
             .provider(provider.clone())
-            .identity_prompt("")
-            .instruction_prompt("initial")
+            .role("")
+            .instruction("initial")
             .event_handler(events.handler())
             .retain();
         (provider, h, o)

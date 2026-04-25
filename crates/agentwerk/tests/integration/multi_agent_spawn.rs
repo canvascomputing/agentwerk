@@ -30,20 +30,18 @@ async fn test() -> std::result::Result<(), Box<dyn std::error::Error>> {
     let researcher = Agent::new()
         .name("researcher")
         .model_name(&model)
-        .identity_prompt(
-            "You are a research assistant. Answer the given question concisely in 1-2 sentences.",
-        )
+        .role("You are a research assistant. Answer the given question concisely in 1-2 sentences.")
         .max_turns(1);
 
     let output = Agent::new()
         .provider(provider)
         .model_name(&model)
         .name("orchestrator")
-        .identity_prompt(
+        .role(
             "You coordinate research tasks. Use spawn_agent with agent: \"researcher\" to delegate questions. \
              Summarize the results. Be concise.",
         )
-        .instruction_prompt("What is the capital of France? Use the researcher agent to find out, then tell me.")
+        .instruction("What is the capital of France? Use the researcher agent to find out, then tell me.")
         .sub_agents([researcher])
         .max_turns(10)
         .event_handler(event_handler)

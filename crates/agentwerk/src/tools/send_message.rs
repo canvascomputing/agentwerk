@@ -136,7 +136,7 @@ mod tests {
         let caller = Agent::new()
             .name("alice")
             .model_name("mock")
-            .identity_prompt("")
+            .role("")
             .provider(Arc::new(MockProvider::text("unused")))
             .command_queue(queue.clone());
         let (spec, runtime) = caller.compile(None);

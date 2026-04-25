@@ -68,7 +68,7 @@ async fn main() {
 
     let pricing_researcher = Agent::new()
         .name("pricing_researcher")
-        .identity_prompt(PRICING_RESEARCHER_PROMPT)
+        .role(PRICING_RESEARCHER_PROMPT)
         .tool(WebFetchTool)
         .max_turns(10);
 
@@ -78,11 +78,11 @@ async fn main() {
         .expect("LLM provider required")
         .model_from_env()
         .expect("model name required")
-        .identity_prompt(ORCHESTRATOR_PROMPT)
+        .role(ORCHESTRATOR_PROMPT)
         .sub_agents([pricing_researcher])
         .output_schema(output_schema())
         .max_turns(10)
-        .instruction_prompt("Gather current model pricing from all supported providers.")
+        .instruction("Gather current model pricing from all supported providers.")
         .event_handler(Arc::new(|event| log_event(&event)))
         .cancel_signal(setup_cancel_signal())
         .run()

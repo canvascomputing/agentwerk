@@ -32,7 +32,7 @@ async fn test() -> std::result::Result<(), Box<dyn std::error::Error>> {
             .clone()
             .name(format!("summarize-{file}"))
             .provider(provider.clone())
-            .instruction_prompt(format!("Read and summarize: {file}"))
+            .instruction(format!("Read and summarize: {file}"))
     });
 
     let results = Werk::new().lines(2).workers(agents).produce().await;

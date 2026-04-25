@@ -274,8 +274,8 @@ mod tests {
         Agent::new()
             .name(name)
             .model_name("mock")
-            .identity_prompt("")
-            .instruction_prompt("go")
+            .role("")
+            .instruction("go")
             .provider(Arc::new(MockProvider::text(text)))
     }
 
@@ -297,8 +297,8 @@ mod tests {
         Agent::new()
             .name(name)
             .model_name("mock")
-            .identity_prompt("")
-            .instruction_prompt("go")
+            .role("")
+            .instruction("go")
             .tool(slow_tool)
             .provider(provider)
     }
@@ -345,8 +345,8 @@ mod tests {
         let failing = Agent::new()
             .name("fail")
             .model_name("mock")
-            .identity_prompt("")
-            .instruction_prompt("go")
+            .role("")
+            .instruction("go")
             .provider(Arc::new(MockProvider::new(vec![])));
 
         let results = Werk::new()
@@ -435,8 +435,8 @@ mod tests {
             Agent::new()
                 .name(&format!("w{i}"))
                 .model_name("mock")
-                .identity_prompt("")
-                .instruction_prompt("go")
+                .role("")
+                .instruction("go")
                 .tool(slow_tool)
                 .provider(Arc::new(MockProvider::new(vec![
                     tool_response("slow", "c1", serde_json::json!({})),

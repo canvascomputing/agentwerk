@@ -308,7 +308,7 @@ impl EventCollector {
 pub struct TestHarness {
     provider: Arc<MockProvider>,
     events: EventCollector,
-    template_variables: HashMap<String, serde_json::Value>,
+    templates: HashMap<String, serde_json::Value>,
     working_dir: PathBuf,
     cancel_signal: Arc<AtomicBool>,
     // Only read from the cfg(test) branch in `run_agent` — in non-test builds
@@ -326,7 +326,7 @@ impl TestHarness {
         Self {
             provider,
             events: EventCollector::new(),
-            template_variables: HashMap::new(),
+            templates: HashMap::new(),
             working_dir: std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")),
             cancel_signal: Arc::new(AtomicBool::new(false)),
             command_queue: None,
@@ -344,7 +344,7 @@ impl TestHarness {
     }
 
     pub fn with_state(mut self, key: &str, value: serde_json::Value) -> Self {
-        self.template_variables.insert(key.to_string(), value);
+        self.templates.insert(key.to_string(), value);
         self
     }
 
@@ -355,12 +355,12 @@ impl TestHarness {
         let mut prepared = agent
             .clone()
             .provider(self.provider.clone())
-            .instruction_prompt(input)
+            .instruction(input)
             .working_dir(self.working_dir.clone())
             .event_handler(self.events.callback())
             .cancel_signal(self.cancel_signal.clone());
-        for (k, v) in &self.template_variables {
-            prepared = prepared.template_variable(k.clone(), v.clone());
+        for (k, v) in &self.templates {
+            prepared = prepared.template(k.clone(), v.clone());
         }
         // If the harness carries a pre-built command queue, install it on the
         // agent so `Agent::compile` wires it onto the LoopRuntime.
