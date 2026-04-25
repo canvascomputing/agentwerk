@@ -398,7 +398,8 @@ let r2 = researcher_base.clone().name("researcher_2");
 let output = Agent::new()
     .name("orchestrator")
     .role("You are a research orchestrator.")
-    .sub_agents([r1, r2])
+    .hire(r1)
+    .hire(r2)
     .instruction("Research the economic impact of quantum computing.")
     .work()
     .await?;

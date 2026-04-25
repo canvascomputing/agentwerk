@@ -96,7 +96,7 @@ Naming and comment rules, plus README structure. Skim the section matching what 
 
 **Builder methods are bare nouns. No `with_` prefix.**
 
-- Examples: `.name()`, `.model()`, `.tool()`, `.sub_agents()`, `.read_only()`.
+- Examples: `.name()`, `.model()`, `.tool()`, `.hire()`, `.read_only()`.
 - The `with_` prefix is used only when a bare name clashes with a trait method, such as `with_description` on `BashTool`.
 
 ## Constructors

@@ -202,6 +202,14 @@ impl WerkProducing {
         index
     }
 
+    /// Hire many workers at once. Returns the hire indices in submission order.
+    pub fn hire_all<I>(&self, workers: I) -> Vec<usize>
+    where
+        I: IntoIterator<Item = Agent>,
+    {
+        workers.into_iter().map(|w| self.hire(w)).collect()
+    }
+
     /// Signal all in-flight workers to stop (via their `cancel_signal`) and
     /// stop the dispatcher from accepting new hires. In-flight workers
     /// observe the flag at their next turn boundary; the stream ends once
@@ -409,6 +417,25 @@ mod tests {
         }
         seen.sort();
         assert_eq!(seen, vec![0, 1, 2]);
+    }
+
+    #[tokio::test]
+    async fn hire_all_returns_indices_in_order() {
+        let (producing, mut stream) = Werk::new().lines(4).spawn();
+        let indices = producing.hire_all([
+            agent_with_response("a", "ok"),
+            agent_with_response("b", "ok"),
+            agent_with_response("c", "ok"),
+        ]);
+        assert_eq!(indices, vec![0, 1, 2]);
+
+        drop(producing);
+        let mut seen = 0;
+        while let Some((_, r)) = stream.next().await {
+            r.unwrap();
+            seen += 1;
+        }
+        assert_eq!(seen, 3);
     }
 
     #[tokio::test]

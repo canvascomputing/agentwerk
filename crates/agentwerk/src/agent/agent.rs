@@ -234,10 +234,17 @@ impl Agent {
         prompts::default_context(&cwd)
     }
 
-    /// Register agents callable by name as sub-agents.
-    pub fn sub_agents(self, agents: impl IntoIterator<Item = Agent>) -> Self {
-        let agents: Vec<_> = agents.into_iter().collect();
-        self.with_spec(|c| c.sub_agents.extend(agents))
+    /// Hire one sub-agent, callable by name from this agent.
+    pub fn hire(self, worker: Agent) -> Self {
+        self.with_spec(|c| c.hires.push(worker))
+    }
+
+    /// Hire many sub-agents at once. Equivalent to chaining `.hire(w)` for each.
+    pub fn hire_all<I>(self, workers: I) -> Self
+    where
+        I: IntoIterator<Item = Agent>,
+    {
+        self.with_spec(|c| c.hires.extend(workers))
     }
 
     /// Install the provider this agent calls out to.
@@ -484,7 +491,7 @@ impl Agent {
 /// Clone `spec.tools`, auto-wiring `AgentTool` when sub-agents exist and the slot is free.
 fn build_tools(spec: &AgentSpec) -> Arc<ToolRegistry> {
     let mut tools = spec.tool_registry.clone();
-    if !spec.sub_agents.is_empty() && tools.get("agent").is_none() {
+    if !spec.hires.is_empty() && tools.get("agent").is_none() {
         tools.register(AgentTool);
     }
     Arc::new(tools)
@@ -545,6 +552,20 @@ mod tests {
     #[should_panic(expected = "failed to read prompt file")]
     fn missing_prompt_file_panics() {
         let _ = Agent::new().role_file("/nonexistent/xxx.txt");
+    }
+
+    #[test]
+    fn hire_all_extends_hires_in_order() {
+        let a = Agent::new().name("a").model_name("mock");
+        let b = Agent::new().name("b").model_name("mock");
+        let agent = Agent::new().hire_all([a, b]);
+        let names: Vec<String> = agent
+            .spec
+            .hires
+            .iter()
+            .map(|h| h.spec.name.clone())
+            .collect();
+        assert_eq!(names, vec!["a".to_string(), "b".to_string()]);
     }
 
     #[test]

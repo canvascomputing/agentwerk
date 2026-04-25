@@ -1,4 +1,4 @@
-//! Sub-agent invocation. Auto-registered when an agent declares `sub_agents`; lets a model delegate a subtask to a pre-configured child.
+//! Sub-agent invocation. Auto-registered when an agent has hires; lets a model delegate a subtask to a pre-configured child.
 
 use std::future::Future;
 use std::pin::Pin;
@@ -16,7 +16,7 @@ use crate::util::generate_agent_name;
 const DEFAULT_IDENTITY: &str = "You are a focused helper agent. Answer concisely.";
 
 /// Spawn a sub-agent and return its [`Output`](crate::Output). Auto-registered
-/// when an agent declares `.sub_agents([...])`. The sub-agent inherits the
+/// when an agent calls `.hire(...)`. The sub-agent inherits the
 /// caller's provider, model, working directory, event handler, and cancel
 /// signal; tools and prompts come from the registered template.
 pub struct AgentTool;
@@ -167,7 +167,7 @@ impl ToolLike for AgentTool {
             // this base, regardless of path.
             let base = match &args.agent {
                 Some(name) => match caller
-                    .sub_agents
+                    .hires
                     .iter()
                     .find(|a: &&Agent| a.get_name() == name.as_str())
                     .cloned()
@@ -353,7 +353,7 @@ mod tests {
             .name("orchestrator")
             .model_name("mock")
             .role("")
-            .sub_agents([sub]);
+            .hire(sub);
 
         let provider = Arc::new(MockProvider::new(vec![
             tool_response(
@@ -392,7 +392,7 @@ mod tests {
             .name("orchestrator")
             .model_name("mock")
             .role("")
-            .sub_agents([sub]);
+            .hire(sub);
 
         let mut child_turn = tool_response("t", "c1", serde_json::json!({}));
         child_turn.usage = TokenUsage {
@@ -450,7 +450,7 @@ mod tests {
             .name("orchestrator")
             .model_name("mock")
             .role("")
-            .sub_agents([sub]);
+            .hire(sub);
 
         let mut child_turn = tool_response("t", "c1", serde_json::json!({}));
         child_turn.usage = TokenUsage {

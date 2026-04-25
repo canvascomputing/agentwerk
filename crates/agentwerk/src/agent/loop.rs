@@ -817,7 +817,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn sub_agents_auto_wire_spawn_tool() {
+    async fn hire_auto_wires_agent_tool() {
         let sub = Agent::new()
             .name("helper")
             .model_name("mock")
@@ -828,7 +828,7 @@ mod tests {
             .name("parent")
             .model_name("mock")
             .role("I coordinate.")
-            .sub_agents([sub]);
+            .hire(sub);
 
         let harness = TestHarness::new(provider);
         harness.run_agent(&agent, "go").await.unwrap();
@@ -836,7 +836,7 @@ mod tests {
         let req = harness.provider().last_request().unwrap();
         assert!(
             req.tools.iter().any(|t| t.name == "agent"),
-            ".sub_agents() should register agent tool automatically"
+            ".hire() should register agent tool automatically"
         );
     }
 

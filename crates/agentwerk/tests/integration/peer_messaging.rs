@@ -69,7 +69,7 @@ async fn orchestrator_sends_message_to_backgrounded_worker(
         .name("orchestrator")
         .role(orchestrator_identity)
         .instruction(orchestrator_instruction)
-        .sub_agents([worker])
+        .hire(worker)
         .tool(SendMessageTool)
         .cancel_signal(cancel.clone())
         .max_turns(6)

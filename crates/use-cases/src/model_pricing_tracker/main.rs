@@ -79,7 +79,7 @@ async fn main() {
         .model_from_env()
         .expect("model name required")
         .role(ORCHESTRATOR_PROMPT)
-        .sub_agents([pricing_researcher])
+        .hire(pricing_researcher)
         .output_schema(output_schema())
         .max_turns(10)
         .instruction("Gather current model pricing from all supported providers.")

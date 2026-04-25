@@ -39,7 +39,7 @@ async fn main() {
         .model_from_env()
         .expect("model name required")
         .role(REPORT_WRITER_PROMPT)
-        .sub_agents(researchers)
+        .hire_all(researchers)
         .output_schema(output_schema())
         .max_turns(10)
         .instruction(question)

@@ -42,7 +42,7 @@ async fn test() -> std::result::Result<(), Box<dyn std::error::Error>> {
              Summarize the results. Be concise.",
         )
         .instruction("What is the capital of France? Use the researcher agent to find out, then tell me.")
-        .sub_agents([researcher])
+        .hire(researcher)
         .max_turns(10)
         .event_handler(event_handler)
         .work()

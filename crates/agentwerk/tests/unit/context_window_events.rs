@@ -247,7 +247,7 @@ async fn sub_agent_compaction_uses_own_model_window() {
         .name("parent")
         .model(Model::from_name("parent-mock").context_window_size(200_000))
         .role("")
-        .sub_agents([child]);
+        .hire(child);
 
     // Response script (shared across parent + child runs via the same mock):
     //   1. parent turn 1 — small usage, stays under parent threshold, spawns child
