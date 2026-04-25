@@ -176,7 +176,7 @@ async fn main() {
     let results = Werk::new()
         .lines(config.batch_size)
         .cancel_signal(cancel.clone())
-        .workers(agents)
+        .hire_all(agents)
         .produce()
         .await;
 

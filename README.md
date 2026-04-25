@@ -403,6 +403,11 @@ let output = Agent::new()
     .await?;
 ```
 
+| Method | Description |
+|--------|-------------|
+| `Agent::hire(...)` | Register one sub-agent the parent can delegate to |
+| `Agent::hire_all(...)` | Register many sub-agents at once |
+
 #### Inheritance
 
 The following fields are inherited, shared or owned by the sub-agents:
@@ -435,7 +440,7 @@ let workers = docs.iter().map(|doc| {
 
 let results = Werk::new()
     .lines(10)
-    .workers(workers)
+    .hire_all(workers)
     .produce()
     .await;
 
@@ -449,16 +454,16 @@ for (doc, result) in docs.iter().zip(results.iter()) {
 Start a Werk that hires workers over time. Results are reported in *completion order*:
 
 ```rust
-let (producing, mut results) = Werk::new()
+let (werk, mut results) = Werk::new()
     .lines(10)
-    .spawn();
+    .open();
 
 let docs = ["document A", "document B"];
 for doc in &docs {
-    producing.hire(template.clone().task(format!("Summarize {doc}")));
+    werk.hire(template.clone().task(format!("Summarize {doc}")));
 }
 
-producing.close();
+werk.close();
 
 while let Some((i, result)) = results.next().await {
     let out = result?;
@@ -469,10 +474,16 @@ while let Some((i, result)) = results.next().await {
 | Method | Description |
 |--------|-------------|
 | `WerkProducing::hire(...)` | Hire another worker |
+| `WerkProducing::hire_all(...)` | Hire many workers at once |
 | `WerkProducing::close()` | Stop hiring and let in-flight workers finish |
 | `WerkProducing::interrupt()` | Stop all workers and close the workshop |
 | `WerkProducing::is_interrupted()` | Check if the workshop was interrupted |
 | `WerkProducing::clone()` | Get another handle to the same workshop |
+
+> `hire(worker)` and `hire_all(workers)` are the same on three surfaces:
+> [`Agent`](#sub-agents) (register sub-agents on a parent), `Werk` (preload
+> workers on the workshop builder above), and `WerkProducing` (add workers to
+> a running workshop). Same shape, same vocabulary, three contexts.
 
 ### Todo
 

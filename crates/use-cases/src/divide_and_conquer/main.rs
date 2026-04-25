@@ -77,8 +77,8 @@ async fn main() {
     let (producing, mut stream) = Werk::new()
         .lines(args.concurrency)
         .cancel_signal(cancel)
-        .workers(agents)
-        .spawn();
+        .hire_all(agents)
+        .open();
     producing.close();
 
     let mut partial_sums: Vec<Option<i128>> = vec![None; total_chunks];

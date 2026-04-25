@@ -1,4 +1,4 @@
-//! Run many agents on a fixed number of production lines. `Werk::produce` waits for a fixed set; `Werk::spawn` hands back a producing handle you can hire into while it's running.
+//! Run many agents on a fixed number of production lines. `Werk::produce` waits for a fixed set; `Werk::open` hands back a producing handle you can hire into while it's running.
 
 use std::pin::Pin;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
@@ -16,11 +16,16 @@ const DEFAULT_LINES: usize = 1;
 
 /// Workshop of agents capped to a fixed number of production lines. Build with
 /// [`Werk::new`], chain [`lines`](Self::lines) and
-/// [`worker`](Self::worker) / [`workers`](Self::workers), then finish with
-/// [`produce`](Self::produce) (wait for all) or [`spawn`](Self::spawn) (dynamic).
+/// [`hire`](Self::hire) / [`hire_all`](Self::hire_all), then finish with
+/// [`produce`](Self::produce) (wait for all) or [`open`](Self::open) (dynamic).
+///
+/// `hire` / `hire_all` mirror the same methods on [`WerkProducing`] (the runtime
+/// handle returned by [`open`](Self::open)) and on
+/// [`Agent`](crate::Agent::hire) (sub-agent registration on a parent), so the
+/// vocabulary is uniform across the three surfaces.
 pub struct Werk {
     lines: usize,
-    workers: Vec<Agent>,
+    hires: Vec<Agent>,
     cancel_signal: Option<Arc<AtomicBool>>,
 }
 
@@ -28,7 +33,7 @@ impl Default for Werk {
     fn default() -> Self {
         Self {
             lines: DEFAULT_LINES,
-            workers: Vec::new(),
+            hires: Vec::new(),
             cancel_signal: None,
         }
     }
@@ -45,18 +50,18 @@ impl Werk {
         self
     }
 
-    /// Add one worker to run.
-    pub fn worker(mut self, worker: Agent) -> Self {
-        self.workers.push(worker);
+    /// Hire one worker to run.
+    pub fn hire(mut self, worker: Agent) -> Self {
+        self.hires.push(worker);
         self
     }
 
-    /// Add many workers to run.
-    pub fn workers<I>(mut self, workers: I) -> Self
+    /// Hire many workers to run.
+    pub fn hire_all<I>(mut self, workers: I) -> Self
     where
         I: IntoIterator<Item = Agent>,
     {
-        self.workers.extend(workers);
+        self.hires.extend(workers);
         self
     }
 
@@ -71,11 +76,11 @@ impl Werk {
 
     /// Run every hired worker to completion. Returns results in **hire**
     /// order: `results[i]` corresponds to the `i`th worker added via
-    /// [`worker`](Self::worker) / [`workers`](Self::workers). A failing worker does
+    /// [`hire`](Self::hire) / [`hire_all`](Self::hire_all). A failing worker does
     /// not abort the others.
     pub async fn produce(self) -> Vec<Result<Output>> {
-        let total = self.workers.len();
-        let (handle, stream) = self.spawn();
+        let total = self.hires.len();
+        let (handle, stream) = self.open();
         handle.close();
 
         let mut slots: Vec<Option<Result<Output>>> = (0..total).map(|_| None).collect();
@@ -90,21 +95,26 @@ impl Werk {
             .collect()
     }
 
-    /// Start a dispatcher on a background tokio task and return a pair:
+    /// Open the workshop: start a dispatcher on a background tokio task and
+    /// return a pair:
     ///
     /// - [`WerkProducing`] — cheap, clonable handle for hiring more workers
     ///   or cancelling.
     /// - [`WerkOutputStream`] — yields
     ///   `(hire_index, Result<Output>)` in completion order. The
     ///   `hire_index` matches the position the worker was added:
-    ///   preloaded [`workers`](Self::workers) take indices `0..n`, then dynamic
-    ///   [`hire`](WerkProducing::hire) calls continue the sequence. Ends
+    ///   preloaded [`hire_all`](Self::hire_all) entries take indices `0..n`, then
+    ///   dynamic [`hire`](WerkProducing::hire) calls on the running handle
+    ///   continue the sequence. Ends
     ///   once all handles are dropped or [`close`](WerkProducing::close)d (let
     ///   in-flight finish), or [`interrupt`](WerkProducing::interrupt) is
     ///   called (stop in-flight) and the backlog completes.
     ///
+    /// Pairs with [`WerkProducing::close`]: `open` starts the workshop;
+    /// `close` shuts it down once the backlog drains.
+    ///
     /// Requires a running tokio runtime.
-    pub fn spawn(self) -> (WerkProducing, WerkOutputStream) {
+    pub fn open(self) -> (WerkProducing, WerkOutputStream) {
         let lines = self.lines;
         let (hire_tx, hire_rx) = mpsc::unbounded_channel::<(usize, Agent)>();
         let (output_tx, output_rx) = mpsc::unbounded_channel::<(usize, Result<Output>)>();
@@ -113,7 +123,7 @@ impl Werk {
             .unwrap_or_else(|| Arc::new(AtomicBool::new(false)));
         let counter = Arc::new(AtomicUsize::new(0));
 
-        for worker in self.workers {
+        for worker in self.hires {
             let index = counter.fetch_add(1, Ordering::Relaxed);
             let _ = hire_tx.send((index, worker));
         }
@@ -175,7 +185,7 @@ async fn dispatch(
 }
 
 /// Cheap, clonable handle to a running [`Werk`]. Obtained from
-/// [`Werk::spawn`].
+/// [`Werk::open`].
 ///
 /// While any clone of the handle is alive, the workshop accepts new hires.
 /// Dropping the last clone (or calling [`close`](Self::close) on it) closes
@@ -192,7 +202,7 @@ impl WerkProducing {
     /// Hire another worker. Returns the hire index that will accompany this
     /// worker's result on the [`WerkOutputStream`]. Indices are assigned
     /// monotonically and continue the sequence begun by the preloaded
-    /// [`Werk::workers`] / [`Werk::worker`] calls. If the workshop has already
+    /// [`Werk::hire`] / [`Werk::hire_all`] calls. If the workshop has already
     /// been cancelled or the dispatcher has exited the worker is silently
     /// dropped; the returned index is still reserved but no result will arrive
     /// for it.
@@ -236,10 +246,10 @@ impl WerkProducing {
     pub fn close(self) {}
 }
 
-/// Stream of per-worker results from a [`Werk::spawn`] workshop. Yields
+/// Stream of per-worker results from a [`Werk::open`] workshop. Yields
 /// `(hire_index, Result<Output>)` in completion order. The `hire_index`
-/// matches the position the worker was added — preloaded [`Werk::workers`]
-/// first, then dynamic [`WerkProducing::hire`] calls — so the caller can
+/// matches the position the worker was added — preloaded [`Werk::hire_all`]
+/// entries first, then dynamic [`WerkProducing::hire`] calls — so the caller can
 /// correlate a streamed result back to its input without inspecting
 /// [`Output::name`]. Ends once the workshop is closed (all handles dropped,
 /// [`close`](WerkProducing::close)d, or [`interrupt`](WerkProducing::interrupt)ed)
@@ -321,7 +331,7 @@ mod tests {
     async fn produce_returns_results_in_hire_order() {
         let results = Werk::new()
             .lines(4)
-            .workers(["a", "b", "c"].iter().map(|n| agent_with_response(n, "ok")))
+            .hire_all(["a", "b", "c"].iter().map(|n| agent_with_response(n, "ok")))
             .produce()
             .await;
         assert_eq!(results.len(), 3);
@@ -338,12 +348,7 @@ mod tests {
         let slow = agent_with_delay("slow", 80, "slow");
         let fast = agent_with_response("fast", "fast");
 
-        let results = Werk::new()
-            .lines(4)
-            .worker(slow)
-            .worker(fast)
-            .produce()
-            .await;
+        let results = Werk::new().lines(4).hire(slow).hire(fast).produce().await;
         assert_eq!(results[0].as_ref().unwrap().name, "slow");
         assert_eq!(results[1].as_ref().unwrap().name, "fast");
     }
@@ -359,9 +364,9 @@ mod tests {
 
         let results = Werk::new()
             .lines(2)
-            .worker(agent_with_response("ok1", "first"))
-            .worker(failing)
-            .worker(agent_with_response("ok2", "second"))
+            .hire(agent_with_response("ok1", "first"))
+            .hire(failing)
+            .hire(agent_with_response("ok2", "second"))
             .produce()
             .await;
         assert_eq!(results.len(), 3);
@@ -383,8 +388,8 @@ mod tests {
     async fn stream_yields_hire_indices() {
         let (producing, mut stream) = Werk::new()
             .lines(4)
-            .workers(["a", "b", "c"].iter().map(|n| agent_with_response(n, "ok")))
-            .spawn();
+            .hire_all(["a", "b", "c"].iter().map(|n| agent_with_response(n, "ok")))
+            .open();
         drop(producing);
 
         let mut seen: Vec<(usize, String)> = Vec::new();
@@ -402,8 +407,8 @@ mod tests {
     async fn hire_returns_monotonic_indices_continuing_preloaded() {
         let (producing, mut stream) = Werk::new()
             .lines(4)
-            .worker(agent_with_response("preloaded", "ok"))
-            .spawn();
+            .hire(agent_with_response("preloaded", "ok"))
+            .open();
 
         let idx_b = producing.hire(agent_with_response("b", "ok"));
         let idx_c = producing.hire(agent_with_response("c", "ok"));
@@ -421,7 +426,7 @@ mod tests {
 
     #[tokio::test]
     async fn hire_all_returns_indices_in_order() {
-        let (producing, mut stream) = Werk::new().lines(4).spawn();
+        let (producing, mut stream) = Werk::new().lines(4).open();
         let indices = producing.hire_all([
             agent_with_response("a", "ok"),
             agent_with_response("b", "ok"),
@@ -473,7 +478,7 @@ mod tests {
 
         let results = Werk::new()
             .lines(3)
-            .workers((0..10).map(make))
+            .hire_all((0..10).map(make))
             .produce()
             .await;
         assert_eq!(results.len(), 10);
@@ -491,7 +496,7 @@ mod tests {
         let start = tokio::time::Instant::now();
         let seq = Werk::new()
             .lines(1)
-            .workers((0..10).map(|i| agent_with_delay("w", 30, &format!("r{i}"))))
+            .hire_all((0..10).map(|i| agent_with_delay("w", 30, &format!("r{i}"))))
             .produce()
             .await;
         let seq_elapsed = start.elapsed();
@@ -499,7 +504,7 @@ mod tests {
         let start = tokio::time::Instant::now();
         let par = Werk::new()
             .lines(10)
-            .workers((0..10).map(|i| agent_with_delay("w", 30, &format!("r{i}"))))
+            .hire_all((0..10).map(|i| agent_with_delay("w", 30, &format!("r{i}"))))
             .produce()
             .await;
         let par_elapsed = start.elapsed();
@@ -516,7 +521,7 @@ mod tests {
     async fn high_throughput_smoke() {
         let results = Werk::new()
             .lines(50)
-            .workers((0..500).map(|i| agent_with_response("w", &format!("r{i}"))))
+            .hire_all((0..500).map(|i| agent_with_response("w", &format!("r{i}"))))
             .produce()
             .await;
         assert_eq!(results.len(), 500);
@@ -524,8 +529,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn spawn_accepts_dynamic_hires() {
-        let (producing, mut stream) = Werk::new().lines(2).spawn();
+    async fn open_accepts_dynamic_hires() {
+        let (producing, mut stream) = Werk::new().lines(2).open();
         producing.hire(agent_with_response("a", "first"));
         producing.hire(agent_with_response("b", "second"));
 
@@ -547,8 +552,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn spawn_keeps_stream_open_while_any_handle_lives() {
-        let (producing, mut stream) = Werk::new().lines(4).spawn();
+    async fn open_keeps_stream_open_while_any_handle_lives() {
+        let (producing, mut stream) = Werk::new().lines(4).open();
         let clone = producing.clone();
         producing.hire(agent_with_response("a", "done"));
         drop(producing);
@@ -560,8 +565,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn spawn_drops_handle_completes_backlog_and_ends_stream() {
-        let (producing, mut stream) = Werk::new().lines(2).spawn();
+    async fn open_drops_handle_completes_backlog_and_ends_stream() {
+        let (producing, mut stream) = Werk::new().lines(2).open();
         producing.hire(agent_with_response("a", "done"));
         producing.hire(agent_with_response("b", "done"));
         drop(producing);
@@ -576,7 +581,7 @@ mod tests {
 
     #[tokio::test]
     async fn close_lets_in_flight_workers_finish_unlike_interrupt() {
-        let (producing, mut stream) = Werk::new().lines(2).spawn();
+        let (producing, mut stream) = Werk::new().lines(2).open();
         producing.hire(agent_with_delay("a", 30, "done"));
         producing.hire(agent_with_delay("b", 30, "done"));
         producing.close();
@@ -591,8 +596,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn spawn_interrupt_stops_in_flight_workers() {
-        let (producing, mut stream) = Werk::new().lines(2).spawn();
+    async fn open_interrupt_stops_in_flight_workers() {
+        let (producing, mut stream) = Werk::new().lines(2).open();
         producing.hire(agent_with_delay("slow", 200, "never"));
 
         tokio::time::sleep(Duration::from_millis(20)).await;
@@ -610,8 +615,8 @@ mod tests {
     async fn preloaded_workers_produce_without_explicit_hire() {
         let (producing, stream) = Werk::new()
             .lines(2)
-            .workers(["a", "b"].iter().map(|n| agent_with_response(n, "ok")))
-            .spawn();
+            .hire_all(["a", "b"].iter().map(|n| agent_with_response(n, "ok")))
+            .open();
         drop(producing);
         let results = stream.collect().await;
         assert_eq!(results.len(), 2);
