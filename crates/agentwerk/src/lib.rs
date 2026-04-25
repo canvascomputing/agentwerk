@@ -46,7 +46,6 @@
 //! - Agents are cheap to clone and may be `.run()` again.
 
 pub mod agent;
-pub mod batch;
 pub mod error;
 pub mod event;
 pub mod output;
@@ -54,6 +53,7 @@ pub(crate) mod persistence;
 pub mod provider;
 pub mod tools;
 pub(crate) mod util;
+pub mod werk;
 
 pub mod testutil;
 
@@ -64,6 +64,6 @@ pub use provider::{Model, Provider};
 pub use tools::Tool;
 
 pub use agent::Agent;
-pub use batch::Batch;
 pub use event::Event;
 pub use output::Output;
+pub use werk::Werk;

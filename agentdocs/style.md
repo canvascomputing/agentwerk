@@ -6,7 +6,7 @@ Naming and comment rules, plus README structure. Skim the section matching what 
 
 **Only headline types live at the crate root.**
 
-- The current root holds nine items: `Error`, `Result`, `Model`, `Provider`, `Tool`, `Agent`, `Batch`, `Event`, `Output`.
+- The current root holds nine items: `Error`, `Result`, `Model`, `Provider`, `Tool`, `Agent`, `Werk`, `Event`, `Output`.
 - A new item earns a root slot only when it opens a new dimension of the public API.
 - Name collisions at the root are forbidden; `ToolResult` next to `Result` is not acceptable.
 - Every other type lives under its domain module.
@@ -16,7 +16,7 @@ Naming and comment rules, plus README structure. Skim the section matching what 
 **Types live next to the abstraction, owner, or protocol they belong to.**
 
 - Concrete implementations live with their abstraction: `AnthropicProvider` under `provider::`, `BashTool` under `tools::`.
-- Companion types and handles live with their owner: `AgentHandle` under `agent::`, `BatchHandle` under `batch::`.
+- Companion types and handles live with their owner: `AgentWorking` under `agent::`, `WerkProducing` under `werk::`.
 - Domain errors live with their domain: `ProviderError`, `ToolError`, `AgentError`.
 - Wire-protocol types live with the protocol: `ModelRequest`, `Message`, `TokenUsage` under `provider::`.
 - Free functions live in their module, never at the crate root: `now_millis()` in `util`, `run_loop()` in `agent::loop`.

@@ -1,10 +1,10 @@
-//! High-level unit tests for the `AgentHandle` / `OutputFuture` pair
-//! returned by `Agent::spawn()`.
+//! High-level unit tests for the `AgentWorking` / `OutputFuture` pair
+//! returned by `Agent::retain()`.
 //!
 //! The agent loop runs on a background tokio task. The foreground code
 //! interacts with it through two values:
 //!
-//! - [`AgentHandle`] — cheap to clone. Public surface:
+//! - [`AgentWorking`] — cheap to clone. Public surface:
 //!   - `send(instruction)` — enqueue a new instruction; picked up at the
 //!     next turn boundary or immediately if the agent is parked idle.
 //!   - `cancel()` — flip the shared cancel signal.
@@ -22,7 +22,7 @@
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use agentwerk::agent::{AgentHandle, OutputFuture};
+use agentwerk::agent::{AgentWorking, OutputFuture};
 use agentwerk::event::EventKind;
 use agentwerk::output::Outcome;
 use agentwerk::provider::types::ModelResponse;
@@ -40,7 +40,7 @@ async fn output_resolves_with_final_text_after_cancel() {
         .identity_prompt("")
         .instruction_prompt("greet")
         .event_handler(events.handler())
-        .spawn();
+        .retain();
 
     // Wait until the loop has produced its terminal output and parked idle;
     // cancelling before that would abort turn 1 with `Cancelled` status.
@@ -56,7 +56,7 @@ async fn output_resolves_with_final_text_after_cancel() {
 #[tokio::test]
 async fn send_injects_an_instruction_into_the_next_turn() {
     let events = EventLog::new();
-    let (provider, handle, output) = spawn_agent(
+    let (provider, handle, output) = retain_agent(
         vec![text_response("first"), text_response("second")],
         &events,
     );
@@ -85,7 +85,7 @@ async fn is_cancelled_returns_true_after_cancel() {
         .provider(Arc::new(MockProvider::text("done")))
         .identity_prompt("")
         .instruction_prompt("x")
-        .spawn();
+        .retain();
 
     assert!(!handle.is_cancelled());
     handle.cancel();
@@ -96,7 +96,7 @@ async fn is_cancelled_returns_true_after_cancel() {
 #[tokio::test]
 async fn cancel_breaks_an_idle_agent_out_of_its_wait() {
     let events = EventLog::new();
-    let (_provider, handle, output) = spawn_agent(vec![text_response("first")], &events);
+    let (_provider, handle, output) = retain_agent(vec![text_response("first")], &events);
 
     events
         .wait_for(|e| matches!(e.kind, EventKind::AgentPaused))
@@ -112,7 +112,7 @@ async fn cancel_breaks_an_idle_agent_out_of_its_wait() {
 #[tokio::test]
 async fn send_and_cancel_on_a_clone_reach_the_original_task() {
     let events = EventLog::new();
-    let (provider, original, output) = spawn_agent(
+    let (provider, original, output) = retain_agent(
         vec![text_response("first"), text_response("second")],
         &events,
     );
@@ -141,7 +141,7 @@ async fn send_and_cancel_on_a_clone_reach_the_original_task() {
 #[tokio::test]
 async fn dropping_the_last_handle_terminates_the_agent() {
     let events = EventLog::new();
-    let (_provider, handle, output) = spawn_agent(vec![text_response("first")], &events);
+    let (_provider, handle, output) = retain_agent(vec![text_response("first")], &events);
 
     events
         .wait_for(|e| matches!(e.kind, EventKind::AgentPaused))
@@ -151,11 +151,11 @@ async fn dropping_the_last_handle_terminates_the_agent() {
     assert_eq!(out.outcome, Outcome::Completed);
 }
 
-/// Spawn a fresh agent wired to a MockProvider and the given event log.
-fn spawn_agent(
+/// Retain a fresh agent wired to a MockProvider and the given event log.
+fn retain_agent(
     responses: Vec<ModelResponse>,
     events: &EventLog,
-) -> (Arc<MockProvider>, AgentHandle, OutputFuture) {
+) -> (Arc<MockProvider>, AgentWorking, OutputFuture) {
     let provider = Arc::new(MockProvider::new(responses));
     let (h, o) = Agent::new()
         .name("root")
@@ -164,7 +164,7 @@ fn spawn_agent(
         .identity_prompt("")
         .instruction_prompt("initial")
         .event_handler(events.handler())
-        .spawn();
+        .retain();
     (provider, h, o)
 }
 

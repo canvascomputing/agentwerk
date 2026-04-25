@@ -1,7 +1,7 @@
-//! End-to-end coverage for `Agent::spawn()` / `AgentHandle`.
+//! End-to-end coverage for `Agent::retain()` / `AgentWorking`.
 //!
 //! Uses a real LLM provider (`make test_integration`). The test plays the
-//! role of an external controller: it spawns an agent via `.spawn()`, feeds
+//! role of an external controller: it retains an agent via `.retain()`, feeds
 //! it two instructions through `send` (one via the original handle, one via
 //! a clone), cancels via a third clone on a spawned task, then awaits the
 //! returned output future.
@@ -63,7 +63,7 @@ async fn external_sender_delivers_two_instructions_and_clone_cancels(
         .instruction_prompt("wait")
         .max_turns(10)
         .event_handler(event_handler)
-        .spawn();
+        .retain();
 
     wait_for(&events, |all| {
         all.iter().any(|e| matches!(e.kind, EventKind::AgentPaused))

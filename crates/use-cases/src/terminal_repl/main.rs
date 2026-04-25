@@ -1,4 +1,4 @@
-//! Interactive terminal chat with an agent. Demonstrates `Agent::spawn` + `AgentHandle` for back-and-forth conversation against a live LLM.
+//! Interactive terminal chat with an agent. Demonstrates `Agent::retain` + `AgentWorking` for back-and-forth conversation against a live LLM.
 
 use std::future::IntoFuture;
 use std::io::{self, IsTerminal, Write};
@@ -49,7 +49,7 @@ async fn main() {
         .event_handler(Arc::new(move |e: Event| {
             print_event(&e, &handler_idle, &handler_style)
         }))
-        .spawn();
+        .retain();
 
     let output = output.into_future();
     tokio::pin!(output);

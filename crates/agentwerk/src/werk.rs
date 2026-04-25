@@ -1,4 +1,4 @@
-//! Run many agents with a shared concurrency cap. `Batch::run` waits for a fixed set; `Batch::spawn` hands back a pool you can submit into while it's running.
+//! Run many agents on a fixed number of production lines. `Werk::run` waits for a fixed set; `Werk::spawn` hands back a pool you can submit into while it's running.
 
 use std::pin::Pin;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
@@ -12,56 +12,56 @@ use crate::agent::Agent;
 use crate::error::Result;
 use crate::output::Output;
 
-const DEFAULT_CONCURRENCY: usize = 1;
+const DEFAULT_LINES: usize = 1;
 
-/// Pool of agents that all share a concurrency cap. Build with
-/// [`Batch::new`], chain [`concurrency`](Self::concurrency) and
-/// [`agent`](Self::agent) / [`agents`](Self::agents), then finish with
+/// Pool of agents capped to a fixed number of production lines. Build with
+/// [`Werk::new`], chain [`lines`](Self::lines) and
+/// [`worker`](Self::worker) / [`workers`](Self::workers), then finish with
 /// [`run`](Self::run) (wait for all) or [`spawn`](Self::spawn) (dynamic pool).
-pub struct Batch {
-    concurrency: usize,
-    agents: Vec<Agent>,
+pub struct Werk {
+    lines: usize,
+    workers: Vec<Agent>,
     cancel_signal: Option<Arc<AtomicBool>>,
 }
 
-impl Default for Batch {
+impl Default for Werk {
     fn default() -> Self {
         Self {
-            concurrency: DEFAULT_CONCURRENCY,
-            agents: Vec::new(),
+            lines: DEFAULT_LINES,
+            workers: Vec::new(),
             cancel_signal: None,
         }
     }
 }
 
-impl Batch {
+impl Werk {
     pub fn new() -> Self {
         Self::default()
     }
 
     /// Cap on simultaneous in-flight agents. Clamped to at least 1.
-    pub fn concurrency(mut self, n: usize) -> Self {
-        self.concurrency = n.max(1);
+    pub fn lines(mut self, n: usize) -> Self {
+        self.lines = n.max(1);
         self
     }
 
-    /// Add one agent to run.
-    pub fn agent(mut self, agent: Agent) -> Self {
-        self.agents.push(agent);
+    /// Add one worker to run.
+    pub fn worker(mut self, worker: Agent) -> Self {
+        self.workers.push(worker);
         self
     }
 
-    /// Add many agents to run.
-    pub fn agents<I>(mut self, agents: I) -> Self
+    /// Add many workers to run.
+    pub fn workers<I>(mut self, workers: I) -> Self
     where
         I: IntoIterator<Item = Agent>,
     {
-        self.agents.extend(agents);
+        self.workers.extend(workers);
         self
     }
 
     /// Share an external cancel signal with the pool. Every submitted agent
-    /// uses it, and [`BatchHandle::cancel`] writes to it. Useful when the
+    /// uses it, and [`WerkProducing::cancel`] writes to it. Useful when the
     /// caller already owns a signal (e.g. wired to Ctrl-C) and wants in-flight
     /// agents to observe it.
     pub fn cancel_signal(mut self, signal: Arc<AtomicBool>) -> Self {
@@ -71,10 +71,10 @@ impl Batch {
 
     /// Run every added agent to completion. Returns results in **submission**
     /// order: `results[i]` corresponds to the `i`th agent added via
-    /// [`agent`](Self::agent) / [`agents`](Self::agents). A failing agent does
+    /// [`worker`](Self::worker) / [`workers`](Self::workers). A failing agent does
     /// not abort the others.
     pub async fn run(self) -> Vec<Result<Output>> {
-        let total = self.agents.len();
+        let total = self.workers.len();
         let (handle, stream) = self.spawn();
         handle.drain();
 
@@ -86,26 +86,26 @@ impl Batch {
         }
         slots
             .into_iter()
-            .map(|slot| slot.expect("batch stream yields one result per submission"))
+            .map(|slot| slot.expect("werk stream yields one result per submission"))
             .collect()
     }
 
     /// Start a dispatcher on a background tokio task and return a pair:
     ///
-    /// - [`BatchHandle`] — cheap, clonable handle for submitting more agents
+    /// - [`WerkProducing`] — cheap, clonable handle for submitting more agents
     ///   or cancelling.
-    /// - [`BatchOutputStream`] — yields
+    /// - [`WerkOutputStream`] — yields
     ///   `(submission_index, Result<Output>)` in completion order. The
     ///   `submission_index` matches the position the agent was added:
-    ///   preloaded [`agents`](Self::agents) take indices `0..n`, then dynamic
-    ///   [`submit`](BatchHandle::submit) calls continue the sequence. Ends
-    ///   once all handles are dropped or [`drain`](BatchHandle::drain)ed (let
-    ///   in-flight finish), or [`cancel`](BatchHandle::cancel) is called
+    ///   preloaded [`workers`](Self::workers) take indices `0..n`, then dynamic
+    ///   [`submit`](WerkProducing::submit) calls continue the sequence. Ends
+    ///   once all handles are dropped or [`drain`](WerkProducing::drain)ed (let
+    ///   in-flight finish), or [`cancel`](WerkProducing::cancel) is called
     ///   (interrupt in-flight) and the backlog completes.
     ///
     /// Requires a running tokio runtime.
-    pub fn spawn(self) -> (BatchHandle, BatchOutputStream) {
-        let concurrency = self.concurrency;
+    pub fn spawn(self) -> (WerkProducing, WerkOutputStream) {
+        let lines = self.lines;
         let (submit_tx, submit_rx) = mpsc::unbounded_channel::<(usize, Agent)>();
         let (output_tx, output_rx) = mpsc::unbounded_channel::<(usize, Result<Output>)>();
         let cancel = self
@@ -113,22 +113,22 @@ impl Batch {
             .unwrap_or_else(|| Arc::new(AtomicBool::new(false)));
         let counter = Arc::new(AtomicUsize::new(0));
 
-        for agent in self.agents {
+        for worker in self.workers {
             let index = counter.fetch_add(1, Ordering::Relaxed);
-            let _ = submit_tx.send((index, agent));
+            let _ = submit_tx.send((index, worker));
         }
 
         let dispatcher_cancel = cancel.clone();
         tokio::spawn(async move {
-            dispatch(submit_rx, output_tx, concurrency, dispatcher_cancel).await;
+            dispatch(submit_rx, output_tx, lines, dispatcher_cancel).await;
         });
 
-        let handle = BatchHandle {
+        let handle = WerkProducing {
             sender: submit_tx,
             cancel,
             counter,
         };
-        let output = BatchOutputStream { rx: output_rx };
+        let output = WerkOutputStream { rx: output_rx };
         (handle, output)
     }
 }
@@ -136,7 +136,7 @@ impl Batch {
 async fn dispatch(
     mut submit_rx: mpsc::UnboundedReceiver<(usize, Agent)>,
     output_tx: mpsc::UnboundedSender<(usize, Result<Output>)>,
-    concurrency: usize,
+    lines: usize,
     cancel: Arc<AtomicBool>,
 ) {
     let mut in_flight: FuturesUnordered<tokio::task::JoinHandle<(usize, Result<Output>)>> =
@@ -154,19 +154,19 @@ async fn dispatch(
             Some(join) = in_flight.next(), if !in_flight.is_empty() => {
                 // A task-level JoinError means the spawned future panicked or was
                 // aborted — the submission index is then unrecoverable, so the slot
-                // will be backfilled with a synthetic error by `Batch::run`.
+                // will be backfilled with a synthetic error by `Werk::run`.
                 if let Ok(pair) = join {
                     let _ = output_tx.send(pair);
                 }
             }
-            maybe = submit_rx.recv(), if !closed && in_flight.len() < concurrency => {
-                let Some((index, agent)) = maybe else {
+            maybe = submit_rx.recv(), if !closed && in_flight.len() < lines => {
+                let Some((index, worker)) = maybe else {
                     closed = true;
                     continue;
                 };
-                let agent = agent.cancel_signal(cancel.clone());
+                let worker = worker.cancel_signal(cancel.clone());
                 in_flight.push(tokio::spawn(async move {
-                    (index, agent.run().await)
+                    (index, worker.run().await)
                 }));
             }
             else => return,
@@ -174,25 +174,25 @@ async fn dispatch(
     }
 }
 
-/// Cheap, clonable handle to a running [`Batch`] pool. Obtained from
-/// [`Batch::spawn`].
+/// Cheap, clonable handle to a running [`Werk`] pool. Obtained from
+/// [`Werk::spawn`].
 ///
 /// While any clone of the handle is alive, the pool accepts new submissions.
 /// Dropping the last clone (or calling [`drain`](Self::drain) on it) closes
 /// the pool gracefully: queued and in-flight agents finish, then the output
 /// stream ends. Use [`cancel`](Self::cancel) to interrupt instead.
 #[derive(Clone)]
-pub struct BatchHandle {
+pub struct WerkProducing {
     sender: mpsc::UnboundedSender<(usize, Agent)>,
     cancel: Arc<AtomicBool>,
     counter: Arc<AtomicUsize>,
 }
 
-impl BatchHandle {
+impl WerkProducing {
     /// Enqueue another agent for the pool. Returns the submission index that
-    /// will accompany this agent's result on the [`BatchOutputStream`].
+    /// will accompany this agent's result on the [`WerkOutputStream`].
     /// Indices are assigned monotonically and continue the sequence begun by
-    /// the preloaded [`Batch::agents`] / [`Batch::agent`] calls. If the pool
+    /// the preloaded [`Werk::workers`] / [`Werk::worker`] calls. If the pool
     /// has already been cancelled or the dispatcher has exited the agent is
     /// silently dropped; the returned index is still reserved but no result
     /// will arrive for it.
@@ -210,7 +210,7 @@ impl BatchHandle {
     /// The pool owns one cancel signal and sets it on every submitted agent,
     /// overriding any per-agent signal the caller attached. To share an
     /// external signal with the pool, pass it to
-    /// [`Batch::cancel_signal`](Batch::cancel_signal).
+    /// [`Werk::cancel_signal`](Werk::cancel_signal).
     pub fn cancel(&self) {
         self.cancel.store(true, Ordering::Relaxed);
     }
@@ -222,25 +222,25 @@ impl BatchHandle {
 
     /// Release this handle. When the last clone is gone, the dispatcher
     /// flushes in-flight agents to completion and ends the output stream.
-    /// Non-blocking: results still arrive on the [`BatchOutputStream`]. Sugar
+    /// Non-blocking: results still arrive on the [`WerkOutputStream`]. Sugar
     /// for `drop(handle)`, but visible at the call site — pairs with
     /// [`cancel`](Self::cancel) (interrupt) to name the two exit modes.
     pub fn drain(self) {}
 }
 
-/// Stream of per-agent results from a [`Batch::spawn`] pool. Yields
+/// Stream of per-agent results from a [`Werk::spawn`] pool. Yields
 /// `(submission_index, Result<Output>)` in completion order. The
 /// `submission_index` matches the position the agent was added — preloaded
-/// [`Batch::agents`] first, then dynamic [`BatchHandle::submit`] calls — so
+/// [`Werk::workers`] first, then dynamic [`WerkProducing::submit`] calls — so
 /// the caller can correlate a streamed result back to its input without
 /// inspecting [`Output::name`]. Ends once the pool is closed (all
-/// handles dropped, [`drain`](BatchHandle::drain)ed, or
-/// [`cancel`](BatchHandle::cancel)led) and the backlog completes.
-pub struct BatchOutputStream {
+/// handles dropped, [`drain`](WerkProducing::drain)ed, or
+/// [`cancel`](WerkProducing::cancel)led) and the backlog completes.
+pub struct WerkOutputStream {
     rx: mpsc::UnboundedReceiver<(usize, Result<Output>)>,
 }
 
-impl Stream for BatchOutputStream {
+impl Stream for WerkOutputStream {
     type Item = (usize, Result<Output>);
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
@@ -248,7 +248,7 @@ impl Stream for BatchOutputStream {
     }
 }
 
-impl BatchOutputStream {
+impl WerkOutputStream {
     /// Collect every remaining result in completion order.
     pub async fn collect(self) -> Vec<(usize, Result<Output>)> {
         StreamExt::collect(self).await
@@ -260,7 +260,7 @@ impl BatchOutputStream {
     }
 }
 
-impl Unpin for BatchOutputStream {}
+impl Unpin for WerkOutputStream {}
 
 #[cfg(test)]
 mod tests {
@@ -305,15 +305,15 @@ mod tests {
 
     #[tokio::test]
     async fn empty_run_yields_empty_vec() {
-        let results = Batch::new().concurrency(4).run().await;
+        let results = Werk::new().lines(4).run().await;
         assert!(results.is_empty());
     }
 
     #[tokio::test]
     async fn run_returns_results_in_submission_order() {
-        let results = Batch::new()
-            .concurrency(4)
-            .agents(["a", "b", "c"].iter().map(|n| agent_with_response(n, "ok")))
+        let results = Werk::new()
+            .lines(4)
+            .workers(["a", "b", "c"].iter().map(|n| agent_with_response(n, "ok")))
             .run()
             .await;
         assert_eq!(results.len(), 3);
@@ -330,12 +330,7 @@ mod tests {
         let slow = agent_with_delay("slow", 80, "slow");
         let fast = agent_with_response("fast", "fast");
 
-        let results = Batch::new()
-            .concurrency(4)
-            .agent(slow)
-            .agent(fast)
-            .run()
-            .await;
+        let results = Werk::new().lines(4).worker(slow).worker(fast).run().await;
         assert_eq!(results[0].as_ref().unwrap().name, "slow");
         assert_eq!(results[1].as_ref().unwrap().name, "fast");
     }
@@ -349,11 +344,11 @@ mod tests {
             .instruction_prompt("go")
             .provider(Arc::new(MockProvider::new(vec![])));
 
-        let results = Batch::new()
-            .concurrency(2)
-            .agent(agent_with_response("ok1", "first"))
-            .agent(failing)
-            .agent(agent_with_response("ok2", "second"))
+        let results = Werk::new()
+            .lines(2)
+            .worker(agent_with_response("ok1", "first"))
+            .worker(failing)
+            .worker(agent_with_response("ok2", "second"))
             .run()
             .await;
         assert_eq!(results.len(), 3);
@@ -373,9 +368,9 @@ mod tests {
 
     #[tokio::test]
     async fn stream_yields_submission_indices() {
-        let (pool, mut stream) = Batch::new()
-            .concurrency(4)
-            .agents(["a", "b", "c"].iter().map(|n| agent_with_response(n, "ok")))
+        let (pool, mut stream) = Werk::new()
+            .lines(4)
+            .workers(["a", "b", "c"].iter().map(|n| agent_with_response(n, "ok")))
             .spawn();
         drop(pool);
 
@@ -392,9 +387,9 @@ mod tests {
 
     #[tokio::test]
     async fn submit_returns_monotonic_indices_continuing_preloaded() {
-        let (pool, mut stream) = Batch::new()
-            .concurrency(4)
-            .agent(agent_with_response("preloaded", "ok"))
+        let (pool, mut stream) = Werk::new()
+            .lines(4)
+            .worker(agent_with_response("preloaded", "ok"))
             .spawn();
 
         let idx_b = pool.submit(agent_with_response("b", "ok"));
@@ -412,7 +407,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn concurrency_cap_bounds_parallelism() {
+    async fn lines_cap_bounds_parallelism() {
         let running = Arc::new(AtomicUsize::new(0));
         let max_concurrent = Arc::new(AtomicUsize::new(0));
 
@@ -444,35 +439,31 @@ mod tests {
                 ])))
         };
 
-        let results = Batch::new()
-            .concurrency(3)
-            .agents((0..10).map(make))
-            .run()
-            .await;
+        let results = Werk::new().lines(3).workers((0..10).map(make)).run().await;
         assert_eq!(results.len(), 10);
         assert!(results.iter().all(|r| r.is_ok()));
         let peak = max_concurrent.load(Ordering::SeqCst);
-        assert!(peak <= 3, "peak concurrency {peak} exceeded cap of 3");
+        assert!(peak <= 3, "peak in-flight {peak} exceeded line cap of 3");
         assert!(
             peak >= 2,
-            "peak concurrency {peak} never reached meaningful overlap"
+            "peak in-flight {peak} never reached meaningful overlap"
         );
     }
 
     #[tokio::test]
-    async fn concurrency_scales_throughput() {
+    async fn lines_scale_throughput() {
         let start = tokio::time::Instant::now();
-        let seq = Batch::new()
-            .concurrency(1)
-            .agents((0..10).map(|i| agent_with_delay("w", 30, &format!("r{i}"))))
+        let seq = Werk::new()
+            .lines(1)
+            .workers((0..10).map(|i| agent_with_delay("w", 30, &format!("r{i}"))))
             .run()
             .await;
         let seq_elapsed = start.elapsed();
 
         let start = tokio::time::Instant::now();
-        let par = Batch::new()
-            .concurrency(10)
-            .agents((0..10).map(|i| agent_with_delay("w", 30, &format!("r{i}"))))
+        let par = Werk::new()
+            .lines(10)
+            .workers((0..10).map(|i| agent_with_delay("w", 30, &format!("r{i}"))))
             .run()
             .await;
         let par_elapsed = start.elapsed();
@@ -487,9 +478,9 @@ mod tests {
 
     #[tokio::test]
     async fn high_throughput_smoke() {
-        let results = Batch::new()
-            .concurrency(50)
-            .agents((0..500).map(|i| agent_with_response("w", &format!("r{i}"))))
+        let results = Werk::new()
+            .lines(50)
+            .workers((0..500).map(|i| agent_with_response("w", &format!("r{i}"))))
             .run()
             .await;
         assert_eq!(results.len(), 500);
@@ -498,7 +489,7 @@ mod tests {
 
     #[tokio::test]
     async fn spawn_accepts_dynamic_submissions() {
-        let (pool, mut stream) = Batch::new().concurrency(2).spawn();
+        let (pool, mut stream) = Werk::new().lines(2).spawn();
         pool.submit(agent_with_response("a", "first"));
         pool.submit(agent_with_response("b", "second"));
 
@@ -521,7 +512,7 @@ mod tests {
 
     #[tokio::test]
     async fn spawn_keeps_stream_open_while_any_handle_lives() {
-        let (pool, mut stream) = Batch::new().concurrency(4).spawn();
+        let (pool, mut stream) = Werk::new().lines(4).spawn();
         let clone = pool.clone();
         pool.submit(agent_with_response("a", "done"));
         drop(pool);
@@ -534,7 +525,7 @@ mod tests {
 
     #[tokio::test]
     async fn spawn_drops_handle_drains_backlog_and_ends_stream() {
-        let (pool, mut stream) = Batch::new().concurrency(2).spawn();
+        let (pool, mut stream) = Werk::new().lines(2).spawn();
         pool.submit(agent_with_response("a", "done"));
         pool.submit(agent_with_response("b", "done"));
         drop(pool);
@@ -549,7 +540,7 @@ mod tests {
 
     #[tokio::test]
     async fn drain_lets_in_flight_agents_finish_unlike_cancel() {
-        let (pool, mut stream) = Batch::new().concurrency(2).spawn();
+        let (pool, mut stream) = Werk::new().lines(2).spawn();
         pool.submit(agent_with_delay("a", 30, "done"));
         pool.submit(agent_with_delay("b", 30, "done"));
         pool.drain();
@@ -565,7 +556,7 @@ mod tests {
 
     #[tokio::test]
     async fn spawn_cancel_stops_in_flight_agents() {
-        let (pool, mut stream) = Batch::new().concurrency(2).spawn();
+        let (pool, mut stream) = Werk::new().lines(2).spawn();
         pool.submit(agent_with_delay("slow", 200, "never"));
 
         tokio::time::sleep(Duration::from_millis(20)).await;
@@ -581,9 +572,9 @@ mod tests {
 
     #[tokio::test]
     async fn preloaded_agents_run_without_explicit_submit() {
-        let (pool, stream) = Batch::new()
-            .concurrency(2)
-            .agents(["a", "b"].iter().map(|n| agent_with_response(n, "ok")))
+        let (pool, stream) = Werk::new()
+            .lines(2)
+            .workers(["a", "b"].iter().map(|n| agent_with_response(n, "ok")))
             .spawn();
         drop(pool);
         let results = stream.collect().await;

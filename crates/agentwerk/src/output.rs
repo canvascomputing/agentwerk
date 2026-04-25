@@ -118,7 +118,6 @@ impl OutputSchema {
         validate_value(&value, &self.schema)?;
         Ok(value)
     }
-
 }
 
 fn strip_code_fences(s: &str) -> &str {

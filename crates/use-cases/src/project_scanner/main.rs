@@ -1,6 +1,6 @@
 //! Scans a project directory in two phases:
 //! 1. Discovery agent finds files worth reading
-//! 2. Batch of agents summarizes each file in parallel
+//! 2. Werk of agents summarizes each file in parallel
 //!
 //! Usage: project-scanner [OPTIONS] [DIR]
 
@@ -11,7 +11,7 @@ use std::sync::Arc;
 
 use agentwerk::event::EventKind;
 use agentwerk::tools::{GlobTool, ListDirectoryTool, ReadFileTool};
-use agentwerk::{Agent, Batch};
+use agentwerk::{Agent, Werk};
 use serde_json::{json, Value};
 
 const DISCOVERY_PROMPT: &str = "\
@@ -174,10 +174,10 @@ async fn main() {
             }))
     });
 
-    let results = Batch::new()
-        .concurrency(config.batch_size)
+    let results = Werk::new()
+        .lines(config.batch_size)
         .cancel_signal(cancel.clone())
-        .agents(agents)
+        .workers(agents)
         .run()
         .await;
 

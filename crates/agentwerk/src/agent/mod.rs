@@ -6,12 +6,12 @@ pub(crate) mod error;
 pub(crate) mod r#loop;
 pub(crate) mod prompts;
 pub(crate) mod queue;
-mod spawn;
+mod retain;
 pub(crate) mod spec;
 
 pub use agent::Agent;
 pub use error::AgentError;
 pub use prompts::DEFAULT_BEHAVIOR_PROMPT;
 pub(crate) use r#loop::LoopRuntime;
-pub use spawn::{AgentHandle, OutputFuture};
+pub use retain::{AgentWorking, OutputFuture};
 pub(crate) use spec::AgentSpec;

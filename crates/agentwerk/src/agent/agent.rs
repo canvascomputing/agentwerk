@@ -193,7 +193,7 @@ impl Agent {
 
     /// Park the agent idle after a terminal output until a peer message arrives or `cancel_signal` fires.
     ///
-    /// [`Agent::spawn`] sets this implicitly. Call it only on a sub-agent template
+    /// [`Agent::retain`] sets this implicitly. Call it only on a sub-agent template
     /// that should idle in the background after the orchestrator spawns it.
     pub fn keep_alive(self) -> Self {
         self.with_spec(|c| c.keep_alive = true)
@@ -300,7 +300,7 @@ impl Agent {
         self
     }
 
-    /// Install an externally-owned command queue so an `AgentHandle` can inject instructions.
+    /// Install an externally-owned command queue so an `AgentWorking` can inject instructions.
     pub(crate) fn command_queue(mut self, q: Arc<CommandQueue>) -> Self {
         self.command_queue = Some(q);
         self

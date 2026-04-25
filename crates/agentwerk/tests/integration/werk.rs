@@ -1,9 +1,9 @@
-//! End-to-end: `Batch::run` runs several real-LLM agents concurrently. Guards concurrency capping and result correlation against a live provider.
+//! End-to-end: `Werk::run` runs several real-LLM agents concurrently. Guards line capping and result correlation against a live provider.
 
 use super::common;
 
 use agentwerk::tools::ReadFileTool;
-use agentwerk::{Agent, Batch};
+use agentwerk::{Agent, Werk};
 
 #[tokio::test]
 async fn test() -> std::result::Result<(), Box<dyn std::error::Error>> {
@@ -35,7 +35,7 @@ async fn test() -> std::result::Result<(), Box<dyn std::error::Error>> {
             .instruction_prompt(format!("Read and summarize: {file}"))
     });
 
-    let results = Batch::new().concurrency(2).agents(agents).run().await;
+    let results = Werk::new().lines(2).workers(agents).run().await;
 
     assert_eq!(results.len(), files.len());
     for result in &results {

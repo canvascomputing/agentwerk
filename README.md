@@ -77,7 +77,7 @@ make use_case name=<name>    # run one
 - [Policies](#policies): retries, token caps, and turn limits
 - [Output](#output): validated, schema-based responses
 - [Sub-agents](#sub-agents): nested workers
-- [Batches](#batches): parallel execution
+- [Werks](#werks): parallel execution
 - [Todo](#todo): planned work
 
 ### Providers
@@ -127,7 +127,7 @@ let output = Agent::new()
 
 #### Keep Agents Alive
 
-Use `spawn` when you want to keep sending instructions to your agent:
+Use `retain` when you want to keep sending instructions to your agent:
 
 ```rust
 let (agent, output) = Agent::new()
@@ -135,7 +135,7 @@ let (agent, output) = Agent::new()
     .model_name("claude-sonnet-4-20250514")
     .identity_prompt("Answer questions about the codebase.")
     .tool(ReadFileTool)
-    .spawn(); // start the agent and send more instructions later
+    .retain(); // start the agent and send more instructions later
 
 agent.send("What does src/main.rs do?");
 agent.send("Now summarize src/lib.rs.");
@@ -147,10 +147,10 @@ The agent waits for the next `send` after each reply. Call `cancel()` to stop it
 
 | Method | Description |
 |--------|-------------|
-| `.send(instruction)` | Send a new instruction |
-| `.cancel()` | Stop the agent |
-| `.is_cancelled()` | Check if the agent was cancelled |
-| `.clone()` | Get another handle to the same agent |
+| `AgentWorking::send(...)` | Send a instruction |
+| `AgentWorking::cancel()` | Stop the agent |
+| `AgentWorking::is_cancelled()` | Check if the agent was cancelled |
+| `AgentWorking::clone()` | Get another handle to the same agent |
 
 
 ### Models
@@ -192,10 +192,14 @@ The following methods on `Agent` configure prompts:
 
 | Method | Description |
 |--------|-------------|
-| `.identity_prompt(_file)` | Persistent identity of the agent |
-| `.instruction_prompt(_file)` | Task for the current run |
-| `.context_prompt(_file)` | Override the context prompt (default: `Agent::default_context_prompt()`, containing working directory, platform, OS version, date) |
-| `.behavior_prompt(_file)` | Override the default behavioral directives (`DEFAULT_BEHAVIOR_PROMPT`) |
+| `Agent::identity_prompt(...)` | Persistent identity of the agent |
+| `Agent::identity_prompt_file(...)` | Read the identity prompt from a file |
+| `Agent::instruction_prompt(...)` | Task for the current run |
+| `Agent::instruction_prompt_file(...)` | Read the instruction prompt from a file |
+| `Agent::context_prompt(...)` | Override the context prompt (default: `Agent::default_context_prompt()`, containing working directory, platform, OS version, date) |
+| `Agent::context_prompt_file(...)` | Read the context prompt from a file |
+| `Agent::behavior_prompt(...)` | Override the default behavioral directives (`DEFAULT_BEHAVIOR_PROMPT`) |
+| `Agent::behavior_prompt_file(...)` | Read the behavior prompt from a file |
 
 Compose a custom context prompt:
 
@@ -333,13 +337,13 @@ For protecting your budget or data, you can define clear execution rules for typ
 
 | Method | Default | Description |
 |--------|---------|-------------|
-| `.max_turns(10)` | no limit | Stop after N agentic loop iterations |
-| `.max_request_tokens(4096)` | provider default | Cap output tokens per LLM request |
-| `.max_input_tokens(200_000)` | no limit | Cap cumulative input tokens across the whole run |
-| `.max_output_tokens(50_000)` | no limit | Cap cumulative output tokens across the whole run |
-| `.max_schema_retries(3)` | 10 | Retry structured output compliance |
-| `.max_request_retries(5)` | 10 | Retry on API errors (429, 529, 5xx) |
-| `.request_retry_delay(Duration::from_millis(2000))` | 500ms | Base delay for exponential backoff between request retries |
+| `Agent::max_turns(...)` | no limit | Stop after N agentic loop iterations |
+| `Agent::max_request_tokens(...)` | provider default | Cap output tokens per LLM request |
+| `Agent::max_input_tokens(...)` | no limit | Cap cumulative input tokens across the whole run |
+| `Agent::max_output_tokens(...)` | no limit | Cap cumulative output tokens across the whole run |
+| `Agent::max_schema_retries(...)` | 10 | Retry structured output compliance |
+| `Agent::max_request_retries(...)` | 10 | Retry on API errors (429, 529, 5xx) |
+| `Agent::request_retry_delay(...)` | 500ms | Base delay for exponential backoff between request retries |
 
 ### Output
 
@@ -410,13 +414,13 @@ The following fields are inherited, shared or owned by the sub-agents:
 | Shared | `command_queue`, `session_store` |
 | Per sub-agent | `identity_prompt`, `instruction_prompt`, `behavior_prompt`, `context_prompt`, `tools`, `output_schema`, `max_turns`, `max_request_tokens`, `max_input_tokens`, `max_output_tokens`, `max_schema_retries`, `max_request_retries`, `request_retry_delay` |
 
-### Batches
+### Werke
 
-Run many agents in parallel with `Batch`. Wait for the execution of all agents in a fixed sized pool. Results arrive in *submission order*:
+Run many agents in parallel with a `Werk`. Wait for the execution of all agents in a fixed sized pool. Results arrive in *submission order*:
 
 ```rust
 use agentwerk::tools::ReadFileTool;
-use agentwerk::{Agent, Batch};
+use agentwerk::{Agent, Werk};
 
 let template = Agent::new()
     .provider(provider)
@@ -424,15 +428,15 @@ let template = Agent::new()
     .tool(ReadFileTool);
 
 let docs = ["document A", "document B"];
-let agents = docs.iter().map(|doc| {
+let workers = docs.iter().map(|doc| {
     template
         .clone()
         .instruction_prompt(format!("Summarize {doc}"))
 });
 
-let results = Batch::new()
-    .concurrency(10)
-    .agents(agents)
+let results = Werk::new()
+    .lines(10)
+    .workers(workers)
     .run()
     .await;
 
@@ -446,8 +450,8 @@ for (doc, result) in docs.iter().zip(results.iter()) {
 Start a dynamic pool of agents, which might grow over time. Results are reported in *completion order*:
 
 ```rust
-let (pool, mut results) = Batch::new()
-    .concurrency(10)
+let (pool, mut results) = Werk::new()
+    .lines(10)
     .spawn();
 
 let docs = ["document A", "document B"];
@@ -465,11 +469,11 @@ while let Some((i, result)) = results.next().await {
 
 | Method | Description |
 |--------|-------------|
-| `.submit(agent)` | Enqueue another agent |
-| `.drain()` | Stop adding new agents and let running agents finish |
-| `.cancel()` | Interrupt all agents work and drain the pool |
-| `.is_cancelled()` | Check if the pool was cancelled |
-| `.clone()` | Get another handle to the same pool |
+| `WerkProducing::submit(...)` | Enqueue another agent |
+| `WerkProducing::drain()` | Stop adding new agents and let running agents finish |
+| `WerkProducing::cancel()` | Interrupt all agents work and drain the pool |
+| `WerkProducing::is_cancelled()` | Check if the pool was cancelled |
+| `WerkProducing::clone()` | Get another handle to the same pool |
 
 ### Todo
 

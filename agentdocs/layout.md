@@ -17,7 +17,7 @@ Where code lives and the rules that govern placement.
 - `lib.rs` holds public re-exports only.
 - `error.rs` defines the categorical `Error` and the `Result` alias.
 - `config.rs` defines `ConfigError`.
-- `batch.rs`, `event.rs`, `output.rs` hold concerns the caller observes in their own right.
+- `werk.rs`, `event.rs`, `output.rs` hold concerns the caller observes in their own right.
 
 ## The `agent/` module
 
@@ -26,7 +26,7 @@ Where code lives and the rules that govern placement.
 - `agent.rs` holds the `Agent` builder.
 - `spec.rs` holds the compiled `AgentSpec`.
 - `loop.rs` holds `run_loop`, `LoopRuntime`, and `LoopState`.
-- `spawn.rs` holds `AgentHandle` and `OutputFuture`.
+- `retain.rs` holds `AgentWorking` and `OutputFuture`.
 - `prompts.rs`, `compact.rs`, and `queue.rs` hold prompt constants, the compaction hook, and the command queue.
 
 ## The `provider/` module

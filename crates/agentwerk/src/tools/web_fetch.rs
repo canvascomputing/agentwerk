@@ -116,15 +116,8 @@ impl ToolLike for WebFetchTool {
                 unreachable!()
             };
 
-            let output = format_output(
-                url,
-                prompt,
-                &body,
-                status,
-                &content_type,
-                bytes,
-                max_length,
-            );
+            let output =
+                format_output(url, prompt, &body, status, &content_type, bytes, max_length);
             Ok(ToolResult::success(output))
         })
     }

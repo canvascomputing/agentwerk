@@ -81,8 +81,8 @@ The invariants that shape how code fits together. Layout says where code lives; 
 
 - `check_guards` reads the flag at every turn boundary; tools read it via `ToolContext::wait_for_cancel`.
 - `tokio::select!` pairs provider calls and tool futures with `wait_for_cancel` so a cancel drops the losing branch promptly.
-- `AgentHandle` sets the flag explicitly; dropping the last handle sets it via `CancelGuard::drop`.
-- `Batch` installs its own signal on every submitted agent so `BatchHandle::cancel` reaches in-flight runs.
+- `AgentWorking` sets the flag explicitly; dropping the last handle sets it via `CancelGuard::drop`.
+- `Werk` installs its own signal on every submitted agent so `WerkProducing::cancel` reaches in-flight runs.
 
 ## Persistence stays internal
 

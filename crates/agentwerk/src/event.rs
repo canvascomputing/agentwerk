@@ -125,9 +125,7 @@ pub fn default_logger() -> Arc<dyn Fn(Event) + Send + Sync> {
                 path,
                 message,
             } => {
-                eprintln!(
-                    "[{agent}] ↻ schema retry {attempt}/{max_attempts} at {path}: {message}"
-                );
+                eprintln!("[{agent}] ↻ schema retry {attempt}/{max_attempts} at {path}: {message}");
             }
             EventKind::RequestRetried {
                 attempt,

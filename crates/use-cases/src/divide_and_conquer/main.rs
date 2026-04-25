@@ -1,7 +1,7 @@
 //! Divide-and-conquer sum of squares.
 //!
 //! Partitions `[1, N]` into K subranges, dispatches one worker agent per
-//! partition through a `Batch`, aggregates the partial sums, and verifies the
+//! partition through a `Werk`, aggregates the partial sums, and verifies the
 //! result against the closed-form identity `N(N+1)(2N+1)/6`.
 //!
 //! Usage: divide-and-conquer [OPTIONS] [N]
@@ -17,7 +17,7 @@ use std::time::Instant;
 
 use agentwerk::event::EventKind;
 use agentwerk::tools::{Tool, ToolResult};
-use agentwerk::{Agent, Batch, Event, Output};
+use agentwerk::{Agent, Event, Output, Werk};
 use serde_json::{json, Value};
 
 const WORKER_PROMPT: &str = "\
@@ -74,10 +74,10 @@ async fn main() {
     });
 
     let started = Instant::now();
-    let (pool, mut stream) = Batch::new()
-        .concurrency(args.concurrency)
+    let (pool, mut stream) = Werk::new()
+        .lines(args.concurrency)
         .cancel_signal(cancel)
-        .agents(agents)
+        .workers(agents)
         .spawn();
     pool.drain();
 
@@ -97,7 +97,7 @@ async fn main() {
             Err(e) => {
                 failures += 1;
                 eprintln!(
-                    "{red}│ {progress}  ✗ {name:<9}  {range}  batch error: {e}{reset}",
+                    "{red}│ {progress}  ✗ {name:<9}  {range}  werk error: {e}{reset}",
                     red = style.red,
                     reset = style.reset,
                 );

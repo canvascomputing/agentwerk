@@ -27,20 +27,20 @@ impl Drop for CancelGuard {
 }
 
 /// Cheap, clonable handle to an agent whose loop runs on a background tokio
-/// task. Obtained from [`Agent::spawn`](crate::Agent::spawn).
+/// task. Obtained from [`Agent::retain`](crate::Agent::retain).
 ///
 /// While any clone of the handle is alive, the loop idles after producing
 /// output; dropping the last clone (or calling [`cancel`](Self::cancel))
 /// signals the loop to exit.
 #[derive(Clone)]
-pub struct AgentHandle {
+pub struct AgentWorking {
     queue: Arc<CommandQueue>,
     cancel: Arc<AtomicBool>,
     #[allow(dead_code)]
     guard: Arc<CancelGuard>,
 }
 
-impl AgentHandle {
+impl AgentWorking {
     /// Deliver a new instruction to the running agent. Picked up at the next
     /// turn boundary, or immediately if the agent is parked idle.
     pub fn send(&self, instruction: impl Into<String>) {
@@ -69,7 +69,7 @@ impl AgentHandle {
 /// Resolves to the agent's final [`Output`](crate::output::Output) once the
 /// background loop exits.
 ///
-/// Only [`AgentHandle`] clones keep the agent alive; dropping this
+/// Only [`AgentWorking`] clones keep the agent alive; dropping this
 /// (without awaiting) just abandons the result. Whether the loop keeps
 /// running is decided by whether any handles remain.
 ///
@@ -99,21 +99,21 @@ impl IntoFuture for OutputFuture {
 impl Agent {
     /// Start the agent on a background tokio task and return a pair:
     ///
-    /// - [`AgentHandle`]: cheap, clonable handle for injecting new
+    /// - [`AgentWorking`]: cheap, clonable handle for injecting new
     ///   instructions, cancelling, or inspecting state.
     /// - [`OutputFuture`]: resolves to the final
     ///   [`Output`](crate::output::Output) once the loop exits.
     ///
     /// The loop idles after each terminal output as long as any handle is
-    /// alive. Dropping the last handle calls [`AgentHandle::cancel`] for you
+    /// alive. Dropping the last handle calls [`AgentWorking::cancel`] for you
     /// (RAII safety); an explicit `.cancel()` does the same thing. For a
     /// pure one-shot run without a handle, use [`Agent::run`] instead: a
-    /// `let (_, out) = agent.spawn(); out.await?` pattern will cancel
+    /// `let (_, out) = agent.retain(); out.await?` pattern will cancel
     /// before the first turn completes.
     ///
     /// Requires a running tokio runtime (`tokio::spawn` is invoked
     /// synchronously). Requires `.provider()` and `.instruction_prompt()`.
-    pub fn spawn(self) -> (AgentHandle, OutputFuture) {
+    pub fn retain(self) -> (AgentWorking, OutputFuture) {
         let queue = Arc::new(CommandQueue::new());
         let cancel = Arc::new(AtomicBool::new(false));
         let guard = Arc::new(CancelGuard {
@@ -128,7 +128,7 @@ impl Agent {
         let join = tokio::spawn(async move { prepared.run().await });
 
         (
-            AgentHandle {
+            AgentWorking {
                 queue,
                 cancel,
                 guard,
@@ -152,17 +152,17 @@ mod tests {
     use crate::testutil::{text_response, MockProvider};
 
     #[tokio::test]
-    async fn spawn_returns_handle_and_future() {
+    async fn retain_returns_handle_and_future() {
         let (handle, output) = one_shot_agent("hello");
         let clone = handle.clone();
-        // AgentHandle is Clone; OutputFuture is a Future. Cancel so the
+        // AgentWorking is Clone; OutputFuture is a Future. Cancel so the
         // keep-alive loop terminates.
         clone.cancel();
         let _: Result<Output> = output.await;
     }
 
     #[tokio::test]
-    async fn spawn_starts_loop_immediately() {
+    async fn retain_starts_loop_immediately() {
         let events = EventLog::new();
         let (handle, output) = keep_alive_agent(vec![text_response("first")], &events);
         // AgentStarted is the first event emitted by run_loop: observable
@@ -341,20 +341,20 @@ mod tests {
         let _ = output.await;
     }
 
-    fn one_shot_agent(text: &str) -> (AgentHandle, OutputFuture) {
+    fn one_shot_agent(text: &str) -> (AgentWorking, OutputFuture) {
         Agent::new()
             .name("demo")
             .model_name("mock")
             .provider(Arc::new(MockProvider::text(text)))
             .identity_prompt("")
             .instruction_prompt("x")
-            .spawn()
+            .retain()
     }
 
     fn keep_alive_agent(
         responses: Vec<ModelResponse>,
         events: &EventLog,
-    ) -> (AgentHandle, OutputFuture) {
+    ) -> (AgentWorking, OutputFuture) {
         let (_, h, o) = keep_alive_agent_with_provider(responses, events);
         (h, o)
     }
@@ -362,7 +362,7 @@ mod tests {
     fn keep_alive_agent_with_provider(
         responses: Vec<ModelResponse>,
         events: &EventLog,
-    ) -> (Arc<MockProvider>, AgentHandle, OutputFuture) {
+    ) -> (Arc<MockProvider>, AgentWorking, OutputFuture) {
         let provider = Arc::new(MockProvider::new(responses));
         let (h, o) = Agent::new()
             .name("root")
@@ -371,7 +371,7 @@ mod tests {
             .identity_prompt("")
             .instruction_prompt("initial")
             .event_handler(events.handler())
-            .spawn();
+            .retain();
         (provider, h, o)
     }
 

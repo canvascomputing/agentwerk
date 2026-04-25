@@ -87,9 +87,7 @@ impl ToolLike for GrepTool {
                 None => return Ok(ToolResult::error("Missing required parameter: pattern")),
             };
 
-            let base = ctx
-                .working_dir
-                .join(input["path"].as_str().unwrap_or("."));
+            let base = ctx.working_dir.join(input["path"].as_str().unwrap_or("."));
             let glob_filter = input["glob"].as_str().map(|s| s.to_string());
             let output_mode = input["output_mode"].as_str().unwrap_or("files");
             let context_lines = input["context_lines"].as_u64().unwrap_or(0) as usize;

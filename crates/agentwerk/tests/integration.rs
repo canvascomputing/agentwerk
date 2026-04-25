@@ -6,8 +6,6 @@ mod common;
 
 #[path = "integration/bash_usage.rs"]
 mod bash_usage;
-#[path = "integration/batch.rs"]
-mod batch;
 #[path = "integration/file_exploration.rs"]
 mod file_exploration;
 #[path = "integration/multi_agent_spawn.rs"]
@@ -18,3 +16,5 @@ mod peer_messaging;
 mod project_planning;
 #[path = "integration/running_agent.rs"]
 mod running_agent;
+#[path = "integration/werk.rs"]
+mod werk;
