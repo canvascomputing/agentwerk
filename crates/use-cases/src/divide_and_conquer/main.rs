@@ -173,9 +173,7 @@ fn extract_partial(ticket: &Ticket, total: usize) -> Result<(usize, i128), Strin
     }
     let body_idx = parse_idx_from_body(&ticket.task);
     if body_idx != Some(idx) {
-        return Err(format!(
-            "idx mismatch: body={body_idx:?}, result={idx}"
-        ));
+        return Err(format!("idx mismatch: body={body_idx:?}, result={idx}"));
     }
     Ok((idx, sum))
 }
@@ -286,7 +284,9 @@ fn build_event_handler(
                     reset = style.reset,
                 );
             }
-            EventKind::ToolCallStarted { tool_name, input, .. } if verbose => {
+            EventKind::ToolCallStarted {
+                tool_name, input, ..
+            } if verbose => {
                 let snippet = input
                     .get("code")
                     .and_then(|v| v.as_str())
@@ -298,7 +298,9 @@ fn build_event_handler(
                     reset = style.reset,
                 );
             }
-            EventKind::ToolCallFailed { tool_name, message, .. } => eprintln!(
+            EventKind::ToolCallFailed {
+                tool_name, message, ..
+            } => eprintln!(
                 "{red}│    {agent} ✗ {tool_name}: {}{reset}",
                 truncate(message, 120),
                 red = style.red,
@@ -323,7 +325,9 @@ fn build_event_handler(
 fn print_intro(n: u64, partitions: usize, workers: usize, style: &Style) {
     eprintln!("divide-and-conquer   sum_{{k=1}}^{{{n}}} k^2   (verified via N(N+1)(2N+1)/6)\n");
     eprintln!("  Split [1, {n}] into {partitions} contiguous subranges and enqueue one ticket per");
-    eprintln!("  subrange. {workers} worker agent(s) share the queue, each calling a `python` tool");
+    eprintln!(
+        "  subrange. {workers} worker agent(s) share the queue, each calling a `python` tool"
+    );
     eprintln!("  to compute its partial sum exactly. Workers finish their tickets via");
     eprintln!("  `write_result_tool` with `{{\"idx\", \"partial_sum\"}}`; the driver aggregates");
     eprintln!("  once every ticket is finished and verifies against the closed-form total.\n");
@@ -401,7 +405,12 @@ impl Style {
                 reset: "\x1b[0m",
             }
         } else {
-            Self { dim: "", green: "", red: "", reset: "" }
+            Self {
+                dim: "",
+                green: "",
+                red: "",
+                reset: "",
+            }
         }
     }
 }
@@ -445,9 +454,11 @@ impl CliArgs {
                 }
                 arg if arg.starts_with('-') => bad_arg(&format!("unknown flag: {arg}")),
                 _ => {
-                    n = Some(args[i].parse().unwrap_or_else(|_| {
-                        bad_arg("N must be a positive integer")
-                    }));
+                    n = Some(
+                        args[i]
+                            .parse()
+                            .unwrap_or_else(|_| bad_arg("N must be a positive integer")),
+                    );
                 }
             }
             i += 1;
@@ -467,7 +478,9 @@ impl CliArgs {
         eprintln!("Usage: divide-and-conquer [OPTIONS] [N]\n");
         eprintln!("Options:");
         eprintln!("  -p, --partitions <K>   Number of ticket partitions (default: 16)");
-        eprintln!("  -c, --concurrency <N>  Number of worker agents sharing the queue (default: 8)");
+        eprintln!(
+            "  -c, --concurrency <N>  Number of worker agents sharing the queue (default: 8)"
+        );
         eprintln!("      --max-steps <N>    Per-system step cap (default: unlimited)");
         eprintln!("  -v, --verbose          Stream per-worker tool calls");
         eprintln!("  -h, --help             Show this help\n");

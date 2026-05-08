@@ -194,9 +194,7 @@ async fn process_ticket(
     // byte-stable across every turn of this ticket so the provider's prefix
     // cache survives mid-ticket memory writes. Cross-ticket and cross-agent
     // writes become visible at the top of the next ticket.
-    let memory_contents = agent
-        .memory_handle()
-        .map(|s| s.entries().join("\n\n"));
+    let memory_contents = agent.memory_handle().map(|s| s.entries().join("\n\n"));
 
     let policies = ticket_system.policies();
     let mut messages: Vec<Message> = Vec::new();
@@ -500,7 +498,8 @@ mod tests {
             &self,
             request: ModelRequest,
             _on_event: Arc<dyn Fn(crate::providers::types::StreamEvent) + Send + Sync>,
-        ) -> Pin<Box<dyn std::future::Future<Output = ProviderResult<ModelResponse>> + Send + '_>> {
+        ) -> Pin<Box<dyn std::future::Future<Output = ProviderResult<ModelResponse>> + Send + '_>>
+        {
             self.received.lock().unwrap().push(request.messages.clone());
             self.received_system_prompts
                 .lock()
@@ -1341,7 +1340,6 @@ mod tests {
             bob_prompts[0]
         );
     }
-
 
     // ---- late-add tests ----
     //

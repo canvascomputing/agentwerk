@@ -83,7 +83,11 @@ mod tests {
     use crate::agents::tickets::{Status, Ticket, TicketSystem};
     use crate::schemas::Schema;
 
-    fn ctx_with(ticket_system: Arc<TicketSystem>, agent: &str, working_dir: PathBuf) -> ToolContext {
+    fn ctx_with(
+        ticket_system: Arc<TicketSystem>,
+        agent: &str,
+        working_dir: PathBuf,
+    ) -> ToolContext {
         ToolContext::new(working_dir)
             .ticket_system(ticket_system)
             .agent_name(agent.to_string())
@@ -112,7 +116,10 @@ mod tests {
         let attached = t.result().unwrap();
         assert_eq!(attached.agent, "alice");
         assert_eq!(attached.ticket, key);
-        assert_eq!(attached.result, serde_json::Value::String("the answer".into()));
+        assert_eq!(
+            attached.result,
+            serde_json::Value::String("the answer".into())
+        );
 
         let log = std::fs::read_to_string(dir.path().join("results.jsonl")).unwrap();
         let line = log.trim_end();
@@ -157,7 +164,10 @@ mod tests {
         // string of JSON.
         let log = std::fs::read_to_string(dir.path().join("results.jsonl")).unwrap();
         let parsed: serde_json::Value = serde_json::from_str(log.trim_end()).unwrap();
-        assert!(parsed["result"].is_object(), "expected raw object, got {parsed}");
+        assert!(
+            parsed["result"].is_object(),
+            "expected raw object, got {parsed}"
+        );
         assert_eq!(parsed["result"]["x"], 1);
     }
 
@@ -184,7 +194,10 @@ mod tests {
             "required": ["x"]
         }))
         .unwrap();
-        let key = sys.insert(Ticket::new("hi").schema(schema).label("alice"), "tester".into());
+        let key = sys.insert(
+            Ticket::new("hi").schema(schema).label("alice"),
+            "tester".into(),
+        );
         sys.force_status(&key, Status::InProgress).unwrap();
         let ctx = ctx_with(Arc::clone(&sys), "alice", dir.path().to_path_buf());
 
@@ -288,7 +301,10 @@ mod tests {
         let mut expected = Vec::with_capacity(N);
         for i in 0..N {
             let agent = format!("agent_{i}");
-            let key = sys.insert(Ticket::new(format!("body_{i}")).label(&agent), "tester".into());
+            let key = sys.insert(
+                Ticket::new(format!("body_{i}")).label(&agent),
+                "tester".into(),
+            );
             sys.force_status(&key, Status::InProgress).unwrap();
             expected.push((agent, key));
         }
@@ -316,8 +332,8 @@ mod tests {
 
         let mut seen_tickets = std::collections::HashSet::new();
         for line in &lines {
-            let parsed: serde_json::Value = serde_json::from_str(line)
-                .unwrap_or_else(|e| panic!("corrupt line {line:?}: {e}"));
+            let parsed: serde_json::Value =
+                serde_json::from_str(line).unwrap_or_else(|e| panic!("corrupt line {line:?}: {e}"));
             let ticket = parsed["ticket"].as_str().unwrap().to_string();
             assert!(seen_tickets.insert(ticket), "duplicate ticket in log");
         }

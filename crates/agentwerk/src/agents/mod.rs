@@ -14,4 +14,4 @@ pub use memory::{IntoMemory, Memory};
 pub use policy::Policies;
 pub use running::Running;
 pub use stats::{LoopStats, Stats};
-pub use tickets::{TicketResult, Status, Ticket, TicketError, TicketSystem};
+pub use tickets::{Status, Ticket, TicketError, TicketResult, TicketSystem};

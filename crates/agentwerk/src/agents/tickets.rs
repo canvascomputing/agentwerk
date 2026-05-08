@@ -504,7 +504,11 @@ impl TicketSystem {
         }
         match next {
             Status::Done | Status::Failed => {
-                let event = if next == Status::Done { "done" } else { "failed" };
+                let event = if next == Status::Done {
+                    "done"
+                } else {
+                    "failed"
+                };
                 self.append_ticket_event(serde_json::json!({
                     "event": event,
                     "ts": ts,
@@ -521,11 +525,7 @@ impl TicketSystem {
     /// ticket to the agent that just claimed it: subsequent Path-A
     /// lookups find the ticket via `has_label(agent_name)`. No-op when
     /// the label is already present.
-    pub(crate) fn add_label(
-        &self,
-        key: &str,
-        label: impl Into<String>,
-    ) -> Result<(), TicketError> {
+    pub(crate) fn add_label(&self, key: &str, label: impl Into<String>) -> Result<(), TicketError> {
         let label = label.into();
         let mut store = self.tickets.lock().unwrap();
         let ticket = store
@@ -540,11 +540,7 @@ impl TicketSystem {
     }
 
     /// Attach a `TicketResult` to the ticket at `key`.
-    pub(crate) fn set_result(
-        &self,
-        key: &str,
-        result: TicketResult,
-    ) -> Result<(), TicketError> {
+    pub(crate) fn set_result(&self, key: &str, result: TicketResult) -> Result<(), TicketError> {
         let mut store = self.tickets.lock().unwrap();
         let ticket = store
             .get_mut(key)
@@ -1115,7 +1111,11 @@ mod tests {
         sys.task("a").task("b");
         attach_done_result(&sys, "TICKET-2", "alice", "second");
         attach_done_result(&sys, "TICKET-1", "alice", "first");
-        let last = sys.collect_results().last().cloned().expect("expected last result");
+        let last = sys
+            .collect_results()
+            .last()
+            .cloned()
+            .expect("expected last result");
         assert_eq!(last.ticket, "TICKET-2");
         assert_eq!(last.result, serde_json::Value::String("second".into()));
     }

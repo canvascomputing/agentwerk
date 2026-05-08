@@ -21,7 +21,7 @@ use super::memory::{IntoMemory, Memory};
 
 use super::policy::Policies;
 use super::stats::Stats;
-use super::tickets::{TicketResult, Ticket, TicketSystem};
+use super::tickets::{Ticket, TicketResult, TicketSystem};
 
 static AGENT_COUNTER: AtomicU64 = AtomicU64::new(0);
 
@@ -271,11 +271,7 @@ impl Agent {
     /// policy budget) when [`Self::context`] was not set. A custom context
     /// is left byte-exact: `policies` and `stats` are ignored on that
     /// branch.
-    pub(super) fn context_message(
-        &self,
-        policies: &Policies,
-        stats: &Stats,
-    ) -> Option<String> {
+    pub(super) fn context_message(&self, policies: &Policies, stats: &Stats) -> Option<String> {
         match &self.context {
             Some(body) => Some(Section::context(self.interpolate(body)).render()),
             None => Some(default_context(
@@ -475,8 +471,11 @@ mod tests {
             "{static_prefix}\n\
              - Steps remaining: 2\n\
              - Input tokens remaining: 750",
-            static_prefix =
-                default_context(&PathBuf::from("/tmp/check"), &Policies::default(), &Stats::new()),
+            static_prefix = default_context(
+                &PathBuf::from("/tmp/check"),
+                &Policies::default(),
+                &Stats::new()
+            ),
         );
         assert_eq!(rendered, expected);
     }
@@ -649,7 +648,10 @@ mod tests {
         let agent = Agent::new().memory(&store);
         let cloned = agent.clone();
         agent.memory_handle().unwrap().add("via original").unwrap();
-        assert_eq!(cloned.memory_handle().unwrap().entries().join("\n§\n"), "via original");
+        assert_eq!(
+            cloned.memory_handle().unwrap().entries().join("\n§\n"),
+            "via original"
+        );
     }
 
     #[test]
@@ -659,7 +661,10 @@ mod tests {
         let alice = Agent::new().memory(&store);
         let bob = Agent::new().memory(&store);
         alice.memory_handle().unwrap().add("from alice").unwrap();
-        assert_eq!(bob.memory_handle().unwrap().entries().join("\n§\n"), "from alice");
+        assert_eq!(
+            bob.memory_handle().unwrap().entries().join("\n§\n"),
+            "from alice"
+        );
     }
 
     #[test]

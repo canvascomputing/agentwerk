@@ -247,10 +247,7 @@ mod tests {
         let (store, _dir) = fresh_store();
         let tool = MemoryTool::new(Arc::clone(&store));
         let r = tool
-            .call(
-                serde_json::json!({"action": "add", "content": 42}),
-                &ctx(),
-            )
+            .call(serde_json::json!({"action": "add", "content": 42}), &ctx())
             .await
             .unwrap();
         // The dispatch reads `content` as a `&str`; a non-string value is

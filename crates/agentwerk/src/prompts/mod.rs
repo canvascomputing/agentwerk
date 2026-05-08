@@ -249,8 +249,7 @@ mod tests {
         assert!(rendered.starts_with(&baseline));
         let trailing = &rendered[baseline.len()..];
         assert!(
-            trailing == "\n- Time remaining: 3600s"
-                || trailing == "\n- Time remaining: 3599s",
+            trailing == "\n- Time remaining: 3600s" || trailing == "\n- Time remaining: 3599s",
             "unexpected runtime block: {trailing:?}",
         );
     }

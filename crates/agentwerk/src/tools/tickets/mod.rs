@@ -9,7 +9,7 @@ use std::io::Write as _;
 
 use serde_json::Value;
 
-use crate::agents::tickets::{TicketResult, Status, Ticket, TicketError, TicketSystem};
+use crate::agents::tickets::{Status, Ticket, TicketError, TicketResult, TicketSystem};
 use crate::schemas::{format_violations, Schema};
 
 use super::tool::{ToolContext, ToolResult};
