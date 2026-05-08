@@ -143,22 +143,17 @@ pub(super) async fn handle_tickets(agent: Agent) {
         }
         // Path A: in-progress ticket already labelled with this agent's name.
         let path_a = ticket_system
-            .find(|t| t.status() == "in_progress" && t.has_label(agent.get_name()))
-            .map(|t| (t.key().to_string(), false));
-        // Path B: open Todo whose labels match this agent's scope.
-        let path_b = ticket_system
-            .find(|t| t.status() == "todo" && agent.handles_labels(&t.labels))
-            .map(|t| (t.key().to_string(), true));
-        let claim = path_a.or(path_b);
-
-        let key = match claim {
-            Some((key, needs_claim)) => {
-                if needs_claim {
-                    let _ = ticket_system.add_label(&key, agent.get_name());
-                    let _ = ticket_system.update_status(&key, Status::InProgress);
-                }
-                key
-            }
+            .find(|t| t.status == Status::InProgress && t.has_label(agent.get_name()))
+            .map(|t| t.key().to_string());
+        // Path B: atomically claim an open Todo whose labels match.
+        let path_b = || {
+            ticket_system.claim(
+                |t| t.status == Status::Todo && agent.handles_labels(&t.labels),
+                agent.get_name(),
+            )
+        };
+        let key = match path_a.or_else(path_b) {
+            Some(key) => key,
             None => {
                 tokio::time::sleep(IDLE_POLL_INTERVAL).await;
                 continue;
@@ -169,7 +164,7 @@ pub(super) async fn handle_tickets(agent: Agent) {
     }
 }
 
-/// One ticket from claimed → settled. Owns the per-ticket message vector.
+/// One ticket from claimed → done/failed. Owns the per-ticket message vector.
 async fn process_ticket(
     agent: &Agent,
     ticket_system: &Arc<crate::agents::tickets::TicketSystem>,
@@ -325,7 +320,11 @@ async fn process_ticket(
                     (None, _) => Status::Done,
                 },
             };
-            let _ = ticket_system.force_status(key, final_status);
+            let _ = match final_status {
+                Status::Done => ticket_system.set_done(key),
+                Status::Failed => ticket_system.set_failed(key),
+                _ => unreachable!(),
+            };
             emit(terminal_event(final_status, key));
             return;
         }
@@ -417,7 +416,7 @@ async fn process_ticket(
                 kind: crate::event::PolicyKind::MaxSchemaRetries,
                 limit: u64::from(max_schema_retries),
             });
-            let _ = ticket_system.force_status(key, Status::Failed);
+            let _ = ticket_system.set_failed(key);
             emit(EventKind::TicketFailed {
                 key: key.to_string(),
             });
@@ -709,7 +708,7 @@ mod tests {
         assert_eq!(provider.requests(), 3);
         assert_eq!(retries_in(&events).len(), 2);
         assert!(failures_in(&events).is_empty());
-        assert_eq!(settled.unwrap().status(), "done");
+        assert_eq!(settled.unwrap().status, Status::Done);
     }
 
     #[tokio::test]
@@ -758,7 +757,7 @@ mod tests {
 
         assert!(retries_in(&events).is_empty());
         assert!(failures_in(&events).is_empty());
-        assert_eq!(settled.unwrap().status(), "done");
+        assert_eq!(settled.unwrap().status, Status::Done);
     }
 
     #[tokio::test]
@@ -957,7 +956,7 @@ mod tests {
             .count();
         assert_eq!(done, 1);
         assert_eq!(failed, 0);
-        assert_eq!(settled.unwrap().status(), "done");
+        assert_eq!(settled.unwrap().status, Status::Done);
     }
 
     #[tokio::test]
@@ -977,7 +976,7 @@ mod tests {
             .count();
         assert_eq!(failed, 1);
         assert_eq!(done, 0);
-        assert_eq!(settled.unwrap().status(), "failed");
+        assert_eq!(settled.unwrap().status, Status::Failed);
     }
 
     #[tokio::test]
@@ -1000,7 +999,7 @@ mod tests {
         assert_eq!(done, 1);
         assert_eq!(failed, 0);
         let settled = settled.unwrap();
-        assert_eq!(settled.status(), "done");
+        assert_eq!(settled.status, Status::Done);
         assert_eq!(settled.result().unwrap().result["partial_sum"], 42);
     }
 
@@ -1034,7 +1033,7 @@ mod tests {
         for (_, max_attempts, _) in &schema_retries {
             assert_eq!(*max_attempts, 10);
         }
-        assert_eq!(settled.unwrap().status(), "done");
+        assert_eq!(settled.unwrap().status, Status::Done);
     }
 
     #[tokio::test]
@@ -1075,7 +1074,7 @@ mod tests {
             )
         });
         assert!(policy_violated, "expected MaxSchemaRetries PolicyViolated");
-        assert_eq!(settled.unwrap().status(), "failed");
+        assert_eq!(settled.unwrap().status, Status::Failed);
     }
 
     // =====================================================================
@@ -1379,7 +1378,7 @@ mod tests {
             let done = tickets
                 .tickets()
                 .iter()
-                .any(|t| t.status() == "done" && t.task.as_str() == Some("hello"));
+                .any(|t| t.status == Status::Done && t.task.as_str() == Some("hello"));
             if done {
                 break;
             }
@@ -1425,7 +1424,7 @@ mod tests {
             let done = tickets
                 .tickets()
                 .iter()
-                .any(|t| t.status() == "done" && t.task.as_str() == Some("x"));
+                .any(|t| t.status == Status::Done && t.task.as_str() == Some("x"));
             if done {
                 break;
             }

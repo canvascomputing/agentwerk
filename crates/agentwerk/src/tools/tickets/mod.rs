@@ -73,7 +73,7 @@ pub(super) fn resolve_current_key(
     let agent_name = ctx.agent_name_str().ok_or_else(|| {
         ToolResult::error("Missing `key` and no agent_name set on this tool context")
     })?;
-    match ticket_system.find(|t| t.status() == "in_progress" && t.has_label(agent_name)) {
+    match ticket_system.find(|t| t.status == Status::InProgress && t.has_label(agent_name)) {
         Some(t) => Ok(t.key().to_string()),
         None => Err(ToolResult::error(
             "Missing `key` and no current ticket assigned to this agent",
@@ -382,7 +382,7 @@ pub(super) fn write_result(
     if let Err(e) = ticket_system.set_result(key, ticket_result) {
         return ToolResult::error(ticket_error_message(e));
     }
-    match ticket_system.update_status(key, Status::Done) {
+    match ticket_system.set_done(key) {
         Ok(()) => ToolResult::success(format!("Ticket {key} marked done")),
         Err(e) => ToolResult::error(ticket_error_message(e)),
     }
@@ -417,12 +417,15 @@ mod tests {
             .agent_name(agent.to_string())
     }
 
-    /// Insert one Todo ticket, force it to InProgress, label with `agent`,
-    /// so `sys.find(...)` resolves it as the current ticket for `agent`.
+    /// Insert one Todo ticket, claim it for `agent` (atomically labels +
+    /// transitions to InProgress), so `sys.find(...)` resolves it as the
+    /// current ticket for `agent`.
     fn shared_with_one_ticket(agent: &str) -> (Arc<TicketSystem>, String) {
         let sys = TicketSystem::new();
-        let key = sys.insert(Ticket::new("body").label(agent), "tester".into());
-        sys.force_status(&key, Status::InProgress).unwrap();
+        sys.insert(Ticket::new("body").label(agent), "tester".into());
+        let key = sys
+            .claim(|t| t.status == Status::Todo, agent)
+            .expect("claim must succeed");
         (sys, key)
     }
 
@@ -450,7 +453,7 @@ mod tests {
         let sys = TicketSystem::new();
         sys.insert(Ticket::new("a"), "tester".into());
         sys.insert(Ticket::new("b"), "tester".into());
-        sys.update_status("TICKET-1", Status::InProgress).unwrap();
+        sys.claim(|t| t.key() == "TICKET-1", "alice");
 
         let ctx = ctx_with(Arc::clone(&sys), "alice");
         let result = call(
@@ -497,7 +500,7 @@ mod tests {
         assert!(matches!(result, ToolResult::Success(_)));
         let t = sys.get("TICKET-1").unwrap();
         assert_eq!(t.labels, vec!["research".to_string()]);
-        assert_eq!(t.status(), "todo");
+        assert_eq!(t.status, Status::Todo);
     }
 
     #[tokio::test]
@@ -517,7 +520,7 @@ mod tests {
         assert!(matches!(result, ToolResult::Success(_)));
         let t = sys.get("TICKET-1").unwrap();
         assert!(t.has_label("alice"));
-        assert_eq!(t.status(), "todo");
+        assert_eq!(t.status, Status::Todo);
     }
 
     #[tokio::test]

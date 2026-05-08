@@ -118,8 +118,8 @@ impl Ticket {
     }
 
     /// Current status as a lowercase string: `"todo"`, `"in_progress"`,
-    /// `"done"`, or `"failed"`. Use [`TicketSystem::update_status`] with the
-    /// `Status` enum to drive transitions.
+    /// `"done"`, or `"failed"`. Use [`TicketSystem::set_done`] or
+    /// [`TicketSystem::set_failed`] to drive transitions.
     pub fn status(&self) -> &'static str {
         self.status.as_str()
     }
@@ -423,23 +423,62 @@ impl TicketSystem {
         self.tickets.lock().unwrap().get(key).cloned()
     }
 
-    /// State-machine-checked status transition. Records a ticket-stats
-    /// event when the transition reaches Done or Failed.
-    pub fn update_status(&self, key: &str, status: Status) -> Result<(), TicketError> {
+    /// Atomically find a `Todo` ticket matching `predicate`, label it
+    /// with `agent_name`, and transition to `InProgress`.
+    pub(crate) fn claim<F>(&self, predicate: F, agent_name: &str) -> Option<String>
+    where
+        F: Fn(&Ticket) -> bool,
+    {
         let now = now_millis();
-        let outcome = {
+        let (key, prev, durations, labels) = {
+            let mut store = self.tickets.lock().unwrap();
+            let mut candidates: Vec<&String> = store
+                .iter()
+                .filter(|(_, t)| predicate(t))
+                .map(|(k, _)| k)
+                .collect();
+            candidates.sort_by_key(|k| {
+                let t = &store[k.as_str()];
+                (t.created_at, numeric_id(k))
+            });
+            let key = candidates.into_iter().next()?.clone();
+            let ticket = store.get_mut(&key)?;
+            if ticket.status != Status::Todo {
+                return None;
+            }
+            if !ticket.labels.iter().any(|l| l == agent_name) {
+                ticket.labels.push(agent_name.to_string());
+            }
+            let prev = ticket.status;
+            stamp_transition_timestamps(ticket, Status::InProgress, now);
+            ticket.status = Status::InProgress;
+            let durations = terminal_durations(ticket);
+            let labels = ticket.labels.clone();
+            (key, prev, durations, labels)
+        };
+        self.record_transition(&key, prev, Status::InProgress, now, durations, &labels);
+        Some(key)
+    }
+
+    /// Transition a ticket to `Done`.
+    pub(crate) fn set_done(&self, key: &str) -> Result<(), TicketError> {
+        self.set_final_status(key, Status::Done)
+    }
+
+    /// Transition a ticket to `Failed`.
+    pub(crate) fn set_failed(&self, key: &str) -> Result<(), TicketError> {
+        self.set_final_status(key, Status::Failed)
+    }
+
+    fn set_final_status(&self, key: &str, status: Status) -> Result<(), TicketError> {
+        let now = now_millis();
+        let (prev, durations, labels) = {
             let mut store = self.tickets.lock().unwrap();
             let ticket = store
                 .get_mut(key)
                 .ok_or_else(|| TicketError::TicketMissing {
                     key: key.to_string(),
                 })?;
-            if !is_allowed_transition(ticket.status, status) {
-                return Err(TicketError::TransitionRejected {
-                    from: ticket.status,
-                    to: status,
-                });
-            }
             let prev = ticket.status;
             stamp_transition_timestamps(ticket, status, now);
             ticket.status = status;
@@ -447,36 +486,23 @@ impl TicketSystem {
             let labels = ticket.labels.clone();
             (prev, durations, labels)
         };
-        fire_transition_recorder(&self.stats, outcome.0, status, now, outcome.1);
-        fire_label_transition(&self.stats, status, outcome.1, &outcome.2);
-        self.log_transition(key, outcome.0, status, now, outcome.1, &outcome.2);
+        self.record_transition(key, prev, status, now, durations, &labels);
         Ok(())
     }
 
-    /// Bypass the state machine. Reserved for the loop's recovery paths
-    /// (e.g. `MaxSchemaRetries` trip → Failed) so a stuck ticket doesn't
-    /// get re-picked indefinitely via Path A. Crate-internal: developers
-    /// drive transitions through the normal lifecycle, not this primitive.
-    pub(crate) fn force_status(&self, key: &str, status: Status) -> Result<(), TicketError> {
-        let now = now_millis();
-        let outcome = {
-            let mut store = self.tickets.lock().unwrap();
-            let ticket = store
-                .get_mut(key)
-                .ok_or_else(|| TicketError::TicketMissing {
-                    key: key.to_string(),
-                })?;
-            let prev = ticket.status;
-            stamp_transition_timestamps(ticket, status, now);
-            ticket.status = status;
-            let durations = terminal_durations(ticket);
-            let labels = ticket.labels.clone();
-            (prev, durations, labels)
-        };
-        fire_transition_recorder(&self.stats, outcome.0, status, now, outcome.1);
-        fire_label_transition(&self.stats, status, outcome.1, &outcome.2);
-        self.log_transition(key, outcome.0, status, now, outcome.1, &outcome.2);
-        Ok(())
+    /// Fire stats recorders and workspace log after a transition.
+    fn record_transition(
+        &self,
+        key: &str,
+        prev: Status,
+        next: Status,
+        now: u64,
+        durations: (Duration, Duration),
+        labels: &[String],
+    ) {
+        fire_transition_recorder(&self.stats, prev, next, now, durations);
+        fire_label_transition(&self.stats, next, durations, labels);
+        self.log_transition(key, prev, next, now, durations, labels);
     }
 
     /// Append a `started` / `done` / `failed` line to `tickets.jsonl` if
@@ -519,24 +545,6 @@ impl TicketSystem {
             }
             _ => {}
         }
-    }
-
-    /// Append a label to a ticket. Used by the loop to pin a Path-B
-    /// ticket to the agent that just claimed it: subsequent Path-A
-    /// lookups find the ticket via `has_label(agent_name)`. No-op when
-    /// the label is already present.
-    pub(crate) fn add_label(&self, key: &str, label: impl Into<String>) -> Result<(), TicketError> {
-        let label = label.into();
-        let mut store = self.tickets.lock().unwrap();
-        let ticket = store
-            .get_mut(key)
-            .ok_or_else(|| TicketError::TicketMissing {
-                key: key.to_string(),
-            })?;
-        if !ticket.labels.iter().any(|l| l == &label) {
-            ticket.labels.push(label);
-        }
-        Ok(())
     }
 
     /// Attach a `TicketResult` to the ticket at `key`.
@@ -749,7 +757,7 @@ impl TicketSystem {
     /// Tickets that finished without a recorded result are skipped.
     /// Backing helper for `Running::run_dry`.
     pub(crate) fn collect_results(&self) -> Vec<TicketResult> {
-        self.filter(|t| t.status() == "done")
+        self.filter(|t| t.status == Status::Done)
             .into_iter()
             .filter_map(|t| t.result)
             .collect()
@@ -887,15 +895,6 @@ fn fire_label_transition(
     }
 }
 
-fn is_allowed_transition(from: Status, to: Status) -> bool {
-    matches!(
-        (from, to),
-        (Status::Todo, Status::InProgress)
-            | (Status::InProgress, Status::Done)
-            | (Status::InProgress, Status::Failed)
-    )
-}
-
 pub(crate) fn now_millis() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -945,7 +944,7 @@ mod tests {
             },
         )
         .unwrap();
-        sys.force_status(key, Status::Done).unwrap();
+        sys.set_done(key).unwrap();
     }
 
     #[test]
@@ -955,7 +954,7 @@ mod tests {
         let t = sys.get("TICKET-1").unwrap();
         assert_eq!(t.task, serde_json::Value::String("hello".into()));
         assert_eq!(t.reporter(), "user");
-        assert_eq!(t.status(), "todo");
+        assert_eq!(t.status, Status::Todo);
     }
 
     #[test]
@@ -964,7 +963,7 @@ mod tests {
         sys.task_labeled("hello", "research");
         let t = sys.get("TICKET-1").unwrap();
         assert_eq!(t.labels, vec!["research".to_string()]);
-        assert_eq!(t.status(), "todo");
+        assert_eq!(t.status, Status::Todo);
     }
 
     #[test]
@@ -973,7 +972,7 @@ mod tests {
         sys.ticket(Ticket::new("specific work for alice").label("alice"));
         let t = sys.get("TICKET-1").unwrap();
         assert!(t.has_label("alice"));
-        assert_eq!(t.status(), "todo");
+        assert_eq!(t.status, Status::Todo);
     }
 
     #[test]
@@ -987,17 +986,6 @@ mod tests {
     }
 
     #[test]
-    fn allowed_transitions_match_state_machine() {
-        assert!(is_allowed_transition(Status::Todo, Status::InProgress));
-        assert!(is_allowed_transition(Status::InProgress, Status::Done));
-        assert!(is_allowed_transition(Status::InProgress, Status::Failed));
-        assert!(!is_allowed_transition(Status::Todo, Status::Done));
-        assert!(!is_allowed_transition(Status::InProgress, Status::Todo));
-        assert!(!is_allowed_transition(Status::Done, Status::Failed));
-        assert!(!is_allowed_transition(Status::Failed, Status::Done));
-    }
-
-    #[test]
     fn ticket_system_handle_is_shared_between_caller_and_added_agent() {
         let sys = TicketSystem::new();
         let alice = sys.agent(Agent::new().name("alice"));
@@ -1005,7 +993,7 @@ mod tests {
         alice.task("from alice");
         sys.task("from system");
         let all_keys: Vec<String> = sys
-            .filter(|t| t.status() == "todo")
+            .filter(|t| t.status == Status::Todo)
             .iter()
             .map(|t| t.key().to_string())
             .collect();
@@ -1019,7 +1007,7 @@ mod tests {
         let alice = sys.agent(alice);
         // Bound — task() works, lands in the shared queue.
         alice.task("first").task("second");
-        assert_eq!(sys.count(|t| t.status() == "todo"), 2);
+        assert_eq!(sys.count(|t| t.status == Status::Todo), 2);
     }
 
     #[test]
@@ -1131,11 +1119,11 @@ mod tests {
     fn done_and_failed_filter_by_status() {
         let sys = TicketSystem::new();
         sys.task("ok").task("oops").task("pending");
-        sys.update_status("TICKET-1", Status::InProgress).unwrap();
-        sys.update_status("TICKET-1", Status::Done).unwrap();
-        sys.force_status("TICKET-2", Status::Failed).unwrap();
-        let done = sys.filter(|t| t.status() == "done");
-        let failed = sys.filter(|t| t.status() == "failed");
+        sys.claim(|t| t.key() == "TICKET-1", "agent");
+        sys.set_done("TICKET-1").unwrap();
+        sys.set_failed("TICKET-2").unwrap();
+        let done = sys.filter(|t| t.status == Status::Done);
+        let failed = sys.filter(|t| t.status == Status::Failed);
         assert_eq!(done.len(), 1);
         assert_eq!(done[0].key(), "TICKET-1");
         assert_eq!(failed.len(), 1);
@@ -1148,10 +1136,10 @@ mod tests {
         sys.task("a").task("b").task("c");
         // Created 3 tickets.
         assert_eq!(sys.stats().tickets_created(), 3);
-        sys.update_status("TICKET-1", Status::InProgress).unwrap();
-        sys.update_status("TICKET-1", Status::Done).unwrap();
-        sys.update_status("TICKET-2", Status::InProgress).unwrap();
-        sys.update_status("TICKET-2", Status::Failed).unwrap();
+        sys.claim(|t| t.key() == "TICKET-1", "agent");
+        sys.set_done("TICKET-1").unwrap();
+        sys.claim(|t| t.key() == "TICKET-2", "agent");
+        sys.set_failed("TICKET-2").unwrap();
         assert_eq!(sys.stats().tickets_done(), 1);
         assert_eq!(sys.stats().tickets_failed(), 1);
     }
@@ -1174,10 +1162,10 @@ mod tests {
         let sys = TicketSystem::new();
         sys.ticket(Ticket::new("a").labels(["scan", "high"]));
         sys.ticket(Ticket::new("b").label("scan"));
-        sys.update_status("TICKET-1", Status::InProgress).unwrap();
-        sys.update_status("TICKET-1", Status::Done).unwrap();
-        sys.update_status("TICKET-2", Status::InProgress).unwrap();
-        sys.update_status("TICKET-2", Status::Failed).unwrap();
+        sys.claim(|t| t.key() == "TICKET-1", "agent");
+        sys.set_done("TICKET-1").unwrap();
+        sys.claim(|t| t.key() == "TICKET-2", "agent");
+        sys.set_failed("TICKET-2").unwrap();
         let stats = sys.stats();
         let scan = stats.stats_for_label("scan");
         let high = stats.stats_for_label("high");
@@ -1190,10 +1178,10 @@ mod tests {
     }
 
     #[test]
-    fn stats_for_label_force_status_path_records_per_label() {
+    fn stats_for_label_set_failed_path_records_per_label() {
         let sys = TicketSystem::new();
         sys.ticket(Ticket::new("a").label("scan"));
-        sys.force_status("TICKET-1", Status::Failed).unwrap();
+        sys.set_failed("TICKET-1").unwrap();
         assert_eq!(sys.stats().stats_for_label("scan").tickets_failed(), 1);
     }
 
@@ -1201,8 +1189,8 @@ mod tests {
     fn stats_for_label_unaffected_by_no_label_ticket() {
         let sys = TicketSystem::new();
         sys.ticket(Ticket::new("a"));
-        sys.update_status("TICKET-1", Status::InProgress).unwrap();
-        sys.update_status("TICKET-1", Status::Done).unwrap();
+        sys.claim(|t| t.key() == "TICKET-1", "agent");
+        sys.set_done("TICKET-1").unwrap();
         assert_eq!(sys.stats().tickets_done(), 1);
         assert_eq!(sys.stats().stats_for_label("scan").tickets_done(), 0);
         assert_eq!(sys.stats().stats_for_label("scan").tickets_created(), 0);
@@ -1221,8 +1209,8 @@ mod tests {
     fn workspace_unset_skips_tickets_log() {
         let sys = TicketSystem::new();
         sys.task("hello");
-        sys.update_status("TICKET-1", Status::InProgress).unwrap();
-        sys.update_status("TICKET-1", Status::Done).unwrap();
+        sys.claim(|t| t.key() == "TICKET-1", "agent");
+        sys.set_done("TICKET-1").unwrap();
         // No workspace, no panic, no file: this asserts the no-op path.
         assert!(sys.workspace_value().is_none());
     }
@@ -1232,8 +1220,8 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let sys = TicketSystem::new().workspace(dir.path().to_path_buf());
         sys.task("hello");
-        sys.update_status("TICKET-1", Status::InProgress).unwrap();
-        sys.update_status("TICKET-1", Status::Done).unwrap();
+        sys.claim(|t| t.key() == "TICKET-1", "agent");
+        sys.set_done("TICKET-1").unwrap();
         let lines = read_tickets_log(dir.path());
         assert_eq!(lines.len(), 3);
         assert_eq!(lines[0]["event"], "created");
@@ -1249,13 +1237,13 @@ mod tests {
     }
 
     #[test]
-    fn workspace_emits_failed_event_on_force_failed() {
+    fn workspace_emits_failed_event_on_set_failed() {
         let dir = tempfile::tempdir().unwrap();
         let sys = TicketSystem::new().workspace(dir.path().to_path_buf());
         sys.task("hello");
-        sys.force_status("TICKET-1", Status::Failed).unwrap();
+        sys.set_failed("TICKET-1").unwrap();
         let lines = read_tickets_log(dir.path());
-        // created + failed (no started since Todo→Failed via force_status)
+        // created + failed (no started since Todo→Failed via set_failed)
         assert_eq!(lines.len(), 2);
         assert_eq!(lines[0]["event"], "created");
         assert_eq!(lines[1]["event"], "failed");
@@ -1278,12 +1266,87 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let sys = TicketSystem::new().workspace(dir.path().to_path_buf());
         sys.task("a").task("b");
-        sys.update_status("TICKET-1", Status::InProgress).unwrap();
-        sys.update_status("TICKET-1", Status::Done).unwrap();
-        sys.update_status("TICKET-2", Status::InProgress).unwrap();
-        sys.update_status("TICKET-2", Status::Failed).unwrap();
+        sys.claim(|t| t.key() == "TICKET-1", "agent");
+        sys.set_done("TICKET-1").unwrap();
+        sys.claim(|t| t.key() == "TICKET-2", "agent");
+        sys.set_failed("TICKET-2").unwrap();
         let lines = read_tickets_log(dir.path());
         // 2 created + 2 started + 1 done + 1 failed
         assert_eq!(lines.len(), 6);
+    }
+
+    // ---- claim / set_done / set_failed unit tests ----
+
+    #[test]
+    fn claim_transitions_todo_to_in_progress_and_adds_label() {
+        let sys = TicketSystem::new();
+        sys.task("hello");
+        let key = sys.claim(|t| t.status == Status::Todo, "alice").unwrap();
+        assert_eq!(key, "TICKET-1");
+        let t = sys.get(&key).unwrap();
+        assert_eq!(t.status, Status::InProgress);
+        assert!(t.has_label("alice"));
+        assert!(t.started_at().is_some());
+    }
+
+    #[test]
+    fn claim_returns_none_when_no_ticket_matches() {
+        let sys = TicketSystem::new();
+        sys.task("hello");
+        assert!(sys.claim(|t| t.has_label("nonexistent"), "alice").is_none());
+    }
+
+    #[test]
+    fn second_claim_of_same_ticket_returns_none() {
+        let sys = TicketSystem::new();
+        sys.task("hello");
+        let first = sys.claim(|t| t.key() == "TICKET-1", "alice");
+        assert!(first.is_some());
+        // Second claim: ticket is now InProgress, not Todo.
+        let second = sys.claim(|t| t.key() == "TICKET-1", "bob");
+        assert!(second.is_none());
+    }
+
+    #[test]
+    fn claim_picks_earliest_eligible_ticket() {
+        let sys = TicketSystem::new();
+        sys.task("a").task("b").task("c");
+        let key = sys.claim(|t| t.status == Status::Todo, "alice").unwrap();
+        assert_eq!(key, "TICKET-1");
+    }
+
+    #[test]
+    fn claim_emits_started_event_in_workspace_log() {
+        let dir = tempfile::tempdir().unwrap();
+        let sys = TicketSystem::new().workspace(dir.path().to_path_buf());
+        sys.task("hello");
+        sys.claim(|t| t.status == Status::Todo, "alice");
+        let lines = read_tickets_log(dir.path());
+        assert_eq!(lines.len(), 2);
+        assert_eq!(lines[0]["event"], "created");
+        assert_eq!(lines[1]["event"], "started");
+        assert_eq!(lines[1]["key"], "TICKET-1");
+    }
+
+    #[test]
+    fn set_done_transitions_to_done() {
+        let sys = TicketSystem::new();
+        sys.task("hello");
+        sys.claim(|t| t.status == Status::Todo, "alice");
+        sys.set_done("TICKET-1").unwrap();
+        let t = sys.get("TICKET-1").unwrap();
+        assert_eq!(t.status, Status::Done);
+        assert!(t.finished_at().is_some());
+    }
+
+    #[test]
+    fn set_failed_transitions_to_failed() {
+        let sys = TicketSystem::new();
+        sys.task("hello");
+        sys.claim(|t| t.status == Status::Todo, "alice");
+        sys.set_failed("TICKET-1").unwrap();
+        let t = sys.get("TICKET-1").unwrap();
+        assert_eq!(t.status, Status::Failed);
+        assert!(t.failed_at().is_some());
     }
 }

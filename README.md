@@ -370,20 +370,6 @@ let s = tickets.stats();
 | `count(predicate)` | Count tickets matching `predicate`. |
 | `stats()` | Read current statistics. |
 
-### Status
-
-Move a ticket through the state machine with `update_status`.
-
-```rust
-use agentwerk::Status;
-
-tickets.update_status("TICKET-1", Status::InProgress)?;
-```
-
-| Method | Description |
-|--------|-------------|
-| `update_status(key, status)` | Transition a ticket through the state machine. |
-
 ### Policies
 
 Configure execution policies on a ticket system. A breach fires `EventKind::PolicyViolated` and halts execution.
