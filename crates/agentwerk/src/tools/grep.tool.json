@@ -7,7 +7,7 @@
   "constraints": [
     "ALWAYS use this tool for content search. NEVER invoke `grep` or `rg` via bash_tool.",
     "Use the `glob` parameter to scope by file type (`*.rs`, `*.ts`); cheaper than searching the whole tree.",
-    "Pair with `read_file_tool` once you have a hit to inspect surrounding code."
+    "Pair with `read_file_tool` once you have a hit to inspect surrounding code. In content mode, long lines are truncated to ~200 bytes around the match; use `read_file_tool` with `col_offset`/`col_limit` to read the full context."
   ],
   "anti_patterns": [
     "To find files by *name*, not contents — use `glob_tool`.",

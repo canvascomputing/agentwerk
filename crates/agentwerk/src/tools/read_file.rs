@@ -73,6 +73,9 @@ impl ToolLike for ReadFileTool {
                 .map(|l| l as usize)
                 .unwrap_or(lines.len().saturating_sub(offset - 1));
 
+            let col_offset = input["col_offset"].as_u64().map(|c| c.max(1) as usize);
+            let col_limit = input["col_limit"].as_u64().map(|c| c as usize);
+
             let start = offset - 1;
             let end = (start + limit).min(lines.len());
 
@@ -82,12 +85,37 @@ impl ToolLike for ReadFileTool {
                 if !result.is_empty() {
                     result.push('\n');
                 }
-                result.push_str(&format!("{line_num}\t{line}"));
+                match col_offset {
+                    Some(col) => {
+                        let byte_start = snap_to_char_boundary(line, (col - 1).min(line.len()));
+                        let byte_end = match col_limit {
+                            Some(cl) => {
+                                snap_to_char_boundary(line, (byte_start + cl).min(line.len()))
+                            }
+                            None => line.len(),
+                        };
+                        let slice = &line[byte_start..byte_end];
+                        let display_col = byte_start + 1;
+                        result.push_str(&format!("{line_num}:{display_col}\t{slice}"));
+                    }
+                    None => {
+                        result.push_str(&format!("{line_num}\t{line}"));
+                    }
+                }
             }
 
             Ok(ToolResult::success(result))
         })
     }
+}
+
+fn snap_to_char_boundary(s: &str, pos: usize) -> usize {
+    let pos = pos.min(s.len());
+    let mut p = pos;
+    while p < s.len() && !s.is_char_boundary(p) {
+        p += 1;
+    }
+    p
 }
 
 #[cfg(test)]
@@ -130,6 +158,24 @@ mod tests {
                 input: serde_json::json!({ "path": "no_such_file.txt" }),
                 expect_error: true,
                 expect_contains: "Failed to read file",
+            },
+            Case {
+                name: "col_offset slices from byte position",
+                input: serde_json::json!({ "path": "test.txt", "offset": 1, "limit": 1, "col_offset": 3 }),
+                expect_error: false,
+                expect_contains: "1:3\tpha",
+            },
+            Case {
+                name: "col_offset with col_limit bounds the slice",
+                input: serde_json::json!({ "path": "test.txt", "offset": 2, "limit": 1, "col_offset": 2, "col_limit": 3 }),
+                expect_error: false,
+                expect_contains: "2:2\teta",
+            },
+            Case {
+                name: "col_offset beyond line returns empty",
+                input: serde_json::json!({ "path": "test.txt", "offset": 1, "limit": 1, "col_offset": 100 }),
+                expect_error: false,
+                expect_contains: "1:6\t",
             },
         ];
 

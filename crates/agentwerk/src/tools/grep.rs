@@ -20,6 +20,13 @@ pub struct GrepTool;
 const DEFAULT_MAX_RESULTS: u64 = 100;
 const SKIP_DIRS: &[&str] = &[".git", "target", "node_modules", "vendor"];
 
+/// Maximum bytes of a source line to include in content-mode output. Lines
+/// longer than this (common in minified bundles) are sliced to a window
+/// around the match column so a single hit never dumps megabytes into the
+/// tool result. The agent can follow up with `read_file_tool` and
+/// `col_offset`/`col_limit` for the full context.
+const MAX_LINE_DISPLAY: usize = 200;
+
 fn tool_file() -> &'static ToolFile {
     static FILE: OnceLock<ToolFile> = OnceLock::new();
     FILE.get_or_init(|| ToolFile::parse(include_str!("grep.tool.json")))
@@ -129,9 +136,11 @@ fn search_content(
                     continue;
                 }
                 if let Some(&col) = match_map.get(&li) {
-                    output.push(format!("{}:{}:{}: {}", rel, li + 1, col, line));
+                    let snippet = truncate_around(line, col.saturating_sub(1), MAX_LINE_DISPLAY);
+                    output.push(format!("{}:{}:{}: {}", rel, li + 1, col, snippet));
                 } else {
-                    output.push(format!("{}:{}: {}", rel, li + 1, line));
+                    let snippet = truncate_line(line, MAX_LINE_DISPLAY);
+                    output.push(format!("{}:{}: {}", rel, li + 1, snippet));
                 }
                 if output.len() >= max_results {
                     break 'outer;
@@ -200,6 +209,39 @@ fn search_files(
     }
 
     matched.join("\n")
+}
+
+/// Truncate a line to `max` bytes from the start, snapping to a char boundary.
+fn truncate_line(line: &str, max: usize) -> &str {
+    if line.len() <= max {
+        return line;
+    }
+    let mut end = max;
+    while end < line.len() && !line.is_char_boundary(end) {
+        end += 1;
+    }
+    &line[..end]
+}
+
+/// Return a window of up to `max` bytes centred on `byte_offset`, snapping
+/// to char boundaries. For short lines the full line is returned unchanged.
+fn truncate_around(line: &str, byte_offset: usize, max: usize) -> &str {
+    if line.len() <= max {
+        return line;
+    }
+    let half = max / 2;
+    let raw_start = byte_offset.saturating_sub(half);
+    let mut start = raw_start;
+    // Snap start forward to a char boundary.
+    while start < line.len() && !line.is_char_boundary(start) {
+        start += 1;
+    }
+    let mut end = (start + max).min(line.len());
+    // Snap end forward to a char boundary.
+    while end < line.len() && !line.is_char_boundary(end) {
+        end += 1;
+    }
+    &line[start..end]
 }
 
 /// Returns the 1-based column of the first match, or `None` if there is no match.
@@ -524,5 +566,43 @@ mod tests {
                 "Expected 'matches' in count line: {line}"
             );
         }
+    }
+
+    #[tokio::test]
+    async fn content_mode_truncates_long_lines() {
+        let tmp = tempfile::tempdir().unwrap();
+        // Build a single-line file with a needle buried deep inside.
+        let prefix = "x".repeat(1000);
+        let suffix = "y".repeat(1000);
+        let content = format!("{prefix}NEEDLE{suffix}");
+        fs::write(tmp.path().join("big.txt"), &content).unwrap();
+
+        let tool = GrepTool;
+        let ctx = test_ctx(tmp.path());
+
+        let result = tool
+            .call(
+                serde_json::json!({"pattern": "NEEDLE", "output_mode": "content"}),
+                &ctx,
+            )
+            .await
+            .unwrap();
+
+        let (ToolResult::Success(output)
+        | ToolResult::Error(output)
+        | ToolResult::SchemaError(output)) = &result;
+        let line = output.lines().next().expect("should have a match");
+        // The output line (including path:line:col: prefix) must be much
+        // shorter than the 2006-byte source line.
+        assert!(
+            line.len() < 300,
+            "grep content output should truncate long lines, got {} bytes",
+            line.len()
+        );
+        // The snippet should still contain the needle.
+        assert!(
+            line.contains("NEEDLE"),
+            "truncated output should contain the needle; got: {line}"
+        );
     }
 }
