@@ -61,7 +61,7 @@ impl ToolLike for WriteFileTool {
                 }
             };
 
-            let resolved = ctx.working_dir.join(path);
+            let resolved = ctx.dir.join(path);
 
             if let Some(parent) = resolved.parent() {
                 if let Err(e) = std::fs::create_dir_all(parent) {

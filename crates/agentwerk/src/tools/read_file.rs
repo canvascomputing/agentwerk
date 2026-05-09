@@ -56,7 +56,7 @@ impl ToolLike for ReadFileTool {
                 }
             };
 
-            let resolved = ctx.working_dir.join(path);
+            let resolved = ctx.dir.join(path);
 
             let content = match std::fs::read_to_string(&resolved) {
                 Ok(c) => c,

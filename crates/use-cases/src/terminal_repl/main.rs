@@ -60,7 +60,7 @@ async fn main() {
             .provider(Arc::clone(&provider))
             .model(&model)
             .role(role)
-            .working_dir(&cwd)
+            .dir(&cwd)
             .tool(GlobTool)
             .tool(GrepTool)
             .tool(ListDirectoryTool)

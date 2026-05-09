@@ -85,7 +85,7 @@ async fn finds_every_lib_rs_in_nested_tree() -> std::result::Result<(), Box<dyn 
     let agent = Agent::new()
         .provider(provider)
         .model(&model)
-        .working_dir(root)
+        .dir(root)
         .role(
             "Investigate the working directory and answer the user's question. \
              Use the available tools — pick whichever one fits the question. \

@@ -22,7 +22,7 @@ async fn creates_file_with_token() -> std::result::Result<(), Box<dyn std::error
     let agent = Agent::new()
         .provider(provider)
         .model(&model)
-        .working_dir(root)
+        .dir(root)
         .role(
             "Step 1: call `write_file_tool` to create exactly the file the user \
              asks for, with exactly the content they specify (and nothing else). \

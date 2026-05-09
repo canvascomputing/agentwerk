@@ -19,13 +19,13 @@ use super::error::ToolError;
 /// Context passed to tool execution. `tool_registry` and the ticket-side
 /// fields are ambient internals — only the built-in `ToolSearchTool` and
 /// the ticket tools (`Read`/`Write`/`Manage`) read them. External tool
-/// authors use `working_dir`, `interrupt_signal`, and
+/// authors use `dir`, `interrupt_signal`, and
 /// `wait_for_cancel`.
 #[derive(Clone)]
 pub struct ToolContext {
-    /// Working directory the tool runs in. Tools that touch the filesystem
+    /// Directory the tool runs in. Tools that touch the filesystem
     /// should resolve relative paths against this.
-    pub working_dir: PathBuf,
+    pub dir: PathBuf,
     pub interrupt_signal: Arc<AtomicBool>,
     pub(crate) tool_registry: Option<Arc<ToolRegistry>>,
     pub(crate) ticket_system: Option<Arc<TicketSystem>>,
@@ -33,13 +33,13 @@ pub struct ToolContext {
 }
 
 impl ToolContext {
-    /// A fresh context rooted at `working_dir`, with no registry handle and
+    /// A fresh context rooted at `dir`, with no registry handle and
     /// a fresh never-firing cancel signal. Tools that search the registry
     /// need a context installed by the loop; bare contexts are for
     /// standalone use and tests.
-    pub fn new(working_dir: PathBuf) -> Self {
+    pub fn new(dir: PathBuf) -> Self {
         Self {
-            working_dir,
+            dir,
             interrupt_signal: Arc::new(AtomicBool::new(false)),
             tool_registry: None,
             ticket_system: None,
@@ -102,7 +102,7 @@ impl ToolContext {
 impl std::fmt::Debug for ToolContext {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("ToolContext")
-            .field("working_dir", &self.working_dir)
+            .field("dir", &self.dir)
             .field("has_registry", &self.tool_registry.is_some())
             .field("has_ticket_system", &self.ticket_system.is_some())
             .finish()

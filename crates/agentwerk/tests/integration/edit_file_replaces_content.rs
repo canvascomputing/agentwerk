@@ -24,7 +24,7 @@ async fn replaces_substring_in_place() -> std::result::Result<(), Box<dyn std::e
     let agent = Agent::new()
         .provider(provider)
         .model(&model)
-        .working_dir(root)
+        .dir(root)
         .role(
             "Step 1: call `edit_file_tool` to perform an exact substring \
              replacement in the existing file. Do not rewrite the whole file. \

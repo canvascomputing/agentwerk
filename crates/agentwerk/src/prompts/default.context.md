@@ -1,4 +1,4 @@
-- Working directory: {working_dir}
+- Working directory: {dir}
 - Platform: {platform}
 - OS version: {os_version}
 - Date: {date}

@@ -233,7 +233,7 @@ pub struct TicketSystem {
     policies: Mutex<Policies>,
     pub(crate) interrupt_signal: Mutex<Arc<AtomicBool>>,
     pub(crate) stats: Stats,
-    workspace: Mutex<Option<PathBuf>>,
+    dir: Mutex<Option<PathBuf>>,
     tickets_log_lock: Mutex<()>,
 }
 
@@ -250,7 +250,7 @@ impl TicketSystem {
             policies: Mutex::new(Policies::default()),
             interrupt_signal: Mutex::new(Arc::new(AtomicBool::new(false))),
             stats: Stats::new(),
-            workspace: Mutex::new(None),
+            dir: Mutex::new(None),
             tickets_log_lock: Mutex::new(()),
         })
     }
@@ -315,15 +315,15 @@ impl TicketSystem {
     /// Directory under which the system writes `results.jsonl` and
     /// `tickets.jsonl`. Knowledge lives next to them when the caller points
     /// `Knowledge::open` at the same directory. When unset, `WriteResultTool`
-    /// falls back to the calling agent's working directory and the ticket
+    /// falls back to the calling agent's directory and the ticket
     /// event log is skipped entirely.
-    pub fn workspace(self: Arc<Self>, dir: impl Into<PathBuf>) -> Arc<Self> {
-        *self.workspace.lock().unwrap() = Some(dir.into());
+    pub fn dir(self: Arc<Self>, dir: impl Into<PathBuf>) -> Arc<Self> {
+        *self.dir.lock().unwrap() = Some(dir.into());
         self
     }
 
-    pub(crate) fn workspace_value(&self) -> Option<PathBuf> {
-        self.workspace.lock().unwrap().clone()
+    pub(crate) fn dir_value(&self) -> Option<PathBuf> {
+        self.dir.lock().unwrap().clone()
     }
 
     // ---- ticket-creation API mirrored on Agent ----
@@ -407,11 +407,11 @@ impl TicketSystem {
         key
     }
 
-    /// Append one JSON line to `<workspace>/tickets.jsonl`. Silently no-ops
-    /// when no workspace is configured. Errors are swallowed: the log is
+    /// Append one JSON line to `<dir>/tickets.jsonl`. Silently no-ops
+    /// when no directory is configured. Errors are swallowed: the log is
     /// observational, not load-bearing for run correctness.
     pub(crate) fn append_ticket_event(&self, event: serde_json::Value) {
-        let Some(dir) = self.workspace_value() else {
+        let Some(dir) = self.dir_value() else {
             return;
         };
         let _guard = self.tickets_log_lock.lock().unwrap();
@@ -490,7 +490,7 @@ impl TicketSystem {
         Ok(())
     }
 
-    /// Fire stats recorders and workspace log after a transition.
+    /// Fire stats recorders and ticket log after a transition.
     fn record_transition(
         &self,
         key: &str,
@@ -1212,13 +1212,13 @@ mod tests {
         sys.claim(|t| t.key() == "TICKET-1", "agent");
         sys.set_done("TICKET-1").unwrap();
         // No workspace, no panic, no file: this asserts the no-op path.
-        assert!(sys.workspace_value().is_none());
+        assert!(sys.dir_value().is_none());
     }
 
     #[test]
     fn workspace_emits_created_started_done_in_order() {
         let dir = tempfile::tempdir().unwrap();
-        let sys = TicketSystem::new().workspace(dir.path().to_path_buf());
+        let sys = TicketSystem::new().dir(dir.path().to_path_buf());
         sys.task("hello");
         sys.claim(|t| t.key() == "TICKET-1", "agent");
         sys.set_done("TICKET-1").unwrap();
@@ -1239,7 +1239,7 @@ mod tests {
     #[test]
     fn workspace_emits_failed_event_on_set_failed() {
         let dir = tempfile::tempdir().unwrap();
-        let sys = TicketSystem::new().workspace(dir.path().to_path_buf());
+        let sys = TicketSystem::new().dir(dir.path().to_path_buf());
         sys.task("hello");
         sys.set_failed("TICKET-1").unwrap();
         let lines = read_tickets_log(dir.path());
@@ -1253,7 +1253,7 @@ mod tests {
     #[test]
     fn workspace_created_event_carries_labels_when_pinned() {
         let dir = tempfile::tempdir().unwrap();
-        let sys = TicketSystem::new().workspace(dir.path().to_path_buf());
+        let sys = TicketSystem::new().dir(dir.path().to_path_buf());
         sys.ticket(Ticket::new("specific").label("alice"));
         let lines = read_tickets_log(dir.path());
         assert_eq!(lines.len(), 1);
@@ -1264,7 +1264,7 @@ mod tests {
     #[test]
     fn workspace_logs_one_line_per_lifecycle_step_for_multiple_tickets() {
         let dir = tempfile::tempdir().unwrap();
-        let sys = TicketSystem::new().workspace(dir.path().to_path_buf());
+        let sys = TicketSystem::new().dir(dir.path().to_path_buf());
         sys.task("a").task("b");
         sys.claim(|t| t.key() == "TICKET-1", "agent");
         sys.set_done("TICKET-1").unwrap();
@@ -1318,7 +1318,7 @@ mod tests {
     #[test]
     fn claim_emits_started_event_in_workspace_log() {
         let dir = tempfile::tempdir().unwrap();
-        let sys = TicketSystem::new().workspace(dir.path().to_path_buf());
+        let sys = TicketSystem::new().dir(dir.path().to_path_buf());
         sys.task("hello");
         sys.claim(|t| t.status == Status::Todo, "alice");
         let lines = read_tickets_log(dir.path());

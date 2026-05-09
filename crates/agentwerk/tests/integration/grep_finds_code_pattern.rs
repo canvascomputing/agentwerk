@@ -94,7 +94,7 @@ async fn finds_code_pattern_with_special_chars(
     let agent = Agent::new()
         .provider(provider)
         .model(&model)
-        .working_dir(root)
+        .dir(root)
         .role(
             "Investigate the working directory and answer the user's question. \
              Use the available tools — pick whichever one fits the question. \

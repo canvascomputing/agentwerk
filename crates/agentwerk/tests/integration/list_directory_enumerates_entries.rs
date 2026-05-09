@@ -44,7 +44,7 @@ async fn separates_files_and_directories() -> std::result::Result<(), Box<dyn st
     let agent = Agent::new()
         .provider(provider)
         .model(&model)
-        .working_dir(root)
+        .dir(root)
         .role(
             "Step 1: call `list_directory_tool` with `path: \".\"` to see the \
              working directory's top level. \

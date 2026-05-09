@@ -80,7 +80,7 @@ async fn traces_three_hop_call_path() -> std::result::Result<(), Box<dyn std::er
     let agent = Agent::new()
         .provider(provider)
         .model(&model)
-        .working_dir(root)
+        .dir(root)
         .role(
             "Investigate the working directory to answer the task. Use the \
              available read-only tools as you see fit. Multiple functions in \

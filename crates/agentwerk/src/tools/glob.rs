@@ -58,7 +58,7 @@ impl ToolLike for GlobTool {
                 }
             };
             let base_str = input["path"].as_str().unwrap_or(".");
-            let base = ctx.working_dir.join(base_str);
+            let base = ctx.dir.join(base_str);
 
             let pattern_segments: Vec<&str> = pattern.split('/').collect();
 

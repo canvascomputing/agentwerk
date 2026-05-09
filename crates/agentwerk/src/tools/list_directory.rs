@@ -50,7 +50,7 @@ impl ToolLike for ListDirectoryTool {
         Box::pin(async move {
             let path_str = input["path"].as_str().unwrap_or(".");
             let recursive = input["recursive"].as_bool().unwrap_or(false);
-            let base = ctx.working_dir.join(path_str);
+            let base = ctx.dir.join(path_str);
 
             match list_entries(&base, &base, recursive) {
                 Ok(mut entries) => {

@@ -77,7 +77,7 @@ Naming and comment rules, plus README structure. Skim the section matching what 
 
 **A directory path uses `_dir`. A file path uses `_file`. The bare suffix `_path` is used only when the value can be either.**
 
-- Directories: `working_dir`, `session_dir`, `base_dir`, `data_dir`. Matches `std::fs::read_dir`, `std::env::current_dir`, `std::fs::DirEntry`.
+- Directories: `scan_dir`, `session_dir`, `base_dir`, `data_dir`. Matches `std::fs::read_dir`, `std::env::current_dir`, `std::fs::DirEntry`.
 - Files: `transcript_file`, `task_file`, `lock_file`. The value is always a concrete file on disk.
 - `_path` is for genuinely ambiguous cases: input that could name either, or a value passed through as opaque.
 - IMPORTANT: `folder` is never used; it has no std analog.

@@ -83,7 +83,7 @@ async fn finds_string_buried_deep_in_line() -> std::result::Result<(), Box<dyn s
     let agent = Agent::new()
         .provider(provider)
         .model(&model)
-        .working_dir(root)
+        .dir(root)
         .role(
             "Investigate the working directory and answer the user's question. \
              Use the available tools — pick whichever one fits. \
@@ -220,7 +220,7 @@ async fn reads_column_slice_after_grep_locates_needle(
     let agent = Agent::new()
         .provider(provider)
         .model(&model)
-        .working_dir(root)
+        .dir(root)
         .role(
             "Investigate the working directory and answer the user's question. \
              Use the available tools — pick whichever one fits. \

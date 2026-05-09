@@ -31,8 +31,8 @@ pub(crate) fn schema_retry(detail: &str) -> String {
 /// bullet for each `Policies` budget that is `Some(_)`. Budgets left as
 /// `None` (unlimited) stay invisible. Pass empty `Policies::default()` and
 /// `Stats::new()` when you only want the static facts.
-pub fn default_context(working_dir: &Path, policies: &Policies, stats: &Stats) -> String {
-    let working_dir_str = working_dir.display().to_string();
+pub fn default_context(dir: &Path, policies: &Policies, stats: &Stats) -> String {
+    let dir_str = dir.display().to_string();
     let platform = std::env::consts::OS;
     let os_version = std::process::Command::new("uname")
         .arg("-r")
@@ -41,7 +41,7 @@ pub fn default_context(working_dir: &Path, policies: &Policies, stats: &Stats) -
         .unwrap_or_default();
     let date = format_current_date();
     let mut body = DEFAULT_CONTEXT_TEMPLATE
-        .replace("{working_dir}", &working_dir_str)
+        .replace("{dir}", &dir_str)
         .replace("{platform}", platform)
         .replace("{os_version}", &os_version)
         .replace("{date}", &date);

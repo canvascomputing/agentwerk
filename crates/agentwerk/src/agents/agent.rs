@@ -40,7 +40,7 @@ pub struct Agent {
     pub(crate) labels: Vec<String>,
     template_variables: Vec<(String, String)>,
     tools: ToolRegistry,
-    working_dir: Option<PathBuf>,
+    dir: Option<PathBuf>,
     event_handler: Option<Arc<dyn Fn(Event) + Send + Sync>>,
     knowledge: Option<Arc<Knowledge>>,
     pub(crate) ticket_system: Weak<TicketSystem>,
@@ -59,7 +59,7 @@ impl Default for Agent {
             labels: Vec::new(),
             template_variables: Vec::new(),
             tools,
-            working_dir: None,
+            dir: None,
             event_handler: None,
             knowledge: None,
             ticket_system: Weak::new(),
@@ -153,10 +153,10 @@ impl Agent {
         self
     }
 
-    /// Working directory tools resolve filesystem paths against. Defaults
+    /// Directory tools resolve filesystem paths against. Defaults
     /// to the process's current directory when unset.
-    pub fn working_dir(mut self, p: impl Into<PathBuf>) -> Self {
-        self.working_dir = Some(p.into());
+    pub fn dir(mut self, p: impl Into<PathBuf>) -> Self {
+        self.dir = Some(p.into());
         self
     }
 
@@ -171,7 +171,7 @@ impl Agent {
     /// `&Arc<Knowledge>` (to share one store across multiple agents, the
     /// same way `ticket_system(&shared)` shares a queue) or a path to a
     /// directory the store should be rooted at (opens a fresh store under
-    /// the hood, mirroring `TicketSystem::workspace(dir)`). Registers
+    /// the hood, mirroring `TicketSystem::dir(dir)`). Registers
     /// `KnowledgeTool` on the agent's tool registry and arranges for the
     /// store's index to be injected into the system prompt under
     /// `## Knowledge` at the top of every ticket. Off by default; each
@@ -232,8 +232,8 @@ impl Agent {
         &self.tools
     }
 
-    pub(super) fn working_dir_or_default(&self) -> PathBuf {
-        self.working_dir
+    pub(super) fn dir_or_default(&self) -> PathBuf {
+        self.dir
             .clone()
             .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")))
     }
@@ -275,11 +275,7 @@ impl Agent {
     pub(super) fn context_message(&self, policies: &Policies, stats: &Stats) -> Option<String> {
         match &self.context {
             Some(body) => Some(Section::context(self.interpolate(body)).render()),
-            None => Some(default_context(
-                &self.working_dir_or_default(),
-                policies,
-                stats,
-            )),
+            None => Some(default_context(&self.dir_or_default(), policies, stats)),
         }
     }
 
@@ -454,7 +450,7 @@ mod tests {
 
     #[test]
     fn context_message_appends_runtime_lines_when_policy_budgets_are_set() {
-        let agent = Agent::new().working_dir("/tmp/check");
+        let agent = Agent::new().dir("/tmp/check");
         let policies = Policies {
             max_steps: Some(3),
             max_input_tokens: Some(1_000),
