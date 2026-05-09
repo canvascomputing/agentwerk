@@ -274,7 +274,8 @@ A `Knowledge` store is the agent's long-term memory. It is written to disk, can 
 ```rust
 use agentwerk::Knowledge;
 
-let agent = Agent::new().knowledge("./.agentwerk");
+// Override default knowledge path:
+let agent = Agent::new().knowledge("./notes");
 
 // Or share one store across multiple agents:
 let store = Knowledge::open("./.agentwerk")?;
@@ -284,7 +285,7 @@ let bob = Agent::new().knowledge(&store);
 
 | Method | Description |
 |--------|-------------|
-| `knowledge(into)` | Set the knowledge store. Pass a path to open a new one, or an existing store to share. |
+| `knowledge(into)` | Set the knowledge store path. |
 
 ## Schemas
 

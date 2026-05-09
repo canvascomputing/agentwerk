@@ -1,5 +1,4 @@
 /target
 
-# Default working dir created by use-case binaries when run from the
-# workspace root via `make use_case`.
-/.agentwerk
+# Default knowledge store directory created by every bound agent.
+**/.agentwerk

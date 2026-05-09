@@ -161,7 +161,10 @@ async fn main() {
         "Tickets:   {} done, {} failed ({:.0}%)",
         stats.tickets_done(),
         stats.tickets_failed(),
-        stats.tickets_success_rate().map(|r| r * 100.0).unwrap_or(0.0),
+        stats
+            .tickets_success_rate()
+            .map(|r| r * 100.0)
+            .unwrap_or(0.0),
     );
     eprintln!(
         "Avg time:  {:?}",

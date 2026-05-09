@@ -167,16 +167,17 @@ impl Agent {
         self
     }
 
-    /// Bind this agent to a `Knowledge` store. Accepts either an
-    /// `&Arc<Knowledge>` (to share one store across multiple agents, the
-    /// same way `ticket_system(&shared)` shares a queue) or a path to a
-    /// directory the store should be rooted at (opens a fresh store under
-    /// the hood, mirroring `TicketSystem::dir(dir)`). Registers
-    /// `KnowledgeTool` on the agent's tool registry and arranges for the
-    /// store's index to be injected into the system prompt under
-    /// `## Knowledge` at the top of every ticket. Off by default; each
-    /// ticket starts without a knowledge section when no store is bound.
-    /// Panics on IO failure when opening from a path.
+    /// Knowledge store the agent uses for its long-term memory. Accepts
+    /// either an `&Arc<Knowledge>` (to share one store across multiple
+    /// agents, the same way `ticket_system(&shared)` shares a queue) or
+    /// a path to a directory the store should be rooted at. Defaults to
+    /// a fresh store rooted at `./.agentwerk` when unset, mirroring how
+    /// [`Self::dir`] defaults to the current working directory; the
+    /// default store is opened lazily when the agent is bound to a
+    /// `TicketSystem`. Registers `KnowledgeTool` on the agent's tool
+    /// registry and arranges for the store's index to be injected into
+    /// the system prompt under `## Knowledge` at the top of every
+    /// ticket. Panics on IO failure when opening from a path.
     pub fn knowledge<K: IntoKnowledge>(mut self, store: K) -> Self {
         let store = store.into_knowledge().expect("open knowledge store");
         self.tools.register(KnowledgeTool::new(Arc::clone(&store)));
@@ -184,8 +185,26 @@ impl Agent {
         self
     }
 
-    pub(super) fn knowledge_handle(&self) -> Option<Arc<Knowledge>> {
-        self.knowledge.clone()
+    /// Configured knowledge store, or a freshly-opened store rooted at
+    /// `./.agentwerk` when unset. Parallel to [`Self::dir_or_default`].
+    /// Panics on IO failure when opening the default.
+    pub(super) fn knowledge_or_default(&self) -> Arc<Knowledge> {
+        self.knowledge
+            .clone()
+            .unwrap_or_else(|| Knowledge::open(".agentwerk").expect("open knowledge store"))
+    }
+
+    /// Materialize the default knowledge store and register
+    /// `KnowledgeTool` if `.knowledge(...)` was not invoked. Called by
+    /// `TicketSystem::bind_agent` so every running agent has a store
+    /// without the caller having to wire one up.
+    pub(super) fn ensure_knowledge_bound(&mut self) {
+        if self.knowledge.is_some() {
+            return;
+        }
+        let store = Knowledge::open(".agentwerk").expect("open knowledge store");
+        self.tools.register(KnowledgeTool::new(Arc::clone(&store)));
+        self.knowledge = Some(store);
     }
 
     /// Bind this agent to a shared `TicketSystem`. Drains any tickets
@@ -603,12 +622,6 @@ mod tests {
     }
 
     #[test]
-    fn knowledge_defaults_to_none() {
-        let agent = Agent::new();
-        assert!(agent.knowledge_handle().is_none());
-    }
-
-    #[test]
     fn knowledge_registers_knowledge_tool_on_the_agent() {
         let dir = tempfile::tempdir().unwrap();
         let store = Knowledge::open(dir.path()).unwrap();
@@ -635,8 +648,7 @@ mod tests {
             .collect();
         assert!(names.iter().any(|n| n == "knowledge_tool"));
         agent
-            .knowledge_handle()
-            .unwrap()
+            .knowledge_or_default()
             .write_page("from-path", "From path", "# From Path", &[])
             .unwrap();
         assert!(dir.path().join("pages").join("from-path.md").exists());
@@ -649,15 +661,10 @@ mod tests {
         let agent = Agent::new().knowledge(&store);
         let cloned = agent.clone();
         agent
-            .knowledge_handle()
-            .unwrap()
+            .knowledge_or_default()
             .write_page("shared", "Shared note", "# Shared", &[])
             .unwrap();
-        assert!(cloned
-            .knowledge_handle()
-            .unwrap()
-            .index()
-            .contains("shared"));
+        assert!(cloned.knowledge_or_default().index().contains("shared"));
     }
 
     #[test]
@@ -667,15 +674,10 @@ mod tests {
         let alice = Agent::new().knowledge(&store);
         let bob = Agent::new().knowledge(&store);
         alice
-            .knowledge_handle()
-            .unwrap()
+            .knowledge_or_default()
             .write_page("from-alice", "From Alice", "# Alice", &[])
             .unwrap();
-        assert!(bob
-            .knowledge_handle()
-            .unwrap()
-            .index()
-            .contains("from-alice"));
+        assert!(bob.knowledge_or_default().index().contains("from-alice"));
     }
 
     #[test]
@@ -690,5 +692,43 @@ mod tests {
     fn system_prompt_omits_knowledge_when_body_empty() {
         let agent = Agent::new().role("R");
         assert_eq!(agent.system_prompt(Some("")), "R");
+    }
+
+    #[test]
+    fn unbound_default_agent_does_not_register_knowledge_tool() {
+        let agent = Agent::new();
+        let names: Vec<String> = agent
+            .tool_definitions()
+            .into_iter()
+            .map(|d| d.name)
+            .collect();
+        assert!(
+            !names.iter().any(|n| n == "knowledge_tool"),
+            "knowledge_tool must not appear before binding: {names:?}"
+        );
+    }
+
+    #[test]
+    fn binding_default_agent_materializes_knowledge_store() {
+        let sys = crate::agents::TicketSystem::new();
+        let agent = Agent::new().ticket_system(&sys);
+        let names: Vec<String> = agent
+            .tool_definitions()
+            .into_iter()
+            .map(|d| d.name)
+            .collect();
+        assert!(
+            names.iter().any(|n| n == "knowledge_tool"),
+            "knowledge_tool should be registered after binding: {names:?}"
+        );
+    }
+
+    #[test]
+    fn binding_agent_with_explicit_knowledge_keeps_explicit_store() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = Knowledge::open(dir.path()).unwrap();
+        let sys = crate::agents::TicketSystem::new();
+        let agent = Agent::new().knowledge(&store).ticket_system(&sys);
+        assert!(Arc::ptr_eq(&store, &agent.knowledge_or_default()));
     }
 }

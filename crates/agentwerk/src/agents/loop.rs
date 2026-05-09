@@ -190,7 +190,7 @@ async fn process_ticket(
     // provider's prefix cache survives mid-ticket knowledge writes.
     // Cross-ticket and cross-agent writes become visible at the top of
     // the next ticket.
-    let knowledge_contents = agent.knowledge_handle().map(|s| s.index());
+    let knowledge_contents = agent.knowledge_or_default().index();
 
     let policies = ticket_system.policies();
     let mut messages: Vec<Message> = Vec::new();
@@ -239,7 +239,7 @@ async fn process_ticket(
         });
         let request = ModelRequest {
             model: agent.model_str().to_string(),
-            system_prompt: agent.system_prompt(knowledge_contents.as_deref()),
+            system_prompt: agent.system_prompt(Some(&knowledge_contents)),
             messages: messages.clone(),
             tools: agent.tool_definitions(),
             max_request_tokens,

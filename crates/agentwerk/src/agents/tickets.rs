@@ -688,6 +688,7 @@ impl TicketSystem {
             }
         }
         agent.ticket_system = self.weak_self.clone();
+        agent.ensure_knowledge_bound();
         self.agents.lock().unwrap().push(agent.clone());
     }
 }
