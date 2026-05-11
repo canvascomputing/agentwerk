@@ -269,7 +269,7 @@ counter += 1;
 - Builder rows lead with an imperative verb describing the configuration effect: `Set the LLM provider.`, `Register a tool.`, `Restrict the agent to matching labels.`
 - Action rows lead with an imperative verb describing the effect: `Create a task.`, `Run until interrupted.`
 - Accessor rows lead with `Return ...`: `Return every finished ticket's result.`
-- Tool rows use third-person present: `Reads a file with line numbers.`
+- Tool rows lead with an imperative verb describing the action the tool exposes: `Read a file with line numbers.`, `Fetch a URL and read its body.` The tool itself does not act; the agent does. The table intro carries that framing once so individual rows stay terse.
 - Event rows are past-tense state sentences: `A ticket finished successfully.`
 
 ## README cell length

@@ -1,5 +1,5 @@
-//! Read + mutate access to the surrounding ticket queue. Union of
-//! `ReadTicketsTool` and `WriteTicketsTool`.
+//! Read + write access to the surrounding ticket queue:
+//! `get`, `list`, `search`, `create`, `edit`.
 
 use std::future::Future;
 use std::pin::Pin;
@@ -13,7 +13,7 @@ use super::super::tool::{ToolContext, ToolLike, ToolResult};
 use super::super::tool_file::ToolFile;
 use super::{dispatch, READ_ACTIONS, WRITE_ACTIONS};
 
-/// All eight ticket actions in one tool.
+/// `get`, `list`, `search`, `create`, `edit` in one tool.
 pub struct ManageTicketsTool;
 
 fn tool_file() -> &'static ToolFile {

@@ -1,8 +1,8 @@
 //! Ticket tools — give an agent a call surface for reading and mutating
-//! the surrounding `TicketSystem`. Three multi-action tools share one
-//! dispatch helper: `ReadTicketsTool` (read-only), `WriteTicketsTool`
-//! (mutating), `ManageTicketsTool` (both). `WriteResultTool` is the
-//! sole way for an agent to finish its current ticket.
+//! the surrounding `TicketSystem`. Two multi-action tools share one
+//! dispatch helper: `ReadTicketsTool` (read-only) and `ManageTicketsTool`
+//! (read + write). `WriteResultTool` is the sole way for an agent to
+//! finish its current ticket.
 
 use std::fs::OpenOptions;
 use std::io::Write as _;
@@ -17,12 +17,10 @@ use super::tool::{ToolContext, ToolResult};
 mod manage_tickets;
 mod read_tickets;
 mod write_result;
-mod write_tickets;
 
 pub use manage_tickets::ManageTicketsTool;
 pub use read_tickets::ReadTicketsTool;
 pub use write_result::WriteResultTool;
-pub use write_tickets::WriteTicketsTool;
 
 /// Action sets each multi-action tool exposes. Keeps the dispatch logic
 /// in one place and lets each tool reject actions outside its
@@ -472,11 +470,11 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn write_create_stamps_reporter_from_agent_name() {
+    async fn manage_create_stamps_reporter_from_agent_name() {
         let sys = TicketSystem::new();
         let ctx = ctx_with(Arc::clone(&sys), "alice");
         let result = call(
-            &WriteTicketsTool,
+            &ManageTicketsTool,
             serde_json::json!({"action": "create", "task": "new ticket"}),
             &ctx,
         )
@@ -488,11 +486,11 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn write_create_with_labels_attaches_them() {
+    async fn manage_create_with_labels_attaches_them() {
         let sys = TicketSystem::new();
         let ctx = ctx_with(Arc::clone(&sys), "alice");
         let result = call(
-            &WriteTicketsTool,
+            &ManageTicketsTool,
             serde_json::json!({
                 "action": "create",
                 "task": "new",
@@ -508,11 +506,11 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn write_create_with_named_label_routes_to_agent() {
+    async fn manage_create_with_named_label_routes_to_agent() {
         let sys = TicketSystem::new();
         let ctx = ctx_with(Arc::clone(&sys), "alice");
         let result = call(
-            &WriteTicketsTool,
+            &ManageTicketsTool,
             serde_json::json!({
                 "action": "create",
                 "task": "new",
@@ -528,11 +526,11 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn write_create_with_schema_field_stores_schema() {
+    async fn manage_create_with_schema_field_stores_schema() {
         let sys = TicketSystem::new();
         let ctx = ctx_with(Arc::clone(&sys), "alice");
         let result = call(
-            &WriteTicketsTool,
+            &ManageTicketsTool,
             serde_json::json!({
                 "action": "create",
                 "task": "new",
@@ -546,11 +544,11 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn write_edit_updates_task_and_labels() {
+    async fn manage_edit_updates_task_and_labels() {
         let (sys, key) = shared_with_one_ticket("alice");
         let ctx = ctx_with(Arc::clone(&sys), "alice");
         let result = call(
-            &WriteTicketsTool,
+            &ManageTicketsTool,
             serde_json::json!({
                 "action": "edit",
                 "task": "new body",
@@ -566,12 +564,12 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn write_rejects_unsupported_actions() {
+    async fn manage_rejects_unsupported_actions() {
         let (sys, _key) = shared_with_one_ticket("alice");
         let ctx = ctx_with(Arc::clone(&sys), "alice");
         for action in ["done", "transition", "comment", "assign", "attach"] {
             let result = call(
-                &WriteTicketsTool,
+                &ManageTicketsTool,
                 serde_json::json!({"action": action}),
                 &ctx,
             )

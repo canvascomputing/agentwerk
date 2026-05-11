@@ -226,24 +226,23 @@ let tickets = TicketSystem::new()
 
 ## Tools
 
-Give agents access to tools helping them to solve a given task. agentwerk provides minimal baseline tools:
+Give agents access to tools helping them to solve a given task. Each tool exposes an action the agent can choose to take. agentwerk provides minimal baseline tools:
 
 | | Tool | Description |
 |-|------|-------------|
-| **File** | `ReadFileTool` | Reads a file with line numbers, offset, and limit. |
-| | `WriteFileTool` | Creates or overwrites a file. |
-| | `EditFileTool` | Replaces text in a file. |
-| **Search** | `GlobTool` | Finds files by pattern. |
-| | `GrepTool` | Searches file contents. |
-| | `ListDirectoryTool` | Lists files and directories. |
-| **Shell** | `BashTool` | Runs shell commands matching an allowed pattern. |
-| **Web** | `WebFetchTool` | Fetches a URL and returns its body. |
-| **Tickets** | `WriteResultTool` | Writes the agent's result for the current ticket and marks it done. |
-| | `ManageTicketsTool` | Reads the ticket queue and creates or edits tickets. |
-| | `ReadTicketsTool` | Reads the ticket queue. |
-| | `WriteTicketsTool` | Creates or edits tickets in the queue. |
-| **Knowledge** | `KnowledgeTool` | Writes, reads, removes, or lists pages in the agent's knowledge store. |
-| **Discovery** | `ToolSearchTool` | Discovers tools registered with `Tool::defer(true)`. |
+| **File** | `ReadFileTool` | Read a file with line numbers, offset, and limit. |
+| | `WriteFileTool` | Create or overwrite a file. |
+| | `EditFileTool` | Replace text in a file. |
+| **Search** | `GlobTool` | Find files by pattern. |
+| | `GrepTool` | Search file contents. |
+| | `ListDirectoryTool` | List files and directories. |
+| **Shell** | `BashTool` | Run a shell command matching an allowed pattern. |
+| **Web** | `WebFetchTool` | Fetch a URL and read its body. |
+| **Tickets** | `WriteResultTool` | Write the result for the current ticket and mark it done. |
+| | `ManageTicketsTool` | Read the ticket queue and create or edit tickets. |
+| | `ReadTicketsTool` | Read the ticket queue. |
+| **Knowledge** | `KnowledgeTool` | Write, read, remove, or list pages in the agent's knowledge store. |
+| **Discovery** | `ToolSearchTool` | Discover tools registered with `Tool::defer(true)`. |
 
 ### Custom tools
 

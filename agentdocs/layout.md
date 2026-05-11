@@ -46,7 +46,7 @@ Where code lives and the rules that govern placement.
 - `tool.rs` defines `ToolLike`, `Tool`, `ToolRegistry`, `ToolContext`, and `ToolCall`.
 - `read_file.rs`, `write_file.rs`, `edit_file.rs`, `glob.rs`, `grep.rs`, and `list_directory.rs` are filesystem tools.
 - `bash.rs` is the shell tool (restricted via `new()`, unrestricted via `unrestricted()`).
-- `tickets/` holds `ManageTicketsTool`, `ReadTicketsTool`, and `WriteTicketsTool`.
+- `tickets/` holds `ManageTicketsTool` and `ReadTicketsTool`.
 - `knowledge.rs` is the model-facing wrapper around `Knowledge` (the store lives in `agents::knowledge`).
 - `tool_search.rs` is the discovery surface for deferred tools.
 - `web_fetch.rs` is the web fetch tool.
