@@ -129,7 +129,7 @@ mod tests {
 
     #[tokio::test]
     async fn read_file_cases() {
-        let dir = tempfile::tempdir().unwrap();
+        let dir = crate::test_util::TempDir::new().unwrap();
         let file_path = dir.path().join("test.txt");
         std::fs::write(&file_path, "alpha\nbeta\ngamma\ndelta\n").unwrap();
 

@@ -4,6 +4,9 @@
 #[path = "integration/common.rs"]
 mod common;
 
+#[path = "../src/test_util.rs"]
+mod test_util;
+
 #[path = "integration/bash_usage.rs"]
 mod bash_usage;
 

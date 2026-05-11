@@ -25,7 +25,7 @@ struct CapturedCall {
 async fn finds_string_buried_deep_in_line() -> std::result::Result<(), Box<dyn std::error::Error>> {
     let (provider, model) = common::build_provider();
 
-    let dir = tempfile::tempdir()?;
+    let dir = crate::test_util::TempDir::new()?;
     let root = dir.path();
     fs::create_dir_all(root.join("src"))?;
 
@@ -171,7 +171,7 @@ async fn reads_column_slice_after_grep_locates_needle(
 ) -> std::result::Result<(), Box<dyn std::error::Error>> {
     let (provider, model) = common::build_provider();
 
-    let dir = tempfile::tempdir()?;
+    let dir = crate::test_util::TempDir::new()?;
     let root = dir.path();
 
     // Build a ~1000-char single-line minified JS file with the needle past column 700.

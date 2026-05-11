@@ -13,7 +13,7 @@ use agentwerk::{Agent, Schema, TicketSystem};
 async fn separates_files_and_directories() -> std::result::Result<(), Box<dyn std::error::Error>> {
     let (provider, model) = common::build_provider();
 
-    let dir = tempfile::tempdir()?;
+    let dir = crate::test_util::TempDir::new()?;
     let root = dir.path();
 
     for name in ["alpha.txt", "beta.txt", "gamma.txt"] {

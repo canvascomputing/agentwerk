@@ -296,8 +296,8 @@ mod tests {
         ToolContext::new(path.to_path_buf())
     }
 
-    fn setup_test_dir() -> tempfile::TempDir {
-        let tmp = tempfile::tempdir().unwrap();
+    fn setup_test_dir() -> crate::test_util::TempDir {
+        let tmp = crate::test_util::TempDir::new().unwrap();
         fs::create_dir_all(tmp.path().join("src")).unwrap();
         fs::write(
             tmp.path().join("src/main.rs"),
@@ -570,7 +570,7 @@ mod tests {
 
     #[tokio::test]
     async fn content_mode_truncates_long_lines() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = crate::test_util::TempDir::new().unwrap();
         // Build a single-line file with a needle buried deep inside.
         let prefix = "x".repeat(1000);
         let suffix = "y".repeat(1000);

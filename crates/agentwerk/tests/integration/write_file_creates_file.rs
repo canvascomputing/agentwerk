@@ -15,7 +15,7 @@ async fn creates_file_with_token() -> std::result::Result<(), Box<dyn std::error
     let (provider, model) = common::build_provider();
 
     let token = ten_digit_token();
-    let dir = tempfile::tempdir()?;
+    let dir = crate::test_util::TempDir::new()?;
     let root = dir.path();
 
     let tickets = TicketSystem::new().max_steps(10);

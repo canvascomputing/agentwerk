@@ -119,7 +119,7 @@ mod tests {
 
     #[tokio::test]
     async fn unique_match_replaced() {
-        let dir = tempfile::tempdir().unwrap();
+        let dir = crate::test_util::TempDir::new().unwrap();
         std::fs::write(dir.path().join("f.txt"), "hello world").unwrap();
 
         let tool = EditFileTool;
@@ -149,7 +149,7 @@ mod tests {
 
     #[tokio::test]
     async fn non_unique_errors_without_replace_all() {
-        let dir = tempfile::tempdir().unwrap();
+        let dir = crate::test_util::TempDir::new().unwrap();
         std::fs::write(dir.path().join("f.txt"), "aaa bbb aaa").unwrap();
 
         let tool = EditFileTool;
@@ -176,7 +176,7 @@ mod tests {
 
     #[tokio::test]
     async fn replace_all_replaces_every_occurrence() {
-        let dir = tempfile::tempdir().unwrap();
+        let dir = crate::test_util::TempDir::new().unwrap();
         std::fs::write(dir.path().join("f.txt"), "aaa bbb aaa").unwrap();
 
         let tool = EditFileTool;
@@ -207,7 +207,7 @@ mod tests {
 
     #[tokio::test]
     async fn not_found_errors() {
-        let dir = tempfile::tempdir().unwrap();
+        let dir = crate::test_util::TempDir::new().unwrap();
         std::fs::write(dir.path().join("f.txt"), "hello world").unwrap();
 
         let tool = EditFileTool;

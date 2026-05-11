@@ -90,7 +90,7 @@ mod tests {
 
     #[tokio::test]
     async fn create_new_file() {
-        let dir = tempfile::tempdir().unwrap();
+        let dir = crate::test_util::TempDir::new().unwrap();
         let tool = WriteFileTool;
         let ctx = test_ctx(dir.path());
 
@@ -113,7 +113,7 @@ mod tests {
 
     #[tokio::test]
     async fn overwrite_existing_file() {
-        let dir = tempfile::tempdir().unwrap();
+        let dir = crate::test_util::TempDir::new().unwrap();
         std::fs::write(dir.path().join("existing.txt"), "old content").unwrap();
 
         let tool = WriteFileTool;
@@ -134,7 +134,7 @@ mod tests {
 
     #[tokio::test]
     async fn creates_parent_dirs() {
-        let dir = tempfile::tempdir().unwrap();
+        let dir = crate::test_util::TempDir::new().unwrap();
         let tool = WriteFileTool;
         let ctx = test_ctx(dir.path());
 

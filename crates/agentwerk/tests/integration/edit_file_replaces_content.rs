@@ -15,7 +15,7 @@ const ORIGINAL: &str = "setting=old_value\nother=keep_me\n";
 async fn replaces_substring_in_place() -> std::result::Result<(), Box<dyn std::error::Error>> {
     let (provider, model) = common::build_provider();
 
-    let dir = tempfile::tempdir()?;
+    let dir = crate::test_util::TempDir::new()?;
     let root = dir.path();
     let path = root.join("config.txt");
     fs::write(&path, ORIGINAL)?;

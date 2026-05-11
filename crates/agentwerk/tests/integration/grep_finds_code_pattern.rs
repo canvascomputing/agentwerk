@@ -32,7 +32,7 @@ async fn finds_code_pattern_with_special_chars(
 ) -> std::result::Result<(), Box<dyn std::error::Error>> {
     let (provider, model) = common::build_provider();
 
-    let dir = tempfile::tempdir()?;
+    let dir = crate::test_util::TempDir::new()?;
     let root = dir.path();
     fs::create_dir_all(root.join("src"))?;
 

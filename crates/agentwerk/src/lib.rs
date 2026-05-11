@@ -7,6 +7,9 @@ pub mod providers;
 pub mod schemas;
 pub mod tools;
 
+#[cfg(test)]
+pub(crate) mod test_util;
+
 pub use agents::{
     Agent, IntoKnowledge, Knowledge, Running, Stats, Status, Ticket, TicketResults, TicketSystem,
 };

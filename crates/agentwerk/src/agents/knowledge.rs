@@ -571,15 +571,15 @@ fn atomic_write(path: &Path, body: &[u8]) -> io::Result<()> {
 mod tests {
     use super::*;
 
-    fn fresh_store() -> (Arc<Knowledge>, tempfile::TempDir) {
-        let dir = tempfile::tempdir().unwrap();
+    fn fresh_store() -> (Arc<Knowledge>, crate::test_util::TempDir) {
+        let dir = crate::test_util::TempDir::new().unwrap();
         let store = Knowledge::open(dir.path()).unwrap();
         (store, dir)
     }
 
     #[test]
     fn open_creates_pages_directory() {
-        let dir = tempfile::tempdir().unwrap();
+        let dir = crate::test_util::TempDir::new().unwrap();
         let nested = dir.path().join("not-yet-there");
         let _ = Knowledge::open(&nested).unwrap();
         assert!(nested.join(PAGES_DIR).exists());
@@ -752,7 +752,7 @@ mod tests {
 
     #[test]
     fn index_char_limit_rejects_oversized_write() {
-        let dir = tempfile::tempdir().unwrap();
+        let dir = crate::test_util::TempDir::new().unwrap();
         let store = Knowledge::open(dir.path()).unwrap();
         // Write a very long summary to push the index past the limit.
         let long_summary = "x".repeat(DEFAULT_INDEX_CHAR_LIMIT + 1);
@@ -786,7 +786,7 @@ mod tests {
 
     #[test]
     fn entries_survive_drop_and_reopen() {
-        let dir = tempfile::tempdir().unwrap();
+        let dir = crate::test_util::TempDir::new().unwrap();
         let s1 = Knowledge::open(dir.path()).unwrap();
         s1.write_page(
             "durable",
@@ -803,7 +803,7 @@ mod tests {
 
     #[test]
     fn rebuild_index_from_pages_when_index_missing() {
-        let dir = tempfile::tempdir().unwrap();
+        let dir = crate::test_util::TempDir::new().unwrap();
         let pages_dir = dir.path().join(PAGES_DIR);
         fs::create_dir_all(&pages_dir).unwrap();
         fs::write(
@@ -820,7 +820,7 @@ mod tests {
 
     #[test]
     fn migration_from_memory_jsonl() {
-        let dir = tempfile::tempdir().unwrap();
+        let dir = crate::test_util::TempDir::new().unwrap();
         let legacy = dir.path().join(LEGACY_MEMORY_FILE);
         fs::write(
             &legacy,
@@ -873,7 +873,7 @@ mod tests {
 
     #[test]
     fn into_knowledge_for_arc_ref() {
-        let dir = tempfile::tempdir().unwrap();
+        let dir = crate::test_util::TempDir::new().unwrap();
         let store = Knowledge::open(dir.path()).unwrap();
         let cloned: Arc<Knowledge> = (&store).into_knowledge().unwrap();
         assert!(Arc::ptr_eq(&store, &cloned));
@@ -881,13 +881,13 @@ mod tests {
 
     #[test]
     fn into_knowledge_for_pathbuf() {
-        let dir = tempfile::tempdir().unwrap();
+        let dir = crate::test_util::TempDir::new().unwrap();
         let _store: Arc<Knowledge> = dir.path().to_path_buf().into_knowledge().unwrap();
     }
 
     #[test]
     fn into_knowledge_for_str() {
-        let dir = tempfile::tempdir().unwrap();
+        let dir = crate::test_util::TempDir::new().unwrap();
         let _store: Arc<Knowledge> = dir.path().to_str().unwrap().into_knowledge().unwrap();
     }
 

@@ -222,7 +222,7 @@ mod tests {
 
     #[tokio::test]
     async fn doublestar_rs_finds_nested() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = crate::test_util::TempDir::new().unwrap();
         fs::create_dir_all(tmp.path().join("src/sub")).unwrap();
         fs::write(tmp.path().join("main.rs"), "fn main() {}").unwrap();
         fs::write(tmp.path().join("src/lib.rs"), "// lib").unwrap();
@@ -250,7 +250,7 @@ mod tests {
 
     #[tokio::test]
     async fn max_results_cap() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = crate::test_util::TempDir::new().unwrap();
         // Create 210 .txt files
         for i in 0..210 {
             fs::write(tmp.path().join(format!("file_{i:04}.txt")), "x").unwrap();

@@ -100,7 +100,7 @@ mod tests {
 
     #[tokio::test]
     async fn writes_string_result_and_marks_done() {
-        let dir = tempfile::tempdir().unwrap();
+        let dir = crate::test_util::TempDir::new().unwrap();
         let (sys, key) = one_ticket("alice");
         let sys = Arc::clone(&sys).dir(dir.path().to_path_buf());
         let ctx = ctx_with(Arc::clone(&sys), "alice", dir.path().to_path_buf());
@@ -123,7 +123,7 @@ mod tests {
 
     #[tokio::test]
     async fn rejects_empty_string_when_no_schema() {
-        let dir = tempfile::tempdir().unwrap();
+        let dir = crate::test_util::TempDir::new().unwrap();
         let (sys, key) = one_ticket("alice");
         let sys = Arc::clone(&sys).dir(dir.path().to_path_buf());
         let ctx = ctx_with(Arc::clone(&sys), "alice", dir.path().to_path_buf());
@@ -139,7 +139,7 @@ mod tests {
 
     #[tokio::test]
     async fn rejects_empty_object_when_no_schema() {
-        let dir = tempfile::tempdir().unwrap();
+        let dir = crate::test_util::TempDir::new().unwrap();
         let (sys, key) = one_ticket("alice");
         let sys = Arc::clone(&sys).dir(dir.path().to_path_buf());
         let ctx = ctx_with(Arc::clone(&sys), "alice", dir.path().to_path_buf());
@@ -155,7 +155,7 @@ mod tests {
 
     #[tokio::test]
     async fn rejects_empty_array_when_no_schema() {
-        let dir = tempfile::tempdir().unwrap();
+        let dir = crate::test_util::TempDir::new().unwrap();
         let (sys, key) = one_ticket("alice");
         let sys = Arc::clone(&sys).dir(dir.path().to_path_buf());
         let ctx = ctx_with(Arc::clone(&sys), "alice", dir.path().to_path_buf());
@@ -171,7 +171,7 @@ mod tests {
 
     #[tokio::test]
     async fn accepts_structured_value_when_no_schema() {
-        let dir = tempfile::tempdir().unwrap();
+        let dir = crate::test_util::TempDir::new().unwrap();
         let (sys, key) = one_ticket("alice");
         let sys = Arc::clone(&sys).dir(dir.path().to_path_buf());
         let ctx = ctx_with(Arc::clone(&sys), "alice", dir.path().to_path_buf());
@@ -197,7 +197,7 @@ mod tests {
 
     #[tokio::test]
     async fn rejects_null_result_when_no_schema() {
-        let dir = tempfile::tempdir().unwrap();
+        let dir = crate::test_util::TempDir::new().unwrap();
         let (sys, _key) = one_ticket("alice");
         let sys = Arc::clone(&sys).dir(dir.path().to_path_buf());
         let ctx = ctx_with(Arc::clone(&sys), "alice", dir.path().to_path_buf());
@@ -210,7 +210,7 @@ mod tests {
 
     #[tokio::test]
     async fn validates_against_schema() {
-        let dir = tempfile::tempdir().unwrap();
+        let dir = crate::test_util::TempDir::new().unwrap();
         let sys = TicketSystem::new().dir(dir.path().to_path_buf());
         let schema = Schema::parse(serde_json::json!({
             "type": "object",
@@ -254,7 +254,7 @@ mod tests {
             x: String,
         }
 
-        let dir = tempfile::tempdir().unwrap();
+        let dir = crate::test_util::TempDir::new().unwrap();
         let sys = TicketSystem::new().dir(dir.path().to_path_buf());
         sys.insert(
             Ticket::new("hi").schema_as::<Out>().label("alice"),
@@ -291,7 +291,7 @@ mod tests {
 
     #[tokio::test]
     async fn falls_back_to_working_dir_when_workspace_unset() {
-        let dir = tempfile::tempdir().unwrap();
+        let dir = crate::test_util::TempDir::new().unwrap();
         let (sys, _key) = one_ticket("alice");
         let ctx = ctx_with(Arc::clone(&sys), "alice", dir.path().to_path_buf());
         let outcome = WriteResultTool
@@ -304,7 +304,7 @@ mod tests {
 
     #[tokio::test]
     async fn errors_when_no_current_ticket() {
-        let dir = tempfile::tempdir().unwrap();
+        let dir = crate::test_util::TempDir::new().unwrap();
         let sys = TicketSystem::new();
         let ctx = ctx_with(Arc::clone(&sys), "alice", dir.path().to_path_buf());
         let outcome = WriteResultTool
@@ -316,7 +316,7 @@ mod tests {
 
     #[tokio::test]
     async fn errors_when_result_missing() {
-        let dir = tempfile::tempdir().unwrap();
+        let dir = crate::test_util::TempDir::new().unwrap();
         let (sys, _key) = one_ticket("alice");
         let ctx = ctx_with(Arc::clone(&sys), "alice", dir.path().to_path_buf());
         let outcome = WriteResultTool
@@ -328,7 +328,7 @@ mod tests {
 
     #[tokio::test]
     async fn appends_one_line_per_completed_ticket() {
-        let dir = tempfile::tempdir().unwrap();
+        let dir = crate::test_util::TempDir::new().unwrap();
         let sys = TicketSystem::new().dir(dir.path().to_path_buf());
 
         sys.insert(Ticket::new("a").label("alice"), "tester".into());
@@ -367,7 +367,7 @@ mod tests {
     #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
     async fn concurrent_writes_produce_one_intact_line_per_ticket() {
         const N: usize = 32;
-        let dir = tempfile::tempdir().unwrap();
+        let dir = crate::test_util::TempDir::new().unwrap();
         let sys = TicketSystem::new().dir(dir.path().to_path_buf());
 
         let mut expected = Vec::with_capacity(N);

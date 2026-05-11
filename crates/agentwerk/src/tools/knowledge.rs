@@ -170,8 +170,8 @@ mod tests {
     use super::*;
     use crate::agents::knowledge::Knowledge;
 
-    fn fresh_store() -> (Arc<Knowledge>, tempfile::TempDir) {
-        let dir = tempfile::tempdir().unwrap();
+    fn fresh_store() -> (Arc<Knowledge>, crate::test_util::TempDir) {
+        let dir = crate::test_util::TempDir::new().unwrap();
         let store = Knowledge::open(dir.path()).unwrap();
         (store, dir)
     }

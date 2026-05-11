@@ -26,7 +26,7 @@ async fn finds_every_lib_rs_in_nested_tree() -> std::result::Result<(), Box<dyn 
 {
     let (provider, model) = common::build_provider();
 
-    let dir = tempfile::tempdir()?;
+    let dir = crate::test_util::TempDir::new()?;
     let root = dir.path();
 
     // Two crates with `lib.rs` at different depths, plus look-alike files

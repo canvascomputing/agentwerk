@@ -656,7 +656,7 @@ mod tests {
 
     #[test]
     fn knowledge_registers_knowledge_tool_on_the_agent() {
-        let dir = tempfile::tempdir().unwrap();
+        let dir = crate::test_util::TempDir::new().unwrap();
         let store = Knowledge::open(dir.path()).unwrap();
         let agent = Agent::new().knowledge(&store);
         let names: Vec<String> = agent
@@ -672,7 +672,7 @@ mod tests {
 
     #[test]
     fn knowledge_opens_a_fresh_store_when_passed_a_path() {
-        let dir = tempfile::tempdir().unwrap();
+        let dir = crate::test_util::TempDir::new().unwrap();
         let agent = Agent::new().knowledge(dir.path());
         let names: Vec<String> = agent
             .tool_definitions()
@@ -689,7 +689,7 @@ mod tests {
 
     #[test]
     fn cloned_agent_observes_writes_through_original_handle() {
-        let dir = tempfile::tempdir().unwrap();
+        let dir = crate::test_util::TempDir::new().unwrap();
         let store = Knowledge::open(dir.path()).unwrap();
         let agent = Agent::new().knowledge(&store);
         let cloned = agent.clone();
@@ -702,7 +702,7 @@ mod tests {
 
     #[test]
     fn two_agents_bound_to_one_store_see_each_others_writes() {
-        let dir = tempfile::tempdir().unwrap();
+        let dir = crate::test_util::TempDir::new().unwrap();
         let store = Knowledge::open(dir.path()).unwrap();
         let alice = Agent::new().knowledge(&store);
         let bob = Agent::new().knowledge(&store);
@@ -758,7 +758,7 @@ mod tests {
 
     #[test]
     fn binding_agent_with_explicit_knowledge_keeps_explicit_store() {
-        let dir = tempfile::tempdir().unwrap();
+        let dir = crate::test_util::TempDir::new().unwrap();
         let store = Knowledge::open(dir.path()).unwrap();
         let sys = crate::agents::TicketSystem::new();
         let agent = Agent::new().knowledge(&store).ticket_system(&sys);

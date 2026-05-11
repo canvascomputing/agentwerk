@@ -1306,7 +1306,7 @@ mod tests {
 
     #[test]
     fn workspace_emits_created_started_done_in_order() {
-        let dir = tempfile::tempdir().unwrap();
+        let dir = crate::test_util::TempDir::new().unwrap();
         let sys = TicketSystem::new().dir(dir.path().to_path_buf());
         sys.task("hello");
         sys.claim(|t| t.key() == "TICKET-1", "agent");
@@ -1327,7 +1327,7 @@ mod tests {
 
     #[test]
     fn workspace_emits_failed_event_on_set_failed() {
-        let dir = tempfile::tempdir().unwrap();
+        let dir = crate::test_util::TempDir::new().unwrap();
         let sys = TicketSystem::new().dir(dir.path().to_path_buf());
         sys.task("hello");
         sys.set_failed("TICKET-1").unwrap();
@@ -1341,7 +1341,7 @@ mod tests {
 
     #[test]
     fn workspace_created_event_carries_labels_when_pinned() {
-        let dir = tempfile::tempdir().unwrap();
+        let dir = crate::test_util::TempDir::new().unwrap();
         let sys = TicketSystem::new().dir(dir.path().to_path_buf());
         sys.ticket(Ticket::new("specific").label("alice"));
         let lines = read_tickets_log(dir.path());
@@ -1352,7 +1352,7 @@ mod tests {
 
     #[test]
     fn workspace_logs_one_line_per_lifecycle_step_for_multiple_tickets() {
-        let dir = tempfile::tempdir().unwrap();
+        let dir = crate::test_util::TempDir::new().unwrap();
         let sys = TicketSystem::new().dir(dir.path().to_path_buf());
         sys.task("a").task("b");
         sys.claim(|t| t.key() == "TICKET-1", "agent");
@@ -1406,7 +1406,7 @@ mod tests {
 
     #[test]
     fn claim_emits_started_event_in_workspace_log() {
-        let dir = tempfile::tempdir().unwrap();
+        let dir = crate::test_util::TempDir::new().unwrap();
         let sys = TicketSystem::new().dir(dir.path().to_path_buf());
         sys.task("hello");
         sys.claim(|t| t.status == Status::Todo, "alice");

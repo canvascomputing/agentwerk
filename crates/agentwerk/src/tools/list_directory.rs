@@ -133,7 +133,7 @@ mod tests {
 
     #[tokio::test]
     async fn flat_listing() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = crate::test_util::TempDir::new().unwrap();
         fs::write(tmp.path().join("alpha.txt"), "hello").unwrap();
         fs::write(tmp.path().join("beta.txt"), "world").unwrap();
         fs::create_dir(tmp.path().join("subdir")).unwrap();
@@ -158,7 +158,7 @@ mod tests {
 
     #[tokio::test]
     async fn recursive_listing() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = crate::test_util::TempDir::new().unwrap();
         fs::write(tmp.path().join("root.txt"), "r").unwrap();
         fs::create_dir(tmp.path().join("child")).unwrap();
         fs::write(tmp.path().join("child").join("nested.txt"), "n").unwrap();

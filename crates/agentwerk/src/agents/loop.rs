@@ -669,7 +669,7 @@ mod tests {
             Arc::new(move |e| c.lock().unwrap().push(e))
         };
 
-        let results_dir = tempfile::tempdir().unwrap();
+        let results_dir = crate::test_util::TempDir::new().unwrap();
         let tickets = TicketSystem::new()
             .dir(results_dir.path().to_path_buf())
             .max_request_retries(max_request_retries)
@@ -902,7 +902,7 @@ mod tests {
             Arc::new(move |e| c.lock().unwrap().push(e))
         };
 
-        let results_dir = tempfile::tempdir().unwrap();
+        let results_dir = crate::test_util::TempDir::new().unwrap();
         let tickets = TicketSystem::new()
             .dir(results_dir.path().to_path_buf())
             .max_request_retries(3)
@@ -1169,7 +1169,7 @@ mod tests {
             Ok(write_result_response("ok")),
             Ok(write_result_response("ok")),
         ]);
-        let results_dir = tempfile::tempdir().unwrap();
+        let results_dir = crate::test_util::TempDir::new().unwrap();
         let tickets = TicketSystem::new()
             .dir(results_dir.path().to_path_buf())
             .max_request_retries(0)
@@ -1210,8 +1210,8 @@ mod tests {
             Ok(write_result_response("done 1")),
             Ok(write_result_response("done 2")),
         ]);
-        let results_dir = tempfile::tempdir().unwrap();
-        let knowledge_dir = tempfile::tempdir().unwrap();
+        let results_dir = crate::test_util::TempDir::new().unwrap();
+        let knowledge_dir = crate::test_util::TempDir::new().unwrap();
         let store = Knowledge::open(knowledge_dir.path()).unwrap();
 
         let tickets = TicketSystem::new()
@@ -1265,8 +1265,8 @@ mod tests {
             )),
             Ok(write_result_response("ok")),
         ]);
-        let results_dir = tempfile::tempdir().unwrap();
-        let knowledge_dir = tempfile::tempdir().unwrap();
+        let results_dir = crate::test_util::TempDir::new().unwrap();
+        let knowledge_dir = crate::test_util::TempDir::new().unwrap();
         let store = Knowledge::open(knowledge_dir.path()).unwrap();
 
         let tickets = TicketSystem::new()
@@ -1313,8 +1313,8 @@ mod tests {
         ]);
         let p_b = MockProvider::with_results(vec![Ok(write_result_response("bob done"))]);
 
-        let results_dir = tempfile::tempdir().unwrap();
-        let knowledge_dir = tempfile::tempdir().unwrap();
+        let results_dir = crate::test_util::TempDir::new().unwrap();
+        let knowledge_dir = crate::test_util::TempDir::new().unwrap();
         let store = Knowledge::open(knowledge_dir.path()).unwrap();
 
         let cancel = Arc::new(AtomicBool::new(false));
@@ -1392,8 +1392,8 @@ mod tests {
             Ok(write_result_response("done 2")),
         ]);
 
-        let results_dir = tempfile::tempdir().unwrap();
-        let knowledge_dir = tempfile::tempdir().unwrap();
+        let results_dir = crate::test_util::TempDir::new().unwrap();
+        let knowledge_dir = crate::test_util::TempDir::new().unwrap();
         let store = Knowledge::open(knowledge_dir.path()).unwrap();
 
         let tickets = TicketSystem::new()
@@ -1523,7 +1523,7 @@ mod tests {
 
     #[tokio::test]
     async fn add_after_run_spawns_new_agent() {
-        let results_dir = tempfile::tempdir().unwrap();
+        let results_dir = crate::test_util::TempDir::new().unwrap();
         let tickets = TicketSystem::new()
             .dir(results_dir.path().to_path_buf())
             .max_request_retries(0)
@@ -1570,7 +1570,7 @@ mod tests {
 
     #[tokio::test]
     async fn late_added_agent_joined_on_shutdown() {
-        let results_dir = tempfile::tempdir().unwrap();
+        let results_dir = crate::test_util::TempDir::new().unwrap();
         let tickets = TicketSystem::new()
             .dir(results_dir.path().to_path_buf())
             .max_request_retries(0)
@@ -1621,7 +1621,7 @@ mod tests {
 
     #[tokio::test]
     async fn running_run_dry_drains_late_added_tickets() {
-        let results_dir = tempfile::tempdir().unwrap();
+        let results_dir = crate::test_util::TempDir::new().unwrap();
         let provider = MockProvider::with_results(vec![
             Ok(write_result_response("a-done")),
             Ok(write_result_response("b-done")),
@@ -1655,7 +1655,7 @@ mod tests {
 
     #[tokio::test]
     async fn running_signal_returns_shared_arc() {
-        let results_dir = tempfile::tempdir().unwrap();
+        let results_dir = crate::test_util::TempDir::new().unwrap();
         let tickets = TicketSystem::new()
             .dir(results_dir.path().to_path_buf())
             .max_request_retries(0)
@@ -1672,7 +1672,7 @@ mod tests {
 
     #[tokio::test]
     async fn running_stop_is_abrupt() {
-        let results_dir = tempfile::tempdir().unwrap();
+        let results_dir = crate::test_util::TempDir::new().unwrap();
         let tickets = TicketSystem::new()
             .dir(results_dir.path().to_path_buf())
             .max_request_retries(0)
@@ -1688,7 +1688,7 @@ mod tests {
 
     #[tokio::test]
     async fn run_dry_after_run_resets_signal() {
-        let results_dir = tempfile::tempdir().unwrap();
+        let results_dir = crate::test_util::TempDir::new().unwrap();
         let provider = MockProvider::with_results(vec![
             Ok(write_result_response("first")),
             Ok(write_result_response("second")),
@@ -1722,7 +1722,7 @@ mod tests {
 
     #[tokio::test]
     async fn agent_run_dry_forwards_to_bound_system() {
-        let results_dir = tempfile::tempdir().unwrap();
+        let results_dir = crate::test_util::TempDir::new().unwrap();
         let provider = MockProvider::with_results(vec![Ok(write_result_response("forwarded"))]);
         let tickets = TicketSystem::new()
             .dir(results_dir.path().to_path_buf())
