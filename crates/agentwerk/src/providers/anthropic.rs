@@ -179,20 +179,21 @@ impl Provider for AnthropicProvider {
 }
 
 async fn stream_response(
-    response: reqwest::Response,
+    mut response: reqwest::Response,
     on_event: &Arc<dyn Fn(StreamEvent) + Send + Sync>,
 ) -> ProviderResult<ModelResponse> {
     use super::stream::{SseEvent, StreamParser};
-    use futures_util::StreamExt;
 
     let mut state = StreamState::default();
     let mut parser = StreamParser::new();
-    let mut stream = response.bytes_stream();
 
-    while let Some(chunk) = stream.next().await {
-        let chunk = chunk.map_err(|e| ProviderError::StreamInterrupted {
+    while let Some(chunk) = response
+        .chunk()
+        .await
+        .map_err(|e| ProviderError::StreamInterrupted {
             message: e.to_string(),
-        })?;
+        })?
+    {
         for event in parser.push(&chunk) {
             match event {
                 SseEvent::Done => on_event(StreamEvent::MessageDone),
