@@ -5,7 +5,7 @@
 <h1 align="center">agentwerk</h1>
 
 <p align="center">
-  <strong>A minimal Rust crate that gives any application agentic capabilities.</strong>
+  <strong>A minimal Rust crate for ticket-driven agentic workflows at scale.</strong>
 </p>
 
 <p align="center">
@@ -282,6 +282,8 @@ let greet = Tool::new("greet", "Say hello")
 ## Knowledge
 
 A `Knowledge` store is the agent's long-term memory. It is written to disk, can be shared across multiple agents, and is curated by the agent through `KnowledgeTool`.
+
+Each entry is stored as a markdown page on disk; a compact index of one-line summaries is injected into the system prompt so the agent can decide which pages to read.
 
 ```rust
 use agentwerk::Knowledge;
