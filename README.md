@@ -37,8 +37,7 @@ use agentwerk::Agent;
 #[tokio::main]
 async fn main() {
     let results = Agent::new()
-        .provider_from_env()
-        .model_from_env()
+        .from_env()
         .role("You are a Rust developer who reads source files to answer questions.")
         .tool(ReadFileTool)
         .task("What does Cargo.toml describe?")
@@ -109,9 +108,7 @@ let agent = Agent::new()
     .model("claude-sonnet-4-20250514");
 
 // Or pick from environment variables (see Environment).
-let agent = Agent::new()
-    .provider_from_env()
-    .model_from_env();
+let agent = Agent::new().from_env();
 ```
 
 Each provider exposes `.base_url(url)` and `.timeout(duration)` to override the endpoint and request timeout.
@@ -122,6 +119,7 @@ Each provider exposes `.base_url(url)` and `.timeout(duration)` to override the 
 | `provider_from_env()` | Detect the provider from environment variables. |
 | `model(m)` | Set the model the provider runs. |
 | `model_from_env()` | Read the model name from environment variables. |
+| `from_env()` | Detect provider and model in one call. |
 
 ## Tickets
 

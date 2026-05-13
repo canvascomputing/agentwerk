@@ -73,8 +73,7 @@ async fn main() {
     let _agent = tickets.agent(
         Agent::new()
             .name("orchestrator")
-            .provider_from_env()
-            .model_from_env()
+            .from_env()
             .role(role)
             .dir(&cwd)
             .tool(GlobTool)

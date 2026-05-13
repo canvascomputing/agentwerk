@@ -123,6 +123,13 @@ impl Agent {
         self.model(model)
     }
 
+    /// Detect both the provider and the model from environment variables.
+    /// Equivalent to `provider_from_env().model_from_env()`. Panics if no
+    /// provider env var is set.
+    pub fn from_env(self) -> Self {
+        self.provider_from_env().model_from_env()
+    }
+
     pub fn role(mut self, r: impl Into<String>) -> Self {
         self.role = Some(r.into());
         self
