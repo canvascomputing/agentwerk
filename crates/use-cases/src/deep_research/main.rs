@@ -42,7 +42,8 @@ async fn main() {
 
     let workdir = prepare_workdir();
 
-    let tickets = TicketSystem::new()
+    let tickets = TicketSystem::new();
+    tickets
         .interrupt_signal(Arc::clone(&signal))
         .dir(workdir.clone());
 

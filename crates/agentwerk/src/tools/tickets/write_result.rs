@@ -102,7 +102,7 @@ mod tests {
     async fn writes_string_result_and_marks_done() {
         let dir = crate::test_util::TempDir::new().unwrap();
         let (sys, key) = one_ticket("alice");
-        let sys = Arc::clone(&sys).dir(dir.path().to_path_buf());
+        sys.dir(dir.path().to_path_buf());
         let ctx = ctx_with(Arc::clone(&sys), "alice", dir.path().to_path_buf());
         let outcome = WriteResultTool
             .call(serde_json::json!({"result": "the answer"}), &ctx)
@@ -125,7 +125,7 @@ mod tests {
     async fn rejects_empty_string_when_no_schema() {
         let dir = crate::test_util::TempDir::new().unwrap();
         let (sys, key) = one_ticket("alice");
-        let sys = Arc::clone(&sys).dir(dir.path().to_path_buf());
+        sys.dir(dir.path().to_path_buf());
         let ctx = ctx_with(Arc::clone(&sys), "alice", dir.path().to_path_buf());
         let outcome = WriteResultTool
             .call(serde_json::json!({"result": ""}), &ctx)
@@ -141,7 +141,7 @@ mod tests {
     async fn rejects_empty_object_when_no_schema() {
         let dir = crate::test_util::TempDir::new().unwrap();
         let (sys, key) = one_ticket("alice");
-        let sys = Arc::clone(&sys).dir(dir.path().to_path_buf());
+        sys.dir(dir.path().to_path_buf());
         let ctx = ctx_with(Arc::clone(&sys), "alice", dir.path().to_path_buf());
         let outcome = WriteResultTool
             .call(serde_json::json!({"result": {}}), &ctx)
@@ -157,7 +157,7 @@ mod tests {
     async fn rejects_empty_array_when_no_schema() {
         let dir = crate::test_util::TempDir::new().unwrap();
         let (sys, key) = one_ticket("alice");
-        let sys = Arc::clone(&sys).dir(dir.path().to_path_buf());
+        sys.dir(dir.path().to_path_buf());
         let ctx = ctx_with(Arc::clone(&sys), "alice", dir.path().to_path_buf());
         let outcome = WriteResultTool
             .call(serde_json::json!({"result": []}), &ctx)
@@ -173,7 +173,7 @@ mod tests {
     async fn accepts_structured_value_when_no_schema() {
         let dir = crate::test_util::TempDir::new().unwrap();
         let (sys, key) = one_ticket("alice");
-        let sys = Arc::clone(&sys).dir(dir.path().to_path_buf());
+        sys.dir(dir.path().to_path_buf());
         let ctx = ctx_with(Arc::clone(&sys), "alice", dir.path().to_path_buf());
         let outcome = WriteResultTool
             .call(serde_json::json!({"result": {"x": 1, "y": [2, 3]}}), &ctx)
@@ -199,7 +199,7 @@ mod tests {
     async fn rejects_null_result_when_no_schema() {
         let dir = crate::test_util::TempDir::new().unwrap();
         let (sys, _key) = one_ticket("alice");
-        let sys = Arc::clone(&sys).dir(dir.path().to_path_buf());
+        sys.dir(dir.path().to_path_buf());
         let ctx = ctx_with(Arc::clone(&sys), "alice", dir.path().to_path_buf());
         let outcome = WriteResultTool
             .call(serde_json::json!({"result": null}), &ctx)
@@ -211,7 +211,8 @@ mod tests {
     #[tokio::test]
     async fn validates_against_schema() {
         let dir = crate::test_util::TempDir::new().unwrap();
-        let sys = TicketSystem::new().dir(dir.path().to_path_buf());
+        let sys = TicketSystem::new();
+        sys.dir(dir.path().to_path_buf());
         let schema = Schema::parse(serde_json::json!({
             "type": "object",
             "properties": {"x": {"type": "string"}},
@@ -255,7 +256,8 @@ mod tests {
         }
 
         let dir = crate::test_util::TempDir::new().unwrap();
-        let sys = TicketSystem::new().dir(dir.path().to_path_buf());
+        let sys = TicketSystem::new();
+        sys.dir(dir.path().to_path_buf());
         sys.insert(
             Ticket::new("hi").schema_as::<Out>().label("alice"),
             "tester".into(),
@@ -329,7 +331,8 @@ mod tests {
     #[tokio::test]
     async fn appends_one_line_per_completed_ticket() {
         let dir = crate::test_util::TempDir::new().unwrap();
-        let sys = TicketSystem::new().dir(dir.path().to_path_buf());
+        let sys = TicketSystem::new();
+        sys.dir(dir.path().to_path_buf());
 
         sys.insert(Ticket::new("a").label("alice"), "tester".into());
         let key1 = sys
@@ -368,7 +371,8 @@ mod tests {
     async fn concurrent_writes_produce_one_intact_line_per_ticket() {
         const N: usize = 32;
         let dir = crate::test_util::TempDir::new().unwrap();
-        let sys = TicketSystem::new().dir(dir.path().to_path_buf());
+        let sys = TicketSystem::new();
+        sys.dir(dir.path().to_path_buf());
 
         let mut expected = Vec::with_capacity(N);
         for i in 0..N {

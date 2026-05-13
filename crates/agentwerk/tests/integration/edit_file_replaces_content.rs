@@ -20,7 +20,9 @@ async fn replaces_substring_in_place() -> std::result::Result<(), Box<dyn std::e
     let path = root.join("config.txt");
     fs::write(&path, ORIGINAL)?;
 
-    let tickets = TicketSystem::new().max_steps(10);
+    let tickets = TicketSystem::new();
+
+    tickets.max_steps(10);
     let agent = Agent::new()
         .provider(provider)
         .model(&model)

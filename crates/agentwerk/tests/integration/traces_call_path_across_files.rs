@@ -76,7 +76,9 @@ async fn traces_three_hop_call_path() -> std::result::Result<(), Box<dyn std::er
         "required": ["call_path"]
     }))?;
 
-    let tickets = TicketSystem::new().max_steps(15);
+    let tickets = TicketSystem::new();
+
+    tickets.max_steps(15);
     let agent = Agent::new()
         .provider(provider)
         .model(&model)

@@ -90,7 +90,9 @@ async fn finds_code_pattern_with_special_chars(
         logger(e);
     });
 
-    let tickets = TicketSystem::new().max_steps(10);
+    let tickets = TicketSystem::new();
+
+    tickets.max_steps(10);
     let agent = Agent::new()
         .provider(provider)
         .model(&model)

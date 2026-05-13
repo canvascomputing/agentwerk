@@ -721,7 +721,8 @@ mod tests {
         };
 
         let results_dir = crate::test_util::TempDir::new().unwrap();
-        let tickets = TicketSystem::new()
+        let tickets = TicketSystem::new();
+        tickets
             .dir(results_dir.path().to_path_buf())
             .max_request_retries(max_request_retries)
             .request_retry_delay(Duration::from_millis(1))
@@ -954,7 +955,8 @@ mod tests {
         };
 
         let results_dir = crate::test_util::TempDir::new().unwrap();
-        let tickets = TicketSystem::new()
+        let tickets = TicketSystem::new();
+        tickets
             .dir(results_dir.path().to_path_buf())
             .max_request_retries(3)
             .request_retry_delay(Duration::from_millis(1));
@@ -1200,7 +1202,8 @@ mod tests {
             Arc::new(move |e| c.lock().unwrap().push(e))
         };
         let cancel = Arc::new(AtomicBool::new(false));
-        let tickets = TicketSystem::new()
+        let tickets = TicketSystem::new();
+        tickets
             .interrupt_signal(Arc::clone(&cancel))
             .max_request_retries(3)
             .request_retry_delay(Duration::from_secs(60));
@@ -1265,7 +1268,8 @@ mod tests {
             Ok(write_result_response("ok")),
         ]);
         let results_dir = crate::test_util::TempDir::new().unwrap();
-        let tickets = TicketSystem::new()
+        let tickets = TicketSystem::new();
+        tickets
             .dir(results_dir.path().to_path_buf())
             .max_request_retries(0)
             .request_retry_delay(Duration::from_millis(1))
@@ -1309,7 +1313,9 @@ mod tests {
         let knowledge_dir = crate::test_util::TempDir::new().unwrap();
         let store = Knowledge::open(knowledge_dir.path()).unwrap();
 
-        let tickets = TicketSystem::new()
+        let tickets = TicketSystem::new();
+
+        tickets
             .dir(results_dir.path().to_path_buf())
             .max_request_retries(0)
             .request_retry_delay(Duration::from_millis(1))
@@ -1364,7 +1370,9 @@ mod tests {
         let knowledge_dir = crate::test_util::TempDir::new().unwrap();
         let store = Knowledge::open(knowledge_dir.path()).unwrap();
 
-        let tickets = TicketSystem::new()
+        let tickets = TicketSystem::new();
+
+        tickets
             .dir(results_dir.path().to_path_buf())
             .max_request_retries(0)
             .request_retry_delay(Duration::from_millis(1))
@@ -1413,7 +1421,8 @@ mod tests {
         let store = Knowledge::open(knowledge_dir.path()).unwrap();
 
         let cancel = Arc::new(AtomicBool::new(false));
-        let tickets = TicketSystem::new()
+        let tickets = TicketSystem::new();
+        tickets
             .dir(results_dir.path().to_path_buf())
             .interrupt_signal(Arc::clone(&cancel))
             .max_request_retries(0)
@@ -1491,7 +1500,9 @@ mod tests {
         let knowledge_dir = crate::test_util::TempDir::new().unwrap();
         let store = Knowledge::open(knowledge_dir.path()).unwrap();
 
-        let tickets = TicketSystem::new()
+        let tickets = TicketSystem::new();
+
+        tickets
             .dir(results_dir.path().to_path_buf())
             .max_request_retries(0)
             .request_retry_delay(Duration::from_millis(1))
@@ -1619,7 +1630,8 @@ mod tests {
     #[tokio::test]
     async fn add_after_run_spawns_new_agent() {
         let results_dir = crate::test_util::TempDir::new().unwrap();
-        let tickets = TicketSystem::new()
+        let tickets = TicketSystem::new();
+        tickets
             .dir(results_dir.path().to_path_buf())
             .max_request_retries(0)
             .request_retry_delay(Duration::from_millis(1));
@@ -1666,7 +1678,8 @@ mod tests {
     #[tokio::test]
     async fn late_added_agent_joined_on_shutdown() {
         let results_dir = crate::test_util::TempDir::new().unwrap();
-        let tickets = TicketSystem::new()
+        let tickets = TicketSystem::new();
+        tickets
             .dir(results_dir.path().to_path_buf())
             .max_request_retries(0)
             .request_retry_delay(Duration::from_millis(1));
@@ -1721,7 +1734,8 @@ mod tests {
             Ok(write_result_response("a-done")),
             Ok(write_result_response("b-done")),
         ]);
-        let tickets = TicketSystem::new()
+        let tickets = TicketSystem::new();
+        tickets
             .dir(results_dir.path().to_path_buf())
             .max_request_retries(0)
             .request_retry_delay(Duration::from_millis(1));
@@ -1751,7 +1765,8 @@ mod tests {
     #[tokio::test]
     async fn running_signal_returns_shared_arc() {
         let results_dir = crate::test_util::TempDir::new().unwrap();
-        let tickets = TicketSystem::new()
+        let tickets = TicketSystem::new();
+        tickets
             .dir(results_dir.path().to_path_buf())
             .max_request_retries(0)
             .request_retry_delay(Duration::from_millis(1));
@@ -1768,7 +1783,8 @@ mod tests {
     #[tokio::test]
     async fn running_stop_is_abrupt() {
         let results_dir = crate::test_util::TempDir::new().unwrap();
-        let tickets = TicketSystem::new()
+        let tickets = TicketSystem::new();
+        tickets
             .dir(results_dir.path().to_path_buf())
             .max_request_retries(0)
             .request_retry_delay(Duration::from_millis(1));
@@ -1788,7 +1804,8 @@ mod tests {
             Ok(write_result_response("first")),
             Ok(write_result_response("second")),
         ]);
-        let tickets = TicketSystem::new()
+        let tickets = TicketSystem::new();
+        tickets
             .dir(results_dir.path().to_path_buf())
             .max_request_retries(0)
             .request_retry_delay(Duration::from_millis(1));
@@ -1819,7 +1836,8 @@ mod tests {
     async fn agent_run_dry_forwards_to_bound_system() {
         let results_dir = crate::test_util::TempDir::new().unwrap();
         let provider = MockProvider::with_results(vec![Ok(write_result_response("forwarded"))]);
-        let tickets = TicketSystem::new()
+        let tickets = TicketSystem::new();
+        tickets
             .dir(results_dir.path().to_path_buf())
             .max_request_retries(0)
             .request_retry_delay(Duration::from_millis(1));

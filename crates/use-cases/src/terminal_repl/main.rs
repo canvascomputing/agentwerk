@@ -63,9 +63,8 @@ async fn main() {
     let handler: Arc<dyn Fn(Event) + Send + Sync> =
         Arc::new(move |e: Event| print_event(&e, &event_style, test_window, &handler_midstream));
 
-    let tickets = TicketSystem::new()
-        .interrupt_signal(Arc::clone(&cancel))
-        .max_steps(40);
+    let tickets = TicketSystem::new();
+    tickets.interrupt_signal(Arc::clone(&cancel)).max_steps(40);
 
     let cwd = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
     let knowledge_dir = cwd.join(".agentwerk");

@@ -183,7 +183,7 @@ mod tests {
     async fn happy_path_finishes_parent_creates_child_with_parent_link() {
         let dir = crate::test_util::TempDir::new().unwrap();
         let (sys, parent_key) = one_ticket("alice");
-        let sys = Arc::clone(&sys).dir(dir.path().to_path_buf());
+        sys.dir(dir.path().to_path_buf());
         let ctx = ctx_with(Arc::clone(&sys), "alice", dir.path().to_path_buf());
 
         let outcome = WriteHandoverTool
@@ -217,7 +217,7 @@ mod tests {
     async fn appends_one_ndjson_line_for_parent_result() {
         let dir = crate::test_util::TempDir::new().unwrap();
         let (sys, parent_key) = one_ticket("alice");
-        let sys = Arc::clone(&sys).dir(dir.path().to_path_buf());
+        sys.dir(dir.path().to_path_buf());
         let ctx = ctx_with(Arc::clone(&sys), "alice", dir.path().to_path_buf());
 
         WriteHandoverTool
@@ -247,7 +247,8 @@ mod tests {
         // a short string, which violates the schema but passes the
         // type check, so we exercise the schema-validation abort path.
         let dir = crate::test_util::TempDir::new().unwrap();
-        let sys = TicketSystem::new().dir(dir.path().to_path_buf());
+        let sys = TicketSystem::new();
+        sys.dir(dir.path().to_path_buf());
         let schema = Schema::parse(serde_json::json!({
             "type": "string",
             "minLength": 50
@@ -285,7 +286,7 @@ mod tests {
     async fn malformed_schema_aborts_atomically() {
         let dir = crate::test_util::TempDir::new().unwrap();
         let (sys, parent_key) = one_ticket("alice");
-        let sys = Arc::clone(&sys).dir(dir.path().to_path_buf());
+        sys.dir(dir.path().to_path_buf());
         let ctx = ctx_with(Arc::clone(&sys), "alice", dir.path().to_path_buf());
 
         let outcome = WriteHandoverTool
@@ -312,7 +313,7 @@ mod tests {
     async fn optional_schema_attached_to_child() {
         let dir = crate::test_util::TempDir::new().unwrap();
         let (sys, _key) = one_ticket("alice");
-        let sys = Arc::clone(&sys).dir(dir.path().to_path_buf());
+        sys.dir(dir.path().to_path_buf());
         let ctx = ctx_with(Arc::clone(&sys), "alice", dir.path().to_path_buf());
 
         WriteHandoverTool
@@ -387,7 +388,7 @@ mod tests {
     async fn rejects_null_or_empty_result() {
         let dir = crate::test_util::TempDir::new().unwrap();
         let (sys, _key) = one_ticket("alice");
-        let sys = Arc::clone(&sys).dir(dir.path().to_path_buf());
+        sys.dir(dir.path().to_path_buf());
         let ctx = ctx_with(Arc::clone(&sys), "alice", dir.path().to_path_buf());
         for body in [
             serde_json::json!({"to": "bob", "task": "x", "result": null}),
@@ -402,7 +403,7 @@ mod tests {
     async fn rejects_non_string_result() {
         let dir = crate::test_util::TempDir::new().unwrap();
         let (sys, parent_key) = one_ticket("alice");
-        let sys = Arc::clone(&sys).dir(dir.path().to_path_buf());
+        sys.dir(dir.path().to_path_buf());
         let ctx = ctx_with(Arc::clone(&sys), "alice", dir.path().to_path_buf());
         for non_string in [
             serde_json::json!({"to": "bob", "task": "next", "result": 42}),
@@ -450,7 +451,7 @@ mod tests {
     async fn substitutes_parent_key_and_result_in_task() {
         let dir = crate::test_util::TempDir::new().unwrap();
         let (sys, parent_key) = one_ticket("alice");
-        let sys = Arc::clone(&sys).dir(dir.path().to_path_buf());
+        sys.dir(dir.path().to_path_buf());
         let ctx = ctx_with(Arc::clone(&sys), "alice", dir.path().to_path_buf());
 
         WriteHandoverTool
@@ -476,7 +477,7 @@ mod tests {
     async fn unknown_placeholders_pass_through() {
         let dir = crate::test_util::TempDir::new().unwrap();
         let (sys, parent_key) = one_ticket("alice");
-        let sys = Arc::clone(&sys).dir(dir.path().to_path_buf());
+        sys.dir(dir.path().to_path_buf());
         let ctx = ctx_with(Arc::clone(&sys), "alice", dir.path().to_path_buf());
 
         WriteHandoverTool
@@ -505,7 +506,7 @@ mod tests {
         // per placeholder, not recursively.
         let dir = crate::test_util::TempDir::new().unwrap();
         let (sys, parent_key) = one_ticket("alice");
-        let sys = Arc::clone(&sys).dir(dir.path().to_path_buf());
+        sys.dir(dir.path().to_path_buf());
         let ctx = ctx_with(Arc::clone(&sys), "alice", dir.path().to_path_buf());
 
         WriteHandoverTool

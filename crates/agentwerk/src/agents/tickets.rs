@@ -325,37 +325,37 @@ impl TicketSystem {
 
     // ---- policy builders ----
 
-    pub fn max_steps(self: Arc<Self>, n: u32) -> Arc<Self> {
+    pub fn max_steps(&self, n: u32) -> &Self {
         self.policies.lock().unwrap().max_steps = Some(n);
         self
     }
 
-    pub fn max_input_tokens(self: Arc<Self>, n: u64) -> Arc<Self> {
+    pub fn max_input_tokens(&self, n: u64) -> &Self {
         self.policies.lock().unwrap().max_input_tokens = Some(n);
         self
     }
 
-    pub fn max_output_tokens(self: Arc<Self>, n: u64) -> Arc<Self> {
+    pub fn max_output_tokens(&self, n: u64) -> &Self {
         self.policies.lock().unwrap().max_output_tokens = Some(n);
         self
     }
 
-    pub fn max_request_tokens(self: Arc<Self>, n: u32) -> Arc<Self> {
+    pub fn max_request_tokens(&self, n: u32) -> &Self {
         self.policies.lock().unwrap().max_request_tokens = Some(n);
         self
     }
 
-    pub fn max_schema_retries(self: Arc<Self>, n: u32) -> Arc<Self> {
+    pub fn max_schema_retries(&self, n: u32) -> &Self {
         self.policies.lock().unwrap().max_schema_retries = Some(n);
         self
     }
 
-    pub fn max_request_retries(self: Arc<Self>, n: u32) -> Arc<Self> {
+    pub fn max_request_retries(&self, n: u32) -> &Self {
         self.policies.lock().unwrap().max_request_retries = n;
         self
     }
 
-    pub fn request_retry_delay(self: Arc<Self>, d: Duration) -> Arc<Self> {
+    pub fn request_retry_delay(&self, d: Duration) -> &Self {
         self.policies.lock().unwrap().request_retry_delay = d;
         self
     }
@@ -363,14 +363,14 @@ impl TicketSystem {
     /// Maximum elapsed duration `run_dry` will wait before tripping
     /// the interrupt signal and returning. Hitting the cap is a
     /// graceful stop, not a `PolicyViolated` event.
-    pub fn max_time(self: Arc<Self>, d: Duration) -> Arc<Self> {
+    pub fn max_time(&self, d: Duration) -> &Self {
         self.policies.lock().unwrap().max_time = Some(d);
         self
     }
 
     /// Override the cancel signal. Useful when a caller wants to share
     /// one `Arc<AtomicBool>` across multiple subsystems.
-    pub fn interrupt_signal(self: Arc<Self>, signal: Arc<AtomicBool>) -> Arc<Self> {
+    pub fn interrupt_signal(&self, signal: Arc<AtomicBool>) -> &Self {
         *self.interrupt_signal.lock().unwrap() = signal;
         self
     }
@@ -380,7 +380,7 @@ impl TicketSystem {
     /// `Knowledge::open` at the same directory. When unset, `WriteResultTool`
     /// falls back to the calling agent's directory and the ticket
     /// event log is skipped entirely.
-    pub fn dir(self: Arc<Self>, dir: impl Into<PathBuf>) -> Arc<Self> {
+    pub fn dir(&self, dir: impl Into<PathBuf>) -> &Self {
         *self.dir.lock().unwrap() = Some(dir.into());
         self
     }
@@ -1296,7 +1296,8 @@ mod tests {
     #[test]
     fn workspace_emits_created_started_done_in_order() {
         let dir = crate::test_util::TempDir::new().unwrap();
-        let sys = TicketSystem::new().dir(dir.path().to_path_buf());
+        let sys = TicketSystem::new();
+        sys.dir(dir.path().to_path_buf());
         sys.task("hello");
         sys.claim(|t| t.key() == "TICKET-1", "agent");
         sys.set_done("TICKET-1").unwrap();
@@ -1317,7 +1318,8 @@ mod tests {
     #[test]
     fn workspace_emits_failed_event_on_set_failed() {
         let dir = crate::test_util::TempDir::new().unwrap();
-        let sys = TicketSystem::new().dir(dir.path().to_path_buf());
+        let sys = TicketSystem::new();
+        sys.dir(dir.path().to_path_buf());
         sys.task("hello");
         sys.set_failed("TICKET-1").unwrap();
         let lines = read_tickets_log(dir.path());
@@ -1331,7 +1333,8 @@ mod tests {
     #[test]
     fn workspace_created_event_carries_labels_when_pinned() {
         let dir = crate::test_util::TempDir::new().unwrap();
-        let sys = TicketSystem::new().dir(dir.path().to_path_buf());
+        let sys = TicketSystem::new();
+        sys.dir(dir.path().to_path_buf());
         sys.ticket(Ticket::new("specific").label("alice"));
         let lines = read_tickets_log(dir.path());
         assert_eq!(lines.len(), 1);
@@ -1342,7 +1345,8 @@ mod tests {
     #[test]
     fn workspace_logs_one_line_per_lifecycle_step_for_multiple_tickets() {
         let dir = crate::test_util::TempDir::new().unwrap();
-        let sys = TicketSystem::new().dir(dir.path().to_path_buf());
+        let sys = TicketSystem::new();
+        sys.dir(dir.path().to_path_buf());
         sys.task("a").task("b");
         sys.claim(|t| t.key() == "TICKET-1", "agent");
         sys.set_done("TICKET-1").unwrap();
@@ -1396,7 +1400,8 @@ mod tests {
     #[test]
     fn claim_emits_started_event_in_workspace_log() {
         let dir = crate::test_util::TempDir::new().unwrap();
-        let sys = TicketSystem::new().dir(dir.path().to_path_buf());
+        let sys = TicketSystem::new();
+        sys.dir(dir.path().to_path_buf());
         sys.task("hello");
         sys.claim(|t| t.status == Status::Todo, "alice");
         let lines = read_tickets_log(dir.path());
@@ -1439,7 +1444,8 @@ mod tests {
     #[test]
     fn parent_field_renders_in_created_event() {
         let dir = crate::test_util::TempDir::new().unwrap();
-        let sys = TicketSystem::new().dir(dir.path().to_path_buf());
+        let sys = TicketSystem::new();
+        sys.dir(dir.path().to_path_buf());
         sys.task("first");
         sys.ticket(Ticket::new("child").parent("TICKET-1"));
         let lines = read_tickets_log(dir.path());

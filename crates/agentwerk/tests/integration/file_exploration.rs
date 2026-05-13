@@ -10,7 +10,9 @@ use agentwerk::{Agent, TicketSystem};
 async fn test() -> std::result::Result<(), Box<dyn std::error::Error>> {
     let (provider, model) = common::build_provider();
 
-    let tickets = TicketSystem::new().max_steps(10);
+    let tickets = TicketSystem::new();
+
+    tickets.max_steps(10);
     let agent = Agent::new()
         .provider(provider)
         .model(&model)

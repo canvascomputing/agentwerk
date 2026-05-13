@@ -181,7 +181,8 @@ let results = tickets.run_dry().await;    // waits for the queue to empty
 Configure execution policies on a ticket system. A breach fires `EventKind::PolicyViolated` and halts execution.
 
 ```rust
-let tickets = TicketSystem::new()
+let tickets = TicketSystem::new();
+tickets
     .max_steps(40)
     .max_time(std::time::Duration::from_secs(300))
     .max_input_tokens(200_000)

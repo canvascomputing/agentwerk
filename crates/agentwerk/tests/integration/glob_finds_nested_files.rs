@@ -81,7 +81,9 @@ async fn finds_every_lib_rs_in_nested_tree() -> std::result::Result<(), Box<dyn 
         logger(e);
     });
 
-    let tickets = TicketSystem::new().max_steps(10);
+    let tickets = TicketSystem::new();
+
+    tickets.max_steps(10);
     let agent = Agent::new()
         .provider(provider)
         .model(&model)

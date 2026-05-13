@@ -40,7 +40,9 @@ async fn separates_files_and_directories() -> std::result::Result<(), Box<dyn st
         "required": ["files", "directories"]
     }))?;
 
-    let tickets = TicketSystem::new().max_steps(10);
+    let tickets = TicketSystem::new();
+
+    tickets.max_steps(10);
     let agent = Agent::new()
         .provider(provider)
         .model(&model)

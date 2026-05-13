@@ -18,7 +18,9 @@ async fn creates_file_with_token() -> std::result::Result<(), Box<dyn std::error
     let dir = crate::test_util::TempDir::new()?;
     let root = dir.path();
 
-    let tickets = TicketSystem::new().max_steps(10);
+    let tickets = TicketSystem::new();
+
+    tickets.max_steps(10);
     let agent = Agent::new()
         .provider(provider)
         .model(&model)

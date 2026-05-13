@@ -38,9 +38,10 @@ async fn main() {
     print_intro(args.n, partitions.len(), workers, &style);
 
     let schema = partial_sum_schema();
-    let mut tickets = TicketSystem::new().interrupt_signal(Arc::clone(&cancel));
+    let tickets = TicketSystem::new();
+    tickets.interrupt_signal(Arc::clone(&cancel));
     if let Some(n) = args.max_steps {
-        tickets = tickets.max_steps(n);
+        tickets.max_steps(n);
     }
 
     for (idx, (lo, hi)) in partitions.iter().enumerate() {
