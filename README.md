@@ -129,23 +129,28 @@ Each provider exposes `.base_url(url)` and `.timeout(duration)` to override the 
   <img src="https://raw.githubusercontent.com/canvascomputing/agentwerk/main/tickets.jpg" width="400" />
 </p>
 
-The `TicketSystem` is the core data structure of agentwerk to orchestrate complex collaboration between agents. A **task** is the work itself, a **ticket** wraps it with additional metadata, like labels and schemas. Labels route work to matching agents.
+The `TicketSystem` is the core data structure of agentwerk to orchestrate complex collaboration between agents. A `task` is the work itself, a `ticket` wraps it with additional metadata, like labels and schemas. Labels route work to matching agents.
 
 ```rust
 use agentwerk::{Ticket, TicketSystem};
 
 let tickets = TicketSystem::new();
 
-tickets.agent(scout);
-tickets.agent(analyst);
+tickets.agent(security_reviewer);
+tickets.agent(performance_reviewer);
 
-tickets.task_labeled("Scan src/ for unused imports.", "scan");
+for path in ["src/auth.rs", "src/session.rs", "src/tokens.rs"] {
+    tickets.task_labeled(
+        format!("Audit {path} for input-validation gaps."),
+        "security",
+    );
+}
 
-let report = Ticket::new("Categorise the findings by severity")
-    .label("analyse")
-    .schema(report_schema);
+let audit = Ticket::new("Audit src/api/ for blocking I/O in async handlers.")
+    .label("performance")
+    .schema(finding_schema);
 
-tickets.ticket(report);
+tickets.ticket(audit);
 ```
 
 | Method | Description |
