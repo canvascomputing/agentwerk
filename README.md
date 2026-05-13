@@ -338,7 +338,7 @@ tickets.ticket(Ticket::new("Write a report on Rust async runtimes.").schema_as::
 let results = tickets.run_dry().await;
 
 for ticket in results.tickets() {
-    let report: Report = ticket.result_as::<Report>().unwrap()?;
+    let report: Report = ticket.result_as::<Report>().unwrap();
     println!("{}: {} sections", report.title, report.sections.len());
 }
 ```

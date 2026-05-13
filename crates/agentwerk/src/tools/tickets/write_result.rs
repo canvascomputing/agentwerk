@@ -285,7 +285,7 @@ mod tests {
         let t = sys.get(&key).unwrap();
         assert_eq!(t.status, Status::Done);
         assert_eq!(
-            t.result_as::<Out>().unwrap().unwrap().x,
+            t.result_as::<Out>().unwrap().x,
             "ok",
             "result deserializes into the typed shape"
         );

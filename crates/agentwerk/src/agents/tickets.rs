@@ -208,18 +208,20 @@ impl Ticket {
         })
     }
 
-    /// Result payload deserialized into `R`. `None` when the ticket
-    /// has no recorded result; `Some(Err(_))` when the recorded
-    /// `Value` does not match the requested type (which on
-    /// schema-bound tickets should not happen — the framework rejects
-    /// mismatched results before marking the ticket done).
-    pub fn result_as<R>(&self) -> Option<Result<R, serde_json::Error>>
+    /// Result payload deserialized into `R`, or `None` when the ticket
+    /// has no recorded result. Panics when the recorded `Value` does not
+    /// deserialize into `R`: schema-bound tickets validate the result
+    /// before the framework marks them done, so a mismatch here means
+    /// the validator and the type drifted apart.
+    pub fn result_as<R>(&self) -> Option<R>
     where
         R: serde::de::DeserializeOwned,
     {
-        self.result
-            .as_ref()
-            .map(|v| serde_json::from_value(v.clone()))
+        self.result.as_ref().map(|v| {
+            serde_json::from_value(v.clone()).expect(
+                "ticket result does not match requested type — validator and type are out of sync",
+            )
+        })
     }
 
     pub fn has_label(&self, label: &str) -> bool {
