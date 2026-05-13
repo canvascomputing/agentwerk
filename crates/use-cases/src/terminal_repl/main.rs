@@ -60,9 +60,8 @@ async fn main() {
     // `eprintln!` doubling up newlines.
     let midstream = Arc::new(AtomicBool::new(false));
     let handler_midstream = Arc::clone(&midstream);
-    let handler: Arc<dyn Fn(Event) + Send + Sync> = Arc::new(move |e: Event| {
-        print_event(&e, &event_style, test_window, &handler_midstream)
-    });
+    let handler: Arc<dyn Fn(Event) + Send + Sync> =
+        Arc::new(move |e: Event| print_event(&e, &event_style, test_window, &handler_midstream));
 
     let tickets = TicketSystem::new()
         .interrupt_signal(Arc::clone(&cancel))
@@ -185,12 +184,7 @@ fn announce_assistant(style: &Style) {
     let _ = io::stdout().flush();
 }
 
-fn print_event(
-    event: &Event,
-    style: &Style,
-    test_window: Option<u64>,
-    midstream: &AtomicBool,
-) {
+fn print_event(event: &Event, style: &Style, test_window: Option<u64>, midstream: &AtomicBool) {
     // Emit a single leading newline only when streamed model text just
     // landed on stdout without a trailing newline; subsequent events
     // print directly on their own line.

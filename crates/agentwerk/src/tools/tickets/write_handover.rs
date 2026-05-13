@@ -201,7 +201,10 @@ mod tests {
 
         let parent = sys.get(&parent_key).unwrap();
         assert_eq!(parent.status, Status::Done);
-        assert_eq!(parent.result_string().as_deref(), Some("summary of alice's work"));
+        assert_eq!(
+            parent.result_string().as_deref(),
+            Some("summary of alice's work")
+        );
 
         let child = sys.get("TICKET-2").unwrap();
         assert_eq!(child.status, Status::Todo);
@@ -227,7 +230,11 @@ mod tests {
 
         let log = std::fs::read_to_string(dir.path().join("results.jsonl")).unwrap();
         let lines: Vec<&str> = log.lines().collect();
-        assert_eq!(lines.len(), 1, "only the parent finish writes a result line");
+        assert_eq!(
+            lines.len(),
+            1,
+            "only the parent finish writes a result line"
+        );
         let parsed: serde_json::Value = serde_json::from_str(lines[0]).unwrap();
         assert_eq!(parsed["ticket"], parent_key.as_str());
         assert_eq!(parsed["agent"], "alice");
@@ -267,7 +274,10 @@ mod tests {
         let parent = sys.get(&parent_key).unwrap();
         assert_eq!(parent.status, Status::InProgress);
         assert!(parent.result().is_none());
-        assert!(sys.get("TICKET-2").is_none(), "no child created on schema failure");
+        assert!(
+            sys.get("TICKET-2").is_none(),
+            "no child created on schema failure"
+        );
         assert!(!dir.path().join("results.jsonl").exists());
     }
 

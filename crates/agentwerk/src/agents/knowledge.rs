@@ -786,9 +786,7 @@ mod tests {
         assert!(err.contains("chars"), "{err}");
 
         // Outcome reports the custom limit.
-        let out = store
-            .write_page("small", "ok", "# Small", &[])
-            .unwrap();
+        let out = store.write_page("small", "ok", "# Small", &[]).unwrap();
         assert_eq!(out.index_char_limit, 80);
     }
 
