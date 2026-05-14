@@ -17,6 +17,8 @@ const DEFAULT_CONTEXT_TEMPLATE: &str = include_str!("default.context.md");
 
 const RETRY_TEMPLATE: &str = include_str!("retry.directive.md");
 
+const COMPACTION_TEMPLATE: &str = include_str!("compaction.directive.md");
+
 /// Render the corrective user message the loop pushes when the model's
 /// previous reply could not finalise the current piece of work. Used
 /// for two cases: a finisher tool returned a schema-validation error,
@@ -25,6 +27,13 @@ const RETRY_TEMPLATE: &str = include_str!("retry.directive.md");
 /// wrong; the template wraps it with the consistent framing.
 pub(crate) fn retry_directive(detail: &str) -> String {
     RETRY_TEMPLATE.replace("{detail}", detail)
+}
+
+/// System prompt used by the agent loop when it collapses an
+/// over-budget conversation into a single summary message. Has no
+/// placeholders; the conversation itself is sent as the user messages.
+pub(crate) fn compaction_directive() -> &'static str {
+    COMPACTION_TEMPLATE
 }
 
 /// Build the default context body: a `## Context` markdown block with the

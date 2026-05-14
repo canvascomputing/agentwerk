@@ -7,13 +7,13 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use crate::event::{Event, EventKind, ToolFailureKind};
-use crate::providers::types::{ResponseStatus, StreamEvent};
+use crate::providers::types::{ResponseStatus, StreamEvent, TokenUsage};
 use crate::providers::{AsUserMessage, ContentBlock, Message, Model, ModelRequest, ProviderError};
 use crate::tools::{ToolCall, ToolContext, ToolError};
 
 use super::agent::Agent;
 use super::compact;
-use super::retry::ExponentialRetry;
+use super::retry::{ExponentialRetry, Retry};
 use super::stats::LoopStats;
 use super::tickets::{policy_violated_kind, Status};
 use crate::prompts::retry_directive;
@@ -62,68 +62,30 @@ pub(super) async fn wait_for_signal(signal: &Arc<AtomicBool>) {
     }
 }
 
-/// Drive one provider request through the request-retry policy.
-/// `Some(r)` on success. `None` on cancellation (no events emitted)
-/// or terminal failure (helper has already emitted `RequestFailed` +
-/// `TicketFailed` and recorded the error stat). Caller bails on `None`.
-/// On a terminal `ContextWindowExceeded` the helper also emits a
-/// `ContextCompacted { Reactive }` warning before `RequestFailed`.
-#[allow(clippy::too_many_arguments)]
-async fn respond_with_retry<F: Fn(EventKind)>(
-    provider: Arc<dyn crate::providers::Provider>,
-    request: ModelRequest,
-    on_stream: Arc<dyn Fn(crate::providers::types::StreamEvent) + Send + Sync>,
-    retry: &super::retry::ExponentialRetry,
-    interrupt_signal: &Arc<AtomicBool>,
+/// Terminate the current ticket with a request failure: emit
+/// `RequestFailed`, record the error in run-wide and per-label stats,
+/// then emit `TicketFailed`. Called from the four sites inside
+/// `process_ticket` that turn a `ProviderError` into a ticket failure
+/// (transient retries exhausted, terminal provider error, summarize
+/// failure, context still over budget after compaction).
+fn fail_request<F: Fn(EventKind)>(
+    emit: &F,
     stats: &super::stats::Stats,
     labels: &[String],
     key: &str,
-    emit: &F,
-) -> Option<crate::providers::types::ModelResponse> {
-    use super::retry::Retry;
-    let mut attempt: u32 = 0;
-    loop {
-        let outcome = tokio::select! {
-            biased;
-            _ = wait_for_signal(interrupt_signal) => return None,
-            r = provider.respond(request.clone(), Arc::clone(&on_stream)) => r,
-        };
-        match outcome {
-            Ok(r) => return Some(r),
-            Err(e) if e.is_retryable() && attempt < retry.max_attempts() => {
-                let delay = retry.delay(attempt, e.retry_delay());
-                attempt += 1;
-                emit(EventKind::RequestRetried {
-                    attempt,
-                    max_attempts: retry.max_attempts(),
-                    kind: e.kind(),
-                    message: e.to_string(),
-                });
-                tokio::select! {
-                    biased;
-                    _ = wait_for_signal(interrupt_signal) => return None,
-                    _ = tokio::time::sleep(delay) => {}
-                }
-            }
-            Err(e) => {
-                if matches!(e, ProviderError::ContextWindowExceeded { .. }) {
-                    emit(compact::reactive_event());
-                }
-                emit(EventKind::RequestFailed {
-                    kind: e.kind(),
-                    message: e.to_string(),
-                });
-                stats.record_error();
-                for l in labels {
-                    stats.stats_for_label(l).record_error();
-                }
-                emit(EventKind::TicketFailed {
-                    key: key.to_string(),
-                });
-                return None;
-            }
-        }
+    err: &ProviderError,
+) {
+    emit(EventKind::RequestFailed {
+        kind: err.kind(),
+        message: err.to_string(),
+    });
+    stats.record_error();
+    for l in labels {
+        stats.stats_for_label(l).record_error();
     }
+    emit(EventKind::TicketFailed {
+        key: key.to_string(),
+    });
 }
 
 /// Per-agent claim loop. Picks the next eligible ticket and runs it
@@ -206,6 +168,8 @@ async fn process_ticket(
         messages.push(Message::user(ctx));
     }
     messages.push(task_msg);
+    // Compaction always preserves the leading context + task messages.
+    let head_len = messages.len();
     emit(EventKind::TicketStarted {
         key: key.to_string(),
     });
@@ -215,6 +179,12 @@ async fn process_ticket(
     // Consecutive schema-validation failures since the last successful
     // schema-checked tool call. Bounded by `max_schema_retries`.
     let mut consecutive_schema_failures: u32 = 0;
+    // Token usage from the previous response, fed to the proactive
+    // compaction seam at the top of each iteration.
+    let mut last_usage: Option<TokenUsage> = None;
+    // Compaction circuit breaker: if a request still overflows after we
+    // already compacted once, give up rather than spin.
+    let mut consecutive_overflows: u32 = 0;
 
     let on_stream: Arc<dyn Fn(StreamEvent) + Send + Sync> = {
         let handler = agent.resolve_event_handler();
@@ -229,7 +199,7 @@ async fn process_ticket(
         })
     };
 
-    loop {
+    'outer: loop {
         if interrupt_signal.load(Ordering::Relaxed) {
             return;
         }
@@ -240,6 +210,27 @@ async fn process_ticket(
             }
             Some(_) => {}
             None => return,
+        }
+
+        // ---- proactive compaction: collapse the tail before sending ----
+        // Once the previous response's input-token estimate plus the
+        // bytes appended since crosses the threshold, summarize the
+        // tail in place so the next request fits.
+        if let Some(usage) = &last_usage {
+            if let Some(ev) = compact::proactive_event(window, usage, &messages) {
+                emit(ev);
+                if let Err(e) = compact::summarize_and_replace(
+                    &agent.provider_handle(),
+                    agent.model_str(),
+                    &mut messages,
+                    head_len,
+                )
+                .await
+                {
+                    fail_request(&emit, &ticket_system.stats, &labels, key, &e);
+                    return;
+                }
+            }
         }
 
         emit(EventKind::RequestStarted {
@@ -257,22 +248,68 @@ async fn process_ticket(
             base_delay: policies.request_retry_delay,
             max_attempts: policies.max_request_retries,
         };
-        // ---- request retry: transient transport errors → backoff + replay ----
-        let response = match respond_with_retry(
-            agent.provider_handle(),
-            request,
-            Arc::clone(&on_stream),
-            &retry,
-            interrupt_signal,
-            &ticket_system.stats,
-            &labels,
-            key,
-            &emit,
-        )
-        .await
-        {
-            Some(r) => r,
-            None => return,
+
+        // ---- request retry: transient errors back off and replay; an
+        // overflow error compacts the tail and continues the outer
+        // loop; any other terminal error fails the ticket. ----
+        let provider = agent.provider_handle();
+        let mut attempt: u32 = 0;
+        let response = loop {
+            let outcome = tokio::select! {
+                biased;
+                _ = wait_for_signal(interrupt_signal) => return,
+                r = provider.respond(request.clone(), Arc::clone(&on_stream)) => r,
+            };
+            match outcome {
+                Ok(r) => break r,
+                Err(ProviderError::ContextWindowExceeded { .. }) => {
+                    emit(compact::reactive_event());
+                    consecutive_overflows += 1;
+                    if consecutive_overflows >= 2 {
+                        fail_request(
+                            &emit,
+                            &ticket_system.stats,
+                            &labels,
+                            key,
+                            &ProviderError::ContextWindowExceeded {
+                                message: "context still exceeds window after compaction".into(),
+                            },
+                        );
+                        return;
+                    }
+                    if let Err(e) = compact::summarize_and_replace(
+                        &agent.provider_handle(),
+                        agent.model_str(),
+                        &mut messages,
+                        head_len,
+                    )
+                    .await
+                    {
+                        fail_request(&emit, &ticket_system.stats, &labels, key, &e);
+                        return;
+                    }
+                    continue 'outer;
+                }
+                Err(e) if e.is_retryable() && attempt < retry.max_attempts() => {
+                    let delay = retry.delay(attempt, e.retry_delay());
+                    attempt += 1;
+                    emit(EventKind::RequestRetried {
+                        attempt,
+                        max_attempts: retry.max_attempts(),
+                        kind: e.kind(),
+                        message: e.to_string(),
+                    });
+                    tokio::select! {
+                        biased;
+                        _ = wait_for_signal(interrupt_signal) => return,
+                        _ = tokio::time::sleep(delay) => {}
+                    }
+                }
+                Err(e) => {
+                    fail_request(&emit, &ticket_system.stats, &labels, key, &e);
+                    return;
+                }
+            }
         };
 
         emit(EventKind::RequestFinished {
@@ -280,9 +317,17 @@ async fn process_ticket(
             usage: response.usage.clone(),
         });
 
+        // Status-level overflow: a 200 OK whose body says the response
+        // was clipped by the context window. Surface the warning, but
+        // let the turn continue — if the next request also overflows
+        // it will surface as `ProviderError::ContextWindowExceeded`
+        // and the retry-loop's recovery path takes over.
         if response.status == ResponseStatus::ContextWindowExceeded {
             emit(compact::reactive_event());
         }
+
+        consecutive_overflows = 0;
+        last_usage = Some(response.usage.clone());
 
         ticket_system
             .stats
@@ -296,10 +341,6 @@ async fn process_ticket(
         messages.push(Message::Assistant {
             content: response.content.clone(),
         });
-
-        if let Some(ev) = compact::proactive_event(window, &response.usage, &messages) {
-            emit(ev);
-        }
 
         let calls: Vec<ToolCall> = response
             .content
@@ -1882,5 +1923,215 @@ mod tests {
             "expected the existing RequestFailed event"
         );
         assert!(compacted_idx.unwrap() < failed_idx.unwrap());
+    }
+
+    /// Tool-less assistant reply with caller-chosen usage. Used to drive
+    /// the summarizer call inside the compaction tests, and to seed
+    /// `last_usage` for the proactive-threshold test.
+    fn text_response_with_usage(text: &str, usage: TokenUsage) -> ModelResponse {
+        ModelResponse {
+            content: vec![ContentBlock::Text { text: text.into() }],
+            status: ResponseStatus::EndTurn,
+            usage,
+            model: "mock".into(),
+        }
+    }
+
+    fn reactive_compacted_count(events: &[Event]) -> usize {
+        events
+            .iter()
+            .filter(|e| {
+                matches!(
+                    &e.kind,
+                    EventKind::ContextCompacted {
+                        reason: CompactReason::Reactive,
+                        ..
+                    }
+                )
+            })
+            .count()
+    }
+
+    fn proactive_compacted_count(events: &[Event]) -> usize {
+        events
+            .iter()
+            .filter(|e| {
+                matches!(
+                    &e.kind,
+                    EventKind::ContextCompacted {
+                        reason: CompactReason::Proactive,
+                        ..
+                    }
+                )
+            })
+            .count()
+    }
+
+    #[tokio::test]
+    async fn reactive_overflow_compacts_then_succeeds() {
+        // Sequence (4 provider calls):
+        //   1. text reply — pads the message tail
+        //   2. ContextWindowExceeded — main request rejected, summarize fires
+        //   3. "SUMMARY" — the summarize call's response
+        //   4. write_result — settles the ticket
+        //
+        // The fourth request must carry the compacted history:
+        // [task, SUMMARY] (no context message; run_one suppresses it).
+        let provider = MockProvider::with_results(vec![
+            Ok(text_response("turn 1")),
+            Err(ProviderError::ContextWindowExceeded {
+                message: "exceeded".into(),
+            }),
+            Ok(text_response_with_usage("SUMMARY", TokenUsage::default())),
+            Ok(write_result_response("ok")),
+        ]);
+        let (events, provider, settled) = run_one(provider, 0, 10, None).await;
+
+        assert_eq!(provider.requests(), 4);
+        assert_eq!(reactive_compacted_count(&events), 1);
+        assert!(failures_in(&events).is_empty());
+        assert_eq!(settled.unwrap().status, Status::Done);
+
+        // Prove compaction actually happened: the fourth (retried)
+        // request's user-side texts are just the task and the summary,
+        // not the original turn-1 trail.
+        let fourth = &provider.received()[3];
+        assert_eq!(
+            user_texts(fourth),
+            vec!["go".to_string(), "SUMMARY".to_string()]
+        );
+    }
+
+    #[tokio::test]
+    async fn reactive_overflow_twice_in_a_row_fails_the_ticket() {
+        // Turn 1 pads the messages, turn 2 overflows (summarize runs),
+        // turn 3 overflows again. Two consecutive overflows trip the
+        // circuit breaker and the first RequestFailed carries the
+        // synthesized "after compaction" message. The same Path-A
+        // re-claim caveat as the other terminal-error tests applies,
+        // so later failures come from the MockProvider's
+        // exhausted-fallback.
+        let provider = MockProvider::with_results(vec![
+            Ok(text_response("turn 1")),
+            Err(ProviderError::ContextWindowExceeded {
+                message: "first overflow".into(),
+            }),
+            Ok(text_response_with_usage("SUMMARY", TokenUsage::default())),
+            Err(ProviderError::ContextWindowExceeded {
+                message: "second overflow".into(),
+            }),
+        ]);
+        let (events, _, _) = run_one(provider, 0, 10, None).await;
+
+        assert_eq!(reactive_compacted_count(&events), 2);
+        let failures = failures_in(&events);
+        assert!(!failures.is_empty());
+        assert!(
+            failures[0].contains("after compaction"),
+            "expected the synthesized circuit-breaker message, got {:?}",
+            failures[0],
+        );
+    }
+
+    /// Run one ticket against `provider` with a model whose context
+    /// window is known (so proactive compaction can fire) and without
+    /// the auto-injected context prelude (so `head_len` is exactly 1
+    /// and the test can reason about request shapes precisely).
+    async fn run_one_with_real_model(
+        provider: Arc<MockProvider>,
+    ) -> (Vec<Event>, Arc<MockProvider>, Option<Ticket>) {
+        let collected: Arc<StdMutex<Vec<Event>>> = Arc::new(StdMutex::new(Vec::new()));
+        let handler: Arc<dyn Fn(Event) + Send + Sync> = {
+            let c = Arc::clone(&collected);
+            Arc::new(move |e| c.lock().unwrap().push(e))
+        };
+
+        let results_dir = crate::test_util::TempDir::new().unwrap();
+        let tickets = TicketSystem::new();
+        tickets
+            .dir(results_dir.path().to_path_buf())
+            .max_request_retries(0)
+            .request_retry_delay(Duration::from_millis(1))
+            .max_schema_retries(10)
+            .max_time(Duration::from_millis(200));
+
+        let agent = Agent::new()
+            .name("tester")
+            .provider(provider.clone() as Arc<dyn Provider>)
+            .model("claude-sonnet-4-20250514")
+            .role("test")
+            .context("static") // suppresses the dynamic context-message default
+            .tool(ManageTicketsTool)
+            .event_handler(handler);
+        tickets.agent(agent);
+        tickets.task("go");
+
+        let _ = tickets.finish().await;
+        let events = collected.lock().unwrap().clone();
+        let settled = tickets.first();
+        (events, provider, settled)
+    }
+
+    #[tokio::test]
+    async fn proactive_threshold_triggers_compaction_before_next_request() {
+        // Turn 1: text reply with input_tokens above the 167K threshold
+        //         (200K window − 20K reserve − 13K headroom). No tool
+        //         call, so the loop pushes a retry directive and loops.
+        // Top of turn 2: proactive_event fires; summarizer collapses
+        //                the messages tail to [ctx, task, "SUMMARY"].
+        // Turn 2:  write_result_response finishes the ticket.
+        let provider = MockProvider::with_results(vec![
+            Ok(text_response_with_usage(
+                "thinking...",
+                TokenUsage {
+                    input_tokens: 170_000,
+                    output_tokens: 0,
+                },
+            )),
+            Ok(text_response_with_usage("SUMMARY", TokenUsage::default())),
+            Ok(write_result_response("done")),
+        ]);
+        let (events, provider, settled) = run_one_with_real_model(provider).await;
+
+        assert_eq!(provider.requests(), 3);
+        assert_eq!(proactive_compacted_count(&events), 1);
+        assert_eq!(settled.unwrap().status, Status::Done);
+
+        // The third request — the retry after compaction — sees the
+        // compacted message vector: context, task, summary.
+        let third = &provider.received()[2];
+        assert_eq!(third.len(), 3);
+        match &third[2] {
+            Message::User { content } => match &content[0] {
+                ContentBlock::Text { text } => assert_eq!(text, "SUMMARY"),
+                other => panic!("expected text summary, got {other:?}"),
+            },
+            other => panic!("expected user message, got {other:?}"),
+        }
+
+        // The ContextCompacted event must precede the second
+        // RequestStarted: proactive runs before the retried request.
+        let proactive_idx = events
+            .iter()
+            .position(|e| {
+                matches!(
+                    &e.kind,
+                    EventKind::ContextCompacted {
+                        reason: CompactReason::Proactive,
+                        ..
+                    }
+                )
+            })
+            .expect("proactive event must fire");
+        let started_indices: Vec<usize> = events
+            .iter()
+            .enumerate()
+            .filter_map(|(i, e)| matches!(&e.kind, EventKind::RequestStarted { .. }).then_some(i))
+            .collect();
+        assert!(started_indices.len() >= 2);
+        assert!(
+            proactive_idx > started_indices[0] && proactive_idx < started_indices[1],
+            "proactive must fall between turn 1's start and turn 2's start, got {proactive_idx} between {started_indices:?}",
+        );
     }
 }
