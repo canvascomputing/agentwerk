@@ -2176,4 +2176,350 @@ mod tests {
         assert!(started_idx > request_started[0] && started_idx < request_started[1]);
         assert!(finished_idx > started_idx && finished_idx < request_started[1]);
     }
+
+    #[tokio::test]
+    async fn summarize_rate_limited_kills_ticket_without_retry() {
+        // Turn 1: text reply with 170K input_tokens primes the
+        // proactive seam to fire at the top of turn 2 (170K + a
+        // trivial bytes/4 > 167K threshold for the 200K Sonnet
+        // window).
+        // Turn 2 (summarize call): RateLimited. The variant is
+        // retryable in the main request loop, but summarize_and_replace
+        // has no retry policy: the error propagates immediately,
+        // CompactionFailed{Proactive} fires, and the ticket dies.
+        let provider = MockProvider::with_results(vec![
+            Ok(text_response_with_usage(
+                "thinking...",
+                TokenUsage {
+                    input_tokens: 170_000,
+                    output_tokens: 0,
+                },
+            )),
+            Err(rate_limit()),
+        ]);
+        let (events, _, _) = run_one_with_real_model(provider).await;
+
+        assert_eq!(
+            compaction_started_count(&events, CompactReason::Proactive),
+            1,
+        );
+        assert!(
+            events.iter().any(|e| matches!(
+                &e.kind,
+                EventKind::CompactionFailed {
+                    reason: CompactReason::Proactive,
+                    message,
+                } if message.contains("rate limited"),
+            )),
+            "rate-limit error must surface verbatim in CompactionFailed{{Proactive}}",
+        );
+        assert!(
+            retries_in(&events).is_empty(),
+            "summarize call has no retry policy; got {:?}",
+            retries_in(&events),
+        );
+        let failures = failures_in(&events);
+        assert!(!failures.is_empty(), "ticket must surface a request failure");
+        assert!(
+            failures[0].contains("rate limited"),
+            "first failure must carry the rate-limited error; got {:?}",
+            failures[0],
+        );
+    }
+
+    #[tokio::test]
+    async fn summary_empty_text_replaces_tail_with_empty_user_message() {
+        // Turn 1: high-input-tokens text reply forces proactive on
+        // turn 2.
+        // Turn 2 (summarize call): Ok with empty text. summarize_and_replace
+        // accepts it as a valid summary today, so the tail collapses
+        // to a single user message whose content is "".
+        // Turn 3 (retried main request): write_result_response settles
+        // the ticket.
+        //
+        // Documents that summarize_and_replace does not reject empty
+        // summaries: the loop will continue with effectively no
+        // working context.
+        let provider = MockProvider::with_results(vec![
+            Ok(text_response_with_usage(
+                "thinking...",
+                TokenUsage {
+                    input_tokens: 170_000,
+                    output_tokens: 0,
+                },
+            )),
+            Ok(text_response_with_usage("", TokenUsage::default())),
+            Ok(write_result_response("done")),
+        ]);
+        let (events, provider, settled) = run_one_with_real_model(provider).await;
+
+        assert_eq!(
+            compaction_started_count(&events, CompactReason::Proactive),
+            1,
+        );
+        assert_eq!(
+            compaction_finished_count(&events, CompactReason::Proactive),
+            1,
+            "empty text counts as a valid summary today",
+        );
+        assert_eq!(settled.unwrap().status, Status::Done);
+
+        // The third request sees [ctx, task, user("")]: the empty
+        // user message is the collapsed summary.
+        let third = &provider.received()[2];
+        assert_eq!(third.len(), 3);
+        match &third[2] {
+            Message::User { content } => match &content[0] {
+                ContentBlock::Text { text } => assert_eq!(text, ""),
+                other => panic!("expected empty text block, got {other:?}"),
+            },
+            other => panic!("expected user message, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn response_status_context_window_exceeded_is_currently_unhandled() {
+        // The reactive seam fires on ProviderError::ContextWindowExceeded
+        // only. A successful response carrying status=ContextWindowExceeded
+        // flows into the no-tool-call branch: the loop pushes a
+        // schema-retry directive and continues.
+        //
+        // Regression-ready: this test pins the current behavior so
+        // that fixing the gap (wiring the status into the reactive
+        // seam) will visibly flip an assertion.
+        let provider = MockProvider::with_results(vec![
+            Ok(ModelResponse {
+                content: vec![ContentBlock::Text {
+                    text: "oops".into(),
+                }],
+                status: ResponseStatus::ContextWindowExceeded,
+                usage: TokenUsage::default(),
+                model: "mock".into(),
+            }),
+            Ok(write_result_response("recovered")),
+        ]);
+        let (events, _, settled) = run_one_with_real_model(provider).await;
+
+        assert_eq!(
+            compaction_started_count(&events, CompactReason::Reactive),
+            0,
+            "ResponseStatus::ContextWindowExceeded must not (yet) fire reactive compaction",
+        );
+        assert_eq!(
+            compaction_started_count(&events, CompactReason::Proactive),
+            0,
+            "single overflow status should not trigger proactive either",
+        );
+        let schema_retries = schema_retries_in(&events);
+        assert_eq!(
+            schema_retries.len(),
+            1,
+            "current behavior routes the overflow status through the schema-retry branch",
+        );
+        assert_eq!(settled.unwrap().status, Status::Done);
+    }
+
+    #[tokio::test]
+    async fn huge_tool_result_overflows_summarizer_and_fails_ticket() {
+        use crate::tools::{Tool, ToolResult};
+
+        // Turn 1: model calls `dump`; the tool returns ~800 KB of
+        // text. The ToolResult lands in messages.
+        // Top of turn 2: bytes/4 ≈ 200K > 167K threshold (200K Sonnet
+        // window). Proactive seam fires. summarize_and_replace builds
+        // a request from messages[head_len..], which still contains
+        // the giant ToolResult, so that summarize request itself
+        // overflows. The scripted ContextWindowExceeded propagates
+        // out of summarize_and_replace; try_compact emits
+        // CompactionFailed{Proactive} and fail_request surfaces
+        // RequestFailed + TicketFailed.
+        //
+        // Gap surfaced: when a single tool result is itself bigger
+        // than the window, the loop has no fallback (no blind
+        // tail-drop, no tool-result truncation). The ticket dies in
+        // one round trip.
+        let provider = MockProvider::with_results(vec![
+            Ok(ModelResponse {
+                content: vec![ContentBlock::ToolUse {
+                    id: "call-1".into(),
+                    name: "dump".into(),
+                    input: serde_json::json!({}),
+                }],
+                status: ResponseStatus::ToolUse,
+                usage: TokenUsage::default(),
+                model: "mock".into(),
+            }),
+            Err(ProviderError::ContextWindowExceeded {
+                message: "summarize request itself exceeds window".into(),
+            }),
+        ]);
+
+        let collected: Arc<StdMutex<Vec<Event>>> = Arc::new(StdMutex::new(Vec::new()));
+        let handler: Arc<dyn Fn(Event) + Send + Sync> = {
+            let c = Arc::clone(&collected);
+            Arc::new(move |e| c.lock().unwrap().push(e))
+        };
+
+        let results_dir = crate::test_util::TempDir::new().unwrap();
+        let tickets = TicketSystem::new();
+        tickets
+            .dir(results_dir.path().to_path_buf())
+            .max_request_retries(0)
+            .request_retry_delay(Duration::from_millis(1))
+            .max_schema_retries(10)
+            .max_time(Duration::from_millis(200));
+
+        let dump = Tool::new("dump", "Returns ~800 KB of text")
+            .handler(|_input, _ctx| async move {
+                Ok(ToolResult::success("x".repeat(800_000)))
+            });
+
+        let agent = Agent::new()
+            .name("tester")
+            .provider(provider.clone() as Arc<dyn Provider>)
+            .model("claude-sonnet-4-20250514")
+            .role("test")
+            .context("static")
+            .tool(dump)
+            .event_handler(handler);
+        tickets.agent(agent);
+        tickets.task("go");
+
+        let _ = tickets.finish().await;
+        let events = collected.lock().unwrap().clone();
+
+        assert_eq!(
+            compaction_started_count(&events, CompactReason::Proactive),
+            1,
+            "proactive compaction must fire exactly once before any retry",
+        );
+        assert!(
+            events.iter().any(|e| matches!(
+                &e.kind,
+                EventKind::CompactionFailed { reason: CompactReason::Proactive, .. },
+            )),
+            "summarize-call overflow must surface as CompactionFailed{{Proactive}}",
+        );
+
+        let failures = failures_in(&events);
+        assert!(!failures.is_empty(), "ticket must surface a request failure");
+        assert!(
+            failures[0].contains("summarize request itself exceeds window"),
+            "first failure must carry the summarizer's overflow message; got {:?}",
+            failures[0],
+        );
+
+        let started_idx = events
+            .iter()
+            .position(|e| matches!(
+                &e.kind,
+                EventKind::CompactionStarted { reason: CompactReason::Proactive },
+            ))
+            .expect("compaction must start");
+        let failed_idx = events
+            .iter()
+            .position(|e| matches!(
+                &e.kind,
+                EventKind::CompactionFailed { reason: CompactReason::Proactive, .. },
+            ))
+            .expect("compaction must fail");
+        let request_failed_idx = events
+            .iter()
+            .position(|e| matches!(&e.kind, EventKind::RequestFailed { .. }))
+            .expect("ticket must fail");
+        assert!(started_idx < failed_idx);
+        assert!(failed_idx < request_failed_idx);
+    }
+
+    #[tokio::test]
+    async fn proactive_compact_does_not_consume_reactive_budget() {
+        use crate::tools::{Tool, ToolResult};
+
+        // Same ticket exercises both seams:
+        //   Turn 1: model calls `dump`, which returns ~700 KB of
+        //   text. The ToolResult lands in messages.
+        //   Top of turn 2: bytes/4 ≈ 175K > 167K threshold →
+        //   proactive fires and summarize_and_replace collapses the
+        //   tail. The compacted main request then errors with a
+        //   (scripted) ContextWindowExceeded, exercising the reactive
+        //   seam in the same ticket.
+        //   Turn 3: write_result_response settles the ticket.
+        //
+        // Reactive's ImmediateRetry budget must still be intact: the
+        // proactive seam does not touch compaction_retry.
+        let provider = MockProvider::with_results(vec![
+            Ok(ModelResponse {
+                content: vec![ContentBlock::ToolUse {
+                    id: "call-1".into(),
+                    name: "dump".into(),
+                    input: serde_json::json!({}),
+                }],
+                status: ResponseStatus::ToolUse,
+                usage: TokenUsage::default(),
+                model: "mock".into(),
+            }),
+            Ok(text_response_with_usage("SUMMARY-A", TokenUsage::default())),
+            Err(ProviderError::ContextWindowExceeded {
+                message: "main request overflow after proactive".into(),
+            }),
+            Ok(text_response_with_usage("SUMMARY-B", TokenUsage::default())),
+            Ok(write_result_response("done")),
+        ]);
+
+        let collected: Arc<StdMutex<Vec<Event>>> = Arc::new(StdMutex::new(Vec::new()));
+        let handler: Arc<dyn Fn(Event) + Send + Sync> = {
+            let c = Arc::clone(&collected);
+            Arc::new(move |e| c.lock().unwrap().push(e))
+        };
+
+        let results_dir = crate::test_util::TempDir::new().unwrap();
+        let tickets = TicketSystem::new();
+        tickets
+            .dir(results_dir.path().to_path_buf())
+            .max_request_retries(0)
+            .request_retry_delay(Duration::from_millis(1))
+            .max_schema_retries(10)
+            .max_time(Duration::from_millis(500));
+
+        let dump = Tool::new("dump", "Returns ~700 KB of text")
+            .handler(|_input, _ctx| async move {
+                Ok(ToolResult::success("x".repeat(700_000)))
+            });
+
+        let agent = Agent::new()
+            .name("tester")
+            .provider(provider.clone() as Arc<dyn Provider>)
+            .model("claude-sonnet-4-20250514")
+            .role("test")
+            .context("static")
+            .tool(dump)
+            .event_handler(handler);
+        tickets.agent(agent);
+        tickets.task("go");
+
+        let _ = tickets.finish().await;
+        let events = collected.lock().unwrap().clone();
+        let settled = tickets.first();
+
+        assert_eq!(provider.requests(), 5);
+        assert_eq!(
+            compaction_started_count(&events, CompactReason::Proactive),
+            1,
+        );
+        assert_eq!(
+            compaction_finished_count(&events, CompactReason::Proactive),
+            1,
+        );
+        assert_eq!(
+            compaction_started_count(&events, CompactReason::Reactive),
+            1,
+            "reactive must have a full budget after a successful proactive",
+        );
+        assert_eq!(
+            compaction_finished_count(&events, CompactReason::Reactive),
+            1,
+        );
+        assert!(failures_in(&events).is_empty());
+        assert_eq!(settled.unwrap().status, Status::Done);
+    }
 }
