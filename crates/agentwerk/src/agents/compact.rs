@@ -99,8 +99,8 @@ pub(crate) fn should_compact_proactively(
     estimate_next_request_tokens(last_usage, messages, system_prompt, tools) >= threshold
 }
 
-/// Replace `messages[head_len..]` with one user-role message containing a
-/// model-generated summary. The first `head_len` entries (the context
+/// Replace `messages[preserved_len..]` with one user-role message containing a
+/// model-generated summary. The first `preserved_len` entries (the context
 /// message, if any, and the task message) stay verbatim; everything
 /// after is passed to the provider with no tools, and the assistant's
 /// text reply becomes the new tail.
@@ -110,15 +110,15 @@ pub(crate) async fn summarize_and_replace(
     provider: &Arc<dyn Provider>,
     model: &str,
     messages: &mut Vec<Message>,
-    head_len: usize,
+    preserved_len: usize,
 ) -> ProviderResult<()> {
-    if messages.len() <= head_len + 1 {
+    if messages.len() <= preserved_len + 1 {
         return Ok(());
     }
     let request = ModelRequest {
         model: model.to_string(),
         system_prompt: compaction_directive().to_string(),
-        messages: messages[head_len..].to_vec(),
+        messages: messages[preserved_len..].to_vec(),
         tools: Vec::new(),
         max_request_tokens: None,
         tool_choice: None,
@@ -135,7 +135,7 @@ pub(crate) async fn summarize_and_replace(
         .ok_or_else(|| ProviderError::ResponseMalformed {
             message: "compaction reply contained no text".into(),
         })?;
-    messages.truncate(head_len);
+    messages.truncate(preserved_len);
     messages.push(Message::user(summary));
     Ok(())
 }
@@ -294,13 +294,13 @@ mod tests {
         }
     }
 
-    /// Conversation with `head_len` head messages (`ctx`, `task`) and
+    /// Conversation with `preserved_len` preserved messages (`ctx`, `task`) and
     /// `tail` alternating assistant/user messages, so tests can spell
     /// the message shape they need without scattering vec![...] noise.
-    fn conversation(head_len: usize, tail: usize) -> Vec<Message> {
-        assert!((1..=2).contains(&head_len), "head_len must be 1 or 2");
-        let mut msgs = Vec::with_capacity(head_len + tail);
-        if head_len == 2 {
+    fn conversation(preserved_len: usize, tail: usize) -> Vec<Message> {
+        assert!((1..=2).contains(&preserved_len), "preserved_len must be 1 or 2");
+        let mut msgs = Vec::with_capacity(preserved_len + tail);
+        if preserved_len == 2 {
             msgs.push(Message::user("ctx"));
         }
         msgs.push(Message::user("task"));

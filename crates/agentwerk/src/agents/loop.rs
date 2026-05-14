@@ -2,7 +2,6 @@
 //! reading the shared `TicketSystem` through the upgraded
 //! `Weak<TicketSystem>` stamped at `bind_agent`.
 
-use std::ops::ControlFlow;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
@@ -17,16 +16,33 @@ use super::compact;
 use super::retry::{ExponentialRetry, ImmediateRetry, Retry};
 use super::stats::LoopStats;
 use super::tickets::{policy_violated_kind, Status};
-use crate::prompts::retry_directive;
+use crate::prompts::{retry_directive, schema_retry_detail};
 use crate::tools::{missing_finisher_detail, FINISHER_TOOL_NAMES};
 
-const IDLE_POLL_INTERVAL: Duration = Duration::from_millis(100);
+/// Per-iteration control signal for the compaction helpers.
+enum LoopAction {
+    Proceed,
+    Replay,
+    Stop,
+}
 
-/// Supervise the agent set: poll the system's agent list every
-/// `IDLE_POLL_INTERVAL`, spawn one `handle_tickets` task per newly
-/// appended agent, and join all of them on shutdown. Detects late adds
-/// from `tickets.agent()` calls that land after `run()` was spawned.
-/// Exits when the interrupt signal flips.
+/// Immutable references shared by helpers that act on one ticket.
+struct TicketScope<'a, F> {
+    key: &'a str,
+    labels: &'a [String],
+
+    provider: &'a Arc<dyn crate::providers::Provider>,
+    model_name: &'a str,
+    preserved_len: usize,
+
+    emit: &'a F,
+    stats: &'a super::stats::Stats,
+}
+
+const POLL_INTERVAL: Duration = Duration::from_millis(50);
+
+/// Spawn one `handle_tickets` task per registered agent and join all
+/// on shutdown. Polls for late-added agents until interrupted.
 pub(super) async fn run_main_loop(system: &crate::agents::tickets::TicketSystem) {
     let signal = Arc::clone(&system.interrupt_signal.lock().unwrap());
     let mut handles: Vec<tokio::task::JoinHandle<()>> = Vec::new();
@@ -42,143 +58,86 @@ pub(super) async fn run_main_loop(system: &crate::agents::tickets::TicketSystem)
             handles.push(tokio::spawn(handle_tickets(agent)));
         }
         last_spawned = total;
-        tokio::time::sleep(IDLE_POLL_INTERVAL).await;
+        tokio::time::sleep(POLL_INTERVAL).await;
     }
 
-    for h in handles {
-        let _ = h.await;
+    for handle in handles {
+        let _ = handle.await;
     }
 }
 
-/// Resolves once `signal` flips. 50 ms poll cadence; same as
-/// `ToolContext::wait_for_cancel`. Pair with `tokio::select!` so
-/// dropping the losing branch aborts the in-flight work.
+/// Resolve once `signal` flips. Pair with `tokio::select!` so
+/// dropping the losing branch aborts in-flight work.
 pub(super) async fn wait_for_signal(signal: &Arc<AtomicBool>) {
-    const POLL: Duration = Duration::from_millis(50);
     loop {
         if signal.load(Ordering::Relaxed) {
             return;
         }
-        tokio::time::sleep(POLL).await;
+        tokio::time::sleep(POLL_INTERVAL).await;
     }
 }
 
-/// Terminate the current ticket with a request failure: emit
-/// `RequestFailed`, record the error in run-wide and per-label stats,
-/// then emit `TicketFailed`. Called from the four sites inside
-/// `process_ticket` that turn a `ProviderError` into a ticket failure
-/// (transient retries exhausted, terminal provider error, summarize
-/// failure, context still over budget after compaction).
-fn fail_request<F: Fn(EventKind)>(
-    emit: &F,
-    stats: &super::stats::Stats,
-    labels: &[String],
-    key: &str,
-    err: &ProviderError,
-) {
-    emit(EventKind::RequestFailed {
+fn fail_ticket<F: Fn(EventKind)>(scope: &TicketScope<'_, F>, err: &ProviderError) {
+    (scope.emit)(EventKind::RequestFailed {
         kind: err.kind(),
         message: err.to_string(),
     });
-    stats.record_error();
-    for l in labels {
-        stats.stats_for_label(l).record_error();
+    scope.stats.record_error();
+    for label in scope.labels {
+        scope.stats.stats_for_label(label).record_error();
     }
-    emit(EventKind::TicketFailed {
-        key: key.to_string(),
+    (scope.emit)(EventKind::TicketFailed {
+        key: scope.key.to_string(),
     });
 }
 
-/// Run one compaction attempt around `summarize_and_replace`: emit
-/// `CompactionStarted`, call the summarizer, emit `CompactionFinished`
-/// on success or `CompactionFailed` + `fail_request` on error.
-///
-/// `Continue(())` — compaction succeeded, caller proceeds.
-/// `Break(())`    — compaction failed and the ticket has already been
-///                  marked failed via `fail_request`; caller must
-///                  `return` from `process_ticket`.
-#[allow(clippy::too_many_arguments)]
+/// `Proceed` on success, `Stop` (ticket already failed) on error.
 async fn try_compact<F: Fn(EventKind)>(
     reason: CompactReason,
-    provider: &Arc<dyn crate::providers::Provider>,
-    model: &str,
+    scope: &TicketScope<'_, F>,
     messages: &mut Vec<Message>,
-    head_len: usize,
-    emit: &F,
-    stats: &super::stats::Stats,
-    labels: &[String],
-    key: &str,
-) -> ControlFlow<()> {
-    emit(EventKind::CompactionStarted { reason });
-    match compact::summarize_and_replace(provider, model, messages, head_len).await {
+) -> LoopAction {
+    (scope.emit)(EventKind::CompactionStarted { reason });
+    match compact::summarize_and_replace(scope.provider, scope.model_name, messages, scope.preserved_len)
+        .await
+    {
         Ok(()) => {
-            emit(EventKind::CompactionFinished { reason });
-            ControlFlow::Continue(())
+            (scope.emit)(EventKind::CompactionFinished { reason });
+            LoopAction::Proceed
         }
         Err(e) => {
-            emit(EventKind::CompactionFailed {
+            (scope.emit)(EventKind::CompactionFailed {
                 reason,
                 message: e.to_string(),
             });
-            fail_request(emit, stats, labels, key, &e);
-            ControlFlow::Break(())
+            fail_ticket(scope, &e);
+            LoopAction::Stop
         }
     }
 }
 
-/// Consume one slot of `compaction_retry`, then run reactive
-/// compaction. If the budget is exhausted, fail the ticket with the
-/// synthesized "after compaction" message and signal `Break(())`.
-///
-/// Called from two sites:
-/// 1. The Layer 2 blocking check, when the estimate crosses the
-///    blocking threshold before the provider call goes out.
-/// 2. The reactive arm of the request retry loop, when the provider
-///    itself returns `ContextWindowExceeded`.
-///
-/// Both sites map the return value: `Continue` => `continue 'outer`,
-/// `Break` => `return` from `process_ticket`.
-#[allow(clippy::too_many_arguments)]
-async fn handle_overflow<F: Fn(EventKind)>(
+/// `Replay` on success, `Stop` when exhausted or on failure.
+async fn compact_or_stop<F: Fn(EventKind)>(
     compaction_retry: &mut ImmediateRetry,
-    provider: &Arc<dyn crate::providers::Provider>,
-    model: &str,
+    scope: &TicketScope<'_, F>,
     messages: &mut Vec<Message>,
-    head_len: usize,
-    emit: &F,
-    stats: &super::stats::Stats,
-    labels: &[String],
-    key: &str,
-) -> ControlFlow<()> {
+) -> LoopAction {
     if compaction_retry.try_consume().is_none() {
-        fail_request(
-            emit,
-            stats,
-            labels,
-            key,
+        fail_ticket(
+            scope,
             &ProviderError::ContextWindowExceeded {
                 message: "context still exceeds window after compaction".into(),
             },
         );
-        return ControlFlow::Break(());
+        return LoopAction::Stop;
     }
-    try_compact(
-        CompactReason::Reactive,
-        provider,
-        model,
-        messages,
-        head_len,
-        emit,
-        stats,
-        labels,
-        key,
-    )
-    .await
+    match try_compact(CompactReason::Reactive, scope, messages).await {
+        LoopAction::Proceed => LoopAction::Replay,
+        other => other,
+    }
 }
 
-/// Per-agent claim loop. Picks the next eligible ticket and runs it
-/// through `process_ticket`. Idles on `IDLE_POLL_INTERVAL` when no
-/// work is queued; exits on cancel or policy violation.
+/// Claim and process tickets until interrupted or a policy trips.
 pub(super) async fn handle_tickets(agent: Agent) {
     let ticket_system = agent
         .ticket_system
@@ -198,21 +157,19 @@ pub(super) async fn handle_tickets(agent: Agent) {
             ));
             return;
         }
-        // Path A: in-progress ticket already labelled with this agent's name.
-        let path_a = ticket_system
+        let in_progress_key = ticket_system
             .find(|t| t.status == Status::InProgress && t.has_label(agent.get_name()))
             .map(|t| t.key().to_string());
-        // Path B: atomically claim an open Todo whose labels match.
-        let path_b = || {
+        let claim_todo = || {
             ticket_system.claim(
                 |t| t.status == Status::Todo && agent.handles_labels(&t.labels),
                 agent.get_name(),
             )
         };
-        let key = match path_a.or_else(path_b) {
+        let key = match in_progress_key.or_else(claim_todo) {
             Some(key) => key,
             None => {
-                tokio::time::sleep(IDLE_POLL_INTERVAL).await;
+                tokio::time::sleep(POLL_INTERVAL).await;
                 continue;
             }
         };
@@ -221,7 +178,7 @@ pub(super) async fn handle_tickets(agent: Agent) {
     }
 }
 
-/// One ticket from claimed → done/failed. Owns the per-ticket message vector.
+/// Drive one ticket from claimed to done or failed.
 async fn process_ticket(
     agent: &Agent,
     ticket_system: &Arc<crate::agents::tickets::TicketSystem>,
@@ -237,50 +194,50 @@ async fn process_ticket(
         return;
     };
     let labels = ticket.labels.clone();
-    let task_msg = ticket.as_user_message();
-    for l in &labels {
-        ticket_system.stats.stats_for_label(l).record_step();
+    let task_message = ticket.as_user_message();
+    for label in &labels {
+        ticket_system.stats.stats_for_label(label).record_step();
     }
 
-    // Read knowledge index once, at the top of the ticket: the system
-    // prompt stays byte-stable across every turn of this ticket so the
-    // provider's prefix cache survives mid-ticket knowledge writes.
-    // Cross-ticket and cross-agent writes become visible at the top of
-    // the next ticket.
-    let knowledge_contents = agent.knowledge_or_default().index();
+    // Read once so the system prompt stays byte-stable across every
+    // turn (prefix-cache friendly).
+    let knowledge_index = agent.knowledge_or_default().index();
 
     let policies = ticket_system.policies();
     let window = Model::from_name(agent.model_str()).context_window_size;
     let mut messages: Vec<Message> = Vec::new();
-    if let Some(ctx) = agent.context_message(&policies, &ticket_system.stats) {
-        messages.push(Message::user(ctx));
+    if let Some(context_msg) = agent.context_message(&policies, &ticket_system.stats) {
+        messages.push(Message::user(context_msg));
     }
-    messages.push(task_msg);
-    // Compaction always preserves the leading context + task messages.
-    let head_len = messages.len();
+    messages.push(task_message);
+    let preserved_len = messages.len();
     emit(EventKind::TicketStarted {
         key: key.to_string(),
     });
 
+    let provider = agent.provider_handle();
+    let scope = TicketScope {
+        key,
+        labels: &labels,
+        provider: &provider,
+        model_name: agent.model_str(),
+        preserved_len,
+        emit: &emit,
+        stats: &ticket_system.stats,
+    };
+
     let max_request_tokens = policies.max_request_tokens;
     let max_schema_retries = policies.max_schema_retries.unwrap_or(u32::MAX);
-    // Consecutive schema-validation failures since the last successful
-    // schema-checked tool call. Bounded by `max_schema_retries`.
     let mut consecutive_schema_failures: u32 = 0;
-    // Token usage from the previous response, fed to the proactive
-    // compaction seam at the top of each iteration.
     let mut last_usage: Option<TokenUsage> = None;
-    // Compaction circuit breaker: allow one retry after compacting; if
-    // the next request still overflows, give up rather than spin. The
-    // counter resets on every successful response.
     let mut compaction_retry = ImmediateRetry::new(1);
 
-    let on_stream: Arc<dyn Fn(StreamEvent) + Send + Sync> = {
-        let handler = agent.resolve_event_handler();
+    let emit_stream: Arc<dyn Fn(StreamEvent) + Send + Sync> = {
+        let stream_handler = agent.resolve_event_handler();
         let name = agent.get_name().to_string();
-        Arc::new(move |ev| {
-            if let StreamEvent::TextDelta { text, .. } = ev {
-                handler(Event::new(
+        Arc::new(move |event| {
+            if let StreamEvent::TextDelta { text, .. } = event {
+                stream_handler(Event::new(
                     &name,
                     EventKind::TextChunkReceived { content: text },
                 ));
@@ -294,86 +251,57 @@ async fn process_ticket(
         }
         match ticket_system.get(key) {
             Some(t) if matches!(t.status, Status::Done | Status::Failed) => {
-                emit(terminal_event(t.status, key));
+                emit(event_for_status(t.status, key));
                 return;
             }
-            Some(_) => {}
             None => return,
+            _ => {}
         }
 
-        // System prompt and tool definitions are byte-stable inputs to
-        // the proactive estimate, the Layer 2 blocking check, and the
-        // request itself: compute once per iteration and feed all
-        // three.
-        let system_prompt_now = agent.system_prompt(Some(&knowledge_contents));
-        let tools_now = agent.tool_definitions();
+        let system_prompt = agent.system_prompt(Some(&knowledge_index));
+        let tools = agent.tool_definitions();
 
-        // ---- proactive compaction: collapse the tail before sending ----
-        // Once the previous response's input-token estimate plus the
-        // bytes appended since crosses the threshold, summarize the
-        // tail in place so the next request fits.
-        if let Some(usage) = &last_usage {
-            if compact::should_compact_proactively(
+        let exceeds_proactive_threshold = last_usage.as_ref().is_some_and(|usage| {
+            compact::should_compact_proactively(
                 window,
                 usage,
                 &messages,
-                &system_prompt_now,
-                &tools_now,
-            ) && try_compact(
-                CompactReason::Proactive,
-                &agent.provider_handle(),
-                agent.model_str(),
-                &mut messages,
-                head_len,
-                &emit,
-                &ticket_system.stats,
-                &labels,
-                key,
+                &system_prompt,
+                &tools,
             )
-            .await
-            .is_break()
-            {
+        });
+        if exceeds_proactive_threshold {
+            if matches!(
+                try_compact(CompactReason::Proactive, &scope, &mut messages).await,
+                LoopAction::Stop
+            ) {
                 return;
             }
         }
 
-        // ---- Layer 2 blocking limit ----
-        // After proactive (which may have shrunk `messages`), check the
-        // estimate against `window - BLOCKING_HEADROOM_TOKENS`. Crossing
-        // that line short-circuits the provider call: synthesize an
-        // overflow and route it through the reactive seam. Uses
-        // `handle_overflow`, so the synthetic path consumes the same
-        // `compaction_retry` budget a real overflow would.
-        if let Some(threshold) = compact::blocking_threshold(window) {
+        let exceeds_blocking_limit = compact::blocking_threshold(window).is_some_and(|threshold| {
             let default_usage = TokenUsage::default();
             let usage = last_usage.as_ref().unwrap_or(&default_usage);
             let estimate = compact::estimate_next_request_tokens(
                 usage,
                 &messages,
-                &system_prompt_now,
-                &tools_now,
+                &system_prompt,
+                &tools,
             );
-            if estimate >= threshold {
-                emit(EventKind::BlockingLimitExceeded {
-                    estimated_tokens: estimate,
-                    threshold_tokens: threshold,
-                });
-                match handle_overflow(
-                    &mut compaction_retry,
-                    &agent.provider_handle(),
-                    agent.model_str(),
-                    &mut messages,
-                    head_len,
-                    &emit,
-                    &ticket_system.stats,
-                    &labels,
-                    key,
-                )
-                .await
-                {
-                    ControlFlow::Continue(()) => continue 'outer,
-                    ControlFlow::Break(()) => return,
-                }
+            if estimate < threshold {
+                return false;
+            }
+            emit(EventKind::BlockingLimitExceeded {
+                estimated_tokens: estimate,
+                threshold_tokens: threshold,
+            });
+            true
+        });
+        if exceeds_blocking_limit {
+            match compact_or_stop(&mut compaction_retry, &scope, &mut messages).await {
+                LoopAction::Replay => continue 'outer,
+                LoopAction::Stop => return,
+                LoopAction::Proceed => {}
             }
         }
 
@@ -382,43 +310,27 @@ async fn process_ticket(
         });
         let request = ModelRequest {
             model: agent.model_str().to_string(),
-            system_prompt: system_prompt_now,
+            system_prompt,
             messages: messages.clone(),
-            tools: tools_now,
+            tools,
             max_request_tokens,
             tool_choice: None,
         };
         let mut retry =
             ExponentialRetry::new(policies.request_retry_delay, policies.max_request_retries);
-
-        // ---- request retry: transient errors back off and replay; an
-        // overflow error compacts the tail and continues the outer
-        // loop; any other terminal error fails the ticket. ----
-        let provider = agent.provider_handle();
         let response = loop {
             let outcome = tokio::select! {
                 biased;
                 _ = wait_for_signal(interrupt_signal) => return,
-                r = provider.respond(request.clone(), Arc::clone(&on_stream)) => r,
+                result = scope.provider.respond(request.clone(), Arc::clone(&emit_stream)) => result,
             };
             match outcome {
-                Ok(r) => break r,
+                Ok(resp) => break resp,
                 Err(ProviderError::ContextWindowExceeded { .. }) => {
-                    match handle_overflow(
-                        &mut compaction_retry,
-                        &agent.provider_handle(),
-                        agent.model_str(),
-                        &mut messages,
-                        head_len,
-                        &emit,
-                        &ticket_system.stats,
-                        &labels,
-                        key,
-                    )
-                    .await
-                    {
-                        ControlFlow::Continue(()) => continue 'outer,
-                        ControlFlow::Break(()) => return,
+                    match compact_or_stop(&mut compaction_retry, &scope, &mut messages).await {
+                        LoopAction::Replay => continue 'outer,
+                        LoopAction::Stop => return,
+                        LoopAction::Proceed => {}
                     }
                 }
                 Err(e) if e.is_retryable() => match retry.try_consume() {
@@ -437,12 +349,12 @@ async fn process_ticket(
                         }
                     }
                     None => {
-                        fail_request(&emit, &ticket_system.stats, &labels, key, &e);
+                        fail_ticket(&scope, &e);
                         return;
                     }
                 },
                 Err(e) => {
-                    fail_request(&emit, &ticket_system.stats, &labels, key, &e);
+                    fail_ticket(&scope, &e);
                     return;
                 }
             }
@@ -452,54 +364,35 @@ async fn process_ticket(
             model: response.model.clone(),
             usage: response.usage.clone(),
         });
-
         last_usage = Some(response.usage.clone());
-
         ticket_system
             .stats
             .record_request(response.usage.input_tokens, response.usage.output_tokens);
-        for l in &labels {
+        for label in &labels {
             ticket_system
                 .stats
-                .stats_for_label(l)
+                .stats_for_label(label)
                 .record_request(response.usage.input_tokens, response.usage.output_tokens);
         }
         messages.push(Message::Assistant {
             content: response.content.clone(),
         });
 
-        // ---- Layer 3: status-borne overflow ----
-        // Some providers (e.g. Anthropic) signal overflow as a status
-        // on a successful reply rather than a `ProviderError`. Route
-        // it through `handle_overflow` so the reactive seam catches
-        // it the same way it catches the error variant. The reset
-        // below is intentionally AFTER this branch: a status-overflow
+        // Reset is intentionally AFTER this branch: a status-overflow
         // reply must not refill the compaction_retry budget.
         if response.status == ResponseStatus::ContextWindowExceeded {
-            match handle_overflow(
-                &mut compaction_retry,
-                &agent.provider_handle(),
-                agent.model_str(),
-                &mut messages,
-                head_len,
-                &emit,
-                &ticket_system.stats,
-                &labels,
-                key,
-            )
-            .await
-            {
-                ControlFlow::Continue(()) => continue 'outer,
-                ControlFlow::Break(()) => return,
+            match compact_or_stop(&mut compaction_retry, &scope, &mut messages).await {
+                LoopAction::Replay => continue 'outer,
+                LoopAction::Stop => return,
+                LoopAction::Proceed => {}
             }
         }
-
         compaction_retry.reset();
 
         let calls: Vec<ToolCall> = response
             .content
             .iter()
-            .filter_map(|b| match b {
+            .filter_map(|block| match block {
                 ContentBlock::ToolUse { id, name, input } => Some(ToolCall {
                     id: id.clone(),
                     name: name.clone(),
@@ -509,54 +402,51 @@ async fn process_ticket(
             })
             .collect();
 
-        // ---- terminal reply: model produced no tool calls ----
-        // Any ticket without an attached result means the model ended
-        // its turn without calling a finisher tool — retry with a
-        // corrective directive. With a result attached, settle Done
-        // (or Failed if a schema is set and validation now fails,
-        // which only happens in the defensive case that the result
-        // bypassed `write_result`'s pre-validation).
         if response.status != ResponseStatus::ToolUse || calls.is_empty() {
-            let ticket = match ticket_system.get(key) {
-                None => return,
-                Some(t) => t,
+            let Some(ticket) = ticket_system.get(key) else {
+                return;
             };
-            match (&ticket.schema, ticket.result()) {
-                (_, None) => {
-                    consecutive_schema_failures = consecutive_schema_failures.saturating_add(1);
-                    let registered: Vec<&str> = agent
-                        .tool_definitions()
-                        .iter()
-                        .filter_map(|d| FINISHER_TOOL_NAMES.iter().find(|n| **n == d.name).copied())
-                        .collect();
-                    let detail = missing_finisher_detail(&registered);
-                    emit(EventKind::SchemaRetried {
-                        attempt: consecutive_schema_failures,
-                        max_attempts: max_schema_retries,
-                        message: detail.clone(),
-                    });
-                    messages.push(Message::User {
-                        content: vec![ContentBlock::Text {
-                            text: retry_directive(&detail),
-                        }],
-                    });
-                    if consecutive_schema_failures >= max_schema_retries {
-                        fail_with_schema_retries(ticket_system, key, max_schema_retries, &emit);
-                        return;
-                    }
-                    continue;
-                }
-                (Some(schema), Some(attached)) if schema.validate(attached).is_err() => {
-                    let _ = ticket_system.set_failed(key);
-                    emit(terminal_event(Status::Failed, key));
+
+            // No result means the model ended without calling a
+            // finisher — inject a corrective directive and replay.
+            if ticket.result().is_none() {
+                consecutive_schema_failures = consecutive_schema_failures.saturating_add(1);
+                let registered: Vec<&str> = agent
+                    .tool_definitions()
+                    .iter()
+                    .filter_map(|d| FINISHER_TOOL_NAMES.iter().find(|n| **n == d.name).copied())
+                    .collect();
+                let finisher_detail = missing_finisher_detail(&registered);
+                emit(EventKind::SchemaRetried {
+                    attempt: consecutive_schema_failures,
+                    max_attempts: max_schema_retries,
+                    message: finisher_detail.clone(),
+                });
+                messages.push(Message::User {
+                    content: vec![ContentBlock::Text {
+                        text: retry_directive(&finisher_detail),
+                    }],
+                });
+                if consecutive_schema_failures >= max_schema_retries {
+                    fail_ticket_schema_exhausted(ticket_system, key, max_schema_retries, &emit);
                     return;
                 }
-                (_, Some(_)) => {
-                    let _ = ticket_system.set_done(key);
-                    emit(terminal_event(Status::Done, key));
-                    return;
-                }
+                continue;
             }
+
+            if ticket.schema.as_ref().is_some_and(|schema| {
+                ticket
+                    .result()
+                    .is_some_and(|result| schema.validate(result).is_err())
+            }) {
+                let _ = ticket_system.set_failed(key);
+                emit(event_for_status(Status::Failed, key));
+                return;
+            }
+
+            let _ = ticket_system.set_done(key);
+            emit(event_for_status(Status::Done, key));
+            return;
         }
 
         for call in &calls {
@@ -566,95 +456,88 @@ async fn process_ticket(
                 input: call.input.clone(),
             });
         }
-
-        let ctx = ToolContext::new(agent.dir_or_default())
+        let tool_context = ToolContext::new(agent.dir_or_default())
             .interrupt_signal(Arc::clone(interrupt_signal))
             .registry(Arc::new(agent.tool_registry().clone()))
             .ticket_system(Arc::clone(ticket_system))
             .agent_name(agent.get_name().to_string())
             .knowledge(agent.knowledge_or_default());
-        let outcomes = agent.tool_registry().execute(&calls, &ctx).await;
+        let outcomes = agent.tool_registry().execute(&calls, &tool_context).await;
 
         let mut schema_failure_message: Option<String> = None;
-        for (block, verdict) in &outcomes {
-            if let ContentBlock::ToolResult { tool_use_id, .. } = block {
-                let call = calls.iter().find(|c| &c.id == tool_use_id);
-                let tool_name = call.map(|c| c.name.clone()).unwrap_or_default();
-                match verdict {
-                    Ok(output) => {
-                        if call.is_some_and(|c| FINISHER_TOOL_NAMES.contains(&c.name.as_str())) {
-                            consecutive_schema_failures = 0;
-                        }
-                        emit(EventKind::ToolCallFinished {
-                            tool_name,
-                            call_id: tool_use_id.clone(),
-                            output: output.clone(),
-                        });
+        for (block, tool_result) in &outcomes {
+            let ContentBlock::ToolResult { tool_use_id, .. } = block else {
+                continue;
+            };
+            let call = calls.iter().find(|c| &c.id == tool_use_id);
+            let tool_name = call.map(|c| c.name.clone()).unwrap_or_default();
+            match tool_result {
+                Ok(output) => {
+                    if call.is_some_and(|c| FINISHER_TOOL_NAMES.contains(&c.name.as_str())) {
+                        consecutive_schema_failures = 0;
                     }
-                    Err(err) => {
-                        if matches!(err, ToolError::SchemaValidationFailed { .. }) {
-                            consecutive_schema_failures =
-                                consecutive_schema_failures.saturating_add(1);
-                            if schema_failure_message.is_none() {
-                                schema_failure_message = Some(err.message());
-                            }
+                    emit(EventKind::ToolCallFinished {
+                        tool_name,
+                        call_id: tool_use_id.clone(),
+                        output: output.clone(),
+                    });
+                }
+                Err(err) => {
+                    if matches!(err, ToolError::SchemaValidationFailed { .. }) {
+                        consecutive_schema_failures =
+                            consecutive_schema_failures.saturating_add(1);
+                        if schema_failure_message.is_none() {
+                            schema_failure_message = Some(err.message());
                         }
-                        emit(EventKind::ToolCallFailed {
-                            tool_name,
-                            call_id: tool_use_id.clone(),
-                            message: err.message(),
-                            kind: match err {
-                                ToolError::ToolNotFound { .. } => ToolFailureKind::ToolNotFound,
-                                ToolError::ExecutionFailed { .. } => {
-                                    ToolFailureKind::ExecutionFailed
-                                }
-                                ToolError::SchemaValidationFailed { .. } => {
-                                    ToolFailureKind::SchemaValidationFailed
-                                }
-                            },
-                        });
                     }
+                    let failure_kind = match err {
+                        ToolError::ToolNotFound { .. } => ToolFailureKind::ToolNotFound,
+                        ToolError::ExecutionFailed { .. } => ToolFailureKind::ExecutionFailed,
+                        ToolError::SchemaValidationFailed { .. } => {
+                            ToolFailureKind::SchemaValidationFailed
+                        }
+                    };
+                    emit(EventKind::ToolCallFailed {
+                        tool_name,
+                        call_id: tool_use_id.clone(),
+                        message: err.message(),
+                        kind: failure_kind,
+                    });
                 }
             }
         }
 
-        // ---- schema retry: tool's done-side validation failed → directive + replay ----
-        // Emit even on the exhausting attempt so observers see the
-        // sequence `SchemaRetried(N) → PolicyViolated`. The directive
-        // rides in the same user message as the tool-result blocks.
-        let mut blocks: Vec<ContentBlock> = outcomes.into_iter().map(|(b, _)| b).collect();
+        // Emitted even on the exhausting attempt so observers see the
+        // sequence SchemaRetried(N) → PolicyViolated.
+        let mut blocks: Vec<ContentBlock> = outcomes.into_iter().map(|(block, _)| block).collect();
         if let Some(validator_message) = &schema_failure_message {
-            let detail = format!(
-                "Your output did not match the required schema. Reply with a \
-                 single JSON value conforming to the schema, with no surrounding \
-                 text and no code fences. Validator said: {validator_message}"
-            );
+            let schema_detail = schema_retry_detail(validator_message);
             emit(EventKind::SchemaRetried {
                 attempt: consecutive_schema_failures,
                 max_attempts: max_schema_retries,
-                message: detail.clone(),
+                message: schema_detail.clone(),
             });
             blocks.push(ContentBlock::Text {
-                text: retry_directive(&detail),
+                text: retry_directive(&schema_detail),
             });
         }
         messages.push(Message::User { content: blocks });
 
         for _ in 0..calls.len() {
             ticket_system.stats.record_tool_call();
-            for l in &labels {
-                ticket_system.stats.stats_for_label(l).record_tool_call();
+            for label in &labels {
+                ticket_system.stats.stats_for_label(label).record_tool_call();
             }
         }
 
         if consecutive_schema_failures >= max_schema_retries {
-            fail_with_schema_retries(ticket_system, key, max_schema_retries, &emit);
+            fail_ticket_schema_exhausted(ticket_system, key, max_schema_retries, &emit);
             return;
         }
     }
 }
 
-fn fail_with_schema_retries<F: Fn(EventKind)>(
+fn fail_ticket_schema_exhausted<F: Fn(EventKind)>(
     ticket_system: &crate::agents::tickets::TicketSystem,
     key: &str,
     max_schema_retries: u32,
@@ -670,7 +553,7 @@ fn fail_with_schema_retries<F: Fn(EventKind)>(
     });
 }
 
-fn terminal_event(status: Status, key: &str) -> EventKind {
+fn event_for_status(status: Status, key: &str) -> EventKind {
     match status {
         Status::Done => EventKind::TicketDone {
             key: key.to_string(),
@@ -678,7 +561,7 @@ fn terminal_event(status: Status, key: &str) -> EventKind {
         Status::Failed => EventKind::TicketFailed {
             key: key.to_string(),
         },
-        other => unreachable!("terminal_event called with non-terminal status {other:?}"),
+        other => unreachable!("event_for_status called with non-terminal status {other:?}"),
     }
 }
 
@@ -909,7 +792,7 @@ mod tests {
         max_request_retries: u32,
         max_schema_retries: u32,
         schema: Option<Schema>,
-    ) -> (Vec<Event>, Arc<MockProvider>, Option<Ticket>) {
+    ) -> (Vec<Event>, Arc<MockProvider>, Ticket) {
         let collected: Arc<StdMutex<Vec<Event>>> = Arc::new(StdMutex::new(Vec::new()));
         let handler: Arc<dyn Fn(Event) + Send + Sync> = {
             let c = Arc::clone(&collected);
@@ -947,13 +830,11 @@ mod tests {
 
         let _ = tickets.finish().await;
         let events = collected.lock().unwrap().clone();
-        let settled = tickets.first();
-        (events, provider, settled)
+        let ticket = tickets.first().expect("ticket must exist");
+        (events, provider, ticket)
     }
 
-    // =====================================================================
-    // Bucket A — request retries
-    // =====================================================================
+    // Request retries
 
     #[tokio::test]
     async fn retry_succeeds_after_rate_limit() {
@@ -962,12 +843,12 @@ mod tests {
             Err(rate_limit()),
             Ok(write_result_response("ok")),
         ]);
-        let (events, provider, settled) = run_one(provider, 3, 10, None).await;
+        let (events, provider, ticket) = run_one(provider, 3, 10, None).await;
 
         assert_eq!(provider.requests(), 3);
         assert_eq!(retries_in(&events).len(), 2);
         assert!(failures_in(&events).is_empty());
-        assert_eq!(settled.unwrap().status, Status::Done);
+        assert_eq!(ticket.status, Status::Done);
     }
 
     #[tokio::test]
@@ -1012,11 +893,11 @@ mod tests {
     #[tokio::test]
     async fn happy_path_emits_no_request_failed() {
         let provider = MockProvider::with_results(vec![Ok(write_result_response("ok"))]);
-        let (events, _, settled) = run_one(provider, 3, 10, None).await;
+        let (events, _, ticket) = run_one(provider, 3, 10, None).await;
 
         assert!(retries_in(&events).is_empty());
         assert!(failures_in(&events).is_empty());
-        assert_eq!(settled.unwrap().status, Status::Done);
+        assert_eq!(ticket.status, Status::Done);
     }
 
     #[tokio::test]
@@ -1130,9 +1011,7 @@ mod tests {
         }
     }
 
-    // =====================================================================
-    // Bucket B — backoff timing
-    // =====================================================================
+    // Backoff timing
 
     #[tokio::test(start_paused = true)]
     async fn request_retried_fires_after_backoff_sleep_not_before() {
@@ -1196,9 +1075,7 @@ mod tests {
         let (_, _) = tokio::join!(run_fut, check_fut);
     }
 
-    // =====================================================================
-    // Bucket E — text-only replies (no-tool branch terminates the ticket)
-    // =====================================================================
+    // Text-only replies
 
     #[tokio::test]
     async fn text_reply_no_schema_retries_then_recovers() {
@@ -1208,7 +1085,7 @@ mod tests {
             Ok(text_response("Hello!")),
             Ok(write_result_response("done")),
         ]);
-        let (events, provider, settled) = run_one(provider, 3, 10, None).await;
+        let (events, provider, ticket) = run_one(provider, 3, 10, None).await;
 
         assert_eq!(provider.requests(), 2);
         let retries = schema_retries_in(&events);
@@ -1224,7 +1101,7 @@ mod tests {
             .count();
         assert_eq!(done, 1);
         assert_eq!(failed, 0);
-        assert_eq!(settled.unwrap().status, Status::Done);
+        assert_eq!(ticket.status, Status::Done);
     }
 
     #[tokio::test]
@@ -1237,7 +1114,7 @@ mod tests {
             Ok(text_response("b")),
             Ok(text_response("c")),
         ]);
-        let (events, _, settled) = run_one(provider, 3, 2, None).await;
+        let (events, _, ticket) = run_one(provider, 3, 2, None).await;
 
         let retries = schema_retries_in(&events);
         assert_eq!(retries.len(), 2);
@@ -1251,7 +1128,7 @@ mod tests {
             )
         });
         assert!(policy_violated, "expected MaxSchemaRetries PolicyViolated");
-        assert_eq!(settled.unwrap().status, Status::Failed);
+        assert_eq!(ticket.status, Status::Failed);
     }
 
     #[tokio::test]
@@ -1263,7 +1140,7 @@ mod tests {
             Ok(text_response("Hello!")),
             Ok(write_result_value(serde_json::json!({"partial_sum": 1}))),
         ]);
-        let (events, provider, settled) =
+        let (events, provider, ticket) =
             run_one(provider, 3, 10, Some(schema_for_partial_sum())).await;
 
         assert_eq!(provider.requests(), 2);
@@ -1280,7 +1157,7 @@ mod tests {
             .count();
         assert_eq!(done, 1);
         assert_eq!(failed, 0);
-        assert_eq!(settled.unwrap().status, Status::Done);
+        assert_eq!(ticket.status, Status::Done);
     }
 
     #[tokio::test]
@@ -1288,7 +1165,7 @@ mod tests {
         let provider = MockProvider::with_results(vec![Ok(write_result_value(
             serde_json::json!({"partial_sum": 42}),
         ))]);
-        let (events, provider, settled) =
+        let (events, provider, ticket) =
             run_one(provider, 3, 10, Some(schema_for_partial_sum())).await;
 
         assert_eq!(provider.requests(), 1);
@@ -1302,14 +1179,11 @@ mod tests {
             .count();
         assert_eq!(done, 1);
         assert_eq!(failed, 0);
-        let settled = settled.unwrap();
-        assert_eq!(settled.status, Status::Done);
-        assert_eq!(settled.result().unwrap()["partial_sum"], 42);
+        assert_eq!(ticket.status, Status::Done);
+        assert_eq!(ticket.result().unwrap()["partial_sum"], 42);
     }
 
-    // =====================================================================
-    // Bucket C — schema retries
-    // =====================================================================
+    // Schema retries
 
     fn schema_for_partial_sum() -> Schema {
         Schema::parse(serde_json::json!({
@@ -1329,7 +1203,7 @@ mod tests {
             Ok(write_result_response("not json again")),
             Ok(write_result_value(serde_json::json!({"partial_sum": 42}))),
         ]);
-        let (events, _, settled) = run_one(provider, 3, 10, Some(schema_for_partial_sum())).await;
+        let (events, _, ticket) = run_one(provider, 3, 10, Some(schema_for_partial_sum())).await;
 
         let schema_retries = schema_retries_in(&events);
         let attempts: Vec<u32> = schema_retries.iter().map(|(a, ..)| *a).collect();
@@ -1337,7 +1211,7 @@ mod tests {
         for (_, max_attempts, _) in &schema_retries {
             assert_eq!(*max_attempts, 10);
         }
-        assert_eq!(settled.unwrap().status, Status::Done);
+        assert_eq!(ticket.status, Status::Done);
     }
 
     #[tokio::test]
@@ -1366,7 +1240,7 @@ mod tests {
             Ok(write_result_response("still nope")),
             Ok(write_result_response("never")),
         ]);
-        let (events, _, settled) = run_one(provider, 3, 2, Some(schema_for_partial_sum())).await;
+        let (events, _, ticket) = run_one(provider, 3, 2, Some(schema_for_partial_sum())).await;
 
         let policy_violated = events.iter().any(|e| {
             matches!(
@@ -1378,12 +1252,10 @@ mod tests {
             )
         });
         assert!(policy_violated, "expected MaxSchemaRetries PolicyViolated");
-        assert_eq!(settled.unwrap().status, Status::Failed);
+        assert_eq!(ticket.status, Status::Failed);
     }
 
-    // =====================================================================
-    // Bucket D — cancellation interactions with retries
-    // =====================================================================
+    // Cancellation interactions with retries
 
     #[tokio::test(start_paused = true)]
     async fn cancel_during_backoff_sleep_aborts_immediately() {
@@ -1434,9 +1306,7 @@ mod tests {
         assert!(failures_in(&events).is_empty());
     }
 
-    // =====================================================================
-    // Bucket F — cross-ticket memory (body capture)
-    // =====================================================================
+    // Cross-ticket memory
 
     /// First user-side text in each `User` message, in order, with the
     /// auto-injected `## Context` block filtered out so cross-ticket
@@ -2042,9 +1912,7 @@ mod tests {
         assert_eq!(sys.last_result().as_deref(), Some("forwarded"));
     }
 
-    // =====================================================================
-    // Bucket G — context-window compaction warnings
-    // =====================================================================
+    // Context-window compaction
 
     #[tokio::test]
     async fn first_overflow_attempts_compaction_before_request_failed() {
@@ -2088,7 +1956,7 @@ mod tests {
         }
     }
 
-    fn compaction_started_count(events: &[Event], expected: CompactReason) -> usize {
+    fn compaction_starts(events: &[Event], expected: CompactReason) -> usize {
         events
             .iter()
             .filter(|e| match &e.kind {
@@ -2098,7 +1966,7 @@ mod tests {
             .count()
     }
 
-    fn compaction_finished_count(events: &[Event], expected: CompactReason) -> usize {
+    fn compaction_finishes(events: &[Event], expected: CompactReason) -> usize {
         events
             .iter()
             .filter(|e| match &e.kind {
@@ -2126,19 +1994,19 @@ mod tests {
             Ok(text_response_with_usage("SUMMARY", TokenUsage::default())),
             Ok(write_result_response("ok")),
         ]);
-        let (events, provider, settled) = run_one(provider, 0, 10, None).await;
+        let (events, provider, ticket) = run_one(provider, 0, 10, None).await;
 
         assert_eq!(provider.requests(), 4);
         assert_eq!(
-            compaction_started_count(&events, CompactReason::Reactive),
+            compaction_starts(&events, CompactReason::Reactive),
             1
         );
         assert_eq!(
-            compaction_finished_count(&events, CompactReason::Reactive),
+            compaction_finishes(&events, CompactReason::Reactive),
             1
         );
         assert!(failures_in(&events).is_empty());
-        assert_eq!(settled.unwrap().status, Status::Done);
+        assert_eq!(ticket.status, Status::Done);
 
         // Prove compaction actually happened: the fourth (retried)
         // request's user-side texts are just the task and the summary,
@@ -2174,11 +2042,11 @@ mod tests {
         // First overflow: Started + Finished pair (compaction succeeded).
         // Second overflow: circuit breaker trips before Started can fire.
         assert_eq!(
-            compaction_started_count(&events, CompactReason::Reactive),
+            compaction_starts(&events, CompactReason::Reactive),
             1
         );
         assert_eq!(
-            compaction_finished_count(&events, CompactReason::Reactive),
+            compaction_finishes(&events, CompactReason::Reactive),
             1
         );
         let failures = failures_in(&events);
@@ -2192,11 +2060,11 @@ mod tests {
 
     /// Run one ticket against `provider` with a model whose context
     /// window is known (so proactive compaction can fire) and without
-    /// the auto-injected context prelude (so `head_len` is exactly 1
+    /// the auto-injected context prelude (so `preserved_len` is exactly 1
     /// and the test can reason about request shapes precisely).
-    async fn run_one_with_real_model(
+    async fn run_compaction(
         provider: Arc<MockProvider>,
-    ) -> (Vec<Event>, Arc<MockProvider>, Option<Ticket>) {
+    ) -> (Vec<Event>, Arc<MockProvider>, Ticket) {
         let collected: Arc<StdMutex<Vec<Event>>> = Arc::new(StdMutex::new(Vec::new()));
         let handler: Arc<dyn Fn(Event) + Send + Sync> = {
             let c = Arc::clone(&collected);
@@ -2225,8 +2093,8 @@ mod tests {
 
         let _ = tickets.finish().await;
         let events = collected.lock().unwrap().clone();
-        let settled = tickets.first();
-        (events, provider, settled)
+        let ticket = tickets.first().expect("ticket must exist");
+        (events, provider, ticket)
     }
 
     #[tokio::test]
@@ -2248,18 +2116,18 @@ mod tests {
             Ok(text_response_with_usage("SUMMARY", TokenUsage::default())),
             Ok(write_result_response("done")),
         ]);
-        let (events, provider, settled) = run_one_with_real_model(provider).await;
+        let (events, provider, ticket) = run_compaction(provider).await;
 
         assert_eq!(provider.requests(), 3);
         assert_eq!(
-            compaction_started_count(&events, CompactReason::Proactive),
+            compaction_starts(&events, CompactReason::Proactive),
             1
         );
         assert_eq!(
-            compaction_finished_count(&events, CompactReason::Proactive),
+            compaction_finishes(&events, CompactReason::Proactive),
             1
         );
-        assert_eq!(settled.unwrap().status, Status::Done);
+        assert_eq!(ticket.status, Status::Done);
 
         // The third request — the retry after compaction — sees the
         // compacted message vector: context, task, summary.
@@ -2315,10 +2183,10 @@ mod tests {
             )),
             Err(rate_limit()),
         ]);
-        let (events, _, _) = run_one_with_real_model(provider).await;
+        let (events, _, _) = run_compaction(provider).await;
 
         assert_eq!(
-            compaction_started_count(&events, CompactReason::Proactive),
+            compaction_starts(&events, CompactReason::Proactive),
             1,
         );
         assert!(
@@ -2369,18 +2237,18 @@ mod tests {
             Ok(text_response_with_usage("", TokenUsage::default())),
             Ok(write_result_response("done")),
         ]);
-        let (events, provider, settled) = run_one_with_real_model(provider).await;
+        let (events, provider, ticket) = run_compaction(provider).await;
 
         assert_eq!(
-            compaction_started_count(&events, CompactReason::Proactive),
+            compaction_starts(&events, CompactReason::Proactive),
             1,
         );
         assert_eq!(
-            compaction_finished_count(&events, CompactReason::Proactive),
+            compaction_finishes(&events, CompactReason::Proactive),
             1,
             "empty text counts as a valid summary today",
         );
-        assert_eq!(settled.unwrap().status, Status::Done);
+        assert_eq!(ticket.status, Status::Done);
 
         // The third request sees [ctx, task, user("")]: the empty
         // user message is the collapsed summary.
@@ -2400,7 +2268,7 @@ mod tests {
         // A successful response carrying `status=ContextWindowExceeded`
         // is the same overflow signal as `ProviderError::ContextWindowExceeded`,
         // delivered on a 200 OK. Layer 3 routes it through
-        // `handle_overflow`. The setup turn before the overflow
+        // `compact_or_stop`. The setup turn before the overflow
         // grows the tail past the summarizer's two-message no-op
         // floor; otherwise summarize_and_replace returns Ok(()) with
         // no provider call and the next response slot would shift.
@@ -2417,25 +2285,25 @@ mod tests {
             Ok(text_response_with_usage("SUMMARY", TokenUsage::default())),
             Ok(write_result_response("recovered")),
         ]);
-        let (events, _, settled) = run_one_with_real_model(provider).await;
+        let (events, _, ticket) = run_compaction(provider).await;
 
         assert_eq!(
-            compaction_started_count(&events, CompactReason::Reactive),
+            compaction_starts(&events, CompactReason::Reactive),
             1,
             "ResponseStatus::ContextWindowExceeded must trigger reactive compaction",
         );
         assert_eq!(
-            compaction_finished_count(&events, CompactReason::Reactive),
+            compaction_finishes(&events, CompactReason::Reactive),
             1,
         );
-        assert_eq!(settled.unwrap().status, Status::Done);
+        assert_eq!(ticket.status, Status::Done);
     }
 
     #[tokio::test]
     async fn response_status_context_window_exceeded_consumes_compaction_retry_budget() {
         // After the setup turn, two consecutive responses carry the
         // overflow status. The first consumes the ImmediateRetry
-        // budget via handle_overflow; the second finds no budget
+        // budget via compact_or_stop; the second finds no budget
         // left (the reset below the status branch was skipped on the
         // overflow path) and the ticket fails with the synthesized
         // "after compaction" message.
@@ -2459,10 +2327,10 @@ mod tests {
                 model: "mock".into(),
             }),
         ]);
-        let (events, _, _) = run_one_with_real_model(provider).await;
+        let (events, _, _) = run_compaction(provider).await;
 
         assert_eq!(
-            compaction_started_count(&events, CompactReason::Reactive),
+            compaction_starts(&events, CompactReason::Reactive),
             1,
             "only the first overflow consumes the retry budget",
         );
@@ -2536,16 +2404,16 @@ mod tests {
 
         let _ = tickets.finish().await;
         let events = collected.lock().unwrap().clone();
-        let settled = tickets.first();
+        let ticket = tickets.first().expect("ticket must exist");
 
         assert_eq!(provider.requests(), 2);
         assert_eq!(
-            compaction_started_count(&events, CompactReason::Proactive),
+            compaction_starts(&events, CompactReason::Proactive),
             0,
             "Layer 1 prevents the messages from ever crossing the proactive threshold",
         );
         assert!(failures_in(&events).is_empty());
-        assert_eq!(settled.unwrap().status, Status::Done);
+        assert_eq!(ticket.status, Status::Done);
 
         // The Knowledge store carries the full original content under
         // the expected slug, and the index summary names the tool.
@@ -2604,28 +2472,28 @@ mod tests {
             Ok(text_response_with_usage("SUMMARY-B", TokenUsage::default())),
             Ok(write_result_response("done")),
         ]);
-        let (events, provider, settled) = run_one_with_real_model(provider).await;
+        let (events, provider, ticket) = run_compaction(provider).await;
 
         assert_eq!(provider.requests(), 6);
         assert_eq!(
-            compaction_started_count(&events, CompactReason::Proactive),
+            compaction_starts(&events, CompactReason::Proactive),
             1,
         );
         assert_eq!(
-            compaction_finished_count(&events, CompactReason::Proactive),
+            compaction_finishes(&events, CompactReason::Proactive),
             1,
         );
         assert_eq!(
-            compaction_started_count(&events, CompactReason::Reactive),
+            compaction_starts(&events, CompactReason::Reactive),
             1,
             "reactive must have a full budget after a successful proactive",
         );
         assert_eq!(
-            compaction_finished_count(&events, CompactReason::Reactive),
+            compaction_finishes(&events, CompactReason::Reactive),
             1,
         );
         assert!(failures_in(&events).is_empty());
-        assert_eq!(settled.unwrap().status, Status::Done);
+        assert_eq!(ticket.status, Status::Done);
     }
 
     #[tokio::test]
@@ -2715,8 +2583,8 @@ mod tests {
         tickets.task("go");
 
         let _ = tickets.finish().await;
-        let settled = tickets.first();
-        assert_eq!(settled.unwrap().status, Status::Done);
+        let ticket = tickets.first().expect("ticket must exist");
+        assert_eq!(ticket.status, Status::Done);
 
         // The second request carries one stub (for c1) and four
         // unchanged tool results (c2..c5).
@@ -2827,11 +2695,9 @@ mod tests {
         );
     }
 
-    // =====================================================================
-    // Bucket H — Layer 2 blocking limit (pre-flight)
-    // =====================================================================
+    // Blocking limit
 
-    fn blocking_limit_count(events: &[Event]) -> usize {
+    fn blocking_limit_events(events: &[Event]) -> usize {
         events
             .iter()
             .filter(|e| matches!(e.kind, EventKind::BlockingLimitExceeded { .. }))
@@ -2843,7 +2709,7 @@ mod tests {
         // Step 1 primes last_usage above the 197K blocking threshold
         // for the 200K Sonnet window. On step 2 both seams cross
         // their lines: proactive runs first, blocking runs after, and
-        // handle_overflow routes the synthetic overflow through the
+        // compact_or_stop routes the synthetic overflow through the
         // reactive seam.
         //
         // The contract: every BlockingLimitExceeded is immediately
@@ -2863,10 +2729,10 @@ mod tests {
             Ok(text_response_with_usage("SUMMARY-B", TokenUsage::default())),
             Ok(text_response_with_usage("SUMMARY-C", TokenUsage::default())),
         ]);
-        let (events, _, _) = run_one_with_real_model(provider).await;
+        let (events, _, _) = run_compaction(provider).await;
 
         assert!(
-            blocking_limit_count(&events) >= 1,
+            blocking_limit_events(&events) >= 1,
             "blocking guard must trip when estimate >= window - 3K",
         );
 
@@ -2889,8 +2755,8 @@ mod tests {
     #[tokio::test]
     async fn blocking_limit_uses_compaction_retry_budget() {
         // Two iterations trip the blocking guard. The first consumes
-        // the ImmediateRetry budget via handle_overflow; the second
-        // finds no budget left and fail_request surfaces the
+        // the ImmediateRetry budget via compact_or_stop; the second
+        // finds no budget left and fail_ticket surfaces the
         // synthesized "context still exceeds window after compaction"
         // message.
         let provider = MockProvider::with_results(vec![
@@ -2906,10 +2772,10 @@ mod tests {
             Ok(text_response_with_usage("SUMMARY-B", TokenUsage::default())),
             Ok(text_response_with_usage("SUMMARY-C", TokenUsage::default())),
         ]);
-        let (events, _, _) = run_one_with_real_model(provider).await;
+        let (events, _, _) = run_compaction(provider).await;
 
         assert!(
-            blocking_limit_count(&events) >= 2,
+            blocking_limit_events(&events) >= 2,
             "two consecutive iterations should trip the blocking guard",
         );
 
@@ -2928,10 +2794,10 @@ mod tests {
         // (tiny prompt/tools/messages) / 4. Far below the 197K
         // blocking threshold. No BlockingLimitExceeded event.
         let provider = MockProvider::with_results(vec![Ok(write_result_response("done"))]);
-        let (events, _, settled) = run_one_with_real_model(provider).await;
+        let (events, _, ticket) = run_compaction(provider).await;
 
-        assert_eq!(blocking_limit_count(&events), 0);
-        assert_eq!(settled.unwrap().status, Status::Done);
+        assert_eq!(blocking_limit_events(&events), 0);
+        assert_eq!(ticket.status, Status::Done);
     }
 
     #[tokio::test]
@@ -2991,7 +2857,7 @@ mod tests {
         let events = collected.lock().unwrap().clone();
 
         assert!(
-            blocking_limit_count(&events) >= 1,
+            blocking_limit_events(&events) >= 1,
             "tool-description bytes must contribute to the estimate and push it over threshold",
         );
     }

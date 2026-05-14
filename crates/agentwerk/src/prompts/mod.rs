@@ -36,6 +36,17 @@ pub(crate) fn compaction_directive() -> &'static str {
     COMPACTION_TEMPLATE
 }
 
+/// Compose the detail string for a schema-validation retry. Plugged
+/// into `retry_directive` when a finisher tool's output does not match
+/// the ticket's schema.
+pub(crate) fn schema_retry_detail(validator_message: &str) -> String {
+    format!(
+        "Your output did not match the required schema. Reply with a \
+         single JSON value conforming to the schema, with no surrounding \
+         text and no code fences. Validator said: {validator_message}"
+    )
+}
+
 /// Build the default context body: a `## Context` markdown block with the
 /// working directory, platform, OS version, and date, plus a `… remaining`
 /// bullet for each `Policies` budget that is `Some(_)`. Budgets left as
