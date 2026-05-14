@@ -234,15 +234,25 @@ fn print_event(event: &Event, style: &Style, test_window: Option<u64>, midstream
                 );
             }
         }
-        EventKind::ContextCompacted {
-            tokens,
-            threshold,
-            reason,
-            ..
-        } => {
+        EventKind::CompactionStarted { reason } => {
             break_stream();
             eprintln!(
-                "{}⚠ compact {tokens}/{threshold} ({reason:?}){}",
+                "{}… compacting context ({reason:?}){}",
+                style.dim, style.reset,
+            );
+        }
+        EventKind::CompactionFinished { reason } => {
+            break_stream();
+            eprintln!(
+                "{}✓ context compacted ({reason:?}){}",
+                style.dim, style.reset,
+            );
+        }
+        EventKind::CompactionFailed { reason, message } => {
+            break_stream();
+            let short = message.split_once(':').map(|(h, _)| h).unwrap_or(message);
+            eprintln!(
+                "{}✗ compaction failed ({reason:?}): {short}{}",
                 style.red, style.reset,
             );
         }

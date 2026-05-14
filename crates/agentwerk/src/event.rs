@@ -122,13 +122,20 @@ pub enum EventKind {
         max_attempts: u32,
         message: String,
     },
-    /// The conversation grew close to the model's context window
-    /// (`Proactive`) or the provider reported overflow (`Reactive`).
-    /// Today the seam is observation-only; messages are not mutated.
-    ContextCompacted {
-        tokens: u64,
-        threshold: u64,
+    /// Compaction is about to run: the loop is about to call the
+    /// summarizer to collapse the message tail. Pairs with
+    /// `CompactionFinished` (success) or `CompactionFailed` (the
+    /// summarizer call returned a provider error).
+    CompactionStarted { reason: CompactReason },
+    /// Compaction finished successfully; the message tail has been
+    /// replaced with the model's summary.
+    CompactionFinished { reason: CompactReason },
+    /// Compaction failed: the summarizer call returned a provider
+    /// error. The ticket is about to fail via the usual
+    /// `RequestFailed` path.
+    CompactionFailed {
         reason: CompactReason,
+        message: String,
     },
 }
 
@@ -182,12 +189,14 @@ pub fn default_logger() -> Arc<dyn Fn(Event) + Send + Sync> {
             EventKind::PolicyViolated { kind, limit } => {
                 eprintln!("[{agent}] policy violated: {kind:?} limit={limit}");
             }
-            EventKind::ContextCompacted {
-                tokens,
-                threshold,
-                reason,
-            } => {
-                eprintln!("[{agent}] compact {tokens}/{threshold} ({reason:?})");
+            EventKind::CompactionStarted { reason } => {
+                eprintln!("[{agent}] compacting context ({reason:?})");
+            }
+            EventKind::CompactionFinished { reason } => {
+                eprintln!("[{agent}] context compacted ({reason:?})");
+            }
+            EventKind::CompactionFailed { reason, message } => {
+                eprintln!("[{agent}] compaction failed ({reason:?}): {message}");
             }
             _ => {}
         }
@@ -268,15 +277,15 @@ mod tests {
                 kind: PolicyKind::MaxSchemaRetries,
                 limit: 10,
             },
-            EventKind::ContextCompacted {
-                tokens: 180_000,
-                threshold: 167_000,
+            EventKind::CompactionStarted {
                 reason: CompactReason::Proactive,
             },
-            EventKind::ContextCompacted {
-                tokens: 0,
-                threshold: 0,
+            EventKind::CompactionFinished {
+                reason: CompactReason::Proactive,
+            },
+            EventKind::CompactionFailed {
                 reason: CompactReason::Reactive,
+                message: "summarize call failed".into(),
             },
         ]
     }

@@ -1,21 +1,29 @@
-//! Retry strategy for transient provider errors. Ported from the
-//! pre-migration `crates/agentwerk/src/util.rs` (visible at
-//! `git show aa725dc^:crates/agentwerk/src/util.rs`). The agent loop
-//! holds an [`ExponentialRetry`] by value and invokes it through the
-//! [`Retry`] trait.
+//! Retry strategies: exponential backoff for transient provider
+//! errors, immediate retry without backoff for compaction. Each
+//! strategy owns its own attempt counter — callers consume one
+//! attempt at a time via [`Retry::try_consume`] and never track the
+//! count themselves.
 
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-/// Retry strategy: total attempt budget and delay between attempts.
-/// Concrete impls live in this module; call sites hold the strategy
-/// by value and invoke it through the trait.
+/// Retry strategy. Owns the attempt counter; callers consume one
+/// attempt at a time and use the returned attempt number for events.
 pub(crate) trait Retry {
+    /// Claim one retry. Returns `Some(attempt)` (1-based) if budget
+    /// was available and decrements it; `None` when exhausted.
+    fn try_consume(&mut self) -> Option<u32>;
+
+    /// Total attempt budget. Useful for `RequestRetried` event
+    /// payloads where observers want to see `attempt/max_attempts`.
     fn max_attempts(&self) -> u32;
 
-    /// Delay between attempt `attempt` and `attempt + 1` (0-indexed).
-    /// `server_hint` (e.g. HTTP `Retry-After`) takes precedence when
-    /// honoured; impls that ignore the hint document that choice.
-    fn delay(&self, attempt: u32, server_hint: Option<Duration>) -> Duration;
+    /// Delay before the next attempt fires. `server_hint`
+    /// (e.g. HTTP `Retry-After`) takes precedence when honoured;
+    /// the default returns `Duration::ZERO`, suitable for strategies
+    /// that retry immediately without backoff.
+    fn delay(&self, _server_hint: Option<Duration>) -> Duration {
+        Duration::ZERO
+    }
 }
 
 /// Cap on per-attempt backoff so exponential growth doesn't run away
@@ -27,23 +35,45 @@ const MAX_RETRY_DELAY: Duration = Duration::from_millis(32_000);
 /// `server_hint` bypasses the cap and jitter: the server is explicit
 /// about what it wants.
 pub(crate) struct ExponentialRetry {
-    pub base_delay: Duration,
-    pub max_attempts: u32,
+    base_delay: Duration,
+    max_attempts: u32,
+    attempt: u32,
+}
+
+impl ExponentialRetry {
+    pub(crate) fn new(base_delay: Duration, max_attempts: u32) -> Self {
+        Self {
+            base_delay,
+            max_attempts,
+            attempt: 0,
+        }
+    }
 }
 
 impl Retry for ExponentialRetry {
+    fn try_consume(&mut self) -> Option<u32> {
+        if self.attempt >= self.max_attempts {
+            return None;
+        }
+        self.attempt += 1;
+        Some(self.attempt)
+    }
+
     fn max_attempts(&self) -> u32 {
         self.max_attempts
     }
 
-    fn delay(&self, attempt: u32, server_hint: Option<Duration>) -> Duration {
+    fn delay(&self, server_hint: Option<Duration>) -> Duration {
         if let Some(hint) = server_hint {
             return hint;
         }
 
+        // `attempt` is 1-based after a successful `try_consume`; shift
+        // by 1 so the first wait uses `base_delay * 2^0 = base_delay`.
+        let exponent = self.attempt.saturating_sub(1).min(31);
         let base_ms = self.base_delay.as_millis() as u64;
         let exponential_ms = base_ms
-            .saturating_mul(1u64 << attempt.min(31))
+            .saturating_mul(1u64 << exponent)
             .min(MAX_RETRY_DELAY.as_millis() as u64);
         let jitter_range = exponential_ms / 4;
 
@@ -61,23 +91,62 @@ impl Retry for ExponentialRetry {
     }
 }
 
+/// Retry budget without backoff: every attempt fires as soon as the
+/// previous one returns. Used by the compaction circuit breaker,
+/// where each retry corresponds to a fresh request built from
+/// already-compacted messages and waiting adds nothing. `delay()`
+/// uses the trait's default (zero).
+pub(crate) struct ImmediateRetry {
+    max_attempts: u32,
+    attempt: u32,
+}
+
+impl ImmediateRetry {
+    pub(crate) fn new(max_attempts: u32) -> Self {
+        Self {
+            max_attempts,
+            attempt: 0,
+        }
+    }
+
+    /// Restore the budget to its starting state. Used to clear the
+    /// compaction circuit breaker after a successful (non-overflow)
+    /// response so the next overflow gets a fresh retry.
+    pub(crate) fn reset(&mut self) {
+        self.attempt = 0;
+    }
+}
+
+impl Retry for ImmediateRetry {
+    fn try_consume(&mut self) -> Option<u32> {
+        if self.attempt >= self.max_attempts {
+            return None;
+        }
+        self.attempt += 1;
+        Some(self.attempt)
+    }
+
+    fn max_attempts(&self) -> u32 {
+        self.max_attempts
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     fn policy(base_ms: u64) -> ExponentialRetry {
-        ExponentialRetry {
-            base_delay: Duration::from_millis(base_ms),
-            max_attempts: 10,
-        }
+        ExponentialRetry::new(Duration::from_millis(base_ms), 10)
     }
 
     #[test]
-    fn exponential_backoff() {
-        let policy = policy(1000);
-        for attempt in 0..3 {
-            let delay = policy.delay(attempt, None);
-            let expected_base_ms = 1000u64 * (1u64 << attempt);
+    fn exponential_backoff_grows_per_consumed_attempt() {
+        let mut policy = policy(1000);
+        for expected_exponent in 0..3u32 {
+            let attempt = policy.try_consume().expect("budget available");
+            assert_eq!(attempt, expected_exponent + 1);
+            let delay = policy.delay(None);
+            let expected_base_ms = 1000u64 * (1u64 << expected_exponent);
             let jitter_range_ms = expected_base_ms / 4;
             let delay_ms = delay.as_millis() as u64;
             assert!(delay_ms >= expected_base_ms);
@@ -86,23 +155,65 @@ mod tests {
     }
 
     #[test]
-    fn respects_retry_delay() {
-        let delay = policy(1000).delay(0, Some(Duration::from_millis(5000)));
+    fn server_hint_takes_precedence_over_backoff() {
+        let mut policy = policy(1000);
+        let _ = policy.try_consume();
+        let delay = policy.delay(Some(Duration::from_millis(5000)));
         assert_eq!(delay, Duration::from_millis(5000));
     }
 
     #[test]
-    fn caps_at_max_delay() {
-        let delay = policy(1000).delay(20, None);
+    fn delay_caps_at_max_retry_delay() {
+        let mut policy = policy(1000);
+        for _ in 0..21 {
+            let _ = policy.try_consume();
+        }
         let max_ms = MAX_RETRY_DELAY.as_millis() as u64;
         let jitter_range_ms = max_ms / 4;
-        let delay_ms = delay.as_millis() as u64;
+        let delay_ms = policy.delay(None).as_millis() as u64;
         assert!(delay_ms >= max_ms);
         assert!(delay_ms <= max_ms + jitter_range_ms);
     }
 
     #[test]
-    fn saturates_instead_of_overflow() {
-        let _delay = policy(u64::MAX).delay(10, None);
+    fn exponential_delay_saturates_instead_of_overflowing() {
+        let mut policy = ExponentialRetry::new(Duration::from_millis(u64::MAX), 50);
+        for _ in 0..11 {
+            let _ = policy.try_consume();
+        }
+        let _delay = policy.delay(None);
+    }
+
+    #[test]
+    fn try_consume_returns_none_once_budget_is_exhausted() {
+        let mut policy = ExponentialRetry::new(Duration::from_millis(1), 2);
+        assert_eq!(policy.try_consume(), Some(1));
+        assert_eq!(policy.try_consume(), Some(2));
+        assert_eq!(policy.try_consume(), None);
+        assert_eq!(policy.try_consume(), None);
+    }
+
+    #[test]
+    fn immediate_retry_consumes_then_exhausts() {
+        let mut r = ImmediateRetry::new(1);
+        assert_eq!(r.max_attempts(), 1);
+        assert_eq!(r.try_consume(), Some(1));
+        assert_eq!(r.try_consume(), None);
+    }
+
+    #[test]
+    fn immediate_retry_delay_is_zero_regardless_of_hint() {
+        let r = ImmediateRetry::new(3);
+        assert_eq!(r.delay(None), Duration::ZERO);
+        assert_eq!(r.delay(Some(Duration::from_secs(60))), Duration::ZERO);
+    }
+
+    #[test]
+    fn immediate_retry_reset_restores_full_budget() {
+        let mut r = ImmediateRetry::new(1);
+        let _ = r.try_consume();
+        assert_eq!(r.try_consume(), None);
+        r.reset();
+        assert_eq!(r.try_consume(), Some(1));
     }
 }

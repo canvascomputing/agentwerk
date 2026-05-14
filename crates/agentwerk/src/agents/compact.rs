@@ -1,11 +1,10 @@
-//! Context-window compaction. The threshold seams (`proactive_event`,
-//! `reactive_event`) produce the typed warning event; `summarize_and_replace`
-//! collapses the tail of an agent's message vector into a single user-role
-//! summary by calling the provider with no tools.
+//! Context-window compaction. `should_compact_proactively` answers
+//! whether the next request is about to overflow; `summarize_and_replace`
+//! collapses the tail of an agent's message vector into a single
+//! user-role summary by calling the provider with no tools.
 
 use std::sync::Arc;
 
-use crate::event::{CompactReason, EventKind};
 use crate::prompts::compaction_directive;
 use crate::providers::types::StreamEvent;
 use crate::providers::{
@@ -56,36 +55,18 @@ fn block_bytes(block: &ContentBlock) -> usize {
     }
 }
 
-/// Proactive seam: the warning event when the estimated next-request
-/// input crosses the threshold. `None` when the window is unknown or
-/// the estimate is still under it.
-pub(crate) fn proactive_event(
+/// `true` when the estimated next-request input crosses the
+/// proactive compaction threshold. `false` when the window is unknown
+/// or the estimate is still under it.
+pub(crate) fn should_compact_proactively(
     window: Option<u64>,
     last_usage: &TokenUsage,
     messages: &[Message],
-) -> Option<EventKind> {
-    let threshold = threshold(window)?;
-    let tokens = estimate_next_request_tokens(last_usage, messages);
-    if tokens < threshold {
-        return None;
-    }
-    Some(EventKind::ContextCompacted {
-        tokens,
-        threshold,
-        reason: CompactReason::Proactive,
-    })
-}
-
-/// Reactive seam: the warning event when the provider itself reports
-/// context-window overflow. Carries sentinel `tokens = 0` and
-/// `threshold = 0` since the authoritative numbers come from the
-/// provider, not our estimator.
-pub(crate) fn reactive_event() -> EventKind {
-    EventKind::ContextCompacted {
-        tokens: 0,
-        threshold: 0,
-        reason: CompactReason::Reactive,
-    }
+) -> bool {
+    let Some(threshold) = threshold(window) else {
+        return false;
+    };
+    estimate_next_request_tokens(last_usage, messages) >= threshold
 }
 
 /// Replace `messages[head_len..]` with one user-role message containing a
@@ -156,62 +137,39 @@ mod tests {
     }
 
     #[test]
-    fn proactive_event_none_when_window_unknown() {
+    fn should_compact_proactively_is_false_when_window_unknown() {
         let usage = TokenUsage {
             input_tokens: 1_000_000,
             output_tokens: 0,
         };
         let messages = [Message::user("hi")];
-        assert!(proactive_event(None, &usage, &messages).is_none());
+        assert!(!should_compact_proactively(None, &usage, &messages));
     }
 
     #[test]
-    fn proactive_event_none_when_under_threshold() {
+    fn should_compact_proactively_is_false_when_under_threshold() {
         let usage = TokenUsage {
             input_tokens: 1_000,
             output_tokens: 0,
         };
         let messages = [Message::user("hi")];
-        assert!(proactive_event(Some(200_000), &usage, &messages).is_none());
+        assert!(!should_compact_proactively(
+            Some(200_000),
+            &usage,
+            &messages
+        ));
     }
 
     #[test]
-    fn proactive_event_some_when_over_threshold() {
+    fn should_compact_proactively_is_true_when_estimate_crosses_threshold() {
+        // Threshold = 200_000 - 20_000 - 13_000 = 167_000; estimate is
+        // last_usage's 170_000 input tokens plus a trivial message.
         let usage = TokenUsage {
             input_tokens: 170_000,
             output_tokens: 0,
         };
         let messages = [Message::user("hi")];
-        let event = proactive_event(Some(200_000), &usage, &messages)
-            .expect("threshold should have tripped");
-        match event {
-            EventKind::ContextCompacted {
-                tokens,
-                threshold,
-                reason,
-            } => {
-                assert_eq!(threshold, 167_000);
-                assert!(tokens >= 170_000);
-                assert_eq!(reason, CompactReason::Proactive);
-            }
-            other => panic!("expected ContextCompacted, got {other:?}"),
-        }
-    }
-
-    #[test]
-    fn reactive_event_carries_sentinel_zeros() {
-        match reactive_event() {
-            EventKind::ContextCompacted {
-                tokens,
-                threshold,
-                reason,
-            } => {
-                assert_eq!(tokens, 0);
-                assert_eq!(threshold, 0);
-                assert_eq!(reason, CompactReason::Reactive);
-            }
-            other => panic!("expected ContextCompacted, got {other:?}"),
-        }
+        assert!(should_compact_proactively(Some(200_000), &usage, &messages));
     }
 
     // ---- summarize_and_replace ----
