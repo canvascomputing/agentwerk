@@ -7,7 +7,7 @@
 
 use std::collections::HashMap;
 use std::fmt;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, Weak};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
@@ -26,10 +26,11 @@ use super::stats::{Stats, TicketStats};
 /// `schema_as::<R>()` to derive a serde-backed validator from a Rust
 /// type). System-managed fields (`key`, `status`, `reporter`,
 /// `created_at`, `result`) are stamped at insertion time.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct Ticket {
     pub task: serde_json::Value,
     pub labels: Vec<String>,
+    #[serde(skip)]
     pub schema: Option<crate::schemas::Schema>,
     pub(crate) key: String,
     pub(crate) status: Status,
@@ -221,6 +222,28 @@ impl Ticket {
         self.comments.retain(|c| c.author == "system");
         self.comments.push(Comment::user_text(summary_text));
     }
+
+    /// Serialize self to `<dir>/tickets/<key>/ticket.{ts}.json`.
+    ///
+    /// `overwrite = false`: creates a new file, `ts = now_millis()`.
+    /// `overwrite = true`: finds the file with the highest `ts` in its name
+    /// and overwrites it; falls back to creating a new file if none exists.
+    ///
+    /// Errors are swallowed — observational, not load-bearing.
+    pub(crate) fn write(&self, dir: &Path, overwrite: bool) {
+        let ticket_dir = dir.join("tickets").join(&self.key);
+        let path = if overwrite {
+            latest_ticket_file(&ticket_dir)
+                .unwrap_or_else(|| ticket_dir.join(format!("ticket.{}.json", now_millis())))
+        } else {
+            ticket_dir.join(format!("ticket.{}.json", now_millis()))
+        };
+        let _ = (|| -> std::io::Result<()> {
+            std::fs::create_dir_all(&ticket_dir)?;
+            let json = serde_json::to_string_pretty(self).map_err(std::io::Error::other)?;
+            std::fs::write(&path, json)
+        })();
+    }
 }
 
 impl AsUserMessage for Ticket {
@@ -233,7 +256,7 @@ impl AsUserMessage for Ticket {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum Status {
     Todo,
     InProgress,
@@ -256,7 +279,7 @@ impl Status {
 }
 
 /// One entry in a ticket's transcript.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct Comment {
     /// Role of the originating message: `"user"` or `"assistant"`. The
     /// agent loop also writes `"system"` entries for the system prompt
@@ -271,7 +294,7 @@ pub struct Comment {
 /// Ticket-side mirror of [`ContentBlock`]. Keeps the public ticket
 /// surface free of provider types while still recording every payload
 /// shape the agent loop sends.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub enum CommentContent {
     Text(String),
     ToolUse {
@@ -572,6 +595,7 @@ impl TicketSystem {
         let parent = ticket.parent.clone();
         store.insert(key.clone(), ticket);
         drop(store);
+        self.persist(&key, false);
         TicketStats::record_created(&self.stats);
         for l in &labels {
             let slice = self.stats.stats_for_label(l);
@@ -590,6 +614,14 @@ impl TicketSystem {
         }
         self.append_ticket_event(event);
         key
+    }
+
+    /// Write the ticket at `key` to disk. No-op when no dir is configured
+    /// or the ticket is missing.
+    fn persist(&self, key: &str, overwrite: bool) {
+        if let (Some(dir), Some(t)) = (self.dir_value(), self.get(key)) {
+            t.write(&dir, overwrite);
+        }
     }
 
     /// Append one JSON line to `<dir>/tickets.jsonl`. Silently no-ops
@@ -642,6 +674,7 @@ impl TicketSystem {
             (key, prev, durations, labels)
         };
         self.record_transition(&key, prev, Status::InProgress, now, durations, &labels);
+        self.persist(&key, true);
         Some(key)
     }
 
@@ -649,8 +682,14 @@ impl TicketSystem {
     /// ticket is missing: the loop drops out shortly afterwards on the
     /// same condition.
     pub(crate) fn add_comment(&self, key: &str, comment: Comment) {
-        if let Some(t) = self.tickets.lock().unwrap().get_mut(key) {
+        let (ticket_copy, dir) = {
+            let mut store = self.tickets.lock().unwrap();
+            let Some(t) = store.get_mut(key) else { return };
             t.comments.push(comment);
+            (t.clone(), self.dir_value())
+        };
+        if let Some(dir) = dir {
+            ticket_copy.write(&dir, true);
         }
     }
 
@@ -681,6 +720,7 @@ impl TicketSystem {
             (prev, durations, labels)
         };
         self.record_transition(key, prev, status, now, durations, &labels);
+        self.persist(key, true);
         Ok(())
     }
 
@@ -747,13 +787,19 @@ impl TicketSystem {
         key: &str,
         result: serde_json::Value,
     ) -> Result<(), TicketError> {
-        let mut store = self.tickets.lock().unwrap();
-        let ticket = store
-            .get_mut(key)
-            .ok_or_else(|| TicketError::TicketMissing {
-                key: key.to_string(),
-            })?;
-        ticket.result = Some(result);
+        let (ticket_copy, dir) = {
+            let mut store = self.tickets.lock().unwrap();
+            let ticket = store
+                .get_mut(key)
+                .ok_or_else(|| TicketError::TicketMissing {
+                    key: key.to_string(),
+                })?;
+            ticket.result = Some(result);
+            (ticket.clone(), self.dir_value())
+        };
+        if let Some(dir) = dir {
+            ticket_copy.write(&dir, true);
+        }
         Ok(())
     }
 
@@ -1187,6 +1233,25 @@ fn numeric_id(key: &str) -> u32 {
 }
 
 const TICKETS_LOG_FILE: &str = "tickets.jsonl";
+
+/// Return the path of the `ticket.{ts}.json` file with the highest timestamp
+/// in `ticket_dir`, or `None` when the directory is absent or empty.
+fn latest_ticket_file(ticket_dir: &Path) -> Option<PathBuf> {
+    std::fs::read_dir(ticket_dir)
+        .ok()?
+        .flatten()
+        .filter_map(|e| {
+            let name = e.file_name();
+            let ts = parse_ticket_filename_ts(name.to_string_lossy().as_ref())?;
+            Some((ts, e.path()))
+        })
+        .max_by_key(|(ts, _)| *ts)
+        .map(|(_, path)| path)
+}
+
+fn parse_ticket_filename_ts(name: &str) -> Option<u64> {
+    name.strip_prefix("ticket.")?.strip_suffix(".json")?.parse().ok()
+}
 
 fn append_ticket_event_to_dir(
     dir: &std::path::Path,

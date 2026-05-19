@@ -108,6 +108,12 @@ async fn try_compact<F: Fn(EventKind)>(
     match compaction::compact(scope.provider, scope.model_name, &messages).await {
         Ok(summary) => {
             if let Some(summary) = summary {
+                let dir = scope.ticket_system.dir_value();
+                if let Some(ref dir) = dir {
+                    if let Some(t) = scope.ticket_system.get(scope.key) {
+                        t.write(dir, false);
+                    }
+                }
                 if let Some(t) = scope
                     .ticket_system
                     .tickets
@@ -116,6 +122,11 @@ async fn try_compact<F: Fn(EventKind)>(
                     .get_mut(scope.key)
                 {
                     t.summarize(summary);
+                }
+                if let Some(ref dir) = dir {
+                    if let Some(t) = scope.ticket_system.get(scope.key) {
+                        t.write(dir, false);
+                    }
                 }
             }
             (scope.emit)(EventKind::CompactionFinished { reason });
