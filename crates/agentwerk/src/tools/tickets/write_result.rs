@@ -91,11 +91,22 @@ mod tests {
 
     fn one_ticket(agent: &str) -> (Arc<TicketSystem>, String) {
         let sys = TicketSystem::new();
+        sys.dir(shared_test_dir().to_path_buf());
         sys.insert(Ticket::new("body").label(agent), "tester".into());
         let key = sys
             .claim(|t| t.status == Status::Todo, agent)
             .expect("claim must succeed");
         (sys, key)
+    }
+
+    /// Process-lifetime tempdir used as the default `TicketSystem` root
+    /// for tests in this module. Tests that need an isolated workspace
+    /// still call `sys.dir(...)` explicitly to override.
+    fn shared_test_dir() -> &'static std::path::Path {
+        use std::sync::OnceLock;
+        static DIR: OnceLock<crate::test_util::TempDir> = OnceLock::new();
+        DIR.get_or_init(|| crate::test_util::TempDir::new().unwrap())
+            .path()
     }
 
     #[tokio::test]
@@ -212,6 +223,7 @@ mod tests {
     async fn validates_against_schema() {
         let dir = crate::test_util::TempDir::new().unwrap();
         let sys = TicketSystem::new();
+        sys.dir(shared_test_dir().to_path_buf());
         sys.dir(dir.path().to_path_buf());
         let schema = Schema::parse(serde_json::json!({
             "type": "object",
@@ -257,6 +269,7 @@ mod tests {
 
         let dir = crate::test_util::TempDir::new().unwrap();
         let sys = TicketSystem::new();
+        sys.dir(shared_test_dir().to_path_buf());
         sys.dir(dir.path().to_path_buf());
         sys.insert(
             Ticket::new("hi").schema_as::<Out>().label("alice"),
@@ -292,22 +305,10 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn falls_back_to_working_dir_when_workspace_unset() {
-        let dir = crate::test_util::TempDir::new().unwrap();
-        let (sys, _key) = one_ticket("alice");
-        let ctx = ctx_with(Arc::clone(&sys), "alice", dir.path().to_path_buf());
-        let outcome = WriteResultTool
-            .call(serde_json::json!({"result": "x"}), &ctx)
-            .await
-            .unwrap();
-        assert!(matches!(outcome, ToolResult::Success(_)));
-        assert!(dir.path().join("results.jsonl").exists());
-    }
-
-    #[tokio::test]
     async fn errors_when_no_current_ticket() {
         let dir = crate::test_util::TempDir::new().unwrap();
         let sys = TicketSystem::new();
+        sys.dir(shared_test_dir().to_path_buf());
         let ctx = ctx_with(Arc::clone(&sys), "alice", dir.path().to_path_buf());
         let outcome = WriteResultTool
             .call(serde_json::json!({"result": "x"}), &ctx)
@@ -332,6 +333,7 @@ mod tests {
     async fn appends_one_line_per_completed_ticket() {
         let dir = crate::test_util::TempDir::new().unwrap();
         let sys = TicketSystem::new();
+        sys.dir(shared_test_dir().to_path_buf());
         sys.dir(dir.path().to_path_buf());
 
         sys.insert(Ticket::new("a").label("alice"), "tester".into());
@@ -372,6 +374,7 @@ mod tests {
         const N: usize = 32;
         let dir = crate::test_util::TempDir::new().unwrap();
         let sys = TicketSystem::new();
+        sys.dir(shared_test_dir().to_path_buf());
         sys.dir(dir.path().to_path_buf());
 
         let mut expected = Vec::with_capacity(N);

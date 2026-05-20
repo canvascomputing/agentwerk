@@ -170,8 +170,19 @@ mod tests {
             .agent_name(agent.to_string())
     }
 
+    /// Process-lifetime tempdir used as the default `TicketSystem` root
+    /// for tests in this module. Tests that need an isolated workspace
+    /// still call `sys.dir(...)` explicitly to override.
+    fn shared_test_dir() -> &'static std::path::Path {
+        use std::sync::OnceLock;
+        static DIR: OnceLock<crate::test_util::TempDir> = OnceLock::new();
+        DIR.get_or_init(|| crate::test_util::TempDir::new().unwrap())
+            .path()
+    }
+
     fn one_ticket(agent: &str) -> (Arc<TicketSystem>, String) {
         let sys = TicketSystem::new();
+        sys.dir(shared_test_dir().to_path_buf());
         sys.insert(Ticket::new("parent body").label(agent), "tester".into());
         let key = sys
             .claim(|t| t.status == Status::Todo, agent)
@@ -248,6 +259,7 @@ mod tests {
         // type check, so we exercise the schema-validation abort path.
         let dir = crate::test_util::TempDir::new().unwrap();
         let sys = TicketSystem::new();
+        sys.dir(shared_test_dir().to_path_buf());
         sys.dir(dir.path().to_path_buf());
         let schema = Schema::parse(serde_json::json!({
             "type": "string",
@@ -436,6 +448,7 @@ mod tests {
     async fn errors_when_no_current_ticket() {
         let dir = crate::test_util::TempDir::new().unwrap();
         let sys = TicketSystem::new();
+        sys.dir(shared_test_dir().to_path_buf());
         let ctx = ctx_with(Arc::clone(&sys), "alice", dir.path().to_path_buf());
         let outcome = WriteHandoverTool
             .call(

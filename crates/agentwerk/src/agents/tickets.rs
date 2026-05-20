@@ -444,7 +444,7 @@ pub struct TicketSystem {
     policies: Mutex<Policies>,
     pub(crate) interrupt_signal: Mutex<Arc<AtomicBool>>,
     pub(crate) stats: Stats,
-    dir: Mutex<Option<PathBuf>>,
+    dir: Mutex<PathBuf>,
     tickets_log_lock: Mutex<()>,
     join_handle: Mutex<Option<JoinHandle<()>>>,
 }
@@ -462,7 +462,7 @@ impl TicketSystem {
             policies: Mutex::new(Policies::default()),
             interrupt_signal: Mutex::new(Arc::new(AtomicBool::new(false))),
             stats: Stats::new(),
-            dir: Mutex::new(None),
+            dir: Mutex::new(PathBuf::from(".agentwerk")),
             tickets_log_lock: Mutex::new(()),
             join_handle: Mutex::new(None),
         })
@@ -531,17 +531,17 @@ impl TicketSystem {
         self
     }
 
-    /// Directory under which the system writes `results.jsonl` and
-    /// `tickets.jsonl`. Knowledge lives next to them when the caller points
-    /// `Knowledge::open` at the same directory. When unset, `WriteResultTool`
-    /// falls back to the calling agent's directory and the ticket
-    /// event log is skipped entirely.
+    /// Override the directory under which the system writes
+    /// `results.jsonl`, `tickets.jsonl`, and per-ticket
+    /// `tickets/<key>/ticket.<ts>.json` files. Defaults to `./.agentwerk`.
+    /// Knowledge co-locates with these files when `Knowledge::open`
+    /// points at the same directory.
     pub fn dir(&self, dir: impl Into<PathBuf>) -> &Self {
-        *self.dir.lock().unwrap() = Some(dir.into());
+        *self.dir.lock().unwrap() = dir.into();
         self
     }
 
-    pub(crate) fn dir_value(&self) -> Option<PathBuf> {
+    pub(crate) fn dir_value(&self) -> PathBuf {
         self.dir.lock().unwrap().clone()
     }
 
@@ -616,21 +616,17 @@ impl TicketSystem {
         key
     }
 
-    /// Write the ticket at `key` to disk. No-op when no dir is configured
-    /// or the ticket is missing.
+    /// Write the ticket at `key` to disk. No-op when the ticket is missing.
     fn persist(&self, key: &str, overwrite: bool) {
-        if let (Some(dir), Some(t)) = (self.dir_value(), self.get(key)) {
-            t.write(&dir, overwrite);
+        if let Some(t) = self.get(key) {
+            t.write(&self.dir_value(), overwrite);
         }
     }
 
-    /// Append one JSON line to `<dir>/tickets.jsonl`. Silently no-ops
-    /// when no directory is configured. Errors are swallowed: the log is
-    /// observational, not load-bearing for run correctness.
+    /// Append one JSON line to `<dir>/tickets.jsonl`. Errors are swallowed:
+    /// the log is observational, not load-bearing for run correctness.
     pub(crate) fn append_ticket_event(&self, event: serde_json::Value) {
-        let Some(dir) = self.dir_value() else {
-            return;
-        };
+        let dir = self.dir_value();
         let _guard = self.tickets_log_lock.lock().unwrap();
         let _ = append_ticket_event_to_dir(&dir, &event);
     }
@@ -682,15 +678,13 @@ impl TicketSystem {
     /// ticket is missing: the loop drops out shortly afterwards on the
     /// same condition.
     pub(crate) fn add_comment(&self, key: &str, comment: Comment) {
-        let (ticket_copy, dir) = {
+        let ticket_copy = {
             let mut store = self.tickets.lock().unwrap();
             let Some(t) = store.get_mut(key) else { return };
             t.comments.push(comment);
-            (t.clone(), self.dir_value())
+            t.clone()
         };
-        if let Some(dir) = dir {
-            ticket_copy.write(&dir, true);
-        }
+        ticket_copy.write(&self.dir_value(), true);
     }
 
     /// Transition a ticket to `Done`.
@@ -787,7 +781,7 @@ impl TicketSystem {
         key: &str,
         result: serde_json::Value,
     ) -> Result<(), TicketError> {
-        let (ticket_copy, dir) = {
+        let ticket_copy = {
             let mut store = self.tickets.lock().unwrap();
             let ticket = store
                 .get_mut(key)
@@ -795,11 +789,9 @@ impl TicketSystem {
                     key: key.to_string(),
                 })?;
             ticket.result = Some(result);
-            (ticket.clone(), self.dir_value())
+            ticket.clone()
         };
-        if let Some(dir) = dir {
-            ticket_copy.write(&dir, true);
-        }
+        ticket_copy.write(&self.dir_value(), true);
         Ok(())
     }
 
@@ -1276,6 +1268,16 @@ mod tests {
         Ticket::new(format!("body-{label}")).label(label)
     }
 
+    /// Build a `TicketSystem` rooted at a fresh `TempDir` so the default
+    /// `.agentwerk` directory never lands in the source tree during tests.
+    /// Hold the returned `TempDir` for the test's lifetime.
+    fn test_system() -> (Arc<TicketSystem>, crate::test_util::TempDir) {
+        let dir = crate::test_util::TempDir::new().unwrap();
+        let built = TicketSystem::new();
+        built.dir(dir.path().to_path_buf());
+        (built, dir)
+    }
+
     fn attach_done_result(sys: &TicketSystem, key: &str, result: &str) {
         sys.set_result(key, serde_json::Value::String(result.into()))
             .unwrap();
@@ -1284,7 +1286,7 @@ mod tests {
 
     #[test]
     fn task_creates_ticket_with_user_reporter() {
-        let sys = TicketSystem::new();
+        let (sys, _tmp) = test_system();
         sys.task("hello");
         let t = sys.get("TICKET-1").unwrap();
         assert_eq!(t.task, serde_json::Value::String("hello".into()));
@@ -1294,7 +1296,7 @@ mod tests {
 
     #[test]
     fn task_labeled_attaches_label_and_leaves_status_todo() {
-        let sys = TicketSystem::new();
+        let (sys, _tmp) = test_system();
         sys.task_labeled("hello", "research");
         let t = sys.get("TICKET-1").unwrap();
         assert_eq!(t.labels, vec!["research".to_string()]);
@@ -1303,7 +1305,7 @@ mod tests {
 
     #[test]
     fn create_with_named_label_is_born_todo_and_carries_label() {
-        let sys = TicketSystem::new();
+        let (sys, _tmp) = test_system();
         sys.ticket(Ticket::new("specific work for alice").label("alice"));
         let t = sys.get("TICKET-1").unwrap();
         assert!(t.has_label("alice"));
@@ -1312,7 +1314,7 @@ mod tests {
 
     #[test]
     fn create_with_label_and_schema_is_stored_verbatim() {
-        let sys = TicketSystem::new();
+        let (sys, _tmp) = test_system();
         let schema = crate::schemas::Schema::parse(serde_json::json!({"type": "string"})).unwrap();
         sys.ticket(Ticket::new("x").label("urgent").schema(schema));
         let t = sys.get("TICKET-1").unwrap();
@@ -1322,7 +1324,7 @@ mod tests {
 
     #[test]
     fn ticket_system_handle_is_shared_between_caller_and_added_agent() {
-        let sys = TicketSystem::new();
+        let (sys, _tmp) = test_system();
         let alice = sys.agent(Agent::new().name("alice"));
         // Alice's task lands in the same queue.
         alice.task("from alice");
@@ -1338,7 +1340,7 @@ mod tests {
     #[test]
     fn agent_must_be_bound_before_task() {
         let alice = Agent::new().name("alice");
-        let sys = TicketSystem::new();
+        let (sys, _tmp) = test_system();
         let alice = sys.agent(alice);
         // Bound — task() works, lands in the shared queue.
         alice.task("first").task("second");
@@ -1354,7 +1356,7 @@ mod tests {
 
     #[test]
     fn search_matches_string_task_case_insensitively() {
-        let sys = TicketSystem::new();
+        let (sys, _tmp) = test_system();
         sys.task("Fix Login");
         sys.task("Other thing");
         let hits = sys.search("login");
@@ -1369,7 +1371,7 @@ mod tests {
 
     #[test]
     fn set_result_updates_ticket() {
-        let sys = TicketSystem::new();
+        let (sys, _tmp) = test_system();
         sys.task("hi");
         sys.set_result("TICKET-1", serde_json::Value::String("answer".into()))
             .unwrap();
@@ -1383,14 +1385,14 @@ mod tests {
 
     #[test]
     fn first_returns_none_on_empty_system() {
-        let sys = TicketSystem::new();
+        let (sys, _tmp) = test_system();
         assert!(sys.first().is_none());
         assert!(sys.tickets().is_empty());
     }
 
     #[test]
     fn first_returns_earliest_ticket_by_creation() {
-        let sys = TicketSystem::new();
+        let (sys, _tmp) = test_system();
         sys.task("first").task("second").task("third");
         let first = sys.first().unwrap();
         assert_eq!(first.key(), "TICKET-1");
@@ -1399,7 +1401,7 @@ mod tests {
 
     #[test]
     fn tickets_returns_all_in_creation_order() {
-        let sys = TicketSystem::new();
+        let (sys, _tmp) = test_system();
         sys.task("a").task("b").task("c");
         let all = sys.tickets();
         assert_eq!(all.len(), 3);
@@ -1410,7 +1412,7 @@ mod tests {
 
     #[test]
     fn all_results_returns_done_payloads_in_creation_order() {
-        let sys = TicketSystem::new();
+        let (sys, _tmp) = test_system();
         sys.task("a").task("b").task("c");
         attach_done_result(&sys, "TICKET-1", "first");
         attach_done_result(&sys, "TICKET-3", "third");
@@ -1419,7 +1421,7 @@ mod tests {
 
     #[test]
     fn last_result_returns_last_done_payload() {
-        let sys = TicketSystem::new();
+        let (sys, _tmp) = test_system();
         sys.task("a").task("b");
         attach_done_result(&sys, "TICKET-2", "second");
         attach_done_result(&sys, "TICKET-1", "first");
@@ -1428,7 +1430,7 @@ mod tests {
 
     #[test]
     fn all_results_orders_by_creation_regardless_of_done_order() {
-        let sys = TicketSystem::new();
+        let (sys, _tmp) = test_system();
         sys.task("a").task("b").task("c");
         attach_done_result(&sys, "TICKET-3", "third");
         attach_done_result(&sys, "TICKET-1", "first");
@@ -1438,7 +1440,7 @@ mod tests {
 
     #[test]
     fn results_are_empty_when_nothing_done() {
-        let sys = TicketSystem::new();
+        let (sys, _tmp) = test_system();
         sys.task("pending");
         assert!(sys.last_result().is_none());
         assert!(sys.all_results().is_empty());
@@ -1446,7 +1448,7 @@ mod tests {
 
     #[test]
     fn done_and_failed_filter_by_status() {
-        let sys = TicketSystem::new();
+        let (sys, _tmp) = test_system();
         sys.task("ok").task("oops").task("pending");
         sys.claim(|t| t.key() == "TICKET-1", "agent");
         sys.set_done("TICKET-1").unwrap();
@@ -1461,7 +1463,7 @@ mod tests {
 
     #[test]
     fn ticket_status_transitions_record_stats() {
-        let sys = TicketSystem::new();
+        let (sys, _tmp) = test_system();
         sys.task("a").task("b").task("c");
         // Created 3 tickets.
         assert_eq!(sys.stats().tickets_created(), 3);
@@ -1475,7 +1477,7 @@ mod tests {
 
     #[test]
     fn stats_for_label_counts_creation_per_label() {
-        let sys = TicketSystem::new();
+        let (sys, _tmp) = test_system();
         sys.ticket(Ticket::new("a").labels(["scan", "high"]));
         sys.ticket(Ticket::new("b").label("scan"));
         sys.ticket(Ticket::new("c"));
@@ -1488,7 +1490,7 @@ mod tests {
 
     #[test]
     fn stats_for_label_counts_terminal_transitions_per_label() {
-        let sys = TicketSystem::new();
+        let (sys, _tmp) = test_system();
         sys.ticket(Ticket::new("a").labels(["scan", "high"]));
         sys.ticket(Ticket::new("b").label("scan"));
         sys.claim(|t| t.key() == "TICKET-1", "agent");
@@ -1508,7 +1510,7 @@ mod tests {
 
     #[test]
     fn stats_for_label_set_failed_path_records_per_label() {
-        let sys = TicketSystem::new();
+        let (sys, _tmp) = test_system();
         sys.ticket(Ticket::new("a").label("scan"));
         sys.set_failed("TICKET-1").unwrap();
         assert_eq!(sys.stats().stats_for_label("scan").tickets_failed(), 1);
@@ -1516,7 +1518,7 @@ mod tests {
 
     #[test]
     fn stats_for_label_unaffected_by_no_label_ticket() {
-        let sys = TicketSystem::new();
+        let (sys, _tmp) = test_system();
         sys.ticket(Ticket::new("a"));
         sys.claim(|t| t.key() == "TICKET-1", "agent");
         sys.set_done("TICKET-1").unwrap();
@@ -1535,20 +1537,8 @@ mod tests {
     }
 
     #[test]
-    fn workspace_unset_skips_tickets_log() {
-        let sys = TicketSystem::new();
-        sys.task("hello");
-        sys.claim(|t| t.key() == "TICKET-1", "agent");
-        sys.set_done("TICKET-1").unwrap();
-        // No workspace, no panic, no file: this asserts the no-op path.
-        assert!(sys.dir_value().is_none());
-    }
-
-    #[test]
     fn workspace_emits_created_started_done_in_order() {
-        let dir = crate::test_util::TempDir::new().unwrap();
-        let sys = TicketSystem::new();
-        sys.dir(dir.path().to_path_buf());
+        let (sys, dir) = test_system();
         sys.task("hello");
         sys.claim(|t| t.key() == "TICKET-1", "agent");
         sys.set_done("TICKET-1").unwrap();
@@ -1568,9 +1558,7 @@ mod tests {
 
     #[test]
     fn workspace_emits_failed_event_on_set_failed() {
-        let dir = crate::test_util::TempDir::new().unwrap();
-        let sys = TicketSystem::new();
-        sys.dir(dir.path().to_path_buf());
+        let (sys, dir) = test_system();
         sys.task("hello");
         sys.set_failed("TICKET-1").unwrap();
         let lines = read_tickets_log(dir.path());
@@ -1583,9 +1571,7 @@ mod tests {
 
     #[test]
     fn workspace_created_event_carries_labels_when_pinned() {
-        let dir = crate::test_util::TempDir::new().unwrap();
-        let sys = TicketSystem::new();
-        sys.dir(dir.path().to_path_buf());
+        let (sys, dir) = test_system();
         sys.ticket(Ticket::new("specific").label("alice"));
         let lines = read_tickets_log(dir.path());
         assert_eq!(lines.len(), 1);
@@ -1595,9 +1581,7 @@ mod tests {
 
     #[test]
     fn workspace_logs_one_line_per_lifecycle_step_for_multiple_tickets() {
-        let dir = crate::test_util::TempDir::new().unwrap();
-        let sys = TicketSystem::new();
-        sys.dir(dir.path().to_path_buf());
+        let (sys, dir) = test_system();
         sys.task("a").task("b");
         sys.claim(|t| t.key() == "TICKET-1", "agent");
         sys.set_done("TICKET-1").unwrap();
@@ -1612,7 +1596,7 @@ mod tests {
 
     #[test]
     fn claim_transitions_todo_to_in_progress_and_adds_label() {
-        let sys = TicketSystem::new();
+        let (sys, _tmp) = test_system();
         sys.task("hello");
         let key = sys.claim(|t| t.status == Status::Todo, "alice").unwrap();
         assert_eq!(key, "TICKET-1");
@@ -1624,14 +1608,14 @@ mod tests {
 
     #[test]
     fn claim_returns_none_when_no_ticket_matches() {
-        let sys = TicketSystem::new();
+        let (sys, _tmp) = test_system();
         sys.task("hello");
         assert!(sys.claim(|t| t.has_label("nonexistent"), "alice").is_none());
     }
 
     #[test]
     fn second_claim_of_same_ticket_returns_none() {
-        let sys = TicketSystem::new();
+        let (sys, _tmp) = test_system();
         sys.task("hello");
         let first = sys.claim(|t| t.key() == "TICKET-1", "alice");
         assert!(first.is_some());
@@ -1642,7 +1626,7 @@ mod tests {
 
     #[test]
     fn claim_picks_earliest_eligible_ticket() {
-        let sys = TicketSystem::new();
+        let (sys, _tmp) = test_system();
         sys.task("a").task("b").task("c");
         let key = sys.claim(|t| t.status == Status::Todo, "alice").unwrap();
         assert_eq!(key, "TICKET-1");
@@ -1650,9 +1634,7 @@ mod tests {
 
     #[test]
     fn claim_emits_started_event_in_workspace_log() {
-        let dir = crate::test_util::TempDir::new().unwrap();
-        let sys = TicketSystem::new();
-        sys.dir(dir.path().to_path_buf());
+        let (sys, dir) = test_system();
         sys.task("hello");
         sys.claim(|t| t.status == Status::Todo, "alice");
         let lines = read_tickets_log(dir.path());
@@ -1664,7 +1646,7 @@ mod tests {
 
     #[test]
     fn set_done_transitions_to_done() {
-        let sys = TicketSystem::new();
+        let (sys, _tmp) = test_system();
         sys.task("hello");
         sys.claim(|t| t.status == Status::Todo, "alice");
         sys.set_done("TICKET-1").unwrap();
@@ -1675,7 +1657,7 @@ mod tests {
 
     #[test]
     fn set_failed_transitions_to_failed() {
-        let sys = TicketSystem::new();
+        let (sys, _tmp) = test_system();
         sys.task("hello");
         sys.claim(|t| t.status == Status::Todo, "alice");
         sys.set_failed("TICKET-1").unwrap();
@@ -1686,7 +1668,7 @@ mod tests {
 
     #[test]
     fn ticket_parent_builder_round_trips() {
-        let sys = TicketSystem::new();
+        let (sys, _tmp) = test_system();
         sys.ticket(Ticket::new("child body").parent("TICKET-1"));
         let stored = sys.get("TICKET-1").unwrap();
         assert_eq!(stored.parent_key(), Some("TICKET-1"));
@@ -1694,9 +1676,7 @@ mod tests {
 
     #[test]
     fn parent_field_renders_in_created_event() {
-        let dir = crate::test_util::TempDir::new().unwrap();
-        let sys = TicketSystem::new();
-        sys.dir(dir.path().to_path_buf());
+        let (sys, dir) = test_system();
         sys.task("first");
         sys.ticket(Ticket::new("child").parent("TICKET-1"));
         let lines = read_tickets_log(dir.path());

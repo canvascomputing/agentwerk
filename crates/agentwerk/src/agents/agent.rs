@@ -619,7 +619,9 @@ mod tests {
 
     #[tokio::test]
     async fn dispatch_interpolates_string_task_body() {
+        let dir = crate::test_util::TempDir::new().unwrap();
         let sys = crate::agents::TicketSystem::new();
+        sys.dir(dir.path().to_path_buf());
         let agent = Agent::new()
             .template_variable("topic", "rust")
             .ticket_system(&sys);
@@ -633,7 +635,9 @@ mod tests {
 
     #[tokio::test]
     async fn dispatch_leaves_object_task_unchanged() {
+        let dir = crate::test_util::TempDir::new().unwrap();
         let sys = crate::agents::TicketSystem::new();
+        sys.dir(dir.path().to_path_buf());
         let agent = Agent::new()
             .template_variable("topic", "rust")
             .ticket_system(&sys);

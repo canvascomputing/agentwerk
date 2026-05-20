@@ -109,10 +109,8 @@ async fn try_compact<F: Fn(EventKind)>(
         Ok(summary) => {
             if let Some(summary) = summary {
                 let dir = scope.ticket_system.dir_value();
-                if let Some(ref dir) = dir {
-                    if let Some(t) = scope.ticket_system.get(scope.key) {
-                        t.write(dir, false);
-                    }
+                if let Some(t) = scope.ticket_system.get(scope.key) {
+                    t.write(&dir, false);
                 }
                 if let Some(t) = scope
                     .ticket_system
@@ -123,10 +121,8 @@ async fn try_compact<F: Fn(EventKind)>(
                 {
                     t.summarize(summary);
                 }
-                if let Some(ref dir) = dir {
-                    if let Some(t) = scope.ticket_system.get(scope.key) {
-                        t.write(dir, false);
-                    }
+                if let Some(t) = scope.ticket_system.get(scope.key) {
+                    t.write(&dir, false);
                 }
             }
             (scope.emit)(EventKind::CompactionFinished { reason });
@@ -1313,8 +1309,10 @@ mod tests {
             let c = Arc::clone(&collected);
             Arc::new(move |e| c.lock().unwrap().push(e))
         };
+        let results_dir = crate::test_util::TempDir::new().unwrap();
         let tickets = TicketSystem::new();
         tickets
+            .dir(results_dir.path().to_path_buf())
             .max_request_retries(3)
             .request_retry_delay(Duration::from_secs(60));
         let agent = Agent::new()

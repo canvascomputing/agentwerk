@@ -408,7 +408,7 @@ pub(super) fn write_result(
         "result": result,
     });
 
-    let target_dir = ticket_system.dir_value().unwrap_or_else(|| ctx.dir.clone());
+    let target_dir = ticket_system.dir_value();
     {
         let _guard = write_result::results_write_lock().lock().unwrap();
         if let Err(e) = append_ndjson(&target_dir, &log_line) {
@@ -459,14 +459,27 @@ mod tests {
 
     /// Insert one Todo ticket, claim it for `agent` (atomically labels +
     /// transitions to InProgress), so `sys.find(...)` resolves it as the
-    /// current ticket for `agent`.
+    /// current ticket for `agent`. The system is rooted at a shared
+    /// per-module temp directory so the default `.agentwerk` writes
+    /// never leak into the source tree.
     fn shared_with_one_ticket(agent: &str) -> (Arc<TicketSystem>, String) {
         let sys = TicketSystem::new();
+        sys.dir(shared_test_dir().to_path_buf());
         sys.insert(Ticket::new("body").label(agent), "tester".into());
         let key = sys
             .claim(|t| t.status == Status::Todo, agent)
             .expect("claim must succeed");
         (sys, key)
+    }
+
+    /// Process-lifetime tempdir used as the default `TicketSystem` root
+    /// for tests in this module. Tests that need an isolated workspace
+    /// still call `sys.dir(...)` explicitly to override.
+    fn shared_test_dir() -> &'static std::path::Path {
+        use std::sync::OnceLock;
+        static DIR: OnceLock<crate::test_util::TempDir> = OnceLock::new();
+        DIR.get_or_init(|| crate::test_util::TempDir::new().unwrap())
+            .path()
     }
 
     async fn call(tool: &dyn ToolLike, input: serde_json::Value, ctx: &ToolContext) -> ToolResult {
@@ -491,6 +504,7 @@ mod tests {
     #[tokio::test]
     async fn read_list_filters_by_status() {
         let sys = TicketSystem::new();
+        sys.dir(shared_test_dir().to_path_buf());
         sys.insert(Ticket::new("a"), "tester".into());
         sys.insert(Ticket::new("b"), "tester".into());
         sys.claim(|t| t.key() == "TICKET-1", "alice");
@@ -510,6 +524,7 @@ mod tests {
     #[tokio::test]
     async fn manage_create_stamps_reporter_from_agent_name() {
         let sys = TicketSystem::new();
+        sys.dir(shared_test_dir().to_path_buf());
         let ctx = ctx_with(Arc::clone(&sys), "alice");
         let result = call(
             &ManageTicketsTool,
@@ -526,6 +541,7 @@ mod tests {
     #[tokio::test]
     async fn manage_create_with_labels_attaches_them() {
         let sys = TicketSystem::new();
+        sys.dir(shared_test_dir().to_path_buf());
         let ctx = ctx_with(Arc::clone(&sys), "alice");
         let result = call(
             &ManageTicketsTool,
@@ -546,6 +562,7 @@ mod tests {
     #[tokio::test]
     async fn manage_create_with_named_label_routes_to_agent() {
         let sys = TicketSystem::new();
+        sys.dir(shared_test_dir().to_path_buf());
         let ctx = ctx_with(Arc::clone(&sys), "alice");
         let result = call(
             &ManageTicketsTool,
@@ -566,6 +583,7 @@ mod tests {
     #[tokio::test]
     async fn manage_create_with_schema_field_stores_schema() {
         let sys = TicketSystem::new();
+        sys.dir(shared_test_dir().to_path_buf());
         let ctx = ctx_with(Arc::clone(&sys), "alice");
         let result = call(
             &ManageTicketsTool,
