@@ -1,22 +1,22 @@
 {
   "name": "write_result_tool",
   "summary": [
-    "Finish the agent's current ticket by writing its `result`. Marks the ticket `Done` on success.",
+    "Record your final answer and mark the current ticket `Done`. Call this tool as the last action of every response — your work is not saved until you call it.",
     "`result` is a JSON value of its natural type: string for plain text, object/array/number/boolean for structured payloads. The tool stores it verbatim, so structured payloads must be passed as JSON values, not as JSON-encoded strings."
   ],
   "constraints": [
     "Operates on the agent's current ticket. No `key` parameter; the loop resolves it from the calling agent's identity.",
-    "Call exactly once per ticket, when the work is complete.",
+    "Call exactly once per ticket, as the final action of your response.",
     "MUST pass `result` as a JSON value of its natural type. Stringifying an object first (passing `\"{\\\"x\\\": 1}\"` instead of `{\"x\": 1}`) saves the value as an escaped string of JSON, not as the object itself.",
     "MUST NOT pass `null` or an empty string. Both mean 'no result' and are rejected.",
     "When the ticket carries a `schema`, `result` must validate against it. Failures count toward `max_schema_retries`."
   ],
   "anti_patterns": [
     "Calling this tool mid-task to 'check in' or 'save progress'. `Done` is terminal: finish the work first, then call.",
-    "Skipping this call. Returning text without `write_result_tool` leaves the ticket `InProgress` and the loop re-picks it next iteration.",
     "To create or edit other tickets: use `write_tickets_tool`. This tool finishes the current ticket only."
   ],
   "cautions": [
+    "IMPORTANT: Every response that completes the task MUST end with this call. Returning text without calling `write_result_tool` leaves the ticket `InProgress`; the loop will re-assign the ticket and ask you to retry.",
     "IMPORTANT: `Done` is terminal. Once the call succeeds, the ticket cannot be re-opened or amended.",
     "IMPORTANT: a schema validation failure counts toward `max_schema_retries`. Read the violation message, correct the shape, and retry; do not loop blindly."
   ],

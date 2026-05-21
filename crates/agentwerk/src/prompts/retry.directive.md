@@ -2,4 +2,4 @@ Your previous reply was not accepted.
 
 {detail}
 
-Please correct it and reply again.
+Do not write any text. Your next reply must be a tool call only.
