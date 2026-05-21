@@ -212,6 +212,141 @@ impl Stats {
     pub(crate) fn mark_finished(&self, when: u64) {
         self.finished_at.store(when, Ordering::Relaxed);
     }
+
+    /// Rebuild from already-loaded tickets. Used as the fallback when
+    /// the stats file is absent or unreadable; otherwise `Stats::load`
+    /// is preferred to keep observability continuous across restarts.
+    pub(crate) fn derive(tickets: &HashMap<String, crate::agents::tickets::Ticket>) -> Self {
+        let stats = Stats::new();
+        for t in tickets.values() {
+            TicketStats::record_created(&stats);
+            for label in t.labels.iter() {
+                TicketStats::record_created(&*stats.stats_for_label(label));
+            }
+            let ticket_dur = ticket_duration(t).unwrap_or_default();
+            let work_dur = work_duration(t).unwrap_or_default();
+            match t.status() {
+                "done" => {
+                    TicketStats::record_done(&stats, ticket_dur, work_dur);
+                    for label in t.labels.iter() {
+                        TicketStats::record_done(
+                            &*stats.stats_for_label(label),
+                            ticket_dur,
+                            work_dur,
+                        );
+                    }
+                }
+                "failed" => {
+                    TicketStats::record_failed(&stats, ticket_dur, work_dur);
+                    for label in t.labels.iter() {
+                        TicketStats::record_failed(
+                            &*stats.stats_for_label(label),
+                            ticket_dur,
+                            work_dur,
+                        );
+                    }
+                }
+                _ => {}
+            }
+        }
+        stats
+    }
+
+    /// Sugar over the `Persist` impl for the keyless case.
+    pub(crate) fn load(dir: &std::path::Path) -> std::io::Result<Self> {
+        <Self as crate::persistence::Persist>::load(dir, &())
+    }
+}
+
+impl Stats {
+    pub(crate) const FILE: &'static str = "stats.json";
+}
+
+impl crate::persistence::Persist for Stats {
+    type Key = ();
+
+    fn save(&self, dir: &std::path::Path) -> std::io::Result<()> {
+        let body = serde_json::to_vec_pretty(&self.as_json()).map_err(std::io::Error::other)?;
+        crate::persistence::write_atomic(&dir.join(Self::FILE), &body)
+    }
+
+    fn load(dir: &std::path::Path, _: &Self::Key) -> std::io::Result<Self> {
+        let bytes = std::fs::read(dir.join(Self::FILE))?;
+        let value: serde_json::Value = serde_json::from_slice(&bytes).map_err(std::io::Error::other)?;
+        let stats = Stats::new();
+        stats.load_fields(&value);
+        if let Some(labels) = value.get("labels").and_then(|v| v.as_object()) {
+            for (name, body) in labels {
+                let slice = stats.stats_for_label(name);
+                slice.load_fields(body);
+            }
+        }
+        Ok(stats)
+    }
+}
+
+impl Stats {
+    fn as_json(&self) -> serde_json::Value {
+        let labels = self.label_stats.lock().unwrap();
+        let label_obj: serde_json::Map<String, serde_json::Value> = labels
+            .iter()
+            .map(|(name, slice)| (name.clone(), slice.fields_as_json()))
+            .collect();
+        let mut body = self.fields_as_json();
+        if let serde_json::Value::Object(map) = &mut body {
+            map.insert("labels".into(), serde_json::Value::Object(label_obj));
+        }
+        body
+    }
+
+    fn fields_as_json(&self) -> serde_json::Value {
+        serde_json::json!({
+            "steps": self.steps.load(Ordering::Relaxed),
+            "requests": self.requests.load(Ordering::Relaxed),
+            "tool_calls": self.tool_calls.load(Ordering::Relaxed),
+            "errors": self.errors.load(Ordering::Relaxed),
+            "input_tokens": self.input_tokens.load(Ordering::Relaxed),
+            "output_tokens": self.output_tokens.load(Ordering::Relaxed),
+            "tickets_created": self.tickets_created.load(Ordering::Relaxed),
+            "tickets_done": self.tickets_done.load(Ordering::Relaxed),
+            "tickets_failed": self.tickets_failed.load(Ordering::Relaxed),
+            "total_ticket_duration_secs": self.total_ticket_duration.load(Ordering::Relaxed),
+            "total_work_duration_secs": self.total_work_duration.load(Ordering::Relaxed),
+        })
+    }
+
+    fn load_fields(&self, value: &serde_json::Value) {
+        let get = |key: &str| value.get(key).and_then(|v| v.as_u64()).unwrap_or(0);
+        self.steps.store(get("steps"), Ordering::Relaxed);
+        self.requests.store(get("requests"), Ordering::Relaxed);
+        self.tool_calls.store(get("tool_calls"), Ordering::Relaxed);
+        self.errors.store(get("errors"), Ordering::Relaxed);
+        self.input_tokens
+            .store(get("input_tokens"), Ordering::Relaxed);
+        self.output_tokens
+            .store(get("output_tokens"), Ordering::Relaxed);
+        self.tickets_created
+            .store(get("tickets_created"), Ordering::Relaxed);
+        self.tickets_done
+            .store(get("tickets_done"), Ordering::Relaxed);
+        self.tickets_failed
+            .store(get("tickets_failed"), Ordering::Relaxed);
+        self.total_ticket_duration
+            .store(get("total_ticket_duration_secs"), Ordering::Relaxed);
+        self.total_work_duration
+            .store(get("total_work_duration_secs"), Ordering::Relaxed);
+    }
+}
+
+fn ticket_duration(t: &crate::agents::tickets::Ticket) -> Option<Duration> {
+    let end = t.finished_at().or_else(|| t.failed_at())?;
+    Some(Duration::from_millis(end.saturating_sub(t.created_at())))
+}
+
+fn work_duration(t: &crate::agents::tickets::Ticket) -> Option<Duration> {
+    let end = t.finished_at().or_else(|| t.failed_at())?;
+    let start = t.started_at()?;
+    Some(Duration::from_millis(end.saturating_sub(start)))
 }
 
 impl Default for Stats {
@@ -425,5 +560,47 @@ mod tests {
         s.mark_finished(7_000);
         assert_eq!(s.run_duration(), Some(Duration::from_secs(6)));
         assert_eq!(s.work_duration(), Duration::from_secs(10));
+    }
+
+    #[test]
+    fn stats_round_trips_through_save_load() {
+        let dir = crate::test_util::TempDir::new().unwrap();
+
+        let s = Stats::new();
+        s.record_step();
+        s.record_step();
+        s.record_request(100, 50);
+        s.record_tool_call();
+        s.record_error();
+        s.record_created();
+        s.record_done(Duration::from_secs(7), Duration::from_secs(5));
+        s.record_failed(Duration::from_secs(3), Duration::from_secs(2));
+
+        let slice = s.stats_for_label("scan");
+        slice.record_step();
+        slice.record_request(40, 20);
+        slice.record_created();
+        slice.record_done(Duration::from_secs(4), Duration::from_secs(3));
+
+        use crate::persistence::Persist;
+        s.save(dir.path()).unwrap();
+        let restored = Stats::load(dir.path()).unwrap();
+        assert_eq!(restored.steps(), 2);
+        assert_eq!(restored.requests(), 1);
+        assert_eq!(restored.tool_calls(), 1);
+        assert_eq!(restored.errors(), 1);
+        assert_eq!(restored.input_tokens(), 100);
+        assert_eq!(restored.output_tokens(), 50);
+        assert_eq!(restored.tickets_created(), 1);
+        assert_eq!(restored.tickets_done(), 1);
+        assert_eq!(restored.tickets_failed(), 1);
+        assert_eq!(restored.ticket_duration(), Duration::from_secs(10));
+        assert_eq!(restored.work_duration(), Duration::from_secs(7));
+
+        let restored_slice = restored.stats_for_label("scan");
+        assert_eq!(restored_slice.steps(), 1);
+        assert_eq!(restored_slice.input_tokens(), 40);
+        assert_eq!(restored_slice.tickets_done(), 1);
+        assert_eq!(restored_slice.ticket_duration(), Duration::from_secs(4));
     }
 }

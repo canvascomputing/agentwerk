@@ -26,11 +26,12 @@ use serde_json::{Map, Number, Value};
 /// module).
 #[derive(Clone)]
 pub struct Schema {
-    inner: Arc<SchemaInner>,
+    inner: Arc<SchemaBody>,
 }
 
-enum SchemaInner {
-    Json { compiled: Node },
+struct SchemaBody {
+    compiled: Node,
+    raw_document: Value,
 }
 
 impl Schema {
@@ -41,7 +42,10 @@ impl Schema {
     pub fn parse(document: Value) -> Result<Self, SchemaParseError> {
         let compiled = compile(&document, "")?;
         Ok(Self {
-            inner: Arc::new(SchemaInner::Json { compiled }),
+            inner: Arc::new(SchemaBody {
+                compiled,
+                raw_document: document,
+            }),
         })
     }
 
@@ -50,9 +54,8 @@ impl Schema {
     /// reported, each tagged with the instance path so the model can
     /// find the field it got wrong.
     pub fn validate(&self, instance: &Value) -> Result<(), Vec<SchemaViolation>> {
-        let SchemaInner::Json { compiled } = self.inner.as_ref();
         let mut violations = Vec::new();
-        compiled.check(instance, "", &mut violations);
+        self.inner.compiled.check(instance, "", &mut violations);
         if violations.is_empty() {
             Ok(())
         } else {
@@ -63,9 +66,20 @@ impl Schema {
 
 impl fmt::Debug for Schema {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("Schema")
-            .field("kind", &"json")
-            .finish_non_exhaustive()
+        f.debug_struct("Schema").finish_non_exhaustive()
+    }
+}
+
+impl serde::Serialize for Schema {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        self.inner.raw_document.serialize(serializer)
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for Schema {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let document = Value::deserialize(deserializer)?;
+        Schema::parse(document).map_err(serde::de::Error::custom)
     }
 }
 
@@ -900,5 +914,26 @@ mod tests {
         let schema = Schema::parse(json!(false)).unwrap();
         assert!(schema.validate(&json!(null)).is_err());
         assert!(schema.validate(&json!("anything")).is_err());
+    }
+
+    #[test]
+    fn schema_parse_round_trips_through_serde() {
+        let document = json!({
+            "type": "object",
+            "properties": { "name": { "type": "string" } },
+            "required": ["name"],
+        });
+        let schema = Schema::parse(document.clone()).unwrap();
+        let serialised = serde_json::to_value(&schema).unwrap();
+        assert_eq!(serialised, document);
+        let restored: Schema = serde_json::from_value(serialised).unwrap();
+        assert!(restored.validate(&json!({"name": "alice"})).is_ok());
+        assert!(restored.validate(&json!({"age": 7})).is_err());
+    }
+
+    #[test]
+    fn option_schema_deserializes_null_as_none() {
+        let none: Option<Schema> = serde_json::from_value(Value::Null).unwrap();
+        assert!(none.is_none());
     }
 }

@@ -68,7 +68,7 @@ async fn main() {
 
     let cwd = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
     let knowledge_dir = cwd.join(".agentwerk");
-    let knowledge = Knowledge::open(&knowledge_dir).expect("open knowledge store");
+    let knowledge = Knowledge::load(&knowledge_dir).expect("open knowledge store");
 
     let _agent = tickets.agent(
         Agent::new()

@@ -5,11 +5,13 @@
 //! `Arc<Knowledge>` from this module.
 
 use std::fs;
-use std::io::{self, Write};
+use std::io;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
+
+use crate::persistence::{write_atomic, Persist};
 
 const INDEX_FILE: &str = "index.md";
 const PAGES_DIR: &str = "pages";
@@ -24,7 +26,7 @@ struct IndexEntry {
     summary: String,
 }
 
-/// Returned by `write_page` and `remove_page` on success so the tool
+/// Returned by [`Pages::save`] and [`Pages::remove`] on success so the tool
 /// layer can show the model how much of the index budget is consumed.
 #[derive(Debug)]
 pub struct KnowledgeOutcome {
@@ -51,7 +53,7 @@ impl Knowledge {
     /// if absent but pages exist, rebuilds from page H1 headings.
     /// If `memory.jsonl` exists and `index.md` does not, migrates
     /// all entries into `pages/legacy-notes.md`.
-    pub fn open(knowledge_dir: impl Into<PathBuf>) -> io::Result<Arc<Self>> {
+    pub fn load(knowledge_dir: impl Into<PathBuf>) -> io::Result<Arc<Self>> {
         let knowledge_dir = knowledge_dir.into();
         fs::create_dir_all(knowledge_dir.join(PAGES_DIR))?;
 
@@ -78,9 +80,9 @@ impl Knowledge {
 
     /// Override the rendered-index char budget. Default is 4000. Page
     /// bodies are never capped; only the bullet list injected into the
-    /// system prompt is bounded. Chain after `open` before binding the
+    /// system prompt is bounded. Chain after `load` before binding the
     /// store to any agent:
-    /// `Knowledge::open(dir)?.index_char_limit(12_000)`.
+    /// `Knowledge::load(dir)?.index_char_limit(12_000)`.
     pub fn index_char_limit(self: Arc<Self>, n: usize) -> Arc<Self> {
         self.index_char_limit.store(n, Ordering::Relaxed);
         self
@@ -94,122 +96,15 @@ impl Knowledge {
         render_index(&index)
     }
 
-    /// Upsert a page and its index entry. Creates or overwrites the
-    /// page file and updates the index. Tags are optional metadata
-    /// stored in the page frontmatter.
-    pub fn write_page(
-        &self,
-        slug: &str,
-        summary: &str,
-        content: &str,
-        tags: &[String],
-    ) -> Result<KnowledgeOutcome, String> {
-        let slug = normalize_slug(slug)?;
-        let summary = summary.trim();
-        if summary.is_empty() {
-            return Err("Summary must not be empty".into());
-        }
-        if content.trim().is_empty() {
-            return Err("Content must not be empty".into());
-        }
-
-        let _w = self.write_lock.lock().unwrap();
-        let mut index = self.index.lock().unwrap().clone();
-
-        // Upsert the index entry.
-        let entry = IndexEntry {
-            slug: slug.clone(),
-            summary: summary.to_string(),
-        };
-        if let Some(pos) = index.iter().position(|e| e.slug == slug) {
-            index[pos] = entry;
-        } else {
-            index.push(entry);
-        }
-
-        // Check index char limit.
-        let limit = self.index_char_limit.load(Ordering::Relaxed);
-        let rendered = render_index(&index);
-        if rendered.len() > limit {
-            return Err(format!(
-                "Index at {}/{} chars. This write would push it to {} chars. \
-                 Consolidate or remove pages first.",
-                render_index(&self.index.lock().unwrap()).len(),
-                limit,
-                rendered.len(),
-            ));
-        }
-
-        // Write the page file with frontmatter.
-        let page_body = render_page(content, tags);
-        let page_path = self.page_path(&slug);
-        atomic_write(&page_path, page_body.as_bytes())
-            .map_err(|e| format!("Failed to write page: {e}"))?;
-
-        // Write the index file.
-        let index_body = render_index_file(&index);
-        atomic_write(&self.knowledge_dir.join(INDEX_FILE), index_body.as_bytes())
-            .map_err(|e| format!("Failed to write index: {e}"))?;
-
-        let chars_used = rendered.len();
-        let page_count = index.len();
-        *self.index.lock().unwrap() = index;
-        Ok(KnowledgeOutcome {
-            message: "page written",
-            index_chars_used: chars_used,
-            index_char_limit: limit,
-            pages: page_count,
-        })
+    /// Sub-handle for the page collection. Save, load, and remove
+    /// pages through `knowledge.pages()` so the verb pair stays bare
+    /// `save` / `load` and the bootstrap `Knowledge::load(dir)` does
+    /// not collide with per-slug loads.
+    pub fn pages(&self) -> Pages<'_> {
+        Pages { inner: self }
     }
 
-    /// Read a page's body with frontmatter stripped. Returns the
-    /// markdown content without the `---` delimited frontmatter block.
-    pub fn read_page(&self, slug: &str) -> Result<String, String> {
-        let slug = normalize_slug(slug)?;
-        let page_path = self.page_path(&slug);
-        if !page_path.exists() {
-            return Err(format!("Page `{slug}` not found"));
-        }
-        let raw = fs::read_to_string(&page_path)
-            .map_err(|e| format!("Failed to read page `{slug}`: {e}"))?;
-        Ok(strip_frontmatter(&raw))
-    }
-
-    /// Delete a page file and its index entry.
-    pub fn remove_page(&self, slug: &str) -> Result<KnowledgeOutcome, String> {
-        let slug = normalize_slug(slug)?;
-        let _w = self.write_lock.lock().unwrap();
-        let mut index = self.index.lock().unwrap().clone();
-
-        let pos = index
-            .iter()
-            .position(|e| e.slug == slug)
-            .ok_or_else(|| format!("Page `{slug}` not found in index"))?;
-        index.remove(pos);
-
-        // Remove the page file if it exists.
-        let page_path = self.page_path(&slug);
-        if page_path.exists() {
-            fs::remove_file(&page_path).map_err(|e| format!("Failed to remove page file: {e}"))?;
-        }
-
-        // Write the updated index.
-        let index_body = render_index_file(&index);
-        atomic_write(&self.knowledge_dir.join(INDEX_FILE), index_body.as_bytes())
-            .map_err(|e| format!("Failed to write index: {e}"))?;
-
-        let chars_used = render_index(&index).len();
-        let page_count = index.len();
-        *self.index.lock().unwrap() = index;
-        Ok(KnowledgeOutcome {
-            message: "page removed",
-            index_chars_used: chars_used,
-            index_char_limit: self.index_char_limit.load(Ordering::Relaxed),
-            pages: page_count,
-        })
-    }
-
-    /// Remove all pages and the index.
+    /// Remove every page file and the index.
     pub fn clear(&self) -> Result<(), String> {
         let _w = self.write_lock.lock().unwrap();
 
@@ -231,12 +126,155 @@ impl Knowledge {
         *self.index.lock().unwrap() = Vec::new();
         Ok(())
     }
+}
 
-    fn page_path(&self, slug: &str) -> PathBuf {
-        self.knowledge_dir
-            .join(PAGES_DIR)
-            .join(format!("{slug}.md"))
+/// One knowledge page: the file shape stored under `<dir>/pages/<slug>.md`.
+/// `summary` is mirrored into the page frontmatter so `Page::load`
+/// recovers it without consulting the index file.
+#[derive(Debug, Clone)]
+pub struct Page {
+    pub slug: String,
+    pub summary: String,
+    pub content: String,
+    pub tags: Vec<String>,
+}
+
+impl Persist for Page {
+    type Key = String;
+
+    fn save(&self, dir: &Path) -> io::Result<()> {
+        let body = render_page(&self.summary, &self.content, &self.tags);
+        write_atomic(&page_path(dir, &self.slug), body.as_bytes())
     }
+
+    fn load(dir: &Path, slug: &Self::Key) -> io::Result<Self> {
+        let raw = fs::read_to_string(page_path(dir, slug))?;
+        let (summary, tags, content) = parse_page(&raw);
+        Ok(Page {
+            slug: slug.clone(),
+            summary,
+            content,
+            tags,
+        })
+    }
+}
+
+/// Sub-handle returned by [`Knowledge::pages`]. Hosts the verb-bare
+/// `save` / `load` / `remove` over the page collection while keeping
+/// the index updated and the char budget enforced.
+pub struct Pages<'a> {
+    inner: &'a Knowledge,
+}
+
+impl Pages<'_> {
+    /// Upsert `page` and its index entry. Creates or overwrites the
+    /// page file and refreshes the index. Returns the outcome with
+    /// the new char usage so the tool layer can show progress.
+    pub fn save(&self, page: Page) -> Result<KnowledgeOutcome, String> {
+        let slug = normalize_slug(&page.slug)?;
+        let summary = page.summary.trim();
+        if summary.is_empty() {
+            return Err("Summary must not be empty".into());
+        }
+        if page.content.trim().is_empty() {
+            return Err("Content must not be empty".into());
+        }
+
+        let _w = self.inner.write_lock.lock().unwrap();
+        let mut index = self.inner.index.lock().unwrap().clone();
+
+        let entry = IndexEntry {
+            slug: slug.clone(),
+            summary: summary.to_string(),
+        };
+        if let Some(pos) = index.iter().position(|e| e.slug == slug) {
+            index[pos] = entry;
+        } else {
+            index.push(entry);
+        }
+
+        let limit = self.inner.index_char_limit.load(Ordering::Relaxed);
+        let rendered = render_index(&index);
+        if rendered.len() > limit {
+            return Err(format!(
+                "Index at {}/{} chars. This write would push it to {} chars. \
+                 Consolidate or remove pages first.",
+                render_index(&self.inner.index.lock().unwrap()).len(),
+                limit,
+                rendered.len(),
+            ));
+        }
+
+        let normalized = Page {
+            slug,
+            summary: summary.to_string(),
+            content: page.content,
+            tags: page.tags,
+        };
+        normalized
+            .save(&self.inner.knowledge_dir)
+            .map_err(|e| format!("Failed to write page: {e}"))?;
+
+        let index_body = render_index_file(&index);
+        write_atomic(&self.inner.knowledge_dir.join(INDEX_FILE), index_body.as_bytes())
+            .map_err(|e| format!("Failed to write index: {e}"))?;
+
+        let chars_used = rendered.len();
+        let page_count = index.len();
+        *self.inner.index.lock().unwrap() = index;
+        Ok(KnowledgeOutcome {
+            message: "page written",
+            index_chars_used: chars_used,
+            index_char_limit: limit,
+            pages: page_count,
+        })
+    }
+
+    /// Read the page at `slug`. Returns the full [`Page`] struct.
+    pub fn load(&self, slug: &str) -> Result<Page, String> {
+        let slug = normalize_slug(slug)?;
+        if !page_path(&self.inner.knowledge_dir, &slug).exists() {
+            return Err(format!("Page `{slug}` not found"));
+        }
+        <Page as Persist>::load(&self.inner.knowledge_dir, &slug)
+            .map_err(|e| format!("Failed to read page `{slug}`: {e}"))
+    }
+
+    /// Delete the page file at `slug` and its index entry.
+    pub fn remove(&self, slug: &str) -> Result<KnowledgeOutcome, String> {
+        let slug = normalize_slug(slug)?;
+        let _w = self.inner.write_lock.lock().unwrap();
+        let mut index = self.inner.index.lock().unwrap().clone();
+
+        let pos = index
+            .iter()
+            .position(|e| e.slug == slug)
+            .ok_or_else(|| format!("Page `{slug}` not found in index"))?;
+        index.remove(pos);
+
+        let page_path = page_path(&self.inner.knowledge_dir, &slug);
+        if page_path.exists() {
+            fs::remove_file(&page_path).map_err(|e| format!("Failed to remove page file: {e}"))?;
+        }
+
+        let index_body = render_index_file(&index);
+        write_atomic(&self.inner.knowledge_dir.join(INDEX_FILE), index_body.as_bytes())
+            .map_err(|e| format!("Failed to write index: {e}"))?;
+
+        let chars_used = render_index(&index).len();
+        let page_count = index.len();
+        *self.inner.index.lock().unwrap() = index;
+        Ok(KnowledgeOutcome {
+            message: "page removed",
+            index_chars_used: chars_used,
+            index_char_limit: self.inner.index_char_limit.load(Ordering::Relaxed),
+            pages: page_count,
+        })
+    }
+}
+
+fn page_path(knowledge_dir: &Path, slug: &str) -> PathBuf {
+    knowledge_dir.join(PAGES_DIR).join(format!("{slug}.md"))
 }
 
 // ---- slug validation ----
@@ -302,8 +340,9 @@ pub(crate) fn normalize_slug(raw: &str) -> Result<String, String> {
 
 // ---- frontmatter ----
 
-fn render_page(content: &str, tags: &[String]) -> String {
+fn render_page(summary: &str, content: &str, tags: &[String]) -> String {
     let now = format_iso8601_now();
+    let summary_line = format!("\nsummary: {summary}");
     let tags_str = if tags.is_empty() {
         String::new()
     } else {
@@ -315,23 +354,45 @@ fn render_page(content: &str, tags: &[String]) -> String {
                 .join(", ")
         )
     };
-    format!("---\nupdated: {now}{tags_str}\n---\n{content}\n")
+    format!("---\nupdated: {now}{summary_line}{tags_str}\n---\n{content}\n")
+}
+
+/// Parse a page file into `(summary, tags, content)`. Legacy pages
+/// without a `summary` line in their frontmatter come back with an
+/// empty summary; the index file still holds the canonical text.
+fn parse_page(raw: &str) -> (String, Vec<String>, String) {
+    let trimmed = raw.trim_start();
+    if !trimmed.starts_with("---") {
+        return (String::new(), Vec::new(), raw.to_string());
+    }
+    let after_first = &trimmed[3..];
+    let Some(end) = after_first.find("\n---") else {
+        return (String::new(), Vec::new(), raw.to_string());
+    };
+    let frontmatter = &after_first[..end];
+    let rest = &after_first[end + 4..];
+    let content = rest.strip_prefix('\n').unwrap_or(rest).to_string();
+
+    let mut summary = String::new();
+    let mut tags = Vec::new();
+    for line in frontmatter.lines() {
+        let line = line.trim();
+        if let Some(value) = line.strip_prefix("summary:") {
+            summary = value.trim().to_string();
+        } else if let Some(value) = line.strip_prefix("tags:") {
+            let body = value.trim().trim_start_matches('[').trim_end_matches(']');
+            tags = body
+                .split(',')
+                .map(|t| t.trim().to_string())
+                .filter(|t| !t.is_empty())
+                .collect();
+        }
+    }
+    (summary, tags, content)
 }
 
 fn strip_frontmatter(raw: &str) -> String {
-    let trimmed = raw.trim_start();
-    if !trimmed.starts_with("---") {
-        return raw.to_string();
-    }
-    // Find the closing `---` after the first line.
-    let after_first = &trimmed[3..];
-    if let Some(end) = after_first.find("\n---") {
-        let rest = &after_first[end + 4..];
-        // Skip the newline after the closing `---`.
-        return rest.strip_prefix('\n').unwrap_or(rest).to_string();
-    }
-    // No closing `---` found; return as-is.
-    raw.to_string()
+    parse_page(raw).2
 }
 
 // ---- index rendering / parsing ----
@@ -407,7 +468,7 @@ fn rebuild_index_from_pages(knowledge_dir: &Path) -> io::Result<Vec<IndexEntry>>
     // Write the rebuilt index to disk.
     if !entries.is_empty() {
         let index_body = render_index_file(&entries);
-        atomic_write(&knowledge_dir.join(INDEX_FILE), index_body.as_bytes())?;
+        write_atomic(&knowledge_dir.join(INDEX_FILE), index_body.as_bytes())?;
     }
     Ok(entries)
 }
@@ -460,9 +521,9 @@ fn migrate_memory_jsonl(knowledge_dir: &Path) -> io::Result<Vec<IndexEntry>> {
         let slug = "legacy-notes";
         let summary = format!("Migrated from memory.jsonl ({} entries)", contents.len());
 
-        let page_file = render_page(&page_body, &[]);
+        let page_file = render_page(&summary, &page_body, &[]);
         let page_path = knowledge_dir.join(PAGES_DIR).join(format!("{slug}.md"));
-        atomic_write(&page_path, page_file.as_bytes())?;
+        write_atomic(&page_path, page_file.as_bytes())?;
 
         let entry = IndexEntry {
             slug: slug.to_string(),
@@ -473,7 +534,7 @@ fn migrate_memory_jsonl(knowledge_dir: &Path) -> io::Result<Vec<IndexEntry>> {
 
     // Write the index.
     let index_body = render_index_file(&entries);
-    atomic_write(&knowledge_dir.join(INDEX_FILE), index_body.as_bytes())?;
+    write_atomic(&knowledge_dir.join(INDEX_FILE), index_body.as_bytes())?;
 
     // Rename the legacy file.
     let migrated_path = knowledge_dir.join(format!("{LEGACY_MEMORY_FILE}{MIGRATED_SUFFIX}"));
@@ -513,71 +574,56 @@ fn format_iso8601_now() -> String {
     format!("{year:04}-{month:02}-{day:02}T{hour:02}:{minute:02}:{second:02}Z")
 }
 
-// ---- atomic write ----
-
-static TEMP_COUNTER: AtomicU64 = AtomicU64::new(0);
-
-fn atomic_write(path: &Path, body: &[u8]) -> io::Result<()> {
-    let parent = path.parent().unwrap_or(Path::new("."));
-    fs::create_dir_all(parent)?;
-    let counter = TEMP_COUNTER.fetch_add(1, Ordering::Relaxed);
-    let pid = std::process::id();
-    let file_name = path
-        .file_name()
-        .map(|n| n.to_string_lossy().into_owned())
-        .unwrap_or_else(|| "knowledge".to_string());
-    let temp = parent.join(format!(".{file_name}.tmp.{pid}.{counter}"));
-    let result = (|| -> io::Result<()> {
-        let mut f = fs::OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(&temp)?;
-        f.write_all(body)?;
-        f.sync_all()?;
-        drop(f);
-        fs::rename(&temp, path)
-    })();
-    if result.is_err() {
-        let _ = fs::remove_file(&temp);
-    }
-    result
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
     fn fresh_store() -> (Arc<Knowledge>, crate::test_util::TempDir) {
         let dir = crate::test_util::TempDir::new().unwrap();
-        let store = Knowledge::open(dir.path()).unwrap();
+        let store = Knowledge::load(dir.path()).unwrap();
         (store, dir)
     }
 
+    fn save_page(
+        store: &Knowledge,
+        slug: &str,
+        summary: &str,
+        content: &str,
+        tags: &[&str],
+    ) -> KnowledgeOutcome {
+        let page = Page {
+            slug: slug.to_string(),
+            summary: summary.to_string(),
+            content: content.to_string(),
+            tags: tags.iter().map(|s| s.to_string()).collect(),
+        };
+        store.pages().save(page).unwrap()
+    }
+
     #[test]
-    fn open_creates_pages_directory() {
+    fn load_creates_pages_directory() {
         let dir = crate::test_util::TempDir::new().unwrap();
         let nested = dir.path().join("not-yet-there");
-        let _ = Knowledge::open(&nested).unwrap();
+        let _ = Knowledge::load(&nested).unwrap();
         assert!(nested.join(PAGES_DIR).exists());
     }
 
     #[test]
-    fn open_with_no_existing_files_starts_empty() {
+    fn load_with_no_existing_files_starts_empty() {
         let (store, _dir) = fresh_store();
         assert!(store.index().is_empty());
     }
 
     #[test]
-    fn write_page_creates_page_and_index() {
+    fn save_page_creates_file_and_index() {
         let (store, dir) = fresh_store();
-        store
-            .write_page(
-                "deploy-config",
-                "Staging on port 8080",
-                "# Deploy\n\nPort 8080.",
-                &[],
-            )
-            .unwrap();
+        save_page(
+            &store,
+            "deploy-config",
+            "Staging on port 8080",
+            "# Deploy\n\nPort 8080.",
+            &[],
+        );
         assert!(dir.path().join(PAGES_DIR).join("deploy-config.md").exists());
         assert!(dir.path().join(INDEX_FILE).exists());
         let idx = store.index();
@@ -586,14 +632,10 @@ mod tests {
     }
 
     #[test]
-    fn write_page_upserts_existing_entry() {
+    fn save_page_upserts_existing_entry() {
         let (store, _dir) = fresh_store();
-        store
-            .write_page("config", "v1", "# Config\n\nVersion 1.", &[])
-            .unwrap();
-        store
-            .write_page("config", "v2", "# Config\n\nVersion 2.", &[])
-            .unwrap();
+        save_page(&store, "config", "v1", "# Config\n\nVersion 1.", &[]);
+        save_page(&store, "config", "v2", "# Config\n\nVersion 2.", &[]);
         let idx = store.index();
         assert!(idx.contains("v2"));
         assert!(!idx.contains("v1"));
@@ -602,17 +644,10 @@ mod tests {
     }
 
     #[test]
-    fn read_page_returns_body_without_frontmatter() {
+    fn load_page_returns_body_without_frontmatter() {
         let (store, _dir) = fresh_store();
-        store
-            .write_page(
-                "test",
-                "A test page",
-                "# Test\n\nHello world.",
-                &["tag1".into()],
-            )
-            .unwrap();
-        let body = store.read_page("test").unwrap();
+        save_page(&store, "test", "A test page", "# Test\n\nHello world.", &["tag1"]);
+        let body = store.pages().load("test").map(|p| p.content).unwrap();
         assert!(body.contains("# Test"));
         assert!(body.contains("Hello world."));
         assert!(!body.contains("---"));
@@ -621,36 +656,34 @@ mod tests {
     }
 
     #[test]
-    fn read_page_not_found() {
+    fn load_page_not_found() {
         let (store, _dir) = fresh_store();
-        let err = store.read_page("nonexistent").unwrap_err();
+        let err = store.pages().load("nonexistent").unwrap_err();
         assert!(err.contains("not found"));
     }
 
     #[test]
-    fn remove_page_deletes_file_and_index_entry() {
+    fn remove_page_clears_file_and_index_entry() {
         let (store, dir) = fresh_store();
-        store
-            .write_page("temp", "Temporary", "# Temp\n\nWill delete.", &[])
-            .unwrap();
+        save_page(&store, "temp", "Temporary", "# Temp\n\nWill delete.", &[]);
         assert!(dir.path().join(PAGES_DIR).join("temp.md").exists());
-        store.remove_page("temp").unwrap();
+        store.pages().remove("temp").unwrap();
         assert!(!dir.path().join(PAGES_DIR).join("temp.md").exists());
         assert!(store.index().is_empty());
     }
 
     #[test]
-    fn remove_page_not_in_index() {
+    fn remove_page_errors_when_not_in_index() {
         let (store, _dir) = fresh_store();
-        let err = store.remove_page("nonexistent").unwrap_err();
+        let err = store.pages().remove("nonexistent").unwrap_err();
         assert!(err.contains("not found"));
     }
 
     #[test]
     fn clear_removes_all_pages_and_index() {
         let (store, dir) = fresh_store();
-        store.write_page("a", "Page A", "# A", &[]).unwrap();
-        store.write_page("b", "Page B", "# B", &[]).unwrap();
+        save_page(&store, "a", "Page A", "# A", &[]);
+        save_page(&store, "b", "Page B", "# B", &[]);
         store.clear().unwrap();
         assert!(store.index().is_empty());
         assert!(!dir.path().join(INDEX_FILE).exists());
@@ -729,12 +762,10 @@ mod tests {
     #[test]
     fn index_char_limit_rejects_oversized_write() {
         let dir = crate::test_util::TempDir::new().unwrap();
-        let store = Knowledge::open(dir.path()).unwrap();
+        let store = Knowledge::load(dir.path()).unwrap();
         // Write a very long summary to push the index past the limit.
         let long_summary = "x".repeat(DEFAULT_INDEX_CHAR_LIMIT + 1);
-        let err = store
-            .write_page("big", &long_summary, "# Big", &[])
-            .unwrap_err();
+        let err = store.pages().save(Page { slug: "big".into(), summary: long_summary.clone(), content: "# Big".into(), tags: vec![] }).unwrap_err();
         assert!(err.contains("chars"), "{err}");
     }
 
@@ -745,22 +776,18 @@ mod tests {
 
         // 80-char budget rejects what the default 4000-char budget would accept.
         let long_summary = "x".repeat(200);
-        let err = store
-            .write_page("big", &long_summary, "# Big", &[])
-            .unwrap_err();
+        let err = store.pages().save(Page { slug: "big".into(), summary: long_summary.clone(), content: "# Big".into(), tags: vec![] }).unwrap_err();
         assert!(err.contains("chars"), "{err}");
 
         // Outcome reports the custom limit.
-        let out = store.write_page("small", "ok", "# Small", &[]).unwrap();
+        let out = save_page(&store, "small", "ok", "# Small", &[]);
         assert_eq!(out.index_char_limit, 80);
     }
 
     #[test]
     fn outcome_reports_usage() {
         let (store, _dir) = fresh_store();
-        let out = store
-            .write_page("test", "A test", "# Test\n\nContent.", &[])
-            .unwrap();
+        let out = save_page(&store, "test", "A test", "# Test\n\nContent.", &[]);
         assert_eq!(out.message, "page written");
         assert_eq!(out.pages, 1);
         assert_eq!(out.index_char_limit, DEFAULT_INDEX_CHAR_LIMIT);
@@ -771,25 +798,17 @@ mod tests {
     fn writes_through_one_arc_clone_are_visible_through_another() {
         let (store, _dir) = fresh_store();
         let other = Arc::clone(&store);
-        store
-            .write_page("shared", "Shared note", "# Shared\n\nShared content.", &[])
-            .unwrap();
+        save_page(&store, "shared", "Shared note", "# Shared\n\nShared content.", &[]);
         assert!(other.index().contains("shared"));
     }
 
     #[test]
     fn entries_survive_drop_and_reopen() {
         let dir = crate::test_util::TempDir::new().unwrap();
-        let s1 = Knowledge::open(dir.path()).unwrap();
-        s1.write_page(
-            "durable",
-            "Survives restart",
-            "# Durable\n\nPersisted.",
-            &[],
-        )
-        .unwrap();
+        let s1 = Knowledge::load(dir.path()).unwrap();
+        save_page(&s1, "durable", "Survives restart", "# Durable\n\nPersisted.", &[]);
         drop(s1);
-        let s2 = Knowledge::open(dir.path()).unwrap();
+        let s2 = Knowledge::load(dir.path()).unwrap();
         assert!(s2.index().contains("durable"));
         assert!(s2.index().contains("Survives restart"));
     }
@@ -805,7 +824,7 @@ mod tests {
         )
         .unwrap();
         // Open without an existing index.md.
-        let store = Knowledge::open(dir.path()).unwrap();
+        let store = Knowledge::load(dir.path()).unwrap();
         let idx = store.index();
         assert!(idx.contains("my-page"));
         assert!(idx.contains("My Page"));
@@ -821,7 +840,7 @@ mod tests {
              {\"content\":\"fact two\",\"added_at\":2}\n",
         )
         .unwrap();
-        let store = Knowledge::open(dir.path()).unwrap();
+        let store = Knowledge::load(dir.path()).unwrap();
         let idx = store.index();
         assert!(idx.contains("legacy-notes"));
         assert!(idx.contains("2 entries"));
@@ -833,22 +852,15 @@ mod tests {
             .exists());
         // The page should exist.
         assert!(dir.path().join(PAGES_DIR).join("legacy-notes.md").exists());
-        let body = store.read_page("legacy-notes").unwrap();
+        let body = store.pages().load("legacy-notes").map(|p| p.content).unwrap();
         assert!(body.contains("fact one"));
         assert!(body.contains("fact two"));
     }
 
     #[test]
-    fn write_page_with_tags() {
+    fn save_page_with_tags() {
         let (store, dir) = fresh_store();
-        store
-            .write_page(
-                "tagged",
-                "A tagged page",
-                "# Tagged\n\nWith tags.",
-                &["config".into(), "deploy".into()],
-            )
-            .unwrap();
+        save_page(&store, "tagged", "A tagged page", "# Tagged\n\nWith tags.", &["config", "deploy"]);
         let raw = fs::read_to_string(dir.path().join(PAGES_DIR).join("tagged.md")).unwrap();
         assert!(raw.contains("tags: [config, deploy]"));
     }
@@ -867,22 +879,22 @@ mod tests {
     #[test]
     fn write_page_rejects_empty_summary() {
         let (store, _dir) = fresh_store();
-        let err = store.write_page("test", "", "content", &[]).unwrap_err();
+        let err = store.pages().save(Page { slug: "test".into(), summary: ("").to_string(), content: "content".into(), tags: vec![] }).unwrap_err();
         assert!(err.contains("Summary"));
     }
 
     #[test]
     fn write_page_rejects_empty_content() {
         let (store, _dir) = fresh_store();
-        let err = store.write_page("test", "summary", "", &[]).unwrap_err();
+        let err = store.pages().save(Page { slug: "test".into(), summary: ("summary").to_string(), content: "".into(), tags: vec![] }).unwrap_err();
         assert!(err.contains("Content"));
     }
 
     #[test]
     fn remove_page_returns_outcome() {
         let (store, _dir) = fresh_store();
-        store.write_page("temp", "Temp", "# Temp", &[]).unwrap();
-        let out = store.remove_page("temp").unwrap();
+        save_page(&store, "temp", "Temp", "# Temp", &[]);
+        let out = store.pages().remove("temp").unwrap();
         assert_eq!(out.message, "page removed");
         assert_eq!(out.pages, 0);
     }

@@ -90,7 +90,13 @@ impl ToolLike for KnowledgeTool {
                         })
                         .unwrap_or_default();
 
-                    match self.store.write_page(slug, summary, content, &tags) {
+                    let page = crate::agents::knowledge::Page {
+                        slug: slug.to_string(),
+                        summary: summary.to_string(),
+                        content: content.to_string(),
+                        tags: tags.clone(),
+                    };
+                    match self.store.pages().save(page) {
                         Ok(out) => {
                             let pct = if out.index_char_limit > 0 {
                                 (out.index_chars_used * 100) / out.index_char_limit
@@ -115,8 +121,8 @@ impl ToolLike for KnowledgeTool {
                         Some(s) => s,
                         None => return Ok(ToolResult::error("Missing required parameter: slug")),
                     };
-                    match self.store.read_page(slug) {
-                        Ok(body) => Ok(ToolResult::success(body)),
+                    match self.store.pages().load(slug) {
+                        Ok(page) => Ok(ToolResult::success(page.content)),
                         Err(_) => Ok(ToolResult::success(format!(
                             "No page found for `{slug}`. Check the knowledge index before reading — only slugs listed there exist."
                         ))),
@@ -128,7 +134,7 @@ impl ToolLike for KnowledgeTool {
                         Some(s) => s,
                         None => return Ok(ToolResult::error("Missing required parameter: slug")),
                     };
-                    match self.store.remove_page(slug) {
+                    match self.store.pages().remove(slug) {
                         Ok(out) => {
                             let pct = if out.index_char_limit > 0 {
                                 (out.index_chars_used * 100) / out.index_char_limit
@@ -168,12 +174,22 @@ impl ToolLike for KnowledgeTool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::agents::knowledge::Knowledge;
+    use crate::agents::knowledge::{Knowledge, Page};
 
     fn fresh_store() -> (Arc<Knowledge>, crate::test_util::TempDir) {
         let dir = crate::test_util::TempDir::new().unwrap();
-        let store = Knowledge::open(dir.path()).unwrap();
+        let store = Knowledge::load(dir.path()).unwrap();
         (store, dir)
+    }
+
+    fn save_page(store: &Knowledge, slug: &str, summary: &str, content: &str, tags: &[&str]) {
+        let page = Page {
+            slug: slug.to_string(),
+            summary: summary.to_string(),
+            content: content.to_string(),
+            tags: tags.iter().map(|s| s.to_string()).collect(),
+        };
+        store.pages().save(page).unwrap();
     }
 
     fn ctx() -> ToolContext {
@@ -219,9 +235,7 @@ mod tests {
     #[tokio::test]
     async fn read_action_returns_page_body() {
         let (store, _dir) = fresh_store();
-        store
-            .write_page("test", "A test", "# Test\n\nHello.", &[])
-            .unwrap();
+        save_page(&store, "test", "A test", "# Test\n\nHello.", &[]);
         let tool = KnowledgeTool::new(Arc::clone(&store));
         let r = tool
             .call(
@@ -250,9 +264,7 @@ mod tests {
     #[tokio::test]
     async fn read_action_strips_frontmatter() {
         let (store, _dir) = fresh_store();
-        store
-            .write_page("test", "A test", "# Test\n\nHello.", &["tag".into()])
-            .unwrap();
+        save_page(&store, "test", "A test", "# Test\n\nHello.", &["tag"]);
         let tool = KnowledgeTool::new(Arc::clone(&store));
         let r = tool
             .call(
@@ -273,9 +285,7 @@ mod tests {
     #[tokio::test]
     async fn remove_action_deletes_page() {
         let (store, _dir) = fresh_store();
-        store
-            .write_page("temp", "Temporary", "# Temp", &[])
-            .unwrap();
+        save_page(&store, "temp", "Temporary", "# Temp", &[]);
         let tool = KnowledgeTool::new(Arc::clone(&store));
         let r = tool
             .call(
@@ -291,9 +301,7 @@ mod tests {
     #[tokio::test]
     async fn list_action_returns_index() {
         let (store, _dir) = fresh_store();
-        store
-            .write_page("config", "Config page", "# Config", &[])
-            .unwrap();
+        save_page(&store, "config", "Config page", "# Config", &[]);
         let tool = KnowledgeTool::new(Arc::clone(&store));
         let r = tool
             .call(serde_json::json!({"action": "list"}), &ctx())

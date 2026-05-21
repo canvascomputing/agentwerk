@@ -2,6 +2,7 @@
 
 pub mod agents;
 pub mod event;
+pub(crate) mod persistence;
 pub mod prompts;
 pub mod providers;
 pub mod schemas;

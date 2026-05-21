@@ -232,7 +232,7 @@ impl Agent {
     pub(super) fn knowledge_or_default(&self) -> Arc<Knowledge> {
         self.knowledge
             .clone()
-            .unwrap_or_else(|| Knowledge::open(".agentwerk").expect("open knowledge store"))
+            .unwrap_or_else(|| Knowledge::load(".agentwerk").expect("open knowledge store"))
     }
 
     /// Materialize the default knowledge store and register
@@ -243,7 +243,7 @@ impl Agent {
         if self.knowledge.is_some() {
             return;
         }
-        let store = Knowledge::open(".agentwerk").expect("open knowledge store");
+        let store = Knowledge::load(".agentwerk").expect("open knowledge store");
         self.tools.register(KnowledgeTool::new(Arc::clone(&store)));
         self.knowledge = Some(store);
     }
@@ -643,7 +643,7 @@ mod tests {
     #[test]
     fn knowledge_registers_knowledge_tool_on_the_agent() {
         let dir = crate::test_util::TempDir::new().unwrap();
-        let store = Knowledge::open(dir.path()).unwrap();
+        let store = Knowledge::load(dir.path()).unwrap();
         let agent = Agent::new().knowledge(&store);
         let names: Vec<String> = agent
             .tool_definitions()
@@ -659,7 +659,7 @@ mod tests {
     #[test]
     fn knowledge_binds_the_passed_store() {
         let dir = crate::test_util::TempDir::new().unwrap();
-        let store = Knowledge::open(dir.path()).unwrap();
+        let store = Knowledge::load(dir.path()).unwrap();
         let agent = Agent::new().knowledge(&store);
         let names: Vec<String> = agent
             .tool_definitions()
@@ -669,7 +669,13 @@ mod tests {
         assert!(names.iter().any(|n| n == "knowledge_tool"));
         agent
             .knowledge_or_default()
-            .write_page("from-store", "From store", "# From Store", &[])
+            .pages()
+            .save(crate::agents::knowledge::Page {
+                slug: "from-store".into(),
+                summary: "From store".into(),
+                content: "# From Store".into(),
+                tags: vec![],
+            })
             .unwrap();
         assert!(dir.path().join("pages").join("from-store.md").exists());
     }
@@ -677,12 +683,18 @@ mod tests {
     #[test]
     fn cloned_agent_observes_writes_through_original_handle() {
         let dir = crate::test_util::TempDir::new().unwrap();
-        let store = Knowledge::open(dir.path()).unwrap();
+        let store = Knowledge::load(dir.path()).unwrap();
         let agent = Agent::new().knowledge(&store);
         let cloned = agent.clone();
         agent
             .knowledge_or_default()
-            .write_page("shared", "Shared note", "# Shared", &[])
+            .pages()
+            .save(crate::agents::knowledge::Page {
+                slug: "shared".into(),
+                summary: "Shared note".into(),
+                content: "# Shared".into(),
+                tags: vec![],
+            })
             .unwrap();
         assert!(cloned.knowledge_or_default().index().contains("shared"));
     }
@@ -690,12 +702,18 @@ mod tests {
     #[test]
     fn two_agents_bound_to_one_store_see_each_others_writes() {
         let dir = crate::test_util::TempDir::new().unwrap();
-        let store = Knowledge::open(dir.path()).unwrap();
+        let store = Knowledge::load(dir.path()).unwrap();
         let alice = Agent::new().knowledge(&store);
         let bob = Agent::new().knowledge(&store);
         alice
             .knowledge_or_default()
-            .write_page("from-alice", "From Alice", "# Alice", &[])
+            .pages()
+            .save(crate::agents::knowledge::Page {
+                slug: "from-alice".into(),
+                summary: "From Alice".into(),
+                content: "# Alice".into(),
+                tags: vec![],
+            })
             .unwrap();
         assert!(bob.knowledge_or_default().index().contains("from-alice"));
     }
@@ -746,7 +764,7 @@ mod tests {
     #[test]
     fn binding_agent_with_explicit_knowledge_keeps_explicit_store() {
         let dir = crate::test_util::TempDir::new().unwrap();
-        let store = Knowledge::open(dir.path()).unwrap();
+        let store = Knowledge::load(dir.path()).unwrap();
         let sys = crate::agents::TicketSystem::new();
         let agent = Agent::new().knowledge(&store).ticket_system(&sys);
         assert!(Arc::ptr_eq(&store, &agent.knowledge_or_default()));

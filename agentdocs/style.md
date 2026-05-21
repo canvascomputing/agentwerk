@@ -93,6 +93,15 @@ Naming and comment rules, plus README structure. Skim the section matching what 
 - Accessor methods mirror the field form: `Stats::requests()` returns the count of recorded requests.
 - The `_count` suffix is reserved for the rare case where the plural would clash with a sibling collection field on the same type.
 
+## Persistence verbs
+
+**Two traits cover every read/write in the crate. The trait dictates the verb; the implementer's type name binds the file location.**
+
+- `Persist` (in `persistence`) — `save(&self, dir)` / `load(dir, &Self::Key)`. Implemented by `Stats`, `Ticket`, `Page`. Service bootstrap (`TicketSystem::load`, `Knowledge::load`) uses the same `load` verb by convention.
+- `Append` (in `persistence`) — `append(dir, &Self::Record)`. Implemented by `Results` (`results.jsonl`) and `TicketEvents` (`tickets.jsonl`). Each implementer encodes its own filename, so the wrong file cannot be reached through the wrong type.
+- No `open` for bootstrap, no `write_X_to_dir`, no `to_json` / `from_json`, no `checkpoint`, `snapshot`, `persist`, or `counter` in names. The jargon these replaced is what the convention exists to keep out.
+- Function names do not embed the type names of their arguments: `Stats::derive(&tickets)`, not `derive_from_tickets`. The argument type carries the meaning.
+
 ## Builders
 
 **Builder methods are bare nouns. No `with_` prefix.**
@@ -105,7 +114,7 @@ Naming and comment rules, plus README structure. Skim the section matching what 
 **`new()` for the primary path. Named constructors carry semantics.**
 
 - `new()` is the primary constructor.
-- Named constructors: `open()`, `unrestricted()`, `success()`, `error()`, `empty()`, `from_id()`, `from_env()`.
+- Named constructors: `load()`, `unrestricted()`, `success()`, `error()`, `empty()`, `from_id()`, `from_env()`.
 
 ## Getters and setters
 

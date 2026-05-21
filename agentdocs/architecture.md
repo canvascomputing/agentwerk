@@ -96,6 +96,15 @@ Two layers of state exist. The per-ticket transcript lives on `Ticket::comments`
 - Lock-free for increments; readers do one atomic load per call.
 - `Stats::stats_for_label(label)` returns a nested `Stats` slice scoped to one label. The loop and ticket lifecycle bump each slice alongside the global counters; `run_duration()` is `None` on a slice (elapsed run duration stays global).
 
+## Persistence routes through two traits
+
+**Every read and write in the crate goes through `Persist` (state files) or `Append` (jsonl logs) in `persistence`. No domain module hand-rolls file IO; no module knows its file's name except the implementer.**
+
+- `Persist` defines `save(&self, dir) -> io::Result<()>` and `load(dir, &Self::Key) -> io::Result<Self>`. `Stats`, `Ticket`, and `Page` implement it; each owns its own path layout (`stats.json`, `tickets/<key>/ticket.<ts>.json`, `pages/<slug>.md`). Service bootstrap (`TicketSystem::load`, `Knowledge::load`) uses the same `load` verb for its dir-to-`Arc<Self>` entry by convention.
+- `Append` defines `append(dir, &Self::Record) -> io::Result<()>`. `Results` writes `results.jsonl`; `TicketEvents` writes `tickets.jsonl`. The wrong type cannot reach the wrong file: each implementer's `append` body hardcodes the filename.
+- Crate-internal helpers `write_atomic` (tmp+rename) and `append_line` (`O_APPEND` + newline) are the only places that touch the filesystem. They are `pub(crate)` so trait impls colocated with their types can call them; by convention nothing outside a `Persist` or `Append` impl reaches for them — the one documented exception is `TicketSystem::write_tool_output`, which writes single-shot flat files that don't fit either trait.
+- Vocabulary is fixed: `save`, `load`, `append`. Bootstrap verbs other than `load` (e.g. `open`) are not used. Domain words (`checkpoint`, `snapshot`, `counter`, `persist`) do not appear in identifiers or test names.
+
 ## Policies are per-system, checked at step boundaries
 
 **A run stops cleanly when any limit on `Policies` trips. The check fires `EventKind::PolicyViolated` and exits the per-agent task.**

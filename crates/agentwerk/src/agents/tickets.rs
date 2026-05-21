@@ -30,7 +30,7 @@ use super::stats::{Stats, TicketStats};
 pub struct Ticket {
     pub task: serde_json::Value,
     pub labels: Vec<String>,
-    #[serde(skip)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub schema: Option<crate::schemas::Schema>,
     pub(crate) key: String,
     pub(crate) status: Status,
@@ -212,26 +212,27 @@ impl Ticket {
         self.comments.push(Comment::user_text(summary_text));
     }
 
-    /// Serialize self to `<dir>/tickets/<key>/ticket.{ts}.json`.
-    ///
-    /// `overwrite = false`: creates a new file, `ts = now_millis()`.
-    /// `overwrite = true`: finds the file with the highest `ts` in its name
-    /// and overwrites it; falls back to creating a new file if none exists.
-    ///
-    /// Errors are swallowed — observational, not load-bearing.
-    pub(crate) fn write(&self, dir: &Path, overwrite: bool) {
-        let ticket_dir = dir.join("tickets").join(&self.key);
-        let path = if overwrite {
-            latest_ticket_file(&ticket_dir)
-                .unwrap_or_else(|| ticket_dir.join(format!("ticket.{}.json", now_millis())))
-        } else {
-            ticket_dir.join(format!("ticket.{}.json", now_millis()))
-        };
-        let _ = (|| -> std::io::Result<()> {
-            std::fs::create_dir_all(&ticket_dir)?;
-            let json = serde_json::to_string_pretty(self).map_err(std::io::Error::other)?;
-            std::fs::write(&path, json)
-        })();
+}
+
+impl crate::persistence::Persist for Ticket {
+    type Key = String;
+
+    fn save(&self, dir: &Path) -> io::Result<()> {
+        let path = dir
+            .join("tickets")
+            .join(&self.key)
+            .join(format!("ticket.{}.json", now_millis()));
+        let body = serde_json::to_vec_pretty(self).map_err(io::Error::other)?;
+        crate::persistence::write_atomic(&path, &body)
+    }
+
+    fn load(dir: &Path, key: &Self::Key) -> io::Result<Self> {
+        let ticket_dir = dir.join("tickets").join(key);
+        let path = crate::persistence::latest_path(&ticket_dir).ok_or_else(|| {
+            io::Error::new(io::ErrorKind::NotFound, format!("no ticket file for {key}"))
+        })?;
+        let bytes = std::fs::read(&path)?;
+        serde_json::from_slice::<Ticket>(&bytes).map_err(io::Error::other)
     }
 }
 
@@ -474,6 +475,64 @@ impl TicketSystem {
         })
     }
 
+    /// Open or create a ticket system rooted at `tickets_dir`. Loads
+    /// the newest `ticket.<ts>.json` per key under `<tickets_dir>/tickets/`
+    /// into the in-memory store and seeds `Stats` from
+    /// `<tickets_dir>/stats.json` (or, when that file is missing or
+    /// malformed, by deriving from the loaded tickets) so success rate
+    /// and counters stay continuous across restarts.
+    ///
+    /// Pointing this and `Knowledge::load` at the same dir co-locates
+    /// knowledge pages with `results.jsonl` and `tickets.jsonl`.
+    ///
+    /// `InProgress` tickets keep their status and their transcript; the
+    /// loop's resume path (`agents/loop.rs`) picks them back up under
+    /// the agent whose name is already in the ticket's `labels`.
+    ///
+    /// Caller contracts:
+    /// - Tickets dirs deleted by hand break the `TICKET-N` counter:
+    ///   the next inserted ticket may collide with an existing key.
+    /// - Agent names must stay stable across restarts; the loop
+    ///   matches `InProgress` tickets by name via the ticket's labels.
+    pub fn load(tickets_dir: impl Into<PathBuf>) -> io::Result<Arc<Self>> {
+        let tickets_dir = tickets_dir.into();
+        std::fs::create_dir_all(tickets_dir.join("tickets"))?;
+
+        let mut tickets = HashMap::new();
+        if let Ok(entries) = std::fs::read_dir(tickets_dir.join("tickets")) {
+            for entry in entries.flatten() {
+                let key_dir = entry.path();
+                if !key_dir.is_dir() {
+                    continue;
+                }
+                let Some(path) = crate::persistence::latest_path(&key_dir) else {
+                    continue;
+                };
+                let Ok(bytes) = std::fs::read(&path) else {
+                    continue;
+                };
+                let Ok(ticket) = serde_json::from_slice::<Ticket>(&bytes) else {
+                    continue;
+                };
+                tickets.insert(ticket.key.clone(), ticket);
+            }
+        }
+
+        let stats = Stats::load(&tickets_dir).unwrap_or_else(|_| Stats::derive(&tickets));
+
+        Ok(Arc::new_cyclic(|weak| Self {
+            weak_self: weak.clone(),
+            tickets: Mutex::new(tickets),
+            agents: Mutex::new(Vec::new()),
+            policies: Mutex::new(Policies::default()),
+            interrupt_signal: Mutex::new(Arc::new(AtomicBool::new(false))),
+            stats,
+            dir: Mutex::new(tickets_dir),
+            tickets_log_lock: Mutex::new(()),
+            join_handle: Mutex::new(None),
+        }))
+    }
+
     /// Run-time counters. Read after `run` / `finish` returns.
     pub fn stats(&self) -> &Stats {
         &self.stats
@@ -600,7 +659,7 @@ impl TicketSystem {
         let parent = ticket.parent.clone();
         store.insert(key.clone(), ticket);
         drop(store);
-        self.persist(&key, false);
+        self.save_ticket(&key);
         TicketStats::record_created(&self.stats);
         for l in &labels {
             let slice = self.stats.stats_for_label(l);
@@ -622,31 +681,43 @@ impl TicketSystem {
     }
 
     /// Write the ticket at `key` to disk. No-op when the ticket is missing.
-    fn persist(&self, key: &str, overwrite: bool) {
+    fn save_ticket(&self, key: &str) {
         if let Some(t) = self.get(key) {
-            t.write(&self.dir_value(), overwrite);
+            use crate::persistence::Persist;
+            let _ = t.save(&self.dir_value());
         }
     }
 
-    /// Append one JSON line to `<dir>/tickets.jsonl`. Errors are swallowed:
-    /// the log is observational, not load-bearing for run correctness.
+    /// Append one JSON line to `<dir>/tickets.jsonl` and refresh
+    /// `<dir>/stats.json` from the current counters. Both writes happen
+    /// under the same lock so a concurrent reader sees consistent
+    /// observational state. Errors are swallowed: persistence is
+    /// best-effort, not load-bearing for run correctness.
     pub(crate) fn append_ticket_event(&self, event: serde_json::Value) {
+        use crate::persistence::{Append, Persist, TicketEvents};
         let dir = self.dir_value();
         let _guard = self.tickets_log_lock.lock().unwrap();
-        let _ = append_ticket_event_to_dir(&dir, &event);
+        let _ = TicketEvents::append(&dir, &event);
+        let _ = self.stats.save(&dir);
     }
 
-    /// Persist a tool's full output to `<dir>/tickets/<key>/outputs/<tool_use_id>.txt`.
-    /// Returns the absolute path on success, `None` when the write fails.
-    /// Best-effort, matching the surrounding observational-persistence
-    /// contract (`Ticket::write`, `append_ticket_event`).
+    /// Write a tool's full output to `<dir>/tickets/<key>/outputs/<tool_use_id>.txt`.
+    /// Returns the path relative to the configured `dir` on success,
+    /// `None` when the write fails. The relative form keeps the comment
+    /// transcript portable across moves of the tickets dir; join with
+    /// [`Self::dir_value`] to recover the on-disk path. Best-effort,
+    /// matching the surrounding observational-persistence contract.
     pub(crate) fn write_tool_output(
         &self,
         key: &str,
         tool_use_id: &str,
         content: &str,
     ) -> Option<PathBuf> {
-        write_tool_output_to_dir(&self.dir_value(), key, tool_use_id, content).ok()
+        let rel = crate::persistence::output_path(key, tool_use_id);
+        let absolute = self.dir_value().join(&rel);
+        crate::persistence::write_atomic(&absolute, content.as_bytes())
+            .ok()
+            .map(|_| rel)
     }
 
     /// Returns a clone of the ticket at `key`, if any.
@@ -688,7 +759,7 @@ impl TicketSystem {
             (key, prev, durations, labels)
         };
         self.record_transition(&key, prev, Status::InProgress, now, durations, &labels);
-        self.persist(&key, true);
+        self.save_ticket(&key);
         Some(key)
     }
 
@@ -702,7 +773,10 @@ impl TicketSystem {
             t.comments.push(comment);
             t.clone()
         };
-        ticket_copy.write(&self.dir_value(), true);
+        {
+            use crate::persistence::Persist;
+            let _ = ticket_copy.save(&self.dir_value());
+        }
     }
 
     /// Transition a ticket to `Done`.
@@ -732,7 +806,7 @@ impl TicketSystem {
             (prev, durations, labels)
         };
         self.record_transition(key, prev, status, now, durations, &labels);
-        self.persist(key, true);
+        self.save_ticket(key);
         Ok(())
     }
 
@@ -809,7 +883,10 @@ impl TicketSystem {
             ticket.result = Some(result);
             ticket.clone()
         };
-        ticket_copy.write(&self.dir_value(), true);
+        {
+            use crate::persistence::Persist;
+            let _ = ticket_copy.save(&self.dir_value());
+        }
         Ok(())
     }
 
@@ -1242,61 +1319,6 @@ fn numeric_id(key: &str) -> u32 {
         .unwrap_or(u32::MAX)
 }
 
-const TICKETS_LOG_FILE: &str = "tickets.jsonl";
-
-/// Return the path of the `ticket.{ts}.json` file with the highest timestamp
-/// in `ticket_dir`, or `None` when the directory is absent or empty.
-fn latest_ticket_file(ticket_dir: &Path) -> Option<PathBuf> {
-    std::fs::read_dir(ticket_dir)
-        .ok()?
-        .flatten()
-        .filter_map(|e| {
-            let name = e.file_name();
-            let ts = parse_ticket_filename_ts(name.to_string_lossy().as_ref())?;
-            Some((ts, e.path()))
-        })
-        .max_by_key(|(ts, _)| *ts)
-        .map(|(_, path)| path)
-}
-
-fn parse_ticket_filename_ts(name: &str) -> Option<u64> {
-    name.strip_prefix("ticket.")?
-        .strip_suffix(".json")?
-        .parse()
-        .ok()
-}
-
-fn append_ticket_event_to_dir(
-    dir: &std::path::Path,
-    event: &serde_json::Value,
-) -> std::io::Result<()> {
-    std::fs::create_dir_all(dir)?;
-    let mut line = serde_json::to_string(event).map_err(std::io::Error::other)?;
-    line.push('\n');
-    let mut file = std::fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(dir.join(TICKETS_LOG_FILE))?;
-    use std::io::Write as _;
-    file.write_all(line.as_bytes())
-}
-
-/// Write a tool's full output to `<dir>/tickets/<key>/outputs/<tool_use_id>.txt`
-/// and return the absolute path. Used to offload oversized payloads off
-/// the wire while leaving a structured pointer in the comment.
-fn write_tool_output_to_dir(
-    dir: &Path,
-    key: &str,
-    tool_use_id: &str,
-    content: &str,
-) -> io::Result<PathBuf> {
-    let outputs_dir = dir.join("tickets").join(key).join("outputs");
-    std::fs::create_dir_all(&outputs_dir)?;
-    let path = outputs_dir.join(format!("{tool_use_id}.txt"));
-    std::fs::write(&path, content)?;
-    Ok(path)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1712,20 +1734,17 @@ mod tests {
     }
 
     #[test]
-    fn write_tool_output_writes_file_at_expected_path() {
+    fn write_tool_output_returns_relative_path_and_writes_absolute() {
         let (sys, dir) = test_system();
         sys.task("seed");
-        let path = sys
+        let rel = sys
             .write_tool_output("TICKET-1", "call-1", "the full content")
             .expect("write succeeds when dir exists");
-        let expected = dir
-            .path()
-            .join("tickets")
-            .join("TICKET-1")
-            .join("outputs")
-            .join("call-1.txt");
-        assert_eq!(path, expected);
-        let body = std::fs::read_to_string(&path).unwrap();
+        let expected_rel: PathBuf = ["tickets", "TICKET-1", "outputs", "call-1.txt"]
+            .iter()
+            .collect();
+        assert_eq!(rel, expected_rel);
+        let body = std::fs::read_to_string(dir.path().join(&rel)).unwrap();
         assert_eq!(body, "the full content");
     }
 
@@ -1751,5 +1770,200 @@ mod tests {
         assert!(lines[0].get("parent").is_none());
         assert_eq!(lines[1]["event"], "created");
         assert_eq!(lines[1]["parent"], "TICKET-1");
+    }
+
+    // ---- resumption: TicketSystem::load ----
+
+    #[test]
+    fn load_creates_tickets_dir_when_missing() {
+        let dir = crate::test_util::TempDir::new().unwrap();
+        let sys = TicketSystem::load(dir.path()).unwrap();
+        assert!(sys.tickets.lock().unwrap().is_empty());
+        assert!(dir.path().join("tickets").is_dir());
+    }
+
+    #[test]
+    fn load_restores_done_ticket_with_result_and_comments() {
+        let dir = crate::test_util::TempDir::new().unwrap();
+        let original = TicketSystem::new();
+        original.dir(dir.path().to_path_buf());
+        original.task("seed work");
+        original
+            .set_result("TICKET-1", serde_json::json!({"ok": true}))
+            .unwrap();
+        original.set_done("TICKET-1").unwrap();
+        drop(original);
+
+        let resumed = TicketSystem::load(dir.path()).unwrap();
+        let t = resumed.get("TICKET-1").unwrap();
+        assert_eq!(t.status, Status::Done);
+        assert_eq!(t.result(), Some(&serde_json::json!({"ok": true})));
+        assert_eq!(t.task, serde_json::Value::String("seed work".into()));
+    }
+
+    #[test]
+    fn load_restores_in_progress_transcript() {
+        let dir = crate::test_util::TempDir::new().unwrap();
+        let original = TicketSystem::new();
+        original.dir(dir.path().to_path_buf());
+        original.task("mid flight");
+        original
+            .claim(|t| t.status == Status::Todo, "alice")
+            .unwrap();
+        drop(original);
+
+        let resumed = TicketSystem::load(dir.path()).unwrap();
+        let t = resumed.get("TICKET-1").unwrap();
+        assert_eq!(t.status, Status::InProgress);
+        assert!(t.has_label("alice"));
+    }
+
+    #[test]
+    fn load_derives_stats_from_ticket_files_when_stats_file_missing() {
+        let dir = crate::test_util::TempDir::new().unwrap();
+        let original = TicketSystem::new();
+        original.dir(dir.path().to_path_buf());
+        original.task_labeled("a", "scan");
+        original.task_labeled("b", "scan");
+        original.task_labeled("c", "scan");
+        original
+            .set_result("TICKET-1", serde_json::Value::Null)
+            .unwrap();
+        original.set_done("TICKET-1").unwrap();
+        original.set_failed("TICKET-2").unwrap();
+        drop(original);
+
+        std::fs::remove_file(dir.path().join("stats.json")).unwrap();
+
+        let resumed = TicketSystem::load(dir.path()).unwrap();
+        let s = resumed.stats();
+        assert_eq!(s.tickets_created(), 3);
+        assert_eq!(s.tickets_done(), 1);
+        assert_eq!(s.tickets_failed(), 1);
+        let scan = s.stats_for_label("scan");
+        assert_eq!(scan.tickets_created(), 3);
+        assert_eq!(scan.tickets_done(), 1);
+        assert_eq!(scan.tickets_failed(), 1);
+    }
+
+    #[test]
+    fn load_skips_malformed_ticket_file() {
+        let dir = crate::test_util::TempDir::new().unwrap();
+        let original = TicketSystem::new();
+        original.dir(dir.path().to_path_buf());
+        original.task("valid");
+        drop(original);
+
+        let broken_dir = dir.path().join("tickets").join("TICKET-99");
+        std::fs::create_dir_all(&broken_dir).unwrap();
+        std::fs::write(broken_dir.join("ticket.123.json"), "not json").unwrap();
+
+        let resumed = TicketSystem::load(dir.path()).unwrap();
+        assert!(resumed.get("TICKET-1").is_some());
+        assert!(resumed.get("TICKET-99").is_none());
+    }
+
+    #[test]
+    fn load_picks_latest_ticket_file_per_key() {
+        let dir = crate::test_util::TempDir::new().unwrap();
+        let key_dir = dir.path().join("tickets").join("TICKET-1");
+        std::fs::create_dir_all(&key_dir).unwrap();
+        let older = serde_json::json!({
+            "task": "old body", "labels": [], "key": "TICKET-1",
+            "status": "Todo", "reporter": "user", "created_at": 100,
+            "started_at": null, "finished_at": null, "failed_at": null,
+            "result": null, "parent": null, "comments": []
+        });
+        let newer = serde_json::json!({
+            "task": "new body", "labels": [], "key": "TICKET-1",
+            "status": "Todo", "reporter": "user", "created_at": 200,
+            "started_at": null, "finished_at": null, "failed_at": null,
+            "result": null, "parent": null, "comments": []
+        });
+        std::fs::write(
+            key_dir.join("ticket.100.json"),
+            serde_json::to_string(&older).unwrap(),
+        )
+        .unwrap();
+        std::fs::write(
+            key_dir.join("ticket.200.json"),
+            serde_json::to_string(&newer).unwrap(),
+        )
+        .unwrap();
+
+        let sys = TicketSystem::load(dir.path()).unwrap();
+        let t = sys.get("TICKET-1").unwrap();
+        assert_eq!(t.task, serde_json::Value::String("new body".into()));
+        assert_eq!(t.created_at(), 200);
+    }
+
+    #[test]
+    fn ticket_lifecycle_event_writes_stats_file() {
+        let (sys, dir) = test_system();
+        sys.task("seed");
+        sys.claim(|t| t.status == Status::Todo, "alice").unwrap();
+        sys.set_result("TICKET-1", serde_json::Value::Null).unwrap();
+        sys.set_done("TICKET-1").unwrap();
+
+        let bytes = std::fs::read(dir.path().join("stats.json")).expect("stats file written");
+        let body: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(body["tickets_created"], 1);
+        assert_eq!(body["tickets_done"], 1);
+    }
+
+    #[test]
+    fn load_prefers_stats_file_over_derivation() {
+        let dir = crate::test_util::TempDir::new().unwrap();
+        std::fs::create_dir_all(dir.path().join("tickets")).unwrap();
+        let body = serde_json::json!({ "steps": 42, "requests": 7 });
+        std::fs::write(
+            dir.path().join("stats.json"),
+            serde_json::to_vec(&body).unwrap(),
+        )
+        .unwrap();
+
+        let sys = TicketSystem::load(dir.path()).unwrap();
+        assert_eq!(sys.stats().steps(), 42);
+        assert_eq!(sys.stats().requests(), 7);
+    }
+
+    #[test]
+    fn load_falls_back_to_derivation_when_stats_file_malformed() {
+        let dir = crate::test_util::TempDir::new().unwrap();
+        let original = TicketSystem::new();
+        original.dir(dir.path().to_path_buf());
+        original.task("seed");
+        original
+            .set_result("TICKET-1", serde_json::Value::Null)
+            .unwrap();
+        original.set_done("TICKET-1").unwrap();
+        drop(original);
+
+        std::fs::write(dir.path().join("stats.json"), "not json").unwrap();
+
+        let sys = TicketSystem::load(dir.path()).unwrap();
+        assert_eq!(sys.stats().tickets_created(), 1);
+        assert_eq!(sys.stats().tickets_done(), 1);
+    }
+
+    #[test]
+    fn ticket_with_json_schema_round_trips_through_load() {
+        let dir = crate::test_util::TempDir::new().unwrap();
+        let original = TicketSystem::new();
+        original.dir(dir.path().to_path_buf());
+        let schema_doc = serde_json::json!({
+            "type": "object",
+            "properties": { "n": { "type": "integer" } },
+            "required": ["n"],
+        });
+        let schema = crate::schemas::Schema::parse(schema_doc.clone()).unwrap();
+        original.ticket(Ticket::new("counted").schema(schema));
+        drop(original);
+
+        let resumed = TicketSystem::load(dir.path()).unwrap();
+        let t = resumed.get("TICKET-1").unwrap();
+        let restored = t.schema.expect("JSON schema must restore");
+        assert!(restored.validate(&serde_json::json!({"n": 3})).is_ok());
+        assert!(restored.validate(&serde_json::json!({})).is_err());
     }
 }

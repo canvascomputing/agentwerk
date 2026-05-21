@@ -112,7 +112,8 @@ async fn try_compact<F: Fn(EventKind)>(
             if let Some(summary) = summary {
                 let dir = scope.ticket_system.dir_value();
                 if let Some(t) = scope.ticket_system.get(scope.key) {
-                    t.write(&dir, false);
+                    use crate::persistence::Persist;
+                    let _ = t.save(&dir);
                 }
                 if let Some(t) = scope
                     .ticket_system
@@ -124,7 +125,8 @@ async fn try_compact<F: Fn(EventKind)>(
                     t.summarize(summary);
                 }
                 if let Some(t) = scope.ticket_system.get(scope.key) {
-                    t.write(&dir, false);
+                    use crate::persistence::Persist;
+                    let _ = t.save(&dir);
                 }
             }
             (scope.emit)(EventKind::CompactionFinished { reason });
@@ -1430,7 +1432,7 @@ mod tests {
         ]);
         let results_dir = crate::test_util::TempDir::new().unwrap();
         let knowledge_dir = crate::test_util::TempDir::new().unwrap();
-        let store = Knowledge::open(knowledge_dir.path()).unwrap();
+        let store = Knowledge::load(knowledge_dir.path()).unwrap();
 
         let tickets = TicketSystem::new();
 
@@ -1487,7 +1489,7 @@ mod tests {
         ]);
         let results_dir = crate::test_util::TempDir::new().unwrap();
         let knowledge_dir = crate::test_util::TempDir::new().unwrap();
-        let store = Knowledge::open(knowledge_dir.path()).unwrap();
+        let store = Knowledge::load(knowledge_dir.path()).unwrap();
 
         let tickets = TicketSystem::new();
 
@@ -1537,7 +1539,7 @@ mod tests {
 
         let results_dir = crate::test_util::TempDir::new().unwrap();
         let knowledge_dir = crate::test_util::TempDir::new().unwrap();
-        let store = Knowledge::open(knowledge_dir.path()).unwrap();
+        let store = Knowledge::load(knowledge_dir.path()).unwrap();
 
         let tickets = TicketSystem::new();
         tickets
@@ -1613,7 +1615,7 @@ mod tests {
 
         let results_dir = crate::test_util::TempDir::new().unwrap();
         let knowledge_dir = crate::test_util::TempDir::new().unwrap();
-        let store = Knowledge::open(knowledge_dir.path()).unwrap();
+        let store = Knowledge::load(knowledge_dir.path()).unwrap();
 
         let tickets = TicketSystem::new();
 
@@ -2439,23 +2441,22 @@ mod tests {
         assert_eq!(ticket.status, Status::Done);
 
         // The full payload sits under the ticket's outputs folder.
-        let output_path = results_dir
-            .path()
-            .join("tickets")
-            .join("TICKET-1")
-            .join("outputs")
-            .join("call-1.txt");
+        let relative_path: std::path::PathBuf = ["tickets", "TICKET-1", "outputs", "call-1.txt"]
+            .iter()
+            .collect();
+        let output_path = results_dir.path().join(&relative_path);
         let body = std::fs::read_to_string(&output_path).expect("offload file must exist");
         assert_eq!(body, "x".repeat(800_000));
 
-        // The comment carries the structured path pointer.
+        // The comment carries the path relative to the tickets dir so
+        // the transcript stays portable across moves of `.agentwerk/`.
         let tool_result_path = ticket.comments().iter().find_map(|c| {
             c.content.iter().find_map(|b| match b {
                 CommentContent::ToolResult { id, path, .. } if id == "call-1" => path.clone(),
                 _ => None,
             })
         });
-        assert_eq!(tool_result_path.as_deref(), Some(output_path.as_path()));
+        assert_eq!(tool_result_path.as_deref(), Some(relative_path.as_path()));
 
         // The second request (after the tool call) sees the stub in
         // place of the giant blob, naming the absolute offload path.

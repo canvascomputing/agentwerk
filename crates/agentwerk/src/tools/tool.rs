@@ -641,10 +641,10 @@ fn cap_oversized_result(
         Ok(content) if content.len() <= per_tool_cap => (Ok(content), None),
         Ok(content) => match persist_output(ctx, tool_use_id, &content) {
             None => (Ok(content), None),
-            Some(path) => {
+            Some(p) => {
                 let preview = truncate_preview(&content);
-                let stub = format_oversized_tool_result(content.len(), &path, preview);
-                (Ok(stub), Some(path))
+                let stub = format_oversized_tool_result(content.len(), &p.display, preview);
+                (Ok(stub), Some(p.rel))
             }
         },
     }
@@ -701,12 +701,12 @@ fn cap_aggregate_outputs(
         let tool_use_id = tool_use_id.clone();
         let original = content.clone();
         let succeeded = *succeeded;
-        let Some(path) = persist_output(ctx, &tool_use_id, &original) else {
+        let Some(p) = persist_output(ctx, &tool_use_id, &original) else {
             // Persistence failed; nothing further this pass can do.
             return;
         };
         let preview = truncate_preview(&original);
-        let stub = format_oversized_tool_result(original.len(), &path, preview);
+        let stub = format_oversized_tool_result(original.len(), &p.display, preview);
         results[i].0 = ContentBlock::ToolResult {
             tool_use_id,
             content: stub.clone(),
@@ -715,19 +715,27 @@ fn cap_aggregate_outputs(
         if results[i].1.is_ok() {
             results[i].1 = Ok(stub);
         }
-        results[i].2 = Some(path);
+        results[i].2 = Some(p.rel);
     }
 }
 
 /// Offload `content` to the ticket's outputs folder via the bound
-/// `TicketSystem`. Returns the absolute path on success; `None` when no
-/// ticket key is present on the context, no ticket system is bound, or
-/// the write fails. Best-effort, matching the surrounding observational-
-/// persistence contract.
-fn persist_output(ctx: &ToolContext, tool_use_id: &str, content: &str) -> Option<PathBuf> {
+/// `TicketSystem`. Returns the path relative to the tickets dir (for
+/// the comment transcript) and the on-disk path (for the model-facing
+/// stub); `None` when no ticket key is present on the context, no
+/// ticket system is bound, or the write fails. Best-effort, matching
+/// the surrounding observational-persistence contract.
+fn persist_output(ctx: &ToolContext, tool_use_id: &str, content: &str) -> Option<PersistedOutput> {
     let system = ctx.ticket_system.as_ref()?;
     let key = ctx.ticket_key.as_deref()?;
-    system.write_tool_output(key, tool_use_id, content)
+    let rel = system.write_tool_output(key, tool_use_id, content)?;
+    let display = system.dir_value().join(&rel);
+    Some(PersistedOutput { rel, display })
+}
+
+struct PersistedOutput {
+    rel: PathBuf,
+    display: PathBuf,
 }
 
 const OVERSIZED_STUB_TAG_OPEN: &str = "<persisted-output>";
@@ -1074,11 +1082,40 @@ mod tests {
         }
     }
 
-    fn outputs_path(dir: &std::path::Path, key: &str, tool_use_id: &str) -> PathBuf {
-        dir.join("tickets")
+    fn relative_outputs_path(key: &str, tool_use_id: &str) -> PathBuf {
+        PathBuf::from("tickets")
             .join(key)
             .join("outputs")
             .join(format!("{tool_use_id}.txt"))
+    }
+
+    fn absolute_outputs_path(dir: &std::path::Path, key: &str, tool_use_id: &str) -> PathBuf {
+        dir.join(relative_outputs_path(key, tool_use_id))
+    }
+
+    #[test]
+    fn write_tool_output_stores_relative_path_in_comment() {
+        let (ctx, _system, key, _dir) = ticket_ctx();
+        let (_outcome, path) = cap_oversized_result(Ok("z".repeat(500)), &ctx, "call-rel", 100);
+        let stored = path.expect("offload happened");
+        assert_eq!(stored, relative_outputs_path(&key, "call-rel"));
+        assert!(
+            stored.is_relative(),
+            "comment path must stay portable: {}",
+            stored.display()
+        );
+    }
+
+    #[test]
+    fn persisted_output_renders_absolute_path_for_model() {
+        let (ctx, _system, key, dir) = ticket_ctx();
+        let (outcome, _path) = cap_oversized_result(Ok("y".repeat(500)), &ctx, "call-abs", 100);
+        let stub = outcome.unwrap();
+        let absolute = absolute_outputs_path(dir.path(), &key, "call-abs");
+        assert!(
+            stub.contains(&absolute.display().to_string()),
+            "stub must give the model the joinable on-disk path: {stub}"
+        );
     }
 
     #[test]
@@ -1097,11 +1134,16 @@ mod tests {
         assert!(stub.starts_with("<persisted-output>"));
         assert!(stub.contains("Output too large"));
         assert!(stub.contains("Full output saved to:"));
+        let absolute = absolute_outputs_path(dir.path(), &key, "call-xyz");
+        assert!(
+            stub.contains(&absolute.display().to_string()),
+            "stub must name the absolute path so the model can read the file: {stub}"
+        );
         assert!(stub.contains("Preview (first"));
         assert!(stub.ends_with("</persisted-output>"));
         let path = path.expect("offload path");
-        assert_eq!(path, outputs_path(dir.path(), &key, "call-xyz"));
-        let body = std::fs::read_to_string(&path).unwrap();
+        assert_eq!(path, relative_outputs_path(&key, "call-xyz"));
+        let body = std::fs::read_to_string(&absolute).unwrap();
         assert_eq!(body, "a".repeat(500));
     }
 
@@ -1152,8 +1194,8 @@ mod tests {
             _ => panic!("expected ToolResult"),
         }
         let big_path = results[1].2.clone().expect("c2 path recorded");
-        assert_eq!(big_path, outputs_path(dir.path(), &key, "c2"));
-        let body = std::fs::read_to_string(&big_path).unwrap();
+        assert_eq!(big_path, relative_outputs_path(&key, "c2"));
+        let body = std::fs::read_to_string(absolute_outputs_path(dir.path(), &key, "c2")).unwrap();
         assert_eq!(body, big);
 
         assert!(matches!(

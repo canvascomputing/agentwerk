@@ -4,12 +4,10 @@
 //! (read + write). `WriteResultTool` is the sole way for an agent to
 //! finish its current ticket.
 
-use std::fs::OpenOptions;
-use std::io::Write as _;
-
 use serde_json::Value;
 
 use crate::agents::tickets::{Status, Ticket, TicketError, TicketSystem};
+use crate::persistence::{Append, Results};
 use crate::schemas::{format_violations, Schema};
 
 use super::tool::{ToolContext, ToolResult};
@@ -411,7 +409,7 @@ pub(super) fn write_result(
     let target_dir = ticket_system.dir_value();
     {
         let _guard = write_result::results_write_lock().lock().unwrap();
-        if let Err(e) = append_ndjson(&target_dir, &log_line) {
+        if let Err(e) = Results::append(&target_dir, &log_line) {
             return ToolResult::error(format!(
                 "Cannot write result to {}: {e}",
                 target_dir.display()
@@ -426,19 +424,6 @@ pub(super) fn write_result(
         Ok(()) => ToolResult::success(format!("Ticket {key} marked done")),
         Err(e) => ToolResult::error(ticket_error_message(e)),
     }
-}
-
-const RESULTS_FILE: &str = "results.jsonl";
-
-fn append_ndjson(dir: &std::path::Path, line: &Value) -> std::io::Result<()> {
-    std::fs::create_dir_all(dir)?;
-    let mut text = serde_json::to_string(line).map_err(std::io::Error::other)?;
-    text.push('\n');
-    let mut file = OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(dir.join(RESULTS_FILE))?;
-    file.write_all(text.as_bytes())
 }
 
 #[cfg(test)]
