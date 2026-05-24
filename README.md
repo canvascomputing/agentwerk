@@ -123,6 +123,22 @@ Each provider exposes `.base_url(url)` and `.timeout(duration)` to override the 
 | `model_from_env()` | Read the model name from environment variables. |
 | `from_env()` | Detect provider and model in one call. |
 
+### Models
+
+`.model(m)` accepts a model name or a `Model`. Names registered with a known provider resolve to a context window automatically. For private or proxied models, build a `Model` and pass an explicit window so automatic compaction stays active:
+
+```rust
+use agentwerk::providers::Model;
+
+let agent = Agent::new()
+    .model(Model::from_name("my-local-model").context_window(128_000));
+```
+
+| Method | Description |
+|--------|-------------|
+| `Model::from_name(name)` | Look the model up in each provider's registry. |
+| `context_window(size)` | Set an explicit context window in tokens. |
+
 ## Tickets
 
 <p align="left">
@@ -215,7 +231,41 @@ for ticket in tickets.tickets() {
 | `last_result()` | Return the most recent finished ticket's payload as a string. |
 | `all_results()` | Return every finished ticket's payload as a string. |
 | `tickets()` | Return every ticket in creation order, with status, payload, and metadata. |
+| `get(key)` | Return the ticket at `key`, or `None` when it is unknown. |
+| `first()` | Return the earliest ticket by creation time. |
+| `search(query)` | Return tickets whose task body contains `query`, case-insensitively. |
+| `filter(predicate)` | Return tickets matching the predicate, in creation order. |
+| `find(predicate)` | Return the earliest ticket matching the predicate. |
+| `count(predicate)` | Return the count of tickets matching the predicate. |
 | `is_cancelled()` | Return `true` once a cancel has been requested. |
+
+### Inspecting tickets
+
+Each `Ticket` carries the recorded result, its transcript, and lifecycle timestamps. Deserialize structured results directly into a type:
+
+```rust
+#[derive(serde::Deserialize)]
+struct Report { title: String }
+
+let ticket = tickets.find(|t| t.has_label("analysis")).unwrap();
+let report: Report = ticket.result_as().unwrap();
+```
+
+| Method | Description |
+|--------|-------------|
+| `key()` | Return the ticket's stable identifier. |
+| `status()` | Return the lifecycle status as a lowercase string. |
+| `result()` | Return the raw JSON result payload. |
+| `result_string()` | Return the result payload as a string. |
+| `result_as::<R>()` | Return the result deserialized into `R`. |
+| `comments()` | Return the transcript of messages exchanged with the model. |
+| `has_label(label)` | Return `true` when the ticket carries `label`. |
+| `parent_key()` | Return the parent ticket's key when one was set. |
+| `created_at()` | Return the millisecond timestamp at which the ticket was created. |
+| `started_at()` | Return the millisecond timestamp at which an agent claimed the ticket. |
+| `finished_at()` | Return the millisecond timestamp at which the ticket was marked done. |
+| `failed_at()` | Return the millisecond timestamp at which the ticket failed. |
+| `elapsed()` | Return the creation-to-terminal duration once the ticket is done or failed. |
 
 ### Policies
 
@@ -292,12 +342,26 @@ Give agents access to tools helping them to solve a given task. Each tool expose
 | | `ListDirectoryTool` | List files and directories. |
 | **Shell** | `BashTool` | Run a shell command matching an allowed pattern. |
 | **Web** | `WebFetchTool` | Fetch a URL and read its body. |
-| **Tickets** | `WriteResultTool` | Write the result for the current ticket and mark it done. |
-| | `WriteHandoverTool` | Write the result, mark the ticket done, and hand follow-up work to another agent. |
+| **Tickets** | `CloseTicketTool` | Write the result for the current ticket and mark it done. |
+| | `HandoverTicketTool` | Write the result, mark the ticket done, and hand follow-up work to another agent. |
 | | `ManageTicketsTool` | Read the ticket queue and create or edit tickets. |
 | | `ReadTicketsTool` | Read the ticket queue. |
 | **Knowledge** | `KnowledgeTool` | Write, read, remove, or list pages in the agent's knowledge store. |
 | **Discovery** | `ToolSearchTool` | Discover tools registered with `Tool::defer(true)`. |
+
+### Bash
+
+`BashTool` restricts execution to commands matching a glob pattern. The first argument names the tool the model sees; the second is the allowed pattern.
+
+```rust
+use agentwerk::tools::BashTool;
+
+let agent = Agent::new()
+    .tool(BashTool::new("git", "git *"))
+    .tool(BashTool::unrestricted());
+```
+
+`BashTool::unrestricted()` removes the pattern check.
 
 ### Custom tools
 
@@ -412,13 +476,16 @@ let agent = Agent::new()
 | **Provider** | `RequestStarted` | A provider request started. |
 | | `RequestFinished` | A provider request finished and reported its token usage. |
 | | `RequestFailed` | A provider request failed and stopped the ticket. |
+| | `RequestRetried` | A transient provider error triggered a retry. |
 | | `TextChunkReceived` | A streamed text chunk arrived. |
 | **Tool** | `ToolCallStarted` | A tool invocation started. |
 | | `ToolCallFinished` | A tool invocation finished. |
 | | `ToolCallFailed` | A tool invocation failed but the ticket continues. |
+| | `SchemaRetried` | A schema validation failed and the model was re-prompted. |
 | **Compaction** | `CompactionStarted` | Compaction is about to summarize the conversation tail. |
 | | `CompactionFinished` | Compaction finished and replaced the tail with a summary. |
 | | `CompactionFailed` | The summarization call failed; the ticket is about to fail. |
+| | `BlockingLimitExceeded` | The next-request token estimate crossed the compaction threshold. |
 | **Run** | `PolicyViolated` | A policy limit was breached and execution stopped. |
 
 ## Stats
