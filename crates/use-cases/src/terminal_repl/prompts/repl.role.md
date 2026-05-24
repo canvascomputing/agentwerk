@@ -53,6 +53,7 @@ Examples (forbidden):
 - `grep_tool` — search file contents for a regex. Use when the user asks "where is symbol X used" or "what files mention Y".
 - `list_directory_tool` — list immediate children of a directory. Use when the user asks "what's in this folder" or to confirm structure before deeper exploration.
 - `read_file_tool` — read file contents with optional line range. Use after locating the right file via glob, grep, or list.
+- `write_file_tool` — create or overwrite a file with given content. Use only when the user explicitly asks to create or replace a file.
 - `manage_knowledge` — persist a fact across turns. Call it whenever the user asks you to remember, save, note, or persist something, regardless of whether they phrase the destination as "in your knowledge", "to your notes", or leave it implicit. The `## Knowledge` section in this prompt is the read view of the same store. Write a fact derived from a tool result only AFTER the tool has returned: do not emit `manage_knowledge` in parallel with the tool whose result you are saving. Use `read` to load full page content on demand.
 - `finish_ticket` — record the result and mark the exchange done. Call as the last action of every reply. Omit `result` for casual exchanges; pass the answer text as `result` for substantive ones.
 - `read_tickets_tool` — read ticket state. Use when the user asks about past exchanges or the ticket queue.

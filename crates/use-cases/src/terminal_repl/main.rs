@@ -8,12 +8,11 @@
 //! resumes across process restarts.
 //! The model's response streams to stdout via
 //! `EventKind::TextChunkReceived`. Slash commands:
-//! `/exit` quits, `/knowledge` prints the knowledge index,
-//! `/clear` resets knowledge, `/new` starts a fresh chat ticket,
-//! `/stats` prints run counters, `/tickets` lists every ticket.
-//! Ctrl-C at the prompt exits with code 130; Ctrl-C during a turn
-//! cancels that turn (a second Ctrl-C while the cancel is still
-//! draining force-quits with exit code 130).
+//! `/new` starts a fresh chat ticket, `/list` lists every ticket,
+//! `/stats` prints run counters, `/clear` resets knowledge.
+//! Ctrl-C at the prompt exits with code 130; Ctrl-D exits with
+//! code 0; Ctrl-C during a turn cancels that turn (a second Ctrl-C
+//! while the cancel is still draining force-quits with exit code 130).
 //!
 //! Every exit path goes through `std::process::exit` rather than a
 //! plain `return`: the stdin reader runs on a tokio blocking thread
@@ -28,6 +27,7 @@ use std::sync::Arc;
 use agentwerk::event::{Event, EventKind};
 use agentwerk::tools::{
     GlobTool, GrepTool, ListDirectoryTool, ManageTicketsTool, ReadFileTool, ReadTicketsTool,
+    WriteFileTool,
 };
 use agentwerk::{Agent, Knowledge, TicketSystem};
 
@@ -37,7 +37,7 @@ const ROLE: &str = include_str!("prompts/repl.role.md");
 async fn main() {
     let style = Style::detect();
     eprintln!(
-        "{}agentwerk REPL: /exit /knowledge /clear /new /stats /tickets, Ctrl-C to cancel.{}",
+        "{}agentwerk REPL: /new /list /stats /clear, Ctrl-C to cancel.{}",
         style.dim, style.reset,
     );
 
@@ -86,6 +86,7 @@ async fn main() {
             .tool(GrepTool)
             .tool(ListDirectoryTool)
             .tool(ReadFileTool)
+            .tool(WriteFileTool)
             .tool(ReadTicketsTool)
             .tool(ManageTicketsTool)
             .event_handler(handler)
@@ -124,48 +125,13 @@ async fn main() {
         if line.is_empty() {
             continue;
         }
-        if line == "/exit" || line == "/quit" {
-            std::process::exit(0);
-        }
-        if line == "/knowledge" {
-            let idx = knowledge.index();
-            let rendered = if idx.is_empty() {
-                "(knowledge empty)".into()
-            } else {
-                idx
-            };
-            eprintln!("{}{rendered}{}", style.dim, style.reset);
-            continue;
-        }
-        if line == "/clear" {
-            knowledge.clear().ok();
-            eprintln!("{}knowledge cleared{}", style.dim, style.reset);
-            continue;
-        }
         if line == "/new" {
             let k = tickets.task("<new chat>");
             eprintln!("{}new chat {k}{}", style.dim, style.reset);
             chat_key = Some(k);
             continue;
         }
-        if line == "/stats" {
-            let s = tickets.stats();
-            eprintln!(
-                "{}{} turns · {} requests · {} tools · {} in / {} out · {} created / {} done / {} failed{}",
-                style.dim,
-                s.turns(),
-                s.requests(),
-                s.tool_calls(),
-                s.input_tokens(),
-                s.output_tokens(),
-                s.tickets_created(),
-                s.tickets_finished(),
-                s.tickets_failed(),
-                style.reset,
-            );
-            continue;
-        }
-        if line == "/tickets" {
+        if line == "/list" {
             let all = tickets.tickets();
             if all.is_empty() {
                 eprintln!("{}(no tickets){}", style.dim, style.reset);
@@ -192,6 +158,28 @@ async fn main() {
                     );
                 }
             }
+            continue;
+        }
+        if line == "/stats" {
+            let s = tickets.stats();
+            eprintln!(
+                "{}{} turns · {} requests · {} tools · {} in / {} out · {} created / {} done / {} failed{}",
+                style.dim,
+                s.turns(),
+                s.requests(),
+                s.tool_calls(),
+                s.input_tokens(),
+                s.output_tokens(),
+                s.tickets_created(),
+                s.tickets_finished(),
+                s.tickets_failed(),
+                style.reset,
+            );
+            continue;
+        }
+        if line == "/clear" {
+            knowledge.clear().ok();
+            eprintln!("{}knowledge cleared{}", style.dim, style.reset);
             continue;
         }
 
