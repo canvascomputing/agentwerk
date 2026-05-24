@@ -1,5 +1,5 @@
 {
-  "name": "tool_search_tool",
+  "name": "find_tools",
   "summary": [
     "Discover tools that were withheld from the initial system prompt to keep context small.",
     "Returns matching tool names, descriptions, and input schemas; once a tool surfaces here it becomes callable for the rest of the session."

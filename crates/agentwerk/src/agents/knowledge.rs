@@ -1,6 +1,6 @@
 //! File-backed knowledge store that persists across tickets and runs.
 //! Pages are markdown files addressed by slug; a compact index is
-//! injected into the system prompt. The model-facing `KnowledgeTool`
+//! injected into the system prompt. The model-facing `ManageKnowledgeTool`
 //! is a thin wrapper in `tools::knowledge` that holds an
 //! `Arc<Knowledge>` from this module.
 

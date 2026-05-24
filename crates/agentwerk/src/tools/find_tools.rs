@@ -14,11 +14,11 @@ use crate::providers::ProviderResult as Result;
 /// [`Tool::defer`](crate::tools::Tool::defer) to `true`: the
 /// model sees only their names until it discovers them through this tool,
 /// keeping the initial system prompt small.
-pub struct ToolSearchTool;
+pub struct FindToolsTool;
 
 fn tool_file() -> &'static ToolFile {
     static FILE: OnceLock<ToolFile> = OnceLock::new();
-    FILE.get_or_init(|| ToolFile::parse(include_str!("tool_search.tool.json")))
+    FILE.get_or_init(|| ToolFile::parse(include_str!("find_tools.tool.json")))
 }
 
 fn description() -> &'static str {
@@ -26,7 +26,7 @@ fn description() -> &'static str {
     DESC.get_or_init(|| tool_file().render_markdown())
 }
 
-impl ToolLike for ToolSearchTool {
+impl ToolLike for FindToolsTool {
     fn name(&self) -> &str {
         &tool_file().name
     }
@@ -160,7 +160,7 @@ mod tests {
     async fn find_by_name() {
         let registry = registry_with_mock_tools();
         let ctx = ctx_registry(registry);
-        let tool = ToolSearchTool;
+        let tool = FindToolsTool;
         let input = serde_json::json!({ "query": "read_file" });
         let result = tool.call(input, &ctx).await.unwrap();
         let (ToolResult::Success(content)
@@ -173,7 +173,7 @@ mod tests {
     async fn find_by_keyword() {
         let registry = registry_with_mock_tools();
         let ctx = ctx_registry(registry);
-        let tool = ToolSearchTool;
+        let tool = FindToolsTool;
         let input = serde_json::json!({ "query": "file" });
         let result = tool.call(input, &ctx).await.unwrap();
         let (ToolResult::Success(content)
@@ -187,7 +187,7 @@ mod tests {
     async fn no_results() {
         let registry = registry_with_mock_tools();
         let ctx = ctx_registry(registry);
-        let tool = ToolSearchTool;
+        let tool = FindToolsTool;
         let input = serde_json::json!({ "query": "nonexistent_xyz" });
         let result = tool.call(input, &ctx).await.unwrap();
         let (ToolResult::Success(content)
@@ -200,7 +200,7 @@ mod tests {
     async fn returns_schema() {
         let registry = registry_with_mock_tools();
         let ctx = ctx_registry(registry);
-        let tool = ToolSearchTool;
+        let tool = FindToolsTool;
         let input = serde_json::json!({ "query": "read_file" });
         let result = tool.call(input, &ctx).await.unwrap();
         let (ToolResult::Success(content)
@@ -214,7 +214,7 @@ mod tests {
     async fn missing_query_errors() {
         let registry = registry_with_mock_tools();
         let ctx = ctx_registry(registry);
-        let tool = ToolSearchTool;
+        let tool = FindToolsTool;
         let input = serde_json::json!({});
         let result = tool.call(input, &ctx).await.unwrap();
         let (ToolResult::Success(content)
@@ -229,7 +229,7 @@ mod tests {
         let ctx = ToolContext::new(
             std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from(".")),
         );
-        let tool = ToolSearchTool;
+        let tool = FindToolsTool;
         let input = serde_json::json!({ "query": "anything" });
         let result = tool.call(input, &ctx).await.unwrap();
         let (ToolResult::Success(content)
@@ -241,13 +241,13 @@ mod tests {
 
     #[tokio::test]
     async fn is_never_deferred() {
-        let tool = ToolSearchTool;
+        let tool = FindToolsTool;
         assert!(!tool.should_defer());
     }
 
     #[tokio::test]
     async fn is_read_only() {
-        let tool = ToolSearchTool;
+        let tool = FindToolsTool;
         assert!(tool.is_read_only());
     }
 
@@ -256,7 +256,7 @@ mod tests {
         let registry = registry_with_mock_tools();
         let ctx = ctx_registry(Arc::clone(&registry));
 
-        let tool = ToolSearchTool;
+        let tool = FindToolsTool;
         tool.call(serde_json::json!({ "query": "read_file" }), &ctx)
             .await
             .unwrap();

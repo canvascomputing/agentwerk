@@ -744,13 +744,13 @@ mod tests {
         }
     }
 
-    /// `knowledge_tool` `write` call: the model's first turn writes a page.
+    /// `manage_knowledge` `write` call: the model's first turn writes a page.
     /// The loop's tool dispatch will upsert it in the bound `Knowledge`.
     fn knowledge_write_response(slug: &str, summary: &str, content: &str) -> ModelResponse {
         ModelResponse {
             content: vec![ContentBlock::ToolUse {
                 id: "call-1".into(),
-                name: "knowledge_tool".into(),
+                name: "manage_knowledge".into(),
                 input: serde_json::json!({"action": "write", "slug": slug, "summary": summary, "content": content}),
             }],
             status: ResponseStatus::ToolUse,
@@ -759,12 +759,12 @@ mod tests {
         }
     }
 
-    /// `knowledge_tool` `read` call.
+    /// `manage_knowledge` `read` call.
     fn knowledge_read_response(slug: &str) -> ModelResponse {
         ModelResponse {
             content: vec![ContentBlock::ToolUse {
                 id: "call-2".into(),
-                name: "knowledge_tool".into(),
+                name: "manage_knowledge".into(),
                 input: serde_json::json!({"action": "read", "slug": slug}),
             }],
             status: ResponseStatus::ToolUse,
@@ -1585,8 +1585,8 @@ mod tests {
         // Two tickets processed sequentially by one agent bound to a Knowledge store.
         //
         // Ticket 1 (3 turns):
-        //   1. Model calls knowledge_tool write (api-config)
-        //   2. Model calls knowledge_tool read (api-config)
+        //   1. Model calls manage_knowledge write (api-config)
+        //   2. Model calls manage_knowledge read (api-config)
         //   3. Model calls finish_ticket to finish
         //
         // Ticket 2 (1 turn):

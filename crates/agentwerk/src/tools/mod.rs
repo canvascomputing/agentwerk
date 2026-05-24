@@ -8,14 +8,14 @@ pub(crate) mod util;
 
 mod bash;
 mod edit_file;
+mod fetch_url;
+mod find_tools;
 mod glob;
 mod grep;
-mod knowledge;
 mod list_directory;
+mod manage_knowledge;
 mod read_file;
 mod tickets;
-mod tool_search;
-mod web_fetch;
 mod write_file;
 
 pub use error::ToolError;
@@ -25,13 +25,13 @@ pub use tool_file::ToolFile;
 
 pub use bash::BashTool;
 pub use edit_file::EditFileTool;
+pub use fetch_url::FetchUrlTool;
+pub use find_tools::FindToolsTool;
 pub use glob::GlobTool;
 pub use grep::GrepTool;
-pub use knowledge::KnowledgeTool;
 pub use list_directory::ListDirectoryTool;
+pub use manage_knowledge::ManageKnowledgeTool;
 pub use read_file::ReadFileTool;
 pub(crate) use tickets::TICKET_FINISHER_TOOLS;
 pub use tickets::{FinishTicketTool, HandoverTicketTool, ManageTicketsTool, ReadTicketsTool};
-pub use tool_search::ToolSearchTool;
-pub use web_fetch::WebFetchTool;
 pub use write_file::WriteFileTool;

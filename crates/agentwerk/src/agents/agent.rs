@@ -15,7 +15,7 @@ use serde::Serialize;
 use crate::event::{default_logger, Event};
 use crate::prompts::{default_context, PromptBuilder, Section};
 use crate::providers::{Model, Provider, ProviderToolDefinition};
-use crate::tools::{KnowledgeTool, ToolLike, ToolRegistry, FinishTicketTool};
+use crate::tools::{ManageKnowledgeTool, ToolLike, ToolRegistry, FinishTicketTool};
 
 use super::knowledge::Knowledge;
 
@@ -216,12 +216,12 @@ impl Agent {
     /// store rooted at `./.agentwerk` when unset, mirroring how
     /// [`Self::dir`] defaults to the current working directory; the
     /// default store is opened lazily when the agent is bound to a
-    /// `TicketSystem`. Registers `KnowledgeTool` on the agent's tool
+    /// `TicketSystem`. Registers `ManageKnowledgeTool` on the agent's tool
     /// registry and arranges for the store's index to be injected into
     /// the system prompt under `## Knowledge` at the top of every
     /// ticket.
     pub fn knowledge(mut self, store: &Arc<Knowledge>) -> Self {
-        self.tools.register(KnowledgeTool::new(Arc::clone(store)));
+        self.tools.register(ManageKnowledgeTool::new(Arc::clone(store)));
         self.knowledge = Some(Arc::clone(store));
         self
     }
@@ -236,7 +236,7 @@ impl Agent {
     }
 
     /// Materialize the default knowledge store and register
-    /// `KnowledgeTool` if `.knowledge(...)` was not invoked. Called by
+    /// `ManageKnowledgeTool` if `.knowledge(...)` was not invoked. Called by
     /// `TicketSystem::bind_agent` so every running agent has a store
     /// without the caller having to wire one up.
     pub(super) fn ensure_knowledge_bound(&mut self) {
@@ -244,7 +244,7 @@ impl Agent {
             return;
         }
         let store = Knowledge::load(".agentwerk").expect("open knowledge store");
-        self.tools.register(KnowledgeTool::new(Arc::clone(&store)));
+        self.tools.register(ManageKnowledgeTool::new(Arc::clone(&store)));
         self.knowledge = Some(store);
     }
 
@@ -640,7 +640,7 @@ mod tests {
     }
 
     #[test]
-    fn knowledge_registers_knowledge_tool_on_the_agent() {
+    fn knowledge_registers_manage_knowledge_on_the_agent() {
         let dir = crate::test_util::TempDir::new().unwrap();
         let store = Knowledge::load(dir.path()).unwrap();
         let agent = Agent::new().knowledge(&store);
@@ -650,8 +650,8 @@ mod tests {
             .map(|d| d.name)
             .collect();
         assert!(
-            names.iter().any(|n| n == "knowledge_tool"),
-            "knowledge_tool should be registered: {names:?}"
+            names.iter().any(|n| n == "manage_knowledge"),
+            "manage_knowledge should be registered: {names:?}"
         );
     }
 
@@ -665,7 +665,7 @@ mod tests {
             .into_iter()
             .map(|d| d.name)
             .collect();
-        assert!(names.iter().any(|n| n == "knowledge_tool"));
+        assert!(names.iter().any(|n| n == "manage_knowledge"));
         agent
             .knowledge_or_default()
             .pages()
@@ -732,7 +732,7 @@ mod tests {
     }
 
     #[test]
-    fn unbound_default_agent_does_not_register_knowledge_tool() {
+    fn unbound_default_agent_does_not_register_manage_knowledge() {
         let agent = Agent::new();
         let names: Vec<String> = agent
             .tool_definitions()
@@ -740,8 +740,8 @@ mod tests {
             .map(|d| d.name)
             .collect();
         assert!(
-            !names.iter().any(|n| n == "knowledge_tool"),
-            "knowledge_tool must not appear before binding: {names:?}"
+            !names.iter().any(|n| n == "manage_knowledge"),
+            "manage_knowledge must not appear before binding: {names:?}"
         );
     }
 
@@ -755,8 +755,8 @@ mod tests {
             .map(|d| d.name)
             .collect();
         assert!(
-            names.iter().any(|n| n == "knowledge_tool"),
-            "knowledge_tool should be registered after binding: {names:?}"
+            names.iter().any(|n| n == "manage_knowledge"),
+            "manage_knowledge should be registered after binding: {names:?}"
         );
     }
 

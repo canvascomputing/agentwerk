@@ -18,7 +18,7 @@ const MAX_REDIRECT_HOPS: usize = 10;
 
 fn tool_file() -> &'static ToolFile {
     static FILE: OnceLock<ToolFile> = OnceLock::new();
-    FILE.get_or_init(|| ToolFile::parse(include_str!("web_fetch.tool.json")))
+    FILE.get_or_init(|| ToolFile::parse(include_str!("fetch_url.tool.json")))
 }
 
 fn description() -> &'static str {
@@ -29,9 +29,9 @@ fn description() -> &'static str {
 /// Fetch a URL and return its content as text. Read-only. HTML is converted
 /// to plain text; HTTP is upgraded to HTTPS; cross-host redirects are
 /// surfaced rather than followed.
-pub struct WebFetchTool;
+pub struct FetchUrlTool;
 
-impl ToolLike for WebFetchTool {
+impl ToolLike for FetchUrlTool {
     fn name(&self) -> &str {
         &tool_file().name
     }

@@ -1,5 +1,5 @@
 {
-  "name": "web_fetch_tool",
+  "name": "fetch_url",
   "summary": [
     "Fetch a URL over HTTPS and return its content as text.",
     "HTML is converted to readable plain text; JSON, plain text, and markdown are returned as-is."
@@ -17,7 +17,7 @@
   ],
   "cautions": [
     "IMPORTANT: the tool will fail on authenticated URLs. Do not retry the same URL repeatedly — fall back to a specialized tool or `bash_tool` with proper credentials.",
-    "IMPORTANT: when a redirect is detected, the tool returns a `REDIRECT DETECTED` message rather than the page. Make a fresh `web_fetch_tool` call with the redirect URL to actually fetch the content."
+    "IMPORTANT: when a redirect is detected, the tool returns a `REDIRECT DETECTED` message rather than the page. Make a fresh `fetch_url` call with the redirect URL to actually fetch the content."
   ],
   "output": [
     "Plain text. The page body — extracted readable text for HTML, raw payload for non-HTML — truncated to `max_length`.",

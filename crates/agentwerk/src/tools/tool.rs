@@ -34,7 +34,7 @@ const PER_TURN_CAP: usize = 200_000;
 const PREVIEW_CHARS: usize = 2_000;
 
 /// Context passed to tool execution. `tool_registry` and the ticket-side
-/// fields are ambient internals — only the built-in `ToolSearchTool` and
+/// fields are ambient internals — only the built-in `FindToolsTool` and
 /// the ticket tools (`Read`/`Write`/`Manage`) read them. External tool
 /// authors use `dir`, `interrupt_signal`, and
 /// `wait_for_cancel`.
@@ -210,7 +210,7 @@ pub trait ToolLike: Send + Sync {
     }
 
     /// Whether the tool's full definition is hidden until it is discovered
-    /// via `ToolSearchTool`. Deferred tools appear to the model as
+    /// via `FindToolsTool`. Deferred tools appear to the model as
     /// name-only stubs. Default: `false`.
     fn should_defer(&self) -> bool {
         false
@@ -483,7 +483,7 @@ impl Tool {
     }
 
     /// Hide the tool's full definition until it is discovered via
-    /// `ToolSearchTool`.
+    /// `FindToolsTool`.
     pub fn defer(mut self, defer: bool) -> Self {
         self.defer = defer;
         self

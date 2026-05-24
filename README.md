@@ -149,7 +149,7 @@ The `TicketSystem` is the core data structure of agentwerk to orchestrate comple
 
 ```rust
 use agentwerk::{Agent, Ticket, TicketSystem};
-use agentwerk::tools::WebFetchTool;
+use agentwerk::tools::FetchUrlTool;
 
 let tickets = TicketSystem::new();
 
@@ -158,7 +158,7 @@ tickets.pool(4, |i| {
         .name(format!("researcher_{i}"))
         .label("research")
         .from_env()
-        .tool(WebFetchTool)
+        .tool(FetchUrlTool)
 });
 
 tickets.agent(
@@ -332,13 +332,13 @@ Give agents access to tools helping them to solve a given task. Each tool expose
 | | `GrepTool` | Search file contents. |
 | | `ListDirectoryTool` | List files and directories. |
 | **Shell** | `BashTool` | Run a shell command matching an allowed pattern. |
-| **Web** | `WebFetchTool` | Fetch a URL and read its body. |
+| **Web** | `FetchUrlTool` | Fetch a URL and read its body. |
 | **Tickets** | `FinishTicketTool` | Write the result for the current ticket and mark it finished. |
 | | `HandoverTicketTool` | Write the result, mark the ticket finished, and hand follow-up work to another agent. |
 | | `ManageTicketsTool` | Read the ticket queue and create or edit tickets. |
 | | `ReadTicketsTool` | Read the ticket queue. |
-| **Knowledge** | `KnowledgeTool` | Write, read, remove, or list pages in the agent's knowledge store. |
-| **Discovery** | `ToolSearchTool` | Discover tools registered with `Tool::defer(true)`. |
+| **Knowledge** | `ManageKnowledgeTool` | Write, read, remove, or list pages in the agent's knowledge store. |
+| **Discovery** | `FindToolsTool` | Discover tools registered with `Tool::defer(true)`. |
 
 ### Bash
 
@@ -379,7 +379,7 @@ let greet = Tool::new("greet", "Say hello")
 
 ## Knowledge
 
-A `Knowledge` store is the agent's long-term memory. It is written to disk, can be shared across multiple agents, and is curated by the agent through `KnowledgeTool`.
+A `Knowledge` store is the agent's long-term memory. It is written to disk, can be shared across multiple agents, and is curated by the agent through `ManageKnowledgeTool`.
 
 Each entry is stored as a markdown page on disk; a compact index of one-line summaries is injected into the system prompt so the agent can decide which pages to read.
 

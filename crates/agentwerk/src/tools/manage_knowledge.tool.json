@@ -1,5 +1,5 @@
 {
-  "name": "knowledge_tool",
+  "name": "manage_knowledge",
   "summary": [
     "Persistent knowledge base of durable facts. Pages are markdown files addressed by slug.",
     "The index (one-line summary per page) is injected into the system prompt at each ticket start. Use `read` to load full pages on demand."
