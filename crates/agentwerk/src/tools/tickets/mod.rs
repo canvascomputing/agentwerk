@@ -80,8 +80,10 @@ pub(super) fn resolve_current_key(
     let agent_name = ctx.agent_name_str().ok_or_else(|| {
         ToolResult::error("Missing `key` and no agent_name set on this tool context")
     })?;
-    match ticket_system.find(|t| t.status == Status::InProgress && t.has_label(agent_name)) {
-        Some(t) => Ok(t.key().to_string()),
+    match ticket_system
+        .find(|t| t.status == Status::InProgress && t.labels.iter().any(|l| l == agent_name))
+    {
+        Some(t) => Ok(t.key.clone()),
         None => Err(ToolResult::error(
             "Missing `key` and no current ticket assigned to this agent",
         )),
@@ -94,16 +96,16 @@ pub(super) fn ticket_error_message(err: TicketError) -> String {
 
 fn render_ticket(t: &Ticket) -> String {
     let mut out = String::new();
-    out.push_str(&format!("# {}\n", t.key()));
+    out.push_str(&format!("# {}\n", t.key));
     out.push_str(&format!("- status: {}\n", status_label(t.status)));
-    out.push_str(&format!("- reporter: {}\n", t.reporter()));
+    out.push_str(&format!("- reporter: {}\n", t.reporter));
     let labels_label = if t.labels.is_empty() {
         "(none)".to_string()
     } else {
         t.labels.join(", ")
     };
     out.push_str(&format!("- labels: {labels_label}\n"));
-    if let Some(parent) = t.parent_key() {
+    if let Some(parent) = t.parent.as_deref() {
         out.push_str(&format!("- parent: {parent}\n"));
     }
     out.push('\n');
@@ -119,8 +121,9 @@ fn render_ticket(t: &Ticket) -> String {
         }
     }
     out.push_str("\n## Result\n");
-    match t.result_string() {
-        Some(s) => out.push_str(&s),
+    match t.result.as_ref() {
+        Some(serde_json::Value::String(s)) => out.push_str(s),
+        Some(other) => out.push_str(&other.to_string()),
         None => out.push_str("(no result)"),
     }
     out.push('\n');
@@ -210,7 +213,7 @@ fn action_list(ticket_system: &TicketSystem, input: &Value) -> ToolResult {
             None => true,
         };
         let label_ok = match label.as_deref() {
-            Some(l) => t.has_label(l),
+            Some(l) => t.labels.iter().any(|x| x == l),
             None => true,
         };
         status_ok && label_ok
@@ -228,7 +231,7 @@ fn action_list(ticket_system: &TicketSystem, input: &Value) -> ToolResult {
         .iter()
         .take(50)
         .zip(previews.iter())
-        .map(|(t, p)| (t.key(), p.as_str(), t.status, t.labels.as_slice()))
+        .map(|(t, p)| (t.key.as_str(), p.as_str(), t.status, t.labels.as_slice()))
         .collect();
     ToolResult::success(render_summary_list(&rows))
 }
@@ -251,7 +254,7 @@ fn action_search(ticket_system: &TicketSystem, input: &Value) -> ToolResult {
         .iter()
         .take(50)
         .zip(previews.iter())
-        .map(|(t, p)| (t.key(), p.as_str(), t.status, t.labels.as_slice()))
+        .map(|(t, p)| (t.key.as_str(), p.as_str(), t.status, t.labels.as_slice()))
         .collect();
     ToolResult::success(render_summary_list(&rows))
 }
@@ -454,7 +457,7 @@ mod tests {
         sys.dir(shared_test_dir().to_path_buf());
         sys.insert(Ticket::new("a"), "tester".into());
         sys.insert(Ticket::new("b"), "tester".into());
-        sys.claim(|t| t.key() == "TICKET-1", "alice");
+        sys.claim(|t| t.key == "TICKET-1", "alice");
 
         let ctx = ctx_with(Arc::clone(&sys), "alice");
         let result = call(
@@ -482,7 +485,7 @@ mod tests {
         assert!(matches!(result, ToolResult::Success(_)));
         let t = sys.get("TICKET-1").unwrap();
         assert_eq!(t.task, serde_json::Value::String("new ticket".into()));
-        assert_eq!(t.reporter(), "alice");
+        assert_eq!(t.reporter, "alice");
     }
 
     #[tokio::test]
@@ -523,7 +526,7 @@ mod tests {
         .await;
         assert!(matches!(result, ToolResult::Success(_)));
         let t = sys.get("TICKET-1").unwrap();
-        assert!(t.has_label("alice"));
+        assert!(t.labels.iter().any(|l| l == "alice"));
         assert_eq!(t.status, Status::Todo);
     }
 

@@ -221,7 +221,7 @@ if let Some(answer) = tickets.last_result() {
 }
 
 for ticket in tickets.tickets() {
-    println!("{}: {}", ticket.key(), ticket.status());
+    println!("{}: {}", ticket.key, ticket.status);
 }
 ```
 
@@ -241,31 +241,28 @@ for ticket in tickets.tickets() {
 
 ### Inspecting tickets
 
-Each `Ticket` carries the recorded result, its transcript, and lifecycle timestamps. Deserialize structured results directly into a type:
+Each `Ticket` carries the recorded result, its transcript, and lifecycle timestamps as `pub` fields. Reach in directly; deserialize structured results with `serde_json::from_value`:
 
 ```rust
 #[derive(serde::Deserialize)]
 struct Report { title: String }
 
-let ticket = tickets.find(|t| t.has_label("analysis")).unwrap();
-let report: Report = ticket.result_as().unwrap();
+let ticket = tickets.find(|t| t.labels.iter().any(|l| l == "analysis")).unwrap();
+let report: Report = serde_json::from_value(ticket.result.clone().unwrap()).unwrap();
 ```
 
-| Method | Description |
-|--------|-------------|
-| `key()` | Return the ticket's stable identifier. |
-| `status()` | Return the lifecycle status as a lowercase string. |
-| `result()` | Return the raw JSON result payload. |
-| `result_string()` | Return the result payload as a string. |
-| `result_as::<R>()` | Return the result deserialized into `R`. |
-| `comments()` | Return the transcript of messages exchanged with the model. |
-| `has_label(label)` | Return `true` when the ticket carries `label`. |
-| `parent_key()` | Return the parent ticket's key when one was set. |
-| `created_at()` | Return the millisecond timestamp at which the ticket was created. |
-| `started_at()` | Return the millisecond timestamp at which an agent claimed the ticket. |
-| `finished_at()` | Return the millisecond timestamp at which the ticket was marked finished. |
-| `failed_at()` | Return the millisecond timestamp at which the ticket failed. |
-| `duration()` | Return the creation-to-terminal duration once the ticket is finished or failed. |
+| Field | Description |
+|-------|-------------|
+| `key` | Stable identifier (`TICKET-N`). |
+| `status` | Lifecycle status as a `Status` enum (`Todo`, `InProgress`, `Finished`, `Failed`). |
+| `result` | Raw JSON result payload, `Option<serde_json::Value>`. |
+| `comments` | Transcript of messages exchanged with the model. |
+| `labels` | Labels carried by the ticket. |
+| `parent` | Parent ticket key when one was set, `Option<String>`. |
+| `created_at` | Millisecond timestamp at which the ticket was created. |
+| `started_at` | Millisecond timestamp at which an agent claimed the ticket. |
+| `finished_at` | Millisecond timestamp at which the ticket was marked finished. |
+| `failed_at` | Millisecond timestamp at which the ticket failed. |
 
 ### Policies
 

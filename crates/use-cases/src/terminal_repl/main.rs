@@ -26,7 +26,9 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
 use agentwerk::event::{Event, EventKind};
-use agentwerk::tools::{GlobTool, GrepTool, ListDirectoryTool, ManageTicketsTool, ReadFileTool, ReadTicketsTool};
+use agentwerk::tools::{
+    GlobTool, GrepTool, ListDirectoryTool, ManageTicketsTool, ReadFileTool, ReadTicketsTool,
+};
 use agentwerk::{Agent, Knowledge, TicketSystem};
 
 const ROLE: &str = include_str!("prompts/repl.role.md");
@@ -99,14 +101,13 @@ async fn main() {
     // Resume the newest open chat ticket from disk if one exists,
     // so a previous session's transcript carries into this one.
     let mut chat_key: Option<String> = tickets
-        .filter(|t| t.status() == "in_progress" && t.has_label("orchestrator"))
+        .filter(|t| {
+            t.status.to_string() == "in_progress" && t.labels.iter().any(|l| l == "orchestrator")
+        })
         .last()
-        .map(|t| t.key().to_string());
+        .map(|t| t.key.to_string());
     if let Some(k) = &chat_key {
-        eprintln!(
-            "{}resumed chat ticket {k}{}",
-            style.dim, style.reset,
-        );
+        eprintln!("{}resumed chat ticket {k}{}", style.dim, style.reset,);
     }
 
     loop {
@@ -178,14 +179,14 @@ async fn main() {
                     if preview.len() < t.task.to_string().len() {
                         preview.push('…');
                     }
-                    let active = chat_key.as_deref() == Some(t.key());
+                    let active = chat_key.as_deref() == Some(t.key.as_str());
                     let mark = if active { "▸ " } else { "  " };
                     eprintln!(
                         "{}{mark}{} [{}] · {} comments · {}{}",
                         style.dim,
-                        t.key(),
-                        t.status(),
-                        t.comments().len(),
+                        t.key,
+                        t.status,
+                        t.comments.len(),
                         preview,
                         style.reset,
                     );
@@ -199,7 +200,12 @@ async fn main() {
         // breaks out before its own content.
         midstream.store(true, Ordering::Relaxed);
         let key = match chat_key.as_deref() {
-            Some(k) if tickets.tickets().iter().any(|t| t.key() == k && t.status() == "in_progress") => {
+            Some(k)
+                if tickets
+                    .tickets()
+                    .iter()
+                    .any(|t| t.key == k && t.status.to_string() == "in_progress") =>
+            {
                 tickets.comment(k, line);
                 k.to_string()
             }
@@ -228,11 +234,21 @@ async fn main() {
         let stats = tickets.stats();
         let outcome = {
             let status = chat_key.as_deref().and_then(|k| {
-                tickets.tickets().into_iter().find(|t| t.key() == k).map(|t| t.status().to_string())
+                tickets
+                    .tickets()
+                    .into_iter()
+                    .find(|t| t.key == k)
+                    .map(|t| t.status.to_string())
             });
             match status.as_deref() {
-                Some("done") => { chat_key = None; "completed" }
-                Some("failed") => { chat_key = None; "failed" }
+                Some("done") => {
+                    chat_key = None;
+                    "completed"
+                }
+                Some("failed") => {
+                    chat_key = None;
+                    "failed"
+                }
                 _ if cancelled => "cancelled",
                 _ => "incomplete",
             }

@@ -15,7 +15,7 @@ use serde::Serialize;
 use crate::event::{default_logger, Event};
 use crate::prompts::{default_context, PromptBuilder, Section};
 use crate::providers::{Model, Provider, ProviderToolDefinition};
-use crate::tools::{ManageKnowledgeTool, ToolLike, ToolRegistry, FinishTicketTool};
+use crate::tools::{FinishTicketTool, ManageKnowledgeTool, ToolLike, ToolRegistry};
 
 use super::knowledge::Knowledge;
 
@@ -221,7 +221,8 @@ impl Agent {
     /// the system prompt under `## Knowledge` at the top of every
     /// ticket.
     pub fn knowledge(mut self, store: &Arc<Knowledge>) -> Self {
-        self.tools.register(ManageKnowledgeTool::new(Arc::clone(store)));
+        self.tools
+            .register(ManageKnowledgeTool::new(Arc::clone(store)));
         self.knowledge = Some(Arc::clone(store));
         self
     }
@@ -244,7 +245,8 @@ impl Agent {
             return;
         }
         let store = Knowledge::load(".agentwerk").expect("open knowledge store");
-        self.tools.register(ManageKnowledgeTool::new(Arc::clone(&store)));
+        self.tools
+            .register(ManageKnowledgeTool::new(Arc::clone(&store)));
         self.knowledge = Some(store);
     }
 

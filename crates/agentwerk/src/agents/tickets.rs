@@ -23,38 +23,39 @@ use super::policy::Policies;
 use super::r#loop::run_main_loop;
 use super::stats::{Stats, TicketStats};
 
-/// A ticket. Caller-settable fields: `task`, `labels`, `schema`.
-/// System-managed fields (`key`, `status`, `reporter`, `created_at`,
-/// `result`) are stamped at insertion time.
+/// A ticket. Caller-settable fields: `task`, `labels`, `schema`,
+/// `parent`. System-managed fields (`key`, `status`, `reporter`,
+/// `created_at`, `started_at`, `finished_at`, `failed_at`, `result`,
+/// `comments`) are stamped by the ticket system and the agent loop.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct Ticket {
     pub task: serde_json::Value,
     pub labels: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub schema: Option<crate::schemas::Schema>,
-    pub(crate) key: String,
-    pub(crate) status: Status,
-    pub(crate) reporter: String,
-    pub(crate) created_at: u64,
+    pub key: String,
+    pub status: Status,
+    pub reporter: String,
+    pub created_at: u64,
     /// Set when the ticket transitions `Todo → InProgress`. Millis
     /// since epoch.
-    pub(crate) started_at: Option<u64>,
+    pub started_at: Option<u64>,
     /// Set when the ticket reaches `Status::Finished`. Millis since epoch.
     /// Mutually exclusive with `failed_at`.
-    pub(crate) finished_at: Option<u64>,
+    pub finished_at: Option<u64>,
     /// Set when the ticket reaches `Status::Failed`. Millis since
     /// epoch. Mutually exclusive with `finished_at`.
-    pub(crate) failed_at: Option<u64>,
-    pub(crate) result: Option<serde_json::Value>,
+    pub failed_at: Option<u64>,
+    pub result: Option<serde_json::Value>,
     /// Back-reference to another ticket, or `None` when the ticket
     /// has no parent. Caller-settable via [`Ticket::parent`].
-    pub(crate) parent: Option<String>,
+    pub parent: Option<String>,
     /// Append-only transcript of the messages the agent loop sent to
     /// the provider for this ticket, plus a leading `system` entry for
     /// the system prompt and synthetic `system` entries marking
     /// compaction boundaries. System-managed: callers cannot push
     /// directly.
-    pub(crate) comments: Vec<Comment>,
+    pub comments: Vec<Comment>,
 }
 
 impl Ticket {
@@ -111,101 +112,11 @@ impl Ticket {
         self
     }
 
-    // ---- read-only accessors for system-managed fields ----
-
-    pub fn key(&self) -> &str {
-        &self.key
-    }
-
-    /// Current status as a lowercase string: `"todo"`, `"in_progress"`,
-    /// `"finished"`, or `"failed"`. Transitions are driven internally by the
-    /// agent loop as it claims, finishes, and fails tickets.
-    pub fn status(&self) -> &'static str {
-        self.status.as_str()
-    }
-
-    pub fn reporter(&self) -> &str {
-        &self.reporter
-    }
-
-    pub fn created_at(&self) -> u64 {
-        self.created_at
-    }
-
-    pub fn started_at(&self) -> Option<u64> {
-        self.started_at
-    }
-
-    pub fn finished_at(&self) -> Option<u64> {
-        self.finished_at
-    }
-
-    pub fn failed_at(&self) -> Option<u64> {
-        self.failed_at
-    }
-
-    /// Duration from creation to terminal status (Finished or Failed),
-    /// `None` while the ticket has not yet reached one. Mirrors the
-    /// naming convention of [`Stats::run_duration`](crate::Stats::run_duration).
-    pub fn duration(&self) -> Option<Duration> {
-        let terminal = self.finished_at.or(self.failed_at)?;
-        Some(Duration::from_millis(
-            terminal.saturating_sub(self.created_at),
-        ))
-    }
-
-    pub fn result(&self) -> Option<&serde_json::Value> {
-        self.result.as_ref()
-    }
-
-    /// Result payload rendered as a String, or `None` when the ticket has
-    /// no recorded result. Convenience for callers that want a flat
-    /// string view of the result regardless of the underlying JSON shape.
-    pub fn result_string(&self) -> Option<String> {
-        self.result.as_ref().map(|v| match v {
-            serde_json::Value::String(s) => s.clone(),
-            other => other.to_string(),
-        })
-    }
-
-    /// Result payload deserialized into `R`, or `None` when the ticket
-    /// has no recorded result. Panics when the recorded `Value` does not
-    /// deserialize into `R`: schema-bound tickets validate the result
-    /// before the framework marks them done, so a mismatch here means
-    /// the validator and the type drifted apart.
-    pub fn result_as<R>(&self) -> Option<R>
-    where
-        R: serde::de::DeserializeOwned,
-    {
-        self.result.as_ref().map(|v| {
-            serde_json::from_value(v.clone()).expect(
-                "ticket result does not match requested type — validator and type are out of sync",
-            )
-        })
-    }
-
-    pub fn has_label(&self, label: &str) -> bool {
-        self.labels.iter().any(|l| l == label)
-    }
-
-    /// Back-reference set via [`Self::parent`], or `None` when no
-    /// parent was recorded.
-    pub fn parent_key(&self) -> Option<&str> {
-        self.parent.as_deref()
-    }
-
-    /// Transcript of messages the agent loop sent to the provider for
-    /// this ticket, in order. Starts with a leading `system` entry
-    /// carrying the system prompt; everything after is `user` /
-    /// `assistant` turns.
-    pub fn comments(&self) -> &[Comment] {
-        &self.comments
-    }
-
     /// True when the model owes a turn: the transcript is empty, the
     /// last comment is user-side, or the model's last reply still has
-    /// unresolved tool calls.
-    pub fn is_waiting_for_response(&self) -> bool {
+    /// unresolved tool calls. Used by the loop's wait-for-response
+    /// branch and by `pending_count`.
+    pub(crate) fn is_waiting_for_response(&self) -> bool {
         let Some(c) = self.comments.last() else {
             return true;
         };
@@ -226,7 +137,6 @@ impl Ticket {
         self.comments.retain(|c| c.author == "system");
         self.comments.push(Comment::user_text(summary_text));
     }
-
 }
 
 impl crate::persistence::Persist for Ticket {
@@ -269,17 +179,18 @@ pub enum Status {
     Failed,
 }
 
-impl Status {
+impl fmt::Display for Status {
     /// Lowercase wire form: `"todo"`, `"in_progress"`, `"finished"`, `"failed"`.
-    /// Single source of truth for the string rendering used by
-    /// [`Ticket::status`] and the `tickets.jsonl` event log.
-    pub fn as_str(self) -> &'static str {
-        match self {
+    /// Single source of truth for the string rendering used by the
+    /// `tickets.jsonl` event log and any caller that prints a status.
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let s = match self {
             Status::Todo => "todo",
             Status::InProgress => "in_progress",
             Status::Finished => "finished",
             Status::Failed => "failed",
-        }
+        };
+        f.write_str(s)
     }
 }
 
@@ -551,6 +462,10 @@ impl TicketSystem {
     /// Run-time counters. Read after `run` / `finish` returns.
     pub fn stats(&self) -> &Stats {
         &self.stats
+    }
+
+    pub(crate) fn policies(&self) -> Policies {
+        self.policies.lock().unwrap().clone()
     }
 
     // ---- policy builders ----
@@ -1020,11 +935,6 @@ impl TicketSystem {
             .count()
     }
 
-    /// Snapshot of the active policies for the loop's per-turn guards.
-    pub(crate) fn policies(&self) -> Policies {
-        self.policies.lock().unwrap().clone()
-    }
-
     /// Wire `agent` to this system. Drains any tickets the agent had
     /// queued in its private default system into this one, then stamps
     /// the system's `Weak<Self>` onto `agent.ticket_system`.
@@ -1191,7 +1101,12 @@ impl TicketSystem {
     pub fn all_results(&self) -> Vec<String> {
         self.filter(|t| t.status == Status::Finished && t.result.is_some())
             .iter()
-            .filter_map(Ticket::result_string)
+            .filter_map(|t| {
+                t.result.as_ref().map(|v| match v {
+                    serde_json::Value::String(s) => s.clone(),
+                    other => other.to_string(),
+                })
+            })
             .collect()
     }
 }
@@ -1279,8 +1194,12 @@ fn stamp_transition_timestamps(ticket: &mut Ticket, next: Status, now: u64) {
 /// `work_duration` is started→terminal. Both default to zero if the
 /// relevant timestamps aren't both set.
 fn terminal_durations(ticket: &Ticket) -> (Duration, Duration) {
-    let ticket_duration = ticket.duration().unwrap_or_default();
-    let work_duration = match (ticket.started_at, ticket.finished_at.or(ticket.failed_at)) {
+    let terminal = ticket.finished_at.or(ticket.failed_at);
+    let ticket_duration = match terminal {
+        Some(end) => Duration::from_millis(end.saturating_sub(ticket.created_at)),
+        None => Duration::ZERO,
+    };
+    let work_duration = match (ticket.started_at, terminal) {
         (Some(start), Some(end)) => Duration::from_millis(end.saturating_sub(start)),
         _ => Duration::ZERO,
     };
@@ -1375,7 +1294,7 @@ mod tests {
         sys.task("hello");
         let t = sys.get("TICKET-1").unwrap();
         assert_eq!(t.task, serde_json::Value::String("hello".into()));
-        assert_eq!(t.reporter(), "user");
+        assert_eq!(t.reporter, "user");
         assert_eq!(t.status, Status::Todo);
     }
 
@@ -1393,7 +1312,7 @@ mod tests {
         let (sys, _tmp) = test_system();
         sys.ticket(Ticket::new("specific work for alice").label("alice"));
         let t = sys.get("TICKET-1").unwrap();
-        assert!(t.has_label("alice"));
+        assert!(t.labels.iter().any(|l| l == "alice"));
         assert_eq!(t.status, Status::Todo);
     }
 
@@ -1417,7 +1336,7 @@ mod tests {
         let all_keys: Vec<String> = sys
             .filter(|t| t.status == Status::Todo)
             .iter()
-            .map(|t| t.key().to_string())
+            .map(|t| t.key.clone())
             .collect();
         assert_eq!(all_keys.len(), 2);
     }
@@ -1463,10 +1382,13 @@ mod tests {
             .unwrap();
         let stored = sys.get("TICKET-1").unwrap();
         assert_eq!(
-            stored.result(),
+            stored.result.as_ref(),
             Some(&serde_json::Value::String("answer".into()))
         );
-        assert_eq!(stored.result_string().as_deref(), Some("answer"));
+        assert_eq!(
+            stored.result.as_ref().and_then(|v| v.as_str()),
+            Some("answer")
+        );
     }
 
     #[test]
@@ -1483,7 +1405,7 @@ mod tests {
         sys.task("second");
         sys.task("third");
         let first = sys.first().unwrap();
-        assert_eq!(first.key(), "TICKET-1");
+        assert_eq!(first.key, "TICKET-1");
         assert_eq!(first.task, serde_json::Value::String("first".into()));
     }
 
@@ -1495,7 +1417,7 @@ mod tests {
         sys.task("second");
         sys.task("third");
         let last = sys.last().unwrap();
-        assert_eq!(last.key(), "TICKET-3");
+        assert_eq!(last.key, "TICKET-3");
         assert_eq!(last.task, serde_json::Value::String("third".into()));
     }
 
@@ -1507,9 +1429,9 @@ mod tests {
         sys.task("c");
         let all = sys.tickets();
         assert_eq!(all.len(), 3);
-        assert_eq!(all[0].key(), "TICKET-1");
-        assert_eq!(all[1].key(), "TICKET-2");
-        assert_eq!(all[2].key(), "TICKET-3");
+        assert_eq!(all[0].key, "TICKET-1");
+        assert_eq!(all[1].key, "TICKET-2");
+        assert_eq!(all[2].key, "TICKET-3");
     }
 
     #[test]
@@ -1559,15 +1481,15 @@ mod tests {
         sys.task("ok");
         sys.task("oops");
         sys.task("pending");
-        sys.claim(|t| t.key() == "TICKET-1", "agent");
+        sys.claim(|t| t.key == "TICKET-1", "agent");
         sys.set_finished("TICKET-1").unwrap();
         sys.set_failed("TICKET-2").unwrap();
         let done = sys.filter(|t| t.status == Status::Finished);
         let failed = sys.filter(|t| t.status == Status::Failed);
         assert_eq!(done.len(), 1);
-        assert_eq!(done[0].key(), "TICKET-1");
+        assert_eq!(done[0].key, "TICKET-1");
         assert_eq!(failed.len(), 1);
-        assert_eq!(failed[0].key(), "TICKET-2");
+        assert_eq!(failed[0].key, "TICKET-2");
     }
 
     #[test]
@@ -1578,9 +1500,9 @@ mod tests {
         sys.task("c");
         // Created 3 tickets.
         assert_eq!(sys.stats().tickets_created(), 3);
-        sys.claim(|t| t.key() == "TICKET-1", "agent");
+        sys.claim(|t| t.key == "TICKET-1", "agent");
         sys.set_finished("TICKET-1").unwrap();
-        sys.claim(|t| t.key() == "TICKET-2", "agent");
+        sys.claim(|t| t.key == "TICKET-2", "agent");
         sys.set_failed("TICKET-2").unwrap();
         assert_eq!(sys.stats().tickets_finished(), 1);
         assert_eq!(sys.stats().tickets_failed(), 1);
@@ -1604,19 +1526,17 @@ mod tests {
         let (sys, _tmp) = test_system();
         sys.ticket(Ticket::new("a").labels(["scan", "high"]));
         sys.ticket(Ticket::new("b").label("scan"));
-        sys.claim(|t| t.key() == "TICKET-1", "agent");
+        sys.claim(|t| t.key == "TICKET-1", "agent");
         sys.set_finished("TICKET-1").unwrap();
-        sys.claim(|t| t.key() == "TICKET-2", "agent");
+        sys.claim(|t| t.key == "TICKET-2", "agent");
         sys.set_failed("TICKET-2").unwrap();
         let stats = sys.stats();
         let scan = stats.stats_for_label("scan");
         let high = stats.stats_for_label("high");
         assert_eq!(scan.tickets_finished(), 1);
         assert_eq!(scan.tickets_failed(), 1);
-        assert_eq!(scan.tickets_success_rate(), Some(0.5));
         assert_eq!(high.tickets_finished(), 1);
         assert_eq!(high.tickets_failed(), 0);
-        assert_eq!(high.tickets_success_rate(), Some(1.0));
     }
 
     #[test]
@@ -1631,7 +1551,7 @@ mod tests {
     fn stats_for_label_unaffected_by_no_label_ticket() {
         let (sys, _tmp) = test_system();
         sys.ticket(Ticket::new("a"));
-        sys.claim(|t| t.key() == "TICKET-1", "agent");
+        sys.claim(|t| t.key == "TICKET-1", "agent");
         sys.set_finished("TICKET-1").unwrap();
         assert_eq!(sys.stats().tickets_finished(), 1);
         assert_eq!(sys.stats().stats_for_label("scan").tickets_finished(), 0);
@@ -1651,7 +1571,7 @@ mod tests {
     fn workspace_emits_created_started_done_in_order() {
         let (sys, dir) = test_system();
         sys.task("hello");
-        sys.claim(|t| t.key() == "TICKET-1", "agent");
+        sys.claim(|t| t.key == "TICKET-1", "agent");
         sys.set_finished("TICKET-1").unwrap();
         let lines = read_tickets_log(dir.path());
         assert_eq!(lines.len(), 3);
@@ -1695,9 +1615,9 @@ mod tests {
         let (sys, dir) = test_system();
         sys.task("a");
         sys.task("b");
-        sys.claim(|t| t.key() == "TICKET-1", "agent");
+        sys.claim(|t| t.key == "TICKET-1", "agent");
         sys.set_finished("TICKET-1").unwrap();
-        sys.claim(|t| t.key() == "TICKET-2", "agent");
+        sys.claim(|t| t.key == "TICKET-2", "agent");
         sys.set_failed("TICKET-2").unwrap();
         let lines = read_tickets_log(dir.path());
         // 2 created + 2 started + 1 done + 1 failed
@@ -1714,25 +1634,27 @@ mod tests {
         assert_eq!(key, "TICKET-1");
         let t = sys.get(&key).unwrap();
         assert_eq!(t.status, Status::InProgress);
-        assert!(t.has_label("alice"));
-        assert!(t.started_at().is_some());
+        assert!(t.labels.iter().any(|l| l == "alice"));
+        assert!(t.started_at.is_some());
     }
 
     #[test]
     fn claim_returns_none_when_no_ticket_matches() {
         let (sys, _tmp) = test_system();
         sys.task("hello");
-        assert!(sys.claim(|t| t.has_label("nonexistent"), "alice").is_none());
+        assert!(sys
+            .claim(|t| t.labels.iter().any(|l| l == "nonexistent"), "alice")
+            .is_none());
     }
 
     #[test]
     fn second_claim_of_same_ticket_returns_none() {
         let (sys, _tmp) = test_system();
         sys.task("hello");
-        let first = sys.claim(|t| t.key() == "TICKET-1", "alice");
+        let first = sys.claim(|t| t.key == "TICKET-1", "alice");
         assert!(first.is_some());
         // Second claim: ticket is now InProgress, not Todo.
-        let second = sys.claim(|t| t.key() == "TICKET-1", "bob");
+        let second = sys.claim(|t| t.key == "TICKET-1", "bob");
         assert!(second.is_none());
     }
 
@@ -1766,7 +1688,7 @@ mod tests {
         sys.set_finished("TICKET-1").unwrap();
         let t = sys.get("TICKET-1").unwrap();
         assert_eq!(t.status, Status::Finished);
-        assert!(t.finished_at().is_some());
+        assert!(t.finished_at.is_some());
     }
 
     #[test]
@@ -1777,7 +1699,7 @@ mod tests {
         sys.set_failed("TICKET-1").unwrap();
         let t = sys.get("TICKET-1").unwrap();
         assert_eq!(t.status, Status::Failed);
-        assert!(t.failed_at().is_some());
+        assert!(t.failed_at.is_some());
     }
 
     #[test]
@@ -1785,7 +1707,7 @@ mod tests {
         let (sys, _tmp) = test_system();
         sys.ticket(Ticket::new("child body").parent("TICKET-1"));
         let stored = sys.get("TICKET-1").unwrap();
-        assert_eq!(stored.parent_key(), Some("TICKET-1"));
+        assert_eq!(stored.parent.as_deref(), Some("TICKET-1"));
     }
 
     #[test]
@@ -1852,7 +1774,7 @@ mod tests {
         let resumed = TicketSystem::load(dir.path()).unwrap();
         let t = resumed.get("TICKET-1").unwrap();
         assert_eq!(t.status, Status::Finished);
-        assert_eq!(t.result(), Some(&serde_json::json!({"ok": true})));
+        assert_eq!(t.result.as_ref(), Some(&serde_json::json!({"ok": true})));
         assert_eq!(t.task, serde_json::Value::String("seed work".into()));
     }
 
@@ -1870,7 +1792,7 @@ mod tests {
         let resumed = TicketSystem::load(dir.path()).unwrap();
         let t = resumed.get("TICKET-1").unwrap();
         assert_eq!(t.status, Status::InProgress);
-        assert!(t.has_label("alice"));
+        assert!(t.labels.iter().any(|l| l == "alice"));
     }
 
     #[test]
@@ -1949,7 +1871,7 @@ mod tests {
         let sys = TicketSystem::load(dir.path()).unwrap();
         let t = sys.get("TICKET-1").unwrap();
         assert_eq!(t.task, serde_json::Value::String("new body".into()));
-        assert_eq!(t.created_at(), 200);
+        assert_eq!(t.created_at, 200);
     }
 
     #[test]

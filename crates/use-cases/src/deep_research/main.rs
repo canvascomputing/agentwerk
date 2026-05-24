@@ -20,7 +20,7 @@ use std::sync::Arc;
 use agentwerk::event::{Event, EventKind};
 use agentwerk::providers::{provider_from_env, ProviderResult};
 use agentwerk::schemas::Schema;
-use agentwerk::tools::{ReadTicketsTool, Tool, ToolResult, HandoverTicketTool};
+use agentwerk::tools::{HandoverTicketTool, ReadTicketsTool, Tool, ToolResult};
 use agentwerk::{Agent, Ticket, TicketSystem};
 
 const RESEARCHER_1_ROLE: &str = include_str!("prompts/researcher_1.role.md");
@@ -126,7 +126,10 @@ fn print_research_outcome(tickets: &TicketSystem, outcome: &Outcome) {
     eprintln!("\n══════════════════════════════════════════════════════════");
     match outcome {
         Outcome::Report(ticket) => {
-            let report_value = ticket.result().expect("done ticket carries a result");
+            let report_value = ticket
+                .result
+                .as_ref()
+                .expect("done ticket carries a result");
             let title = report_value["title"].as_str().unwrap_or("(no title)");
             let research = report_value["research"].as_str().unwrap_or("(no body)");
             eprintln!(" REPORT");
@@ -148,9 +151,17 @@ fn print_research_outcome(tickets: &TicketSystem, outcome: &Outcome) {
             let all = tickets.tickets();
             let researcher_findings: Vec<_> = all
                 .iter()
-                .filter(|t| t.status() == "done")
-                .filter(|t| !t.has_label("report"))
-                .filter_map(|t| t.result_string().map(|r| (t.key().to_string(), r)))
+                .filter(|t| t.status.to_string() == "finished")
+                .filter(|t| !t.labels.iter().any(|l| l == "report"))
+                .filter_map(|t| {
+                    t.result
+                        .as_ref()
+                        .map(|v| match v {
+                            serde_json::Value::String(s) => s.clone(),
+                            other => other.to_string(),
+                        })
+                        .map(|r| (t.key.to_string(), r))
+                })
                 .collect();
             if researcher_findings.is_empty() {
                 eprintln!("(no researcher produced findings)");
@@ -172,8 +183,12 @@ enum Outcome {
 async fn wait_for_outcome(tickets: &TicketSystem) -> Outcome {
     use std::time::Duration;
 
-    let report_ticket = || tickets.find(|t| t.has_label("report") && t.status() == "done");
-    let pending = || tickets.count(|t| matches!(t.status(), "todo" | "in_progress"));
+    let report_ticket = || {
+        tickets
+            .find(|t| t.labels.iter().any(|l| l == "report") && t.status.to_string() == "finished")
+    };
+    let pending =
+        || tickets.count(|t| matches!(t.status.to_string().as_str(), "todo" | "in_progress"));
 
     loop {
         if tickets.is_cancelled() {
@@ -210,7 +225,8 @@ fn print_chain_summary(tickets: &TicketSystem) {
     }
     for t in &all {
         let parent = t
-            .parent_key()
+            .parent
+            .as_deref()
             .map(|p| format!(" ⟵ {p}"))
             .unwrap_or_default();
         let labels = if t.labels.is_empty() {
@@ -219,13 +235,18 @@ fn print_chain_summary(tickets: &TicketSystem) {
             format!(" [{}]", t.labels.join(","))
         };
         let preview = t
-            .result_string()
+            .result
+            .as_ref()
+            .map(|v| match v {
+                serde_json::Value::String(s) => s.clone(),
+                other => other.to_string(),
+            })
             .map(|s| truncate(&s, 100))
             .unwrap_or_else(|| "(no result)".into());
         eprintln!(
             "  {key} {status}{labels}{parent}\n      → {preview}",
-            key = t.key(),
-            status = t.status(),
+            key = t.key,
+            status = t.status,
         );
     }
 }

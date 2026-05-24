@@ -100,7 +100,7 @@ fn aggregate_and_report(
                 failures += 1;
                 eprintln!(
                     "{red}│{reset} {key:<8} ✗ {reason}",
-                    key = ticket.key(),
+                    key = ticket.key,
                     red = style.red,
                     reset = style.reset,
                 );
@@ -153,10 +153,10 @@ fn aggregate_and_report(
 /// against the `idx=` line in the task body so a misrouted result
 /// can't quietly slot into the wrong partition.
 fn extract_partial(ticket: &Ticket, total: usize) -> Result<(usize, i128), String> {
-    if ticket.status() != "done" {
-        return Err(ticket.status().to_string());
+    if ticket.status.to_string() != "finished" {
+        return Err(ticket.status.to_string());
     }
-    let attached = ticket.result().ok_or("no result attached")?;
+    let attached = ticket.result.as_ref().ok_or("no result attached")?;
     let idx = attached
         .get("idx")
         .and_then(|v| v.as_u64())

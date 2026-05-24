@@ -119,7 +119,10 @@ mod tests {
         assert!(matches!(outcome, ToolResult::Success(_)));
         let t = sys.get(&key).unwrap();
         assert_eq!(t.status, Status::Finished);
-        assert_eq!(t.result_string().as_deref(), Some("the answer"));
+        assert_eq!(
+            t.result.as_ref().and_then(|v| v.as_str()),
+            Some("the answer")
+        );
 
         let log = std::fs::read_to_string(dir.path().join("results.jsonl")).unwrap();
         let line = log.trim_end();
@@ -154,7 +157,6 @@ mod tests {
         }
     }
 
-
     #[tokio::test]
     async fn accepts_structured_value_when_no_schema() {
         let dir = crate::test_util::TempDir::new().unwrap();
@@ -168,7 +170,7 @@ mod tests {
         assert!(matches!(outcome, ToolResult::Success(_)));
         let t = sys.get(&key).unwrap();
         assert_eq!(t.status, Status::Finished);
-        assert_eq!(t.result().unwrap()["x"], 1);
+        assert_eq!(t.result.as_ref().unwrap()["x"], 1);
 
         // The saved `result` field is a JSON object, not an escaped
         // string of JSON.
@@ -219,7 +221,7 @@ mod tests {
         assert!(matches!(outcome, ToolResult::Success(_)));
         let t = sys.get(&key).unwrap();
         assert_eq!(t.status, Status::Finished);
-        assert_eq!(t.result().unwrap()["x"], "ok");
+        assert_eq!(t.result.as_ref().unwrap()["x"], "ok");
     }
 
     #[tokio::test]
@@ -235,7 +237,6 @@ mod tests {
         assert!(matches!(outcome, ToolResult::Error(_)));
     }
 
-
     #[tokio::test]
     async fn appends_one_line_per_completed_ticket() {
         let dir = crate::test_util::TempDir::new().unwrap();
@@ -245,7 +246,7 @@ mod tests {
 
         sys.insert(Ticket::new("a").label("alice"), "tester".into());
         let key1 = sys
-            .claim(|t| t.key() == "TICKET-1", "alice")
+            .claim(|t| t.key == "TICKET-1", "alice")
             .expect("claim must succeed");
         let ctx_alice = ctx_with(Arc::clone(&sys), "alice", dir.path().to_path_buf());
         FinishTicketTool
@@ -255,7 +256,7 @@ mod tests {
 
         sys.insert(Ticket::new("b").label("bob"), "tester".into());
         let key2 = sys
-            .claim(|t| t.key() == "TICKET-2", "bob")
+            .claim(|t| t.key == "TICKET-2", "bob")
             .expect("claim must succeed");
         let ctx_bob = ctx_with(Arc::clone(&sys), "bob", dir.path().to_path_buf());
         FinishTicketTool
@@ -292,7 +293,10 @@ mod tests {
                 "tester".into(),
             );
             let key = sys
-                .claim(|t| t.status == Status::Todo && t.has_label(&agent), &agent)
+                .claim(
+                    |t| t.status == Status::Todo && t.labels.iter().any(|l| l == &agent),
+                    &agent,
+                )
                 .expect("claim must succeed");
             expected.push((agent, key));
         }

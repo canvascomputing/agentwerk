@@ -216,8 +216,11 @@ impl Pages<'_> {
             .map_err(|e| format!("Failed to write page: {e}"))?;
 
         let index_body = render_index_file(&index);
-        write_atomic(&self.inner.knowledge_dir.join(INDEX_FILE), index_body.as_bytes())
-            .map_err(|e| format!("Failed to write index: {e}"))?;
+        write_atomic(
+            &self.inner.knowledge_dir.join(INDEX_FILE),
+            index_body.as_bytes(),
+        )
+        .map_err(|e| format!("Failed to write index: {e}"))?;
 
         let chars_used = rendered.len();
         let page_count = index.len();
@@ -258,8 +261,11 @@ impl Pages<'_> {
         }
 
         let index_body = render_index_file(&index);
-        write_atomic(&self.inner.knowledge_dir.join(INDEX_FILE), index_body.as_bytes())
-            .map_err(|e| format!("Failed to write index: {e}"))?;
+        write_atomic(
+            &self.inner.knowledge_dir.join(INDEX_FILE),
+            index_body.as_bytes(),
+        )
+        .map_err(|e| format!("Failed to write index: {e}"))?;
 
         let chars_used = render_index(&index).len();
         let page_count = index.len();
@@ -646,7 +652,13 @@ mod tests {
     #[test]
     fn load_page_returns_body_without_frontmatter() {
         let (store, _dir) = fresh_store();
-        save_page(&store, "test", "A test page", "# Test\n\nHello world.", &["tag1"]);
+        save_page(
+            &store,
+            "test",
+            "A test page",
+            "# Test\n\nHello world.",
+            &["tag1"],
+        );
         let body = store.pages().load("test").map(|p| p.content).unwrap();
         assert!(body.contains("# Test"));
         assert!(body.contains("Hello world."));
@@ -765,7 +777,15 @@ mod tests {
         let store = Knowledge::load(dir.path()).unwrap();
         // Write a very long summary to push the index past the limit.
         let long_summary = "x".repeat(DEFAULT_INDEX_CHAR_LIMIT + 1);
-        let err = store.pages().save(Page { slug: "big".into(), summary: long_summary.clone(), content: "# Big".into(), tags: vec![] }).unwrap_err();
+        let err = store
+            .pages()
+            .save(Page {
+                slug: "big".into(),
+                summary: long_summary.clone(),
+                content: "# Big".into(),
+                tags: vec![],
+            })
+            .unwrap_err();
         assert!(err.contains("chars"), "{err}");
     }
 
@@ -776,7 +796,15 @@ mod tests {
 
         // 80-char budget rejects what the default 4000-char budget would accept.
         let long_summary = "x".repeat(200);
-        let err = store.pages().save(Page { slug: "big".into(), summary: long_summary.clone(), content: "# Big".into(), tags: vec![] }).unwrap_err();
+        let err = store
+            .pages()
+            .save(Page {
+                slug: "big".into(),
+                summary: long_summary.clone(),
+                content: "# Big".into(),
+                tags: vec![],
+            })
+            .unwrap_err();
         assert!(err.contains("chars"), "{err}");
 
         // Outcome reports the custom limit.
@@ -798,7 +826,13 @@ mod tests {
     fn writes_through_one_arc_clone_are_visible_through_another() {
         let (store, _dir) = fresh_store();
         let other = Arc::clone(&store);
-        save_page(&store, "shared", "Shared note", "# Shared\n\nShared content.", &[]);
+        save_page(
+            &store,
+            "shared",
+            "Shared note",
+            "# Shared\n\nShared content.",
+            &[],
+        );
         assert!(other.index().contains("shared"));
     }
 
@@ -806,7 +840,13 @@ mod tests {
     fn entries_survive_drop_and_reopen() {
         let dir = crate::test_util::TempDir::new().unwrap();
         let s1 = Knowledge::load(dir.path()).unwrap();
-        save_page(&s1, "durable", "Survives restart", "# Durable\n\nPersisted.", &[]);
+        save_page(
+            &s1,
+            "durable",
+            "Survives restart",
+            "# Durable\n\nPersisted.",
+            &[],
+        );
         drop(s1);
         let s2 = Knowledge::load(dir.path()).unwrap();
         assert!(s2.index().contains("durable"));
@@ -852,7 +892,11 @@ mod tests {
             .exists());
         // The page should exist.
         assert!(dir.path().join(PAGES_DIR).join("legacy-notes.md").exists());
-        let body = store.pages().load("legacy-notes").map(|p| p.content).unwrap();
+        let body = store
+            .pages()
+            .load("legacy-notes")
+            .map(|p| p.content)
+            .unwrap();
         assert!(body.contains("fact one"));
         assert!(body.contains("fact two"));
     }
@@ -860,7 +904,13 @@ mod tests {
     #[test]
     fn save_page_with_tags() {
         let (store, dir) = fresh_store();
-        save_page(&store, "tagged", "A tagged page", "# Tagged\n\nWith tags.", &["config", "deploy"]);
+        save_page(
+            &store,
+            "tagged",
+            "A tagged page",
+            "# Tagged\n\nWith tags.",
+            &["config", "deploy"],
+        );
         let raw = fs::read_to_string(dir.path().join(PAGES_DIR).join("tagged.md")).unwrap();
         assert!(raw.contains("tags: [config, deploy]"));
     }
@@ -879,14 +929,30 @@ mod tests {
     #[test]
     fn write_page_rejects_empty_summary() {
         let (store, _dir) = fresh_store();
-        let err = store.pages().save(Page { slug: "test".into(), summary: ("").to_string(), content: "content".into(), tags: vec![] }).unwrap_err();
+        let err = store
+            .pages()
+            .save(Page {
+                slug: "test".into(),
+                summary: ("").to_string(),
+                content: "content".into(),
+                tags: vec![],
+            })
+            .unwrap_err();
         assert!(err.contains("Summary"));
     }
 
     #[test]
     fn write_page_rejects_empty_content() {
         let (store, _dir) = fresh_store();
-        let err = store.pages().save(Page { slug: "test".into(), summary: ("summary").to_string(), content: "".into(), tags: vec![] }).unwrap_err();
+        let err = store
+            .pages()
+            .save(Page {
+                slug: "test".into(),
+                summary: ("summary").to_string(),
+                content: "".into(),
+                tags: vec![],
+            })
+            .unwrap_err();
         assert!(err.contains("Content"));
     }
 

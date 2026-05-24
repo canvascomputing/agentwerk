@@ -213,15 +213,15 @@ mod tests {
         let parent = sys.get(&parent_key).unwrap();
         assert_eq!(parent.status, Status::Finished);
         assert_eq!(
-            parent.result_string().as_deref(),
+            parent.result.as_ref().and_then(|v| v.as_str()),
             Some("summary of alice's work")
         );
 
         let child = sys.get("TICKET-2").unwrap();
         assert_eq!(child.status, Status::Todo);
-        assert_eq!(child.parent_key(), Some(parent_key.as_str()));
+        assert_eq!(child.parent.as_deref(), Some(parent_key.as_str()));
         assert_eq!(child.labels, vec!["bob".to_string()]);
-        assert_eq!(child.reporter(), "alice");
+        assert_eq!(child.reporter, "alice");
     }
 
     #[tokio::test]
@@ -286,7 +286,7 @@ mod tests {
 
         let parent = sys.get(&parent_key).unwrap();
         assert_eq!(parent.status, Status::InProgress);
-        assert!(parent.result().is_none());
+        assert!(parent.result.is_none());
         assert!(
             sys.get("TICKET-2").is_none(),
             "no child created on schema failure"

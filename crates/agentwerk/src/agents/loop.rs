@@ -16,7 +16,7 @@ use crate::tools::{ToolCall, ToolContext, ToolError};
 use super::agent::Agent;
 use super::compaction;
 use super::retry::{ExponentialRetry, ImmediateRetry, Retry};
-use super::stats::LoopStats;
+use super::stats::{LoopStats, Stats};
 use super::tickets::{policy_violated_kind, to_messages, Comment, Status};
 use crate::prompts::{retry_directive, schema_retry_detail};
 use crate::tools::TICKET_FINISHER_TOOLS;
@@ -37,7 +37,7 @@ struct TicketScope<'a, F> {
     model_name: &'a str,
 
     emit: &'a F,
-    stats: &'a super::stats::Stats,
+    stats: &'a Stats,
     ticket_system: &'a Arc<crate::agents::tickets::TicketSystem>,
 }
 
@@ -106,7 +106,7 @@ async fn try_compact<F: Fn(EventKind)>(
     let Some(ticket) = scope.ticket_system.get(scope.key) else {
         return LoopAction::Stop;
     };
-    let messages = to_messages(ticket.comments());
+    let messages = to_messages(&ticket.comments);
     match compaction::compact(scope.provider, scope.model_name, &messages).await {
         Ok(summary) => {
             if let Some(summary) = summary {
@@ -192,10 +192,10 @@ pub(super) async fn handle_tickets(agent: Agent) {
                 ticket_system
                     .find(|t| {
                         t.status == Status::InProgress
-                            && t.has_label(agent.get_name())
+                            && t.labels.iter().any(|l| l == agent.get_name())
                             && t.is_waiting_for_response()
                     })
-                    .map(|t| t.key().to_string())
+                    .map(|t| t.key.clone())
             })
         else {
             tokio::time::sleep(POLL_INTERVAL).await;
@@ -244,7 +244,7 @@ async fn process_ticket(
     let system_prompt = agent.system_prompt(Some(&knowledge_index));
 
     // Seed once; resumed tickets keep their transcript.
-    if ticket.comments().is_empty() {
+    if ticket.comments.is_empty() {
         ticket_system.add_comment(key, Comment::system_text(system_prompt.clone()));
         if let Some(context_msg) = agent.context_message(&policies, &ticket_system.stats) {
             ticket_system.add_comment(key, Comment::user_text(context_msg));
@@ -310,7 +310,7 @@ async fn process_ticket(
         // Derive messages from the ticket each turn so the loop carries
         // no parallel transcript: every `add_comment` is visible on the
         // next iteration without manual bookkeeping.
-        let mut messages = to_messages(ticket.comments());
+        let mut messages = to_messages(&ticket.comments);
 
         let tools = agent.tool_definitions();
 
@@ -326,7 +326,7 @@ async fn process_ticket(
                     // the post-compaction transcript.
                     messages = ticket_system
                         .get(key)
-                        .map(|t| to_messages(t.comments()))
+                        .map(|t| to_messages(&t.comments))
                         .unwrap_or_default();
                 }
             }
@@ -466,8 +466,7 @@ async fn process_ticket(
                     .filter(|&n| agent.tool_registry().get(n).is_some())
                     .collect();
                 if !registered.is_empty() {
-                    consecutive_schema_failures =
-                        consecutive_schema_failures.saturating_add(1);
+                    consecutive_schema_failures = consecutive_schema_failures.saturating_add(1);
                     let detail = format!(
                         "Your reply was text-only. Call `{}` to finish the ticket \
                          — your work is not recorded until you do.",
@@ -478,15 +477,9 @@ async fn process_ticket(
                         max_attempts: max_schema_retries,
                         message: detail.clone(),
                     });
-                    ticket_system
-                        .add_comment(key, Comment::user_text(retry_directive(&detail)));
+                    ticket_system.add_comment(key, Comment::user_text(retry_directive(&detail)));
                     if consecutive_schema_failures >= max_schema_retries {
-                        fail_ticket_schema_exhausted(
-                            ticket_system,
-                            key,
-                            max_schema_retries,
-                            &emit,
-                        );
+                        fail_ticket_schema_exhausted(ticket_system, key, max_schema_retries, &emit);
                         return;
                     }
                 }
@@ -1224,7 +1217,7 @@ mod tests {
         assert_eq!(done, 1);
         assert_eq!(failed, 0);
         assert_eq!(ticket.status, Status::Finished);
-        assert_eq!(ticket.result().unwrap()["partial_sum"], 42);
+        assert_eq!(ticket.result.as_ref().unwrap()["partial_sum"], 42);
     }
 
     // Schema retries
@@ -2429,7 +2422,7 @@ mod tests {
 
         // The comment carries the path relative to the tickets dir so
         // the transcript stays portable across moves of `.agentwerk/`.
-        let tool_result_path = ticket.comments().iter().find_map(|c| {
+        let tool_result_path = ticket.comments.iter().find_map(|c| {
             c.content.iter().find_map(|b| match b {
                 CommentContent::ToolResult { id, path, .. } if id == "call-1" => path.clone(),
                 _ => None,
@@ -2809,7 +2802,7 @@ mod tests {
         let provider = MockProvider::with_results(vec![Ok(write_result_response("ok"))]);
         let (_, _, ticket) = run_one(provider, 3, 10, None).await;
 
-        let comments = ticket.comments();
+        let comments = &ticket.comments;
         // [system(prompt), user(context prelude), user(task), assistant(tool_use), user(tool_result)]
         assert_eq!(comments.len(), 5, "got {comments:?}");
 
@@ -2864,7 +2857,7 @@ mod tests {
         ]);
         let (_, _, ticket) = run_one(provider, 3, 10, Some(schema_for_partial_sum())).await;
 
-        let comments = ticket.comments();
+        let comments = &ticket.comments;
 
         // First assistant comment is the text-only reply.
         let first_assistant = comments
@@ -2918,7 +2911,7 @@ mod tests {
         ]);
         let (_, _, ticket) = run_one(provider, 0, 10, Some(string_schema())).await;
 
-        let comments = ticket.comments();
+        let comments = &ticket.comments;
 
         // System prompt survived as the leading entry.
         assert_eq!(comments[0].author, "system");

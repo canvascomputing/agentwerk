@@ -14,6 +14,8 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
+use crate::agents::tickets::Status;
+
 /// Recorder protocol for the agent loop. Each agent holds an
 /// `Arc<dyn LoopStats + Send + Sync>` and reports loop events through
 /// it. Write-only; reads happen on `Stats` directly.
@@ -176,8 +178,8 @@ impl Stats {
     /// Mean of finished tickets' creation→terminal spans. `None`
     /// while no ticket has finished.
     pub fn avg_ticket_duration(&self) -> Option<Duration> {
-        let n =
-            self.tickets_finished.load(Ordering::Relaxed) + self.tickets_failed.load(Ordering::Relaxed);
+        let n = self.tickets_finished.load(Ordering::Relaxed)
+            + self.tickets_failed.load(Ordering::Relaxed);
         if n == 0 {
             None
         } else {
@@ -196,8 +198,8 @@ impl Stats {
     /// Mean of finished tickets' started→terminal spans. `None` while
     /// no ticket has finished.
     pub fn avg_work_duration(&self) -> Option<Duration> {
-        let n =
-            self.tickets_finished.load(Ordering::Relaxed) + self.tickets_failed.load(Ordering::Relaxed);
+        let n = self.tickets_finished.load(Ordering::Relaxed)
+            + self.tickets_failed.load(Ordering::Relaxed);
         if n == 0 {
             None
         } else {
@@ -225,8 +227,8 @@ impl Stats {
             }
             let ticket_dur = ticket_duration(t).unwrap_or_default();
             let work_dur = work_duration(t).unwrap_or_default();
-            match t.status() {
-                "finished" => {
+            match t.status {
+                Status::Finished => {
                     TicketStats::record_finished(&stats, ticket_dur, work_dur);
                     for label in t.labels.iter() {
                         TicketStats::record_finished(
@@ -236,7 +238,7 @@ impl Stats {
                         );
                     }
                 }
-                "failed" => {
+                Status::Failed => {
                     TicketStats::record_failed(&stats, ticket_dur, work_dur);
                     for label in t.labels.iter() {
                         TicketStats::record_failed(
@@ -246,7 +248,7 @@ impl Stats {
                         );
                     }
                 }
-                _ => {}
+                Status::Todo | Status::InProgress => {}
             }
         }
         stats
@@ -272,7 +274,8 @@ impl crate::persistence::Persist for Stats {
 
     fn load(dir: &std::path::Path, _: &Self::Key) -> std::io::Result<Self> {
         let bytes = std::fs::read(dir.join(Self::FILE))?;
-        let value: serde_json::Value = serde_json::from_slice(&bytes).map_err(std::io::Error::other)?;
+        let value: serde_json::Value =
+            serde_json::from_slice(&bytes).map_err(std::io::Error::other)?;
         let stats = Stats::new();
         stats.load_fields(&value);
         if let Some(labels) = value.get("labels").and_then(|v| v.as_object()) {
@@ -339,13 +342,13 @@ impl Stats {
 }
 
 fn ticket_duration(t: &crate::agents::tickets::Ticket) -> Option<Duration> {
-    let end = t.finished_at().or_else(|| t.failed_at())?;
-    Some(Duration::from_millis(end.saturating_sub(t.created_at())))
+    let end = t.finished_at.or(t.failed_at)?;
+    Some(Duration::from_millis(end.saturating_sub(t.created_at)))
 }
 
 fn work_duration(t: &crate::agents::tickets::Ticket) -> Option<Duration> {
-    let end = t.finished_at().or_else(|| t.failed_at())?;
-    let start = t.started_at()?;
+    let end = t.finished_at.or(t.failed_at)?;
+    let start = t.started_at?;
     Some(Duration::from_millis(end.saturating_sub(start)))
 }
 
