@@ -7,7 +7,7 @@
 //! `handover_ticket` to the next agent. The final researcher
 //! attaches the report schema to its handover so the report writer's
 //! result is validated by the framework. The report writer finishes
-//! the chain with `close_ticket`.
+//! the chain with `finish_ticket`.
 //!
 //! Usage: deep-research <QUESTION>
 //!
@@ -240,7 +240,7 @@ fn print_stats(tickets: &TicketSystem) {
     eprintln!("  Work time: {:?}", stats.work_duration());
     eprintln!(
         "  Tickets  : {} done, {} failed ({:.0}%)",
-        stats.tickets_done(),
+        stats.tickets_finished(),
         stats.tickets_failed(),
         stats
             .tickets_success_rate()
@@ -378,7 +378,7 @@ fn log_event(event: &Event) {
         EventKind::PolicyViolated { kind, limit } => {
             eprintln!("│  ⚠ policy: {kind:?} limit={limit}");
         }
-        EventKind::TicketDone { key } => {
+        EventKind::TicketFinished { key } => {
             eprintln!("└─ ✓ finished {key}");
         }
         EventKind::TicketFailed { key } => {
@@ -419,7 +419,7 @@ fn format_tool_call(tool_name: &str, input: &serde_json::Value) -> Vec<String> {
                 format!("      · findings: {result}"),
             ]
         }
-        "close_ticket" => {
+        "finish_ticket" => {
             let result = preview_value(input.get("result"), 80);
             vec![format!("✅ final result: {result}")]
         }

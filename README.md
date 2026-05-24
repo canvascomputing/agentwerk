@@ -262,7 +262,7 @@ let report: Report = ticket.result_as().unwrap();
 | `parent_key()` | Return the parent ticket's key when one was set. |
 | `created_at()` | Return the millisecond timestamp at which the ticket was created. |
 | `started_at()` | Return the millisecond timestamp at which an agent claimed the ticket. |
-| `finished_at()` | Return the millisecond timestamp at which the ticket was marked done. |
+| `finished_at()` | Return the millisecond timestamp at which the ticket was marked finished. |
 | `failed_at()` | Return the millisecond timestamp at which the ticket failed. |
 | `elapsed()` | Return the creation-to-terminal duration once the ticket is done or failed. |
 
@@ -333,8 +333,8 @@ Give agents access to tools helping them to solve a given task. Each tool expose
 | | `ListDirectoryTool` | List files and directories. |
 | **Shell** | `BashTool` | Run a shell command matching an allowed pattern. |
 | **Web** | `WebFetchTool` | Fetch a URL and read its body. |
-| **Tickets** | `CloseTicketTool` | Write the result for the current ticket and mark it done. |
-| | `HandoverTicketTool` | Write the result, mark the ticket done, and hand follow-up work to another agent. |
+| **Tickets** | `FinishTicketTool` | Write the result for the current ticket and mark it finished. |
+| | `HandoverTicketTool` | Write the result, mark the ticket finished, and hand follow-up work to another agent. |
 | | `ManageTicketsTool` | Read the ticket queue and create or edit tickets. |
 | | `ReadTicketsTool` | Read the ticket queue. |
 | **Knowledge** | `KnowledgeTool` | Write, read, remove, or list pages in the agent's knowledge store. |
@@ -453,7 +453,7 @@ use agentwerk::event::{Event, EventKind};
 
 let agent = Agent::new()
     .event_handler(Arc::new(|event: Event| {
-        if let EventKind::TicketDone { key } = &event.kind {
+        if let EventKind::TicketFinished { key } = &event.kind {
             eprintln!("[{}] done {key}", event.agent_name);
         }
     }));
@@ -462,7 +462,7 @@ let agent = Agent::new()
 | | Kind | Description |
 |-|------|-------------|
 | **Ticket** | `TicketStarted` | An agent claimed a ticket. |
-| | `TicketDone` | A ticket finished successfully. |
+| | `TicketFinished` | A ticket finished successfully. |
 | | `TicketFailed` | A ticket failed. |
 | **Provider** | `RequestStarted` | A provider request started. |
 | | `RequestFinished` | A provider request finished and reported its token usage. |
@@ -494,7 +494,7 @@ let scan = s.stats_for_label("scan");
 | **Work** | `work_duration()` | Return the sum of every finished ticket's start-to-end span. |
 | | `avg_work_duration()` | Return the mean of the same span, or `None` until a ticket finishes. |
 | **Tickets** | `tickets_created()` | Return the count of tickets created. |
-| | `tickets_done()` | Return the count of tickets that finished successfully. |
+| | `tickets_finished()` | Return the count of tickets that finished successfully. |
 | | `tickets_failed()` | Return the count of tickets that failed. |
 | | `tickets_success_rate()` | Return `done / (done + failed)`, or `None` until a ticket finishes. |
 | | `ticket_duration()` | Return the sum of every finished ticket's creation-to-end span. |

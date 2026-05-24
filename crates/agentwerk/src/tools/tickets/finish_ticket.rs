@@ -1,7 +1,7 @@
 //! Single-purpose tool for finishing a ticket. Validates the agent's
 //! result against the ticket's schema (when set), appends an NDJSON
 //! line to `<dir>/results.jsonl`, attaches the `TicketResult`
-//! to the ticket, and transitions the ticket to `Done`.
+//! to the ticket, and transitions the ticket to `Finished`.
 
 use std::future::Future;
 use std::pin::Pin;
@@ -21,11 +21,11 @@ use super::super::tool::{ToolContext, ToolLike, ToolResult};
 use super::super::tool_file::ToolFile;
 use super::{resolve_current_key, write_result};
 
-pub struct CloseTicketTool;
+pub struct FinishTicketTool;
 
 fn tool_file() -> &'static ToolFile {
     static FILE: OnceLock<ToolFile> = OnceLock::new();
-    FILE.get_or_init(|| ToolFile::parse(include_str!("close_ticket.tool.json")))
+    FILE.get_or_init(|| ToolFile::parse(include_str!("finish_ticket.tool.json")))
 }
 
 fn description() -> &'static str {
@@ -33,7 +33,7 @@ fn description() -> &'static str {
     DESC.get_or_init(|| tool_file().render_markdown())
 }
 
-impl ToolLike for CloseTicketTool {
+impl ToolLike for FinishTicketTool {
     fn name(&self) -> &str {
         &tool_file().name
     }
@@ -107,18 +107,18 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn writes_string_result_and_marks_done() {
+    async fn writes_string_result_and_marks_finished() {
         let dir = crate::test_util::TempDir::new().unwrap();
         let (sys, key) = one_ticket("alice");
         sys.dir(dir.path().to_path_buf());
         let ctx = ctx_with(Arc::clone(&sys), "alice", dir.path().to_path_buf());
-        let outcome = CloseTicketTool
+        let outcome = FinishTicketTool
             .call(serde_json::json!({"result": "the answer"}), &ctx)
             .await
             .unwrap();
         assert!(matches!(outcome, ToolResult::Success(_)));
         let t = sys.get(&key).unwrap();
-        assert_eq!(t.status, Status::Done);
+        assert_eq!(t.status, Status::Finished);
         assert_eq!(t.result_string().as_deref(), Some("the answer"));
 
         let log = std::fs::read_to_string(dir.path().join("results.jsonl")).unwrap();
@@ -141,7 +141,7 @@ mod tests {
             let (sys, key) = one_ticket("alice");
             sys.dir(dir.path().to_path_buf());
             let ctx = ctx_with(Arc::clone(&sys), "alice", dir.path().to_path_buf());
-            let outcome = CloseTicketTool
+            let outcome = FinishTicketTool
                 .call(serde_json::json!({"result": value}), &ctx)
                 .await
                 .unwrap();
@@ -150,7 +150,7 @@ mod tests {
                 "expected success for {value:?}"
             );
             let t = sys.get(&key).unwrap();
-            assert_eq!(t.status, Status::Done);
+            assert_eq!(t.status, Status::Finished);
         }
     }
 
@@ -161,13 +161,13 @@ mod tests {
         let (sys, key) = one_ticket("alice");
         sys.dir(dir.path().to_path_buf());
         let ctx = ctx_with(Arc::clone(&sys), "alice", dir.path().to_path_buf());
-        let outcome = CloseTicketTool
+        let outcome = FinishTicketTool
             .call(serde_json::json!({"result": {"x": 1, "y": [2, 3]}}), &ctx)
             .await
             .unwrap();
         assert!(matches!(outcome, ToolResult::Success(_)));
         let t = sys.get(&key).unwrap();
-        assert_eq!(t.status, Status::Done);
+        assert_eq!(t.status, Status::Finished);
         assert_eq!(t.result().unwrap()["x"], 1);
 
         // The saved `result` field is a JSON object, not an escaped
@@ -203,7 +203,7 @@ mod tests {
         let ctx = ctx_with(Arc::clone(&sys), "alice", dir.path().to_path_buf());
 
         // wrong shape
-        let outcome = CloseTicketTool
+        let outcome = FinishTicketTool
             .call(serde_json::json!({"result": {"x": 7}}), &ctx)
             .await
             .unwrap();
@@ -212,13 +212,13 @@ mod tests {
         assert_eq!(t.status, Status::InProgress);
 
         // valid shape
-        let outcome = CloseTicketTool
+        let outcome = FinishTicketTool
             .call(serde_json::json!({"result": {"x": "ok"}}), &ctx)
             .await
             .unwrap();
         assert!(matches!(outcome, ToolResult::Success(_)));
         let t = sys.get(&key).unwrap();
-        assert_eq!(t.status, Status::Done);
+        assert_eq!(t.status, Status::Finished);
         assert_eq!(t.result().unwrap()["x"], "ok");
     }
 
@@ -228,7 +228,7 @@ mod tests {
         let sys = TicketSystem::new();
         sys.dir(shared_test_dir().to_path_buf());
         let ctx = ctx_with(Arc::clone(&sys), "alice", dir.path().to_path_buf());
-        let outcome = CloseTicketTool
+        let outcome = FinishTicketTool
             .call(serde_json::json!({"result": "x"}), &ctx)
             .await
             .unwrap();
@@ -248,7 +248,7 @@ mod tests {
             .claim(|t| t.key() == "TICKET-1", "alice")
             .expect("claim must succeed");
         let ctx_alice = ctx_with(Arc::clone(&sys), "alice", dir.path().to_path_buf());
-        CloseTicketTool
+        FinishTicketTool
             .call(serde_json::json!({"result": "from alice"}), &ctx_alice)
             .await
             .unwrap();
@@ -258,7 +258,7 @@ mod tests {
             .claim(|t| t.key() == "TICKET-2", "bob")
             .expect("claim must succeed");
         let ctx_bob = ctx_with(Arc::clone(&sys), "bob", dir.path().to_path_buf());
-        CloseTicketTool
+        FinishTicketTool
             .call(serde_json::json!({"result": "from bob"}), &ctx_bob)
             .await
             .unwrap();
@@ -304,7 +304,7 @@ mod tests {
             let agent = agent.clone();
             handles.push(tokio::spawn(async move {
                 let ctx = ctx_with(sys, &agent, dir_path);
-                CloseTicketTool
+                FinishTicketTool
                     .call(serde_json::json!({"result": format!("payload_{i}")}), &ctx)
                     .await
                     .unwrap()

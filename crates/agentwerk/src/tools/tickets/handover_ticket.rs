@@ -1,7 +1,7 @@
 //! Atomic finisher + spawner: validate the agent's `result`, finish the
 //! current ticket through the shared `write_result` helper, then insert
 //! a child ticket pinned to `to` with the current ticket recorded as
-//! its `parent`. Sister tool to `CloseTicketTool` — both finish the
+//! its `parent`. Sister tool to `FinishTicketTool`: both finish the
 //! current ticket; this one also chains a follow-up.
 
 use std::future::Future;
@@ -98,7 +98,7 @@ impl ToolLike for HandoverTicketTool {
                 }
                 Some(_) => {
                     return Ok(ToolResult::error(
-                        "`result` must be a string — pass plain prose, not numbers or arrays. For structured results use `close_ticket` instead.",
+                        "`result` must be a string: pass plain prose, not numbers or arrays. For structured results use `finish_ticket` instead.",
                     ))
                 }
             };
@@ -149,7 +149,7 @@ impl ToolLike for HandoverTicketTool {
             let child_key = ticket_system.insert(child, reporter);
 
             Ok(ToolResult::success(format!(
-                "Ticket {parent_key} marked done; handed off to {child_key} (to: {to})"
+                "Ticket {parent_key} marked finished; handed off to {child_key} (to: {to})"
             )))
         })
     }
@@ -211,7 +211,7 @@ mod tests {
         assert!(matches!(outcome, ToolResult::Success(_)));
 
         let parent = sys.get(&parent_key).unwrap();
-        assert_eq!(parent.status, Status::Done);
+        assert_eq!(parent.status, Status::Finished);
         assert_eq!(
             parent.result_string().as_deref(),
             Some("summary of alice's work")

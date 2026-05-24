@@ -67,8 +67,8 @@ impl Event {
 pub enum EventKind {
     /// Agent claimed a ticket and began working on it.
     TicketStarted { key: String },
-    /// Ticket settled with `Status::Done`.
-    TicketDone { key: String },
+    /// Ticket settled with `Status::Finished`.
+    TicketFinished { key: String },
     /// Ticket settled with `Status::Failed`.
     TicketFailed { key: String },
     /// Provider request began.
@@ -157,8 +157,8 @@ pub fn default_logger() -> Arc<dyn Fn(Event) + Send + Sync> {
             EventKind::TicketStarted { key } => {
                 eprintln!("[{agent}] started {key}");
             }
-            EventKind::TicketDone { key } => {
-                eprintln!("[{agent}] done {key}");
+            EventKind::TicketFinished { key } => {
+                eprintln!("[{agent}] finished {key}");
             }
             EventKind::TicketFailed { key } => {
                 eprintln!("[{agent}] failed {key}");
@@ -238,7 +238,7 @@ mod tests {
     fn all_variants() -> Vec<EventKind> {
         vec![
             EventKind::TicketStarted { key: "T-1".into() },
-            EventKind::TicketDone { key: "T-1".into() },
+            EventKind::TicketFinished { key: "T-1".into() },
             EventKind::TicketFailed { key: "T-1".into() },
             EventKind::RequestStarted { model: "m".into() },
             EventKind::RequestFinished {

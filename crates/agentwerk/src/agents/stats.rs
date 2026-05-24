@@ -33,7 +33,7 @@ pub(crate) trait TicketStats: Send + Sync {
     fn record_started(&self, when: u64);
     /// Adds `ticket_duration.as_secs()` and `work_duration.as_secs()` to
     /// the corresponding atomic sums.
-    fn record_done(&self, ticket_duration: Duration, work_duration: Duration);
+    fn record_finished(&self, ticket_duration: Duration, work_duration: Duration);
     fn record_failed(&self, ticket_duration: Duration, work_duration: Duration);
 }
 
@@ -47,7 +47,7 @@ pub struct Stats {
     input_tokens: AtomicU64,
     output_tokens: AtomicU64,
     tickets_created: AtomicU64,
-    tickets_done: AtomicU64,
+    tickets_finished: AtomicU64,
     tickets_failed: AtomicU64,
 
     /// Run-start wall clock (millis since epoch). 0 = unset; first
@@ -78,7 +78,7 @@ impl Stats {
             input_tokens: AtomicU64::new(0),
             output_tokens: AtomicU64::new(0),
             tickets_created: AtomicU64::new(0),
-            tickets_done: AtomicU64::new(0),
+            tickets_finished: AtomicU64::new(0),
             tickets_failed: AtomicU64::new(0),
             started_at: AtomicU64::new(0),
             finished_at: AtomicU64::new(0),
@@ -127,8 +127,8 @@ impl Stats {
         self.tickets_created.load(Ordering::Relaxed)
     }
 
-    pub fn tickets_done(&self) -> u64 {
-        self.tickets_done.load(Ordering::Relaxed)
+    pub fn tickets_finished(&self) -> u64 {
+        self.tickets_finished.load(Ordering::Relaxed)
     }
 
     pub fn tickets_failed(&self) -> u64 {
@@ -155,10 +155,10 @@ impl Stats {
         Some(Duration::from_millis(now.saturating_sub(s)))
     }
 
-    /// `tickets_done / (tickets_done + tickets_failed)`. `None` when
+    /// `tickets_finished / (tickets_finished + tickets_failed)`. `None` when
     /// no ticket has reached a terminal state.
     pub fn tickets_success_rate(&self) -> Option<f64> {
-        let done = self.tickets_done.load(Ordering::Relaxed);
+        let done = self.tickets_finished.load(Ordering::Relaxed);
         let failed = self.tickets_failed.load(Ordering::Relaxed);
         let total = done + failed;
         if total == 0 {
@@ -177,7 +177,7 @@ impl Stats {
     /// while no ticket has finished.
     pub fn avg_ticket_duration(&self) -> Option<Duration> {
         let n =
-            self.tickets_done.load(Ordering::Relaxed) + self.tickets_failed.load(Ordering::Relaxed);
+            self.tickets_finished.load(Ordering::Relaxed) + self.tickets_failed.load(Ordering::Relaxed);
         if n == 0 {
             None
         } else {
@@ -197,7 +197,7 @@ impl Stats {
     /// no ticket has finished.
     pub fn avg_work_duration(&self) -> Option<Duration> {
         let n =
-            self.tickets_done.load(Ordering::Relaxed) + self.tickets_failed.load(Ordering::Relaxed);
+            self.tickets_finished.load(Ordering::Relaxed) + self.tickets_failed.load(Ordering::Relaxed);
         if n == 0 {
             None
         } else {
@@ -226,10 +226,10 @@ impl Stats {
             let ticket_dur = ticket_duration(t).unwrap_or_default();
             let work_dur = work_duration(t).unwrap_or_default();
             match t.status() {
-                "done" => {
-                    TicketStats::record_done(&stats, ticket_dur, work_dur);
+                "finished" => {
+                    TicketStats::record_finished(&stats, ticket_dur, work_dur);
                     for label in t.labels.iter() {
-                        TicketStats::record_done(
+                        TicketStats::record_finished(
                             &*stats.stats_for_label(label),
                             ticket_dur,
                             work_dur,
@@ -308,7 +308,7 @@ impl Stats {
             "input_tokens": self.input_tokens.load(Ordering::Relaxed),
             "output_tokens": self.output_tokens.load(Ordering::Relaxed),
             "tickets_created": self.tickets_created.load(Ordering::Relaxed),
-            "tickets_done": self.tickets_done.load(Ordering::Relaxed),
+            "tickets_finished": self.tickets_finished.load(Ordering::Relaxed),
             "tickets_failed": self.tickets_failed.load(Ordering::Relaxed),
             "total_ticket_duration_secs": self.total_ticket_duration.load(Ordering::Relaxed),
             "total_work_duration_secs": self.total_work_duration.load(Ordering::Relaxed),
@@ -327,8 +327,8 @@ impl Stats {
             .store(get("output_tokens"), Ordering::Relaxed);
         self.tickets_created
             .store(get("tickets_created"), Ordering::Relaxed);
-        self.tickets_done
-            .store(get("tickets_done"), Ordering::Relaxed);
+        self.tickets_finished
+            .store(get("tickets_finished"), Ordering::Relaxed);
         self.tickets_failed
             .store(get("tickets_failed"), Ordering::Relaxed);
         self.total_ticket_duration
@@ -389,8 +389,8 @@ impl TicketStats for Stats {
             .compare_exchange(0, when, Ordering::Relaxed, Ordering::Relaxed);
     }
 
-    fn record_done(&self, ticket_duration: Duration, work_duration: Duration) {
-        self.tickets_done.fetch_add(1, Ordering::Relaxed);
+    fn record_finished(&self, ticket_duration: Duration, work_duration: Duration) {
+        self.tickets_finished.fetch_add(1, Ordering::Relaxed);
         self.total_ticket_duration
             .fetch_add(ticket_duration.as_secs(), Ordering::Relaxed);
         self.total_work_duration
@@ -420,7 +420,7 @@ mod tests {
         assert_eq!(s.input_tokens(), 0);
         assert_eq!(s.output_tokens(), 0);
         assert_eq!(s.tickets_created(), 0);
-        assert_eq!(s.tickets_done(), 0);
+        assert_eq!(s.tickets_finished(), 0);
         assert_eq!(s.tickets_failed(), 0);
         assert_eq!(s.ticket_duration(), Duration::ZERO);
         assert_eq!(s.work_duration(), Duration::ZERO);
@@ -453,11 +453,11 @@ mod tests {
         let s = Stats::new();
         s.record_created();
         s.record_created();
-        s.record_done(Duration::from_secs(3), Duration::from_secs(2));
+        s.record_finished(Duration::from_secs(3), Duration::from_secs(2));
         s.record_failed(Duration::from_secs(5), Duration::from_secs(4));
 
         assert_eq!(s.tickets_created(), 2);
-        assert_eq!(s.tickets_done(), 1);
+        assert_eq!(s.tickets_finished(), 1);
         assert_eq!(s.tickets_failed(), 1);
         assert_eq!(s.ticket_duration(), Duration::from_secs(8));
         assert_eq!(s.work_duration(), Duration::from_secs(6));
@@ -490,8 +490,8 @@ mod tests {
     #[test]
     fn tickets_success_rate_done_failed_mix() {
         let s = Stats::new();
-        s.record_done(Duration::from_secs(1), Duration::from_secs(1));
-        s.record_done(Duration::from_secs(2), Duration::from_secs(2));
+        s.record_finished(Duration::from_secs(1), Duration::from_secs(1));
+        s.record_finished(Duration::from_secs(2), Duration::from_secs(2));
         s.record_failed(Duration::from_secs(3), Duration::from_secs(3));
         let rate = s.tickets_success_rate().unwrap();
         assert!((rate - 2.0 / 3.0).abs() < 1e-9, "rate = {rate}");
@@ -506,7 +506,7 @@ mod tests {
     #[test]
     fn avg_ticket_duration_is_arithmetic_mean() {
         let s = Stats::new();
-        s.record_done(Duration::from_secs(2), Duration::from_secs(2));
+        s.record_finished(Duration::from_secs(2), Duration::from_secs(2));
         s.record_failed(Duration::from_secs(4), Duration::from_secs(4));
         assert_eq!(s.avg_ticket_duration(), Some(Duration::from_secs(3)));
     }
@@ -514,7 +514,7 @@ mod tests {
     #[test]
     fn avg_work_duration_is_arithmetic_mean() {
         let s = Stats::new();
-        s.record_done(Duration::from_secs(3), Duration::from_secs(2));
+        s.record_finished(Duration::from_secs(3), Duration::from_secs(2));
         s.record_failed(Duration::from_secs(5), Duration::from_secs(4));
         assert_eq!(s.avg_work_duration(), Some(Duration::from_secs(3)));
     }
@@ -544,9 +544,9 @@ mod tests {
     fn stats_for_label_slice_run_duration_is_none() {
         let s = Stats::new();
         let slice = s.stats_for_label("scan");
-        slice.record_done(Duration::from_secs(2), Duration::from_secs(1));
+        slice.record_finished(Duration::from_secs(2), Duration::from_secs(1));
         assert!(slice.run_duration().is_none());
-        assert_eq!(slice.tickets_done(), 1);
+        assert_eq!(slice.tickets_finished(), 1);
     }
 
     #[test]
@@ -555,8 +555,8 @@ mod tests {
         // models 2 agents working in parallel.
         let s = Stats::new();
         s.record_started(1_000);
-        s.record_done(Duration::from_secs(5), Duration::from_secs(5));
-        s.record_done(Duration::from_secs(5), Duration::from_secs(5));
+        s.record_finished(Duration::from_secs(5), Duration::from_secs(5));
+        s.record_finished(Duration::from_secs(5), Duration::from_secs(5));
         s.mark_finished(7_000);
         assert_eq!(s.run_duration(), Some(Duration::from_secs(6)));
         assert_eq!(s.work_duration(), Duration::from_secs(10));
@@ -573,14 +573,14 @@ mod tests {
         s.record_tool_call();
         s.record_error();
         s.record_created();
-        s.record_done(Duration::from_secs(7), Duration::from_secs(5));
+        s.record_finished(Duration::from_secs(7), Duration::from_secs(5));
         s.record_failed(Duration::from_secs(3), Duration::from_secs(2));
 
         let slice = s.stats_for_label("scan");
         slice.record_turn();
         slice.record_request(40, 20);
         slice.record_created();
-        slice.record_done(Duration::from_secs(4), Duration::from_secs(3));
+        slice.record_finished(Duration::from_secs(4), Duration::from_secs(3));
 
         use crate::persistence::Persist;
         s.save(dir.path()).unwrap();
@@ -592,7 +592,7 @@ mod tests {
         assert_eq!(restored.input_tokens(), 100);
         assert_eq!(restored.output_tokens(), 50);
         assert_eq!(restored.tickets_created(), 1);
-        assert_eq!(restored.tickets_done(), 1);
+        assert_eq!(restored.tickets_finished(), 1);
         assert_eq!(restored.tickets_failed(), 1);
         assert_eq!(restored.ticket_duration(), Duration::from_secs(10));
         assert_eq!(restored.work_duration(), Duration::from_secs(7));
@@ -600,7 +600,7 @@ mod tests {
         let restored_slice = restored.stats_for_label("scan");
         assert_eq!(restored_slice.turns(), 1);
         assert_eq!(restored_slice.input_tokens(), 40);
-        assert_eq!(restored_slice.tickets_done(), 1);
+        assert_eq!(restored_slice.tickets_finished(), 1);
         assert_eq!(restored_slice.ticket_duration(), Duration::from_secs(4));
     }
 }

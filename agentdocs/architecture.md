@@ -31,14 +31,14 @@ The invariants that shape how code fits together. Layout says where code lives; 
 
 ## Finishing is a tool call
 
-**Agents finish tickets through one of two finisher tools: `close_ticket` (terminal) or `handover_ticket` (terminal + spawn child). Both route through the same internal `write_result` helper, which owns the result-validation contract and the `Done` transition. The loop enforces the rule: a turn that ends without a finisher tool call is rejected and retried.**
+**Agents finish tickets through one of two finisher tools: `finish_ticket` (terminal) or `handover_ticket` (terminal + spawn child). Both route through the same internal `write_result` helper, which owns the result-validation contract and the `Finished` transition. The loop enforces the rule: a turn that ends without a finisher tool call is rejected and retried.**
 
-- `close_ticket` writes a `result`, attaches it to the current ticket, and transitions to `Done`. Use it for terminal work.
-- `handover_ticket` does the same and then inserts a child ticket pinned to a target agent or label with the current ticket recorded as its `parent`. Use it to atomically finish-and-chain; the alternative — `close_ticket` followed by `manage_tickets_tool::create` — is order-sensitive and leaves the current ticket re-picked when the order is wrong.
-- When a turn ends without a finisher tool call (no `close_ticket`, no `handover_ticket`, no result attached), the loop pushes a corrective directive and retries. This is the same retry path used for schema-validation failures, bounded by `max_schema_retries`; exhaustion emits `PolicyViolated { MaxSchemaRetries, .. }` and `TicketFailed`.
+- `finish_ticket` writes a `result`, attaches it to the current ticket, and transitions to `Finished`. Use it for terminal work.
+- `handover_ticket` does the same and then inserts a child ticket pinned to a target agent or label with the current ticket recorded as its `parent`. Use it to atomically finish-and-chain; the alternative — `finish_ticket` followed by `manage_tickets_tool::create` — is order-sensitive and leaves the current ticket re-picked when the order is wrong.
+- When a turn ends without a finisher tool call (no `finish_ticket`, no `handover_ticket`, no result attached), the loop pushes a corrective directive and retries. This is the same retry path used for schema-validation failures, bounded by `max_schema_retries`; exhaustion emits `PolicyViolated { MaxSchemaRetries, .. }` and `TicketFailed`.
 - `Status` transitions go through tickets-side helpers; the agent never writes status directly. `Failed` is reserved for system-driven outcomes (schema-retry trip, missing-finisher exhaustion, policy violations).
 - `Ticket::schema(...)` attaches a `Schema` to the ticket; the finisher tool validates the result and the loop applies `max_schema_retries` on mismatch. A schema mismatch in `handover_ticket` aborts both the parent's finish AND the child insert — the operation is atomic.
-- A successful finish appends one NDJSON record `{agent, ticket, result}` to `<dir>/results.jsonl` (configured via `TicketSystem::dir(d)`; defaults to `./.agentwerk`) and attaches the same `ResultRecord` to the ticket. The record is surfaced through `Ticket::result()`; `last_result()` returns its serialized form for the most recent `Done` ticket.
+- A successful finish appends one NDJSON record `{agent, ticket, result}` to `<dir>/results.jsonl` (configured via `TicketSystem::dir(d)`; defaults to `./.agentwerk`) and attaches the same `ResultRecord` to the ticket. The record is surfaced through `Ticket::result()`; `last_result()` returns its serialized form for the most recent `Finished` ticket.
 - The system also appends one JSON line to `<dir>/tickets.jsonl` per lifecycle event (`created`, `started`, `done`, `failed`) and writes the full ticket state to `<dir>/tickets/<key>/ticket.<ts>.json`. The `created` event carries the optional `parent` key when set, giving the log a complete handover audit trail. The log is observational: errors are swallowed. The result payload stays in `results.jsonl`; `tickets.jsonl` carries only the transition.
 
 ## Knowledge is opt-in and shareable across agents
@@ -93,7 +93,7 @@ Two layers of state exist. The per-ticket transcript lives on `Ticket::comments`
 
 - `LoopStats` is what the per-agent loop sees: `record_turn`, `record_request`, `record_tool_call`, `record_error`.
 - `TicketStats` is what the ticket lifecycle sees: `record_created`, `record_started`, `record_done`, `record_failed`.
-- Reads happen on `Stats` directly through inherent accessors (`turns()`, `tickets_done()`, `run_duration()`, `success_rate()`, ...), never through the recorder traits.
+- Reads happen on `Stats` directly through inherent accessors (`turns()`, `tickets_finished()`, `run_duration()`, `success_rate()`, ...), never through the recorder traits.
 - Lock-free for increments; readers do one atomic load per call.
 - `Stats::stats_for_label(label)` returns a nested `Stats` slice scoped to one label. The loop and ticket lifecycle bump each slice alongside the global counters; `run_duration()` is `None` on a slice (elapsed run duration stays global).
 

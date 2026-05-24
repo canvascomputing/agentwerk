@@ -1,7 +1,7 @@
-//! Ticket tools — give an agent a call surface for reading and mutating
+//! Ticket tools: give an agent a call surface for reading and mutating
 //! the surrounding `TicketSystem`. Two multi-action tools share one
 //! dispatch helper: `ReadTicketsTool` (read-only) and `ManageTicketsTool`
-//! (read + write). `CloseTicketTool` (`close_ticket`) is the sole way for
+//! (read + write). `FinishTicketTool` (`finish_ticket`) is the sole way for
 //! an agent to finish its current ticket.
 
 use serde_json::Value;
@@ -12,12 +12,12 @@ use crate::schemas::{format_violations, Schema};
 
 use super::tool::{ToolContext, ToolResult};
 
-mod close_ticket;
+mod finish_ticket;
 mod handover_ticket;
 mod manage_tickets;
 mod read_tickets;
 
-pub use close_ticket::CloseTicketTool;
+pub use finish_ticket::FinishTicketTool;
 pub use handover_ticket::HandoverTicketTool;
 pub use manage_tickets::ManageTicketsTool;
 pub use read_tickets::ReadTicketsTool;
@@ -32,7 +32,7 @@ pub(super) const WRITE_ACTIONS: &[&str] = &["create", "edit"];
 /// classify successful tool calls (resetting the schema-retry counter)
 /// and to build the missing-finisher directive against the agent's
 /// actual tool registry.
-pub(crate) const TICKET_CLOSING_TOOLS: &[&str] = &["close_ticket", "handover_ticket"];
+pub(crate) const TICKET_FINISHER_TOOLS: &[&str] = &["finish_ticket", "handover_ticket"];
 
 pub(super) fn dispatch(input: Value, ctx: &ToolContext, allowed: &[&str]) -> ToolResult {
     let action = match input["action"].as_str() {
@@ -131,7 +131,7 @@ fn status_label(s: Status) -> &'static str {
     match s {
         Status::Todo => "Todo",
         Status::InProgress => "InProgress",
-        Status::Done => "Done",
+        Status::Finished => "Finished",
         Status::Failed => "Failed",
     }
 }
@@ -140,10 +140,10 @@ fn parse_status_for_list(s: &str) -> Result<Status, ToolResult> {
     match s {
         "Todo" => Ok(Status::Todo),
         "InProgress" => Ok(Status::InProgress),
-        "Done" => Ok(Status::Done),
+        "Finished" => Ok(Status::Finished),
         "Failed" => Ok(Status::Failed),
         other => Err(ToolResult::error(format!(
-            "Invalid status `{other}`. Expected one of Todo, InProgress, Done, Failed"
+            "Invalid status `{other}`. Expected one of Todo, InProgress, Finished, Failed"
         ))),
     }
 }
@@ -339,8 +339,8 @@ fn action_edit(ticket_system: &TicketSystem, input: &Value, ctx: &ToolContext) -
 /// "non-empty string" rule when there is no schema), append an NDJSON
 /// `{agent, ticket, result}` line to the configured results directory,
 /// attach the payload to the ticket, and transition the ticket to
-/// `Done`. The `agent` field is taken from the calling context; the
-/// `ticket` field is the resolved key. Shared by `WriteResultTool` and
+/// `Finished`. The `agent` field is taken from the calling context; the
+/// `ticket` field is the resolved key. Shared by `FinishTicketTool` and
 /// the loop's terminal-reply path.
 pub(super) fn write_result(
     ticket_system: &TicketSystem,
@@ -370,7 +370,7 @@ pub(super) fn write_result(
 
     let target_dir = ticket_system.dir_value();
     {
-        let _guard = close_ticket::results_write_lock().lock().unwrap();
+        let _guard = finish_ticket::results_write_lock().lock().unwrap();
         if let Err(e) = Results::append(&target_dir, &log_line) {
             return ToolResult::error(format!(
                 "Cannot write result to {}: {e}",
@@ -382,8 +382,8 @@ pub(super) fn write_result(
     if let Err(e) = ticket_system.set_result(key, result) {
         return ToolResult::error(ticket_error_message(e));
     }
-    match ticket_system.set_done(key) {
-        Ok(()) => ToolResult::success(format!("Ticket {key} marked done")),
+    match ticket_system.set_finished(key) {
+        Ok(()) => ToolResult::success(format!("Ticket {key} marked finished")),
         Err(e) => ToolResult::error(ticket_error_message(e)),
     }
 }

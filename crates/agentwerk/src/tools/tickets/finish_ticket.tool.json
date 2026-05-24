@@ -1,7 +1,7 @@
 {
-  "name": "close_ticket",
+  "name": "finish_ticket",
   "summary": [
-    "Record your final answer and mark the current ticket `Done`. Call this tool as the last action of every response — your work is not saved until you call it.",
+    "Record your final answer and mark the current ticket `Finished`. Call this tool as the last action of every response: your work is not saved until you call it.",
     "`result` is a JSON value of its natural type: string for plain text, object/array/number/boolean for structured payloads. Omit `result` when there is nothing to report."
   ],
   "constraints": [
@@ -11,16 +11,16 @@
     "When the ticket carries a `schema`, `result` must validate against it. Failures count toward `max_schema_retries`."
   ],
   "anti_patterns": [
-    "Calling this tool mid-task to 'check in' or 'save progress'. `Done` is terminal: finish the work first, then call.",
+    "Calling this tool mid-task to 'check in' or 'save progress'. `Finished` is terminal: finish the work first, then call.",
     "To create or edit other tickets: use `manage_tickets_tool`. This tool finishes the current ticket only."
   ],
   "cautions": [
-    "IMPORTANT: Every response that completes the task MUST end with this call. Returning text without calling `close_ticket` leaves the ticket `InProgress`; the loop will re-assign the ticket and ask you to retry.",
-    "IMPORTANT: `Done` is terminal. Once the call succeeds, the ticket cannot be re-opened or amended.",
+    "IMPORTANT: Every response that completes the task MUST end with this call. Returning text without calling `finish_ticket` leaves the ticket `InProgress`; the loop will re-assign the ticket and ask you to retry.",
+    "IMPORTANT: `Finished` is terminal. Once the call succeeds, the ticket cannot be re-opened or amended.",
     "IMPORTANT: a schema validation failure counts toward `max_schema_retries`. Read the violation message, correct the shape, and retry; do not loop blindly."
   ],
   "output": [
-    "Success: `Ticket TICKET-N marked done`.",
+    "Success: `Ticket TICKET-N marked finished`.",
     "Schema error: a JSON Schema violation message; counted toward `max_schema_retries`.",
     "Input error: no `InProgress` ticket is assigned to this agent."
   ],

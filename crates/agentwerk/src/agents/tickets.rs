@@ -39,7 +39,7 @@ pub struct Ticket {
     /// Set when the ticket transitions `Todo → InProgress`. Millis
     /// since epoch.
     pub(crate) started_at: Option<u64>,
-    /// Set when the ticket reaches `Status::Done`. Millis since epoch.
+    /// Set when the ticket reaches `Status::Finished`. Millis since epoch.
     /// Mutually exclusive with `failed_at`.
     pub(crate) finished_at: Option<u64>,
     /// Set when the ticket reaches `Status::Failed`. Millis since
@@ -118,7 +118,7 @@ impl Ticket {
     }
 
     /// Current status as a lowercase string: `"todo"`, `"in_progress"`,
-    /// `"done"`, or `"failed"`. Transitions are driven internally by the
+    /// `"finished"`, or `"failed"`. Transitions are driven internally by the
     /// agent loop as it claims, finishes, and fails tickets.
     pub fn status(&self) -> &'static str {
         self.status.as_str()
@@ -265,19 +265,19 @@ impl AsUserMessage for Ticket {
 pub enum Status {
     Todo,
     InProgress,
-    Done,
+    Finished,
     Failed,
 }
 
 impl Status {
-    /// Lowercase wire form: `"todo"`, `"in_progress"`, `"done"`, `"failed"`.
+    /// Lowercase wire form: `"todo"`, `"in_progress"`, `"finished"`, `"failed"`.
     /// Single source of truth for the string rendering used by
     /// [`Ticket::status`] and the `tickets.jsonl` event log.
     pub fn as_str(self) -> &'static str {
         match self {
             Status::Todo => "todo",
             Status::InProgress => "in_progress",
-            Status::Done => "done",
+            Status::Finished => "finished",
             Status::Failed => "failed",
         }
     }
@@ -803,9 +803,9 @@ impl TicketSystem {
         }
     }
 
-    /// Transition a ticket to `Done`.
-    pub(crate) fn set_done(&self, key: &str) -> Result<(), TicketError> {
-        self.set_final_status(key, Status::Done)
+    /// Transition a ticket to `Finished`.
+    pub(crate) fn set_finished(&self, key: &str) -> Result<(), TicketError> {
+        self.set_final_status(key, Status::Finished)
     }
 
     /// Transition a ticket to `Failed`.
@@ -849,7 +849,7 @@ impl TicketSystem {
         self.log_transition(key, prev, next, now, durations, labels);
     }
 
-    /// Append a `started` / `done` / `failed` line to `tickets.jsonl` if
+    /// Append a `started` / `finished` / `failed` line to `tickets.jsonl` if
     /// `prev → next` is observable. No-op when prev == next or when the
     /// transition is not one we surface.
     fn log_transition(
@@ -873,9 +873,9 @@ impl TicketSystem {
             }));
         }
         match next {
-            Status::Done | Status::Failed => {
-                let event = if next == Status::Done {
-                    "done"
+            Status::Finished | Status::Failed => {
+                let event = if next == Status::Finished {
+                    "finished"
                 } else {
                     "failed"
                 };
@@ -1184,7 +1184,7 @@ impl TicketSystem {
     /// Every finished ticket's result rendered as a String, in creation
     /// order.
     pub fn all_results(&self) -> Vec<String> {
-        self.filter(|t| t.status == Status::Done && t.result.is_some())
+        self.filter(|t| t.status == Status::Finished && t.result.is_some())
             .iter()
             .filter_map(Ticket::result_string)
             .collect()
@@ -1259,7 +1259,7 @@ fn stamp_transition_timestamps(ticket: &mut Ticket, next: Status, now: u64) {
         ticket.started_at = Some(now);
     }
     match next {
-        Status::Done => {
+        Status::Finished => {
             ticket.finished_at = Some(now);
         }
         Status::Failed => {
@@ -1298,7 +1298,7 @@ fn fire_transition_recorder(
         stats.record_started(now);
     }
     match next {
-        Status::Done => stats.record_done(ticket_duration, work_duration),
+        Status::Finished => stats.record_finished(ticket_duration, work_duration),
         Status::Failed => stats.record_failed(ticket_duration, work_duration),
         _ => {}
     }
@@ -1313,13 +1313,13 @@ fn fire_label_transition(
     (ticket_duration, work_duration): (Duration, Duration),
     labels: &[String],
 ) {
-    if !matches!(next, Status::Done | Status::Failed) {
+    if !matches!(next, Status::Finished | Status::Failed) {
         return;
     }
     for l in labels {
         let slice = stats.stats_for_label(l);
         match next {
-            Status::Done => slice.record_done(ticket_duration, work_duration),
+            Status::Finished => slice.record_finished(ticket_duration, work_duration),
             Status::Failed => slice.record_failed(ticket_duration, work_duration),
             _ => unreachable!(),
         }
@@ -1361,7 +1361,7 @@ mod tests {
     fn attach_done_result(sys: &TicketSystem, key: &str, result: &str) {
         sys.set_result(key, serde_json::Value::String(result.into()))
             .unwrap();
-        sys.set_done(key).unwrap();
+        sys.set_finished(key).unwrap();
     }
 
     #[test]
@@ -1529,7 +1529,7 @@ mod tests {
     }
 
     #[test]
-    fn results_are_empty_when_nothing_done() {
+    fn results_are_empty_when_nothing_finished() {
         let (sys, _tmp) = test_system();
         sys.task("pending");
         assert!(sys.last_result().is_none());
@@ -1543,9 +1543,9 @@ mod tests {
         sys.task("oops");
         sys.task("pending");
         sys.claim(|t| t.key() == "TICKET-1", "agent");
-        sys.set_done("TICKET-1").unwrap();
+        sys.set_finished("TICKET-1").unwrap();
         sys.set_failed("TICKET-2").unwrap();
-        let done = sys.filter(|t| t.status == Status::Done);
+        let done = sys.filter(|t| t.status == Status::Finished);
         let failed = sys.filter(|t| t.status == Status::Failed);
         assert_eq!(done.len(), 1);
         assert_eq!(done[0].key(), "TICKET-1");
@@ -1562,10 +1562,10 @@ mod tests {
         // Created 3 tickets.
         assert_eq!(sys.stats().tickets_created(), 3);
         sys.claim(|t| t.key() == "TICKET-1", "agent");
-        sys.set_done("TICKET-1").unwrap();
+        sys.set_finished("TICKET-1").unwrap();
         sys.claim(|t| t.key() == "TICKET-2", "agent");
         sys.set_failed("TICKET-2").unwrap();
-        assert_eq!(sys.stats().tickets_done(), 1);
+        assert_eq!(sys.stats().tickets_finished(), 1);
         assert_eq!(sys.stats().tickets_failed(), 1);
     }
 
@@ -1588,16 +1588,16 @@ mod tests {
         sys.ticket(Ticket::new("a").labels(["scan", "high"]));
         sys.ticket(Ticket::new("b").label("scan"));
         sys.claim(|t| t.key() == "TICKET-1", "agent");
-        sys.set_done("TICKET-1").unwrap();
+        sys.set_finished("TICKET-1").unwrap();
         sys.claim(|t| t.key() == "TICKET-2", "agent");
         sys.set_failed("TICKET-2").unwrap();
         let stats = sys.stats();
         let scan = stats.stats_for_label("scan");
         let high = stats.stats_for_label("high");
-        assert_eq!(scan.tickets_done(), 1);
+        assert_eq!(scan.tickets_finished(), 1);
         assert_eq!(scan.tickets_failed(), 1);
         assert_eq!(scan.tickets_success_rate(), Some(0.5));
-        assert_eq!(high.tickets_done(), 1);
+        assert_eq!(high.tickets_finished(), 1);
         assert_eq!(high.tickets_failed(), 0);
         assert_eq!(high.tickets_success_rate(), Some(1.0));
     }
@@ -1615,9 +1615,9 @@ mod tests {
         let (sys, _tmp) = test_system();
         sys.ticket(Ticket::new("a"));
         sys.claim(|t| t.key() == "TICKET-1", "agent");
-        sys.set_done("TICKET-1").unwrap();
-        assert_eq!(sys.stats().tickets_done(), 1);
-        assert_eq!(sys.stats().stats_for_label("scan").tickets_done(), 0);
+        sys.set_finished("TICKET-1").unwrap();
+        assert_eq!(sys.stats().tickets_finished(), 1);
+        assert_eq!(sys.stats().stats_for_label("scan").tickets_finished(), 0);
         assert_eq!(sys.stats().stats_for_label("scan").tickets_created(), 0);
     }
 
@@ -1635,7 +1635,7 @@ mod tests {
         let (sys, dir) = test_system();
         sys.task("hello");
         sys.claim(|t| t.key() == "TICKET-1", "agent");
-        sys.set_done("TICKET-1").unwrap();
+        sys.set_finished("TICKET-1").unwrap();
         let lines = read_tickets_log(dir.path());
         assert_eq!(lines.len(), 3);
         assert_eq!(lines[0]["event"], "created");
@@ -1644,7 +1644,7 @@ mod tests {
         assert_eq!(lines[0]["task"], "hello");
         assert_eq!(lines[1]["event"], "started");
         assert_eq!(lines[1]["key"], "TICKET-1");
-        assert_eq!(lines[2]["event"], "done");
+        assert_eq!(lines[2]["event"], "finished");
         assert_eq!(lines[2]["key"], "TICKET-1");
         assert!(lines[2]["duration_ms"].is_u64());
         assert!(lines[2]["work_ms"].is_u64());
@@ -1679,7 +1679,7 @@ mod tests {
         sys.task("a");
         sys.task("b");
         sys.claim(|t| t.key() == "TICKET-1", "agent");
-        sys.set_done("TICKET-1").unwrap();
+        sys.set_finished("TICKET-1").unwrap();
         sys.claim(|t| t.key() == "TICKET-2", "agent");
         sys.set_failed("TICKET-2").unwrap();
         let lines = read_tickets_log(dir.path());
@@ -1687,7 +1687,7 @@ mod tests {
         assert_eq!(lines.len(), 6);
     }
 
-    // ---- claim / set_done / set_failed unit tests ----
+    // ---- claim / set_finished / set_failed unit tests ----
 
     #[test]
     fn claim_transitions_todo_to_in_progress_and_adds_label() {
@@ -1742,13 +1742,13 @@ mod tests {
     }
 
     #[test]
-    fn set_done_transitions_to_done() {
+    fn set_finished_transitions_to_finished() {
         let (sys, _tmp) = test_system();
         sys.task("hello");
         sys.claim(|t| t.status == Status::Todo, "alice");
-        sys.set_done("TICKET-1").unwrap();
+        sys.set_finished("TICKET-1").unwrap();
         let t = sys.get("TICKET-1").unwrap();
-        assert_eq!(t.status, Status::Done);
+        assert_eq!(t.status, Status::Finished);
         assert!(t.finished_at().is_some());
     }
 
@@ -1829,12 +1829,12 @@ mod tests {
         original
             .set_result("TICKET-1", serde_json::json!({"ok": true}))
             .unwrap();
-        original.set_done("TICKET-1").unwrap();
+        original.set_finished("TICKET-1").unwrap();
         drop(original);
 
         let resumed = TicketSystem::load(dir.path()).unwrap();
         let t = resumed.get("TICKET-1").unwrap();
-        assert_eq!(t.status, Status::Done);
+        assert_eq!(t.status, Status::Finished);
         assert_eq!(t.result(), Some(&serde_json::json!({"ok": true})));
         assert_eq!(t.task, serde_json::Value::String("seed work".into()));
     }
@@ -1867,7 +1867,7 @@ mod tests {
         original
             .set_result("TICKET-1", serde_json::Value::Null)
             .unwrap();
-        original.set_done("TICKET-1").unwrap();
+        original.set_finished("TICKET-1").unwrap();
         original.set_failed("TICKET-2").unwrap();
         drop(original);
 
@@ -1876,11 +1876,11 @@ mod tests {
         let resumed = TicketSystem::load(dir.path()).unwrap();
         let s = resumed.stats();
         assert_eq!(s.tickets_created(), 3);
-        assert_eq!(s.tickets_done(), 1);
+        assert_eq!(s.tickets_finished(), 1);
         assert_eq!(s.tickets_failed(), 1);
         let scan = s.stats_for_label("scan");
         assert_eq!(scan.tickets_created(), 3);
-        assert_eq!(scan.tickets_done(), 1);
+        assert_eq!(scan.tickets_finished(), 1);
         assert_eq!(scan.tickets_failed(), 1);
     }
 
@@ -1941,12 +1941,12 @@ mod tests {
         sys.task("seed");
         sys.claim(|t| t.status == Status::Todo, "alice").unwrap();
         sys.set_result("TICKET-1", serde_json::Value::Null).unwrap();
-        sys.set_done("TICKET-1").unwrap();
+        sys.set_finished("TICKET-1").unwrap();
 
         let bytes = std::fs::read(dir.path().join("stats.json")).expect("stats file written");
         let body: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
         assert_eq!(body["tickets_created"], 1);
-        assert_eq!(body["tickets_done"], 1);
+        assert_eq!(body["tickets_finished"], 1);
     }
 
     #[test]
@@ -1974,14 +1974,14 @@ mod tests {
         original
             .set_result("TICKET-1", serde_json::Value::Null)
             .unwrap();
-        original.set_done("TICKET-1").unwrap();
+        original.set_finished("TICKET-1").unwrap();
         drop(original);
 
         std::fs::write(dir.path().join("stats.json"), "not json").unwrap();
 
         let sys = TicketSystem::load(dir.path()).unwrap();
         assert_eq!(sys.stats().tickets_created(), 1);
-        assert_eq!(sys.stats().tickets_done(), 1);
+        assert_eq!(sys.stats().tickets_finished(), 1);
     }
 
     #[test]

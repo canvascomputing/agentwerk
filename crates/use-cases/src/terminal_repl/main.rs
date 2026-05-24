@@ -158,7 +158,7 @@ async fn main() {
                 s.input_tokens(),
                 s.output_tokens(),
                 s.tickets_created(),
-                s.tickets_done(),
+                s.tickets_finished(),
                 s.tickets_failed(),
                 style.reset,
             );

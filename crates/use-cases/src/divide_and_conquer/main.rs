@@ -2,7 +2,7 @@
 //!
 //! Partitions `[1, N]` into K subranges and creates one ticket per
 //! subrange. Workers share the labelled queue, call the `python` tool
-//! for an exact integer, and finish via `close_ticket` with a
+//! for an exact integer, and finish via `finish_ticket` with a
 //! schema-validated `{"idx", "partial_sum"}`. The driver aggregates
 //! after `finish` returns and verifies the total against the
 //! closed-form `N(N+1)(2N+1)/6`.
@@ -114,7 +114,7 @@ fn aggregate_and_report(
 
     eprintln!(
         "{dim}└ aggregated in {elapsed:.1}s · {} done, {failures} failed · {} in / {} out tokens{reset}",
-        stats.tickets_done(),
+        stats.tickets_finished(),
         stats.input_tokens(),
         stats.output_tokens(),
         dim = style.dim,
@@ -267,9 +267,9 @@ fn build_event_handler(
                 dim = style.dim,
                 reset = style.reset,
             ),
-            EventKind::TicketDone { key } | EventKind::TicketFailed { key } => {
+            EventKind::TicketFinished { key } | EventKind::TicketFailed { key } => {
                 let n = done.fetch_add(1, Ordering::Relaxed) + 1;
-                let outcome = if matches!(event.kind, EventKind::TicketDone { .. }) {
+                let outcome = if matches!(event.kind, EventKind::TicketFinished { .. }) {
                     "done"
                 } else {
                     "failed"
@@ -325,7 +325,7 @@ fn print_intro(n: u64, partitions: usize, workers: usize, style: &Style) {
         "  subrange. {workers} worker agent(s) share the queue, each calling a `python` tool"
     );
     eprintln!("  to compute its partial sum exactly. Workers finish their tickets via");
-    eprintln!("  `close_ticket` with `{{\"idx\", \"partial_sum\"}}`; the driver aggregates");
+    eprintln!("  `finish_ticket` with `{{\"idx\", \"partial_sum\"}}`; the driver aggregates");
     eprintln!("  once every ticket is finished and verifies against the closed-form total.\n");
     eprintln!(
         "{dim}┌ {partitions} partitions · {workers} worker(s) sharing the queue{reset}",
