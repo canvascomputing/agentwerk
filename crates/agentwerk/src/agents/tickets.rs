@@ -1091,7 +1091,7 @@ impl TicketSystem {
     /// Start the agent loop on a background tokio task. Tickets queued
     /// afterwards are picked up within ~`IDLE_POLL_INTERVAL`. Pair with
     /// [`Self::finish`] to wait for the queue to empty, or with
-    /// [`Self::stop`] to cancel and join.
+    /// [`Self::cancel`] to signal an early exit.
     pub fn start(&self) -> &Self {
         let signal = Arc::clone(&self.interrupt_signal.lock().unwrap());
         // Reset so a system can be re-started after a previous finish
@@ -1150,21 +1150,14 @@ impl TicketSystem {
     /// Flip the cancel signal. Sync, so it composes with ctrl-c
     /// handlers, drop guards, and other sync callers. The background
     /// task notices on its next poll and exits gracefully. Pair with
-    /// [`Self::stop`] from async code if you also want to wait for the
-    /// task to exit.
+    /// [`Self::finish`] from async code if you also want to wait for
+    /// the task to exit; `finish` returns as soon as it sees the
+    /// signal set.
     pub fn cancel(&self) {
         self.interrupt_signal
             .lock()
             .unwrap()
             .store(true, Ordering::Relaxed);
-    }
-
-    /// Cancel and wait for the background task to exit. The run
-    /// finishes its in-flight ticket; queued tickets are abandoned.
-    /// No-op when no run is in flight.
-    pub async fn stop(&self) {
-        self.cancel();
-        self.take_join_handle().await;
     }
 
     async fn take_join_handle(&self) {

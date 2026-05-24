@@ -383,7 +383,7 @@ impl Agent {
 
     /// Start the agent loop on a background tokio task. Forwards to
     /// the bound `TicketSystem`. Returns the bound system so callers
-    /// can `stop().await` or read results on the same value.
+    /// can `cancel()` or read results on the same value.
     pub fn start(&self) -> Arc<TicketSystem> {
         let sys = self
             .ticket_system

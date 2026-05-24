@@ -109,7 +109,7 @@ async fn main() {
     // grace period when the queue settles, is race-free.
     tickets.start();
     let outcome = wait_for_outcome(&tickets).await;
-    tickets.stop().await;
+    tickets.cancel();
 
     print_chain_summary(&tickets);
     print_stats(&tickets);

@@ -1773,13 +1773,13 @@ mod tests {
                 break;
             }
             if tokio::time::Instant::now() > deadline {
-                run_handle.stop().await;
+                run_handle.finish().await;
                 panic!("late-added agent did not finish ticket within 5s");
             }
             tokio::time::sleep(Duration::from_millis(20)).await;
         }
 
-        run_handle.stop().await;
+        run_handle.finish().await;
 
         assert_eq!(provider.requests(), 1);
     }
@@ -1818,7 +1818,7 @@ mod tests {
                 break;
             }
             if tokio::time::Instant::now() > deadline {
-                run_handle.stop().await;
+                run_handle.finish().await;
                 panic!("late-added agent did not finish ticket within 5s");
             }
             tokio::time::sleep(Duration::from_millis(20)).await;
@@ -1827,7 +1827,7 @@ mod tests {
         // The run must join the late-spawned task on shutdown rather than
         // orphan it. If it did orphan it, start() would still return on signal
         // flip, but the late task would dangle.
-        tokio::time::timeout(Duration::from_secs(2), run_handle.stop())
+        tokio::time::timeout(Duration::from_secs(2), run_handle.finish())
             .await
             .expect("start() did not return within 2s of signal flip");
     }
@@ -1881,25 +1881,9 @@ mod tests {
         tickets.start();
         tickets.cancel();
 
-        tokio::time::timeout(Duration::from_secs(2), tickets.stop())
+        tokio::time::timeout(Duration::from_secs(2), tickets.finish())
             .await
             .expect("run did not exit within 2s of cancel()");
-    }
-
-    #[tokio::test]
-    async fn stop_is_abrupt() {
-        let results_dir = crate::test_util::TempDir::new().unwrap();
-        let tickets = TicketSystem::new();
-        tickets
-            .dir(results_dir.path().to_path_buf())
-            .max_request_retries(0)
-            .request_retry_delay(Duration::from_millis(1));
-
-        tickets.start();
-
-        tokio::time::timeout(Duration::from_secs(2), tickets.stop())
-            .await
-            .expect("run did not exit within 2s of stop()");
     }
 
     #[tokio::test]

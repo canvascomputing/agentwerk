@@ -207,7 +207,6 @@ let answer = tickets.last_result();
 | `start()` | Begin processing tickets in the background. |
 | `finish().await` | Process every queued ticket and return. |
 | `cancel()` | Cancel the run from anywhere: async code, ctrl-c handlers, drop guards. |
-| `stop().await` | Cancel the run and wait for it to wind down. |
 | `cancel_on_ctrl_c()` | Cancel the run on the first ctrl-c. |
 
 ### Reading results
@@ -319,14 +318,6 @@ When `context(...)` is not set, agentwerk supplies a default block:
 - Output tokens remaining: 12000
 - Time remaining: 240s
 ```
-
-At each turn the agent sends:
-
-- **system**: `role(...)`, with the `knowledge(...)` index
-- **tools**: tools registered with `tool(...)`
-- **messages**: a list that grows turn by turn
-
-`messages` begins with `context(...)` and the body of the current ticket. On each later turn the agent appends the model's reply.
 
 ## Tools
 
