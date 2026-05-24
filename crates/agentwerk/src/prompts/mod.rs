@@ -149,10 +149,11 @@ mod tests {
         let lines: Vec<&str> = rendered.lines().collect();
         assert_eq!(lines[0], "## Context");
         assert_eq!(lines[1], "");
-        assert_eq!(lines[2], "- Working directory: /tmp/check");
-        assert!(lines[3].starts_with("- Platform: "));
-        assert!(lines[4].starts_with("- OS version: "));
-        assert!(lines[5].starts_with("- Date: "));
+        assert!(lines[2].starts_with("You work within a ticket system."));
+        assert_eq!(lines[3], "");
+        assert!(lines[4].starts_with("- Date: "));
+        assert_eq!(lines[5], "- Directory: /tmp/check");
+        assert!(lines[6].starts_with("- Platform: "));
         assert!(!rendered.contains('{'), "no unsubstituted placeholders");
     }
 
@@ -172,8 +173,8 @@ mod tests {
 
         let rendered = default_context(&working_dir, &policies, &stats);
 
-        // Visualizes the exact appended block. Static prefix (working dir,
-        // platform, OS version, date) is rebuilt with empty policy/stats
+        // Visualizes the exact appended block. Static prefix (date, directory,
+        // platform) is rebuilt with empty policy/stats
         // so the expected literal stays portable across CI hosts.
         let expected = format!(
             "{static_prefix}\n\

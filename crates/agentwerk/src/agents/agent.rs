@@ -323,16 +323,28 @@ impl Agent {
     }
 
     /// Render the context block pushed as the first user message in the
-    /// loop. Falls back to [`default_context`] (working directory, platform,
-    /// OS version, date, plus a `… remaining` line for each configured
-    /// policy budget) when [`Self::context`] was not set. A custom context
-    /// is left byte-exact: `policies` and `stats` are ignored on that
-    /// branch.
-    pub(super) fn context_message(&self, policies: &Policies, stats: &Stats) -> Option<String> {
-        match &self.context {
-            Some(body) => Some(Section::context(self.interpolate(body)).render()),
-            None => Some(default_context(&self.dir_or_default(), policies, stats)),
-        }
+    /// Render the context block pushed as the first user message in the
+    /// loop. Falls back to [`default_context`] (date, directory, platform,
+    /// plus a `… remaining` line for each configured policy budget) when
+    /// [`Self::context`] was not set. A custom context is left byte-exact:
+    /// `policies` and `stats` are ignored on that branch. When `ticket_key`
+    /// is `Some`, `- Ticket: {key}` is prepended as the first bullet.
+    pub(super) fn context_message(
+        &self,
+        policies: &Policies,
+        stats: &Stats,
+        ticket_key: Option<&str>,
+    ) -> Option<String> {
+        let base = match &self.context {
+            Some(body) => Section::context(self.interpolate(body)).render(),
+            None => default_context(&self.dir_or_default(), policies, stats),
+        };
+        let Some(key) = ticket_key else {
+            return Some(base);
+        };
+        const PREFIX: &str = "## Context\n\n";
+        let body = base.strip_prefix(PREFIX).unwrap_or(&base);
+        Some(format!("{PREFIX}- Ticket: {key}\n{body}"))
     }
 
     fn interpolate(&self, s: &str) -> String {
@@ -464,22 +476,22 @@ mod tests {
         let policies = Policies::default();
         let stats = Stats::new();
         let rendered = agent
-            .context_message(&policies, &stats)
+            .context_message(&policies, &stats, None)
             .expect("default context");
         assert!(rendered.starts_with("## Context\n\n"));
-        assert!(rendered.contains("- Working directory: "));
+        assert!(rendered.contains("- Directory: "));
         assert!(rendered.contains("- Platform: "));
         assert!(rendered.contains("- Date: "));
     }
 
     #[test]
     fn context_message_renders_h2_heading_when_set() {
-        let agent = Agent::new().context("- Working directory: /tmp");
+        let agent = Agent::new().context("- Note: /tmp");
         let policies = Policies::default();
         let stats = Stats::new();
         assert_eq!(
-            agent.context_message(&policies, &stats).as_deref(),
-            Some("## Context\n\n- Working directory: /tmp"),
+            agent.context_message(&policies, &stats, None).as_deref(),
+            Some("## Context\n\n- Note: /tmp"),
         );
     }
 
@@ -496,7 +508,7 @@ mod tests {
         stats.record_request(250, 0);
 
         let rendered = agent
-            .context_message(&policies, &stats)
+            .context_message(&policies, &stats, None)
             .expect("default context");
 
         let expected = format!(
@@ -524,7 +536,7 @@ mod tests {
         let stats = Stats::new();
         stats.record_turn();
         assert_eq!(
-            agent.context_message(&policies, &stats).as_deref(),
+            agent.context_message(&policies, &stats, None).as_deref(),
             Some("## Context\n\n- Note: custom"),
         );
     }
@@ -578,7 +590,7 @@ mod tests {
         let policies = Policies::default();
         let stats = Stats::new();
         assert_eq!(
-            agent.context_message(&policies, &stats).as_deref(),
+            agent.context_message(&policies, &stats, None).as_deref(),
             Some("## Context\n\n- Topic: Rust generics"),
         );
     }
@@ -592,7 +604,7 @@ mod tests {
         let stats = Stats::new();
         assert_eq!(agent.system_prompt(None), "Hi {missing}.");
         assert_eq!(
-            agent.context_message(&policies, &stats).as_deref(),
+            agent.context_message(&policies, &stats, None).as_deref(),
             Some("## Context\n\n- Note: {also_missing}"),
         );
     }

@@ -246,7 +246,7 @@ async fn process_ticket(
     // Seed once; resumed tickets keep their transcript.
     if ticket.comments.is_empty() {
         ticket_system.add_comment(key, Comment::system_text(system_prompt.clone()));
-        if let Some(context_msg) = agent.context_message(&policies, &ticket_system.stats) {
+        if let Some(context_msg) = agent.context_message(&policies, &ticket_system.stats, Some(key)) {
             ticket_system.add_comment(key, Comment::user_text(context_msg));
         }
         let Message::User {

@@ -304,13 +304,15 @@ let agent = Agent::new()
     .template_variable("divisor", "8");
 ```
 
-When `context(...)` is not set, agentwerk supplies a default block:
+When `context(...)` is not set, agentwerk supplies a default block. When the agent processes a ticket through the loop, the ticket key is prepended automatically:
 
 ```markdown
-- Working directory: /Users/caro
-- Platform: darwin
-- OS version: 25.1.0
+You work within a ticket system. Each task arrives as a ticket; you process one at a time. Each reply you generate is one turn.
+
+- Ticket: TICKET-7
 - Date: 2026-05-06
+- Directory: /Users/caro
+- Platform: darwin 25.1.0
 - Turns remaining: 8
 - Input tokens remaining: 95000
 - Output tokens remaining: 12000

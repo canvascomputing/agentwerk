@@ -2,7 +2,7 @@
   "name": "handover_ticket",
   "summary": [
     "Finish the current ticket and hand follow-up work to another agent in one atomic call. Writes the current ticket's `result`, marks it `Finished`, and creates a new `Todo` ticket pinned to `to` with the current ticket recorded as its `parent`.",
-    "`result` is a JSON value of its natural type: string for plain text, object/array/number/boolean for structured payloads. The tool stores it verbatim. `task` is the body for the new child ticket and accepts any JSON value the same way."
+    "`result` is a plain-text string summarising your work before the handover. `task` is a plain-text instruction for the child ticket."
   ],
   "constraints": [
     "Operates on the agent's current ticket. No `key` parameter; the loop resolves it from the calling agent's identity.",

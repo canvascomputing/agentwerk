@@ -10,7 +10,7 @@
     "`list` and `search` cap at 50 tickets per call; tighten filters rather than re-running."
   ],
   "anti_patterns": [
-    "To create or edit tickets, or settle one with `done` — use `write_tickets_tool`.",
+    "To create or edit tickets — use `manage_tickets_tool`.",
     "When the agent needs read AND write access in the same flow — use `manage_tickets_tool` instead of registering both.",
     "To find code or files in the working directory — use `grep_tool` / `glob_tool`."
   ],
