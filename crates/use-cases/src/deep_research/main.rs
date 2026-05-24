@@ -175,7 +175,7 @@ fn print_research_outcome(tickets: &TicketSystem, outcome: &Outcome) {
 }
 
 enum Outcome {
-    Report(agentwerk::Ticket),
+    Report(Box<agentwerk::Ticket>),
     Cancelled,
     Stalled,
 }
@@ -184,18 +184,20 @@ async fn wait_for_outcome(tickets: &TicketSystem) -> Outcome {
     use std::time::Duration;
 
     let report_ticket = || {
-        tickets
-            .find(|t| t.labels.iter().any(|l| l == "report") && t.status.to_string() == "finished")
+        tickets.find_ticket(|t| {
+            t.labels.iter().any(|l| l == "report") && t.status.to_string() == "finished"
+        })
     };
-    let pending =
-        || tickets.count(|t| matches!(t.status.to_string().as_str(), "todo" | "in_progress"));
+    let pending = || {
+        tickets.count_tickets(|t| matches!(t.status.to_string().as_str(), "todo" | "in_progress"))
+    };
 
     loop {
         if tickets.is_cancelled() {
             return Outcome::Cancelled;
         }
         if let Some(ticket) = report_ticket() {
-            return Outcome::Report(ticket);
+            return Outcome::Report(Box::new(ticket));
         }
         if pending() == 0 {
             // Queue is empty — but a handover may be mid-flight,
@@ -206,7 +208,7 @@ async fn wait_for_outcome(tickets: &TicketSystem) -> Outcome {
                 return Outcome::Cancelled;
             }
             if let Some(ticket) = report_ticket() {
-                return Outcome::Report(ticket);
+                return Outcome::Report(Box::new(ticket));
             }
             if pending() == 0 {
                 return Outcome::Stalled;

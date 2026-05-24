@@ -228,15 +228,15 @@ for ticket in tickets.tickets() {
 | Method | Description |
 |--------|-------------|
 | `last_result()` | Return the most recent finished ticket's payload as a string. |
-| `all_results()` | Return every finished ticket's payload as a string. |
+| `results()` | Return every finished ticket's payload as a string. |
 | `tickets()` | Return every ticket in creation order, with status, payload, and metadata. |
-| `get(key)` | Return the ticket at `key`, or `None` when it is unknown. |
-| `first()` | Return the earliest ticket by creation time. |
-| `last()` | Return the latest ticket by creation time. |
-| `search(query)` | Return tickets whose task body contains `query`, case-insensitively. |
-| `filter(predicate)` | Return tickets matching the predicate, in creation order. |
-| `find(predicate)` | Return the earliest ticket matching the predicate. |
-| `count(predicate)` | Return the count of tickets matching the predicate. |
+| `get_ticket(key)` | Return the ticket at `key`, or `None` when it is unknown. |
+| `first_ticket()` | Return the earliest ticket by creation time. |
+| `last_ticket()` | Return the latest ticket by creation time. |
+| `search_tickets(query)` | Return tickets whose task body contains `query`, case-insensitively. |
+| `find_tickets(predicate)` | Return tickets matching the predicate, in creation order. |
+| `find_ticket(predicate)` | Return the earliest ticket matching the predicate. |
+| `count_tickets(predicate)` | Return the count of tickets matching the predicate. |
 | `is_cancelled()` | Return `true` once a cancel has been requested. |
 
 ### Inspecting tickets
@@ -247,7 +247,7 @@ Each `Ticket` carries the recorded result, its transcript, and lifecycle timesta
 #[derive(serde::Deserialize)]
 struct Report { title: String }
 
-let ticket = tickets.find(|t| t.labels.iter().any(|l| l == "analysis")).unwrap();
+let ticket = tickets.find_ticket(|t| t.labels.iter().any(|l| l == "analysis")).unwrap();
 let report: Report = serde_json::from_value(ticket.result.clone().unwrap()).unwrap();
 ```
 

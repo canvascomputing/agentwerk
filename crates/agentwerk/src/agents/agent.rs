@@ -620,7 +620,7 @@ mod tests {
             .template_variable("topic", "rust")
             .ticket_system(&sys);
         agent.task("Search {topic} forums.");
-        let stored = sys.first().expect("ticket should have been enqueued");
+        let stored = sys.first_ticket().expect("ticket should have been enqueued");
         assert_eq!(
             stored.task,
             serde_json::Value::String("Search rust forums.".into()),
@@ -637,7 +637,7 @@ mod tests {
             .ticket_system(&sys);
         let value = serde_json::json!({"q": "Find {topic}"});
         agent.ticket(Ticket::new(value.clone()));
-        let stored = sys.first().expect("ticket should have been enqueued");
+        let stored = sys.first_ticket().expect("ticket should have been enqueued");
         assert_eq!(stored.task, value);
     }
 

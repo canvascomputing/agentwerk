@@ -210,14 +210,14 @@ mod tests {
             .unwrap();
         assert!(matches!(outcome, ToolResult::Success(_)));
 
-        let parent = sys.get(&parent_key).unwrap();
+        let parent = sys.get_ticket(&parent_key).unwrap();
         assert_eq!(parent.status, Status::Finished);
         assert_eq!(
             parent.result.as_ref().and_then(|v| v.as_str()),
             Some("summary of alice's work")
         );
 
-        let child = sys.get("TICKET-2").unwrap();
+        let child = sys.get_ticket("TICKET-2").unwrap();
         assert_eq!(child.status, Status::Todo);
         assert_eq!(child.parent.as_deref(), Some(parent_key.as_str()));
         assert_eq!(child.labels, vec!["bob".to_string()]);
@@ -284,11 +284,11 @@ mod tests {
             .unwrap();
         assert!(matches!(outcome, ToolResult::SchemaError(_)));
 
-        let parent = sys.get(&parent_key).unwrap();
+        let parent = sys.get_ticket(&parent_key).unwrap();
         assert_eq!(parent.status, Status::InProgress);
         assert!(parent.result.is_none());
         assert!(
-            sys.get("TICKET-2").is_none(),
+            sys.get_ticket("TICKET-2").is_none(),
             "no child created on schema failure"
         );
         assert!(!dir.path().join("results.jsonl").exists());
@@ -315,9 +315,9 @@ mod tests {
             .unwrap();
         assert!(matches!(outcome, ToolResult::Error(_)));
 
-        let parent = sys.get(&parent_key).unwrap();
+        let parent = sys.get_ticket(&parent_key).unwrap();
         assert_eq!(parent.status, Status::InProgress);
-        assert!(sys.get("TICKET-2").is_none());
+        assert!(sys.get_ticket("TICKET-2").is_none());
         assert!(!dir.path().join("results.jsonl").exists());
     }
 
@@ -341,7 +341,7 @@ mod tests {
             .await
             .unwrap();
 
-        let child = sys.get("TICKET-2").unwrap();
+        let child = sys.get_ticket("TICKET-2").unwrap();
         assert!(child.schema.is_some());
     }
 
@@ -425,7 +425,7 @@ mod tests {
             let outcome = HandoverTicketTool.call(non_string, &ctx).await.unwrap();
             assert!(matches!(outcome, ToolResult::Error(_)));
         }
-        assert_eq!(sys.get(&parent_key).unwrap().status, Status::InProgress);
+        assert_eq!(sys.get_ticket(&parent_key).unwrap().status, Status::InProgress);
         assert!(!dir.path().join("results.jsonl").exists());
     }
 
@@ -479,7 +479,7 @@ mod tests {
             .await
             .unwrap();
 
-        let child = sys.get("TICKET-2").unwrap();
+        let child = sys.get_ticket("TICKET-2").unwrap();
         assert_eq!(
             child.task,
             serde_json::Value::String(format!("Continue {parent_key}: alice's findings")),
@@ -505,7 +505,7 @@ mod tests {
             .await
             .unwrap();
 
-        let child = sys.get("TICKET-2").unwrap();
+        let child = sys.get_ticket("TICKET-2").unwrap();
         assert_eq!(
             child.task,
             serde_json::Value::String(format!("See {parent_key} and {{unknown}}")),
@@ -534,7 +534,7 @@ mod tests {
             .await
             .unwrap();
 
-        let child = sys.get("TICKET-2").unwrap();
+        let child = sys.get_ticket("TICKET-2").unwrap();
         assert_eq!(
             child.task,
             serde_json::Value::String("[{parent_key}]".to_string()),

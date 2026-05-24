@@ -117,7 +117,7 @@ mod tests {
             .await
             .unwrap();
         assert!(matches!(outcome, ToolResult::Success(_)));
-        let t = sys.get(&key).unwrap();
+        let t = sys.get_ticket(&key).unwrap();
         assert_eq!(t.status, Status::Finished);
         assert_eq!(
             t.result.as_ref().and_then(|v| v.as_str()),
@@ -152,7 +152,7 @@ mod tests {
                 matches!(outcome, ToolResult::Success(_)),
                 "expected success for {value:?}"
             );
-            let t = sys.get(&key).unwrap();
+            let t = sys.get_ticket(&key).unwrap();
             assert_eq!(t.status, Status::Finished);
         }
     }
@@ -168,7 +168,7 @@ mod tests {
             .await
             .unwrap();
         assert!(matches!(outcome, ToolResult::Success(_)));
-        let t = sys.get(&key).unwrap();
+        let t = sys.get_ticket(&key).unwrap();
         assert_eq!(t.status, Status::Finished);
         assert_eq!(t.result.as_ref().unwrap()["x"], 1);
 
@@ -210,7 +210,7 @@ mod tests {
             .await
             .unwrap();
         assert!(matches!(outcome, ToolResult::SchemaError(_)));
-        let t = sys.get(&key).unwrap();
+        let t = sys.get_ticket(&key).unwrap();
         assert_eq!(t.status, Status::InProgress);
 
         // valid shape
@@ -219,7 +219,7 @@ mod tests {
             .await
             .unwrap();
         assert!(matches!(outcome, ToolResult::Success(_)));
-        let t = sys.get(&key).unwrap();
+        let t = sys.get_ticket(&key).unwrap();
         assert_eq!(t.status, Status::Finished);
         assert_eq!(t.result.as_ref().unwrap()["x"], "ok");
     }

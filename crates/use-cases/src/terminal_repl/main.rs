@@ -101,7 +101,7 @@ async fn main() {
     // Resume the newest open chat ticket from disk if one exists,
     // so a previous session's transcript carries into this one.
     let mut chat_key: Option<String> = tickets
-        .filter(|t| {
+        .find_tickets(|t| {
             t.status.to_string() == "in_progress" && t.labels.iter().any(|l| l == "orchestrator")
         })
         .last()

@@ -621,7 +621,7 @@ impl TicketSystem {
 
     /// Write the ticket at `key` to disk. No-op when the ticket is missing.
     fn save_ticket(&self, key: &str) {
-        if let Some(t) = self.get(key) {
+        if let Some(t) = self.get_ticket(key) {
             use crate::persistence::Persist;
             let _ = t.save(&self.dir_value());
         }
@@ -659,8 +659,8 @@ impl TicketSystem {
             .map(|_| rel)
     }
 
-    /// Returns a clone of the ticket at `key`, if any.
-    pub fn get(&self, key: &str) -> Option<Ticket> {
+    /// Clone of the ticket at `key`, if any.
+    pub fn get_ticket(&self, key: &str) -> Option<Ticket> {
         self.tickets.lock().unwrap().get(key).cloned()
     }
 
@@ -866,17 +866,17 @@ impl TicketSystem {
     }
 
     /// Earliest ticket by creation time, if any.
-    pub fn first(&self) -> Option<Ticket> {
+    pub fn first_ticket(&self) -> Option<Ticket> {
         self.tickets().into_iter().next()
     }
 
     /// Latest ticket by creation time, if any.
-    pub fn last(&self) -> Option<Ticket> {
+    pub fn last_ticket(&self) -> Option<Ticket> {
         self.tickets().into_iter().next_back()
     }
 
     /// Substring search over the task body, case-insensitive.
-    pub fn search(&self, query: &str) -> Vec<Ticket> {
+    pub fn search_tickets(&self, query: &str) -> Vec<Ticket> {
         let needle = query.to_lowercase();
         let store = self.tickets.lock().unwrap();
         let mut out: Vec<Ticket> = store
@@ -895,7 +895,7 @@ impl TicketSystem {
     ///
     /// The predicate runs while `self.tickets` is locked. It MUST NOT call
     /// other `TicketSystem` methods that lock the same `Mutex` — deadlock.
-    pub fn filter<F>(&self, predicate: F) -> Vec<Ticket>
+    pub fn find_tickets<F>(&self, predicate: F) -> Vec<Ticket>
     where
         F: Fn(&Ticket) -> bool,
     {
@@ -909,7 +909,7 @@ impl TicketSystem {
     ///
     /// The predicate runs while `self.tickets` is locked. It MUST NOT call
     /// other `TicketSystem` methods that lock the same `Mutex` — deadlock.
-    pub fn find<F>(&self, predicate: F) -> Option<Ticket>
+    pub fn find_ticket<F>(&self, predicate: F) -> Option<Ticket>
     where
         F: Fn(&Ticket) -> bool,
     {
@@ -923,7 +923,7 @@ impl TicketSystem {
     ///
     /// The predicate runs while `self.tickets` is locked. It MUST NOT call
     /// other `TicketSystem` methods that lock the same `Mutex` — deadlock.
-    pub fn count<F>(&self, predicate: F) -> usize
+    pub fn count_tickets<F>(&self, predicate: F) -> usize
     where
         F: Fn(&Ticket) -> bool,
     {
@@ -1028,7 +1028,7 @@ impl TicketSystem {
     /// is in flight; otherwise watches the in-flight one. Polls every
     /// 20 ms; exits when `pending_count == 0`, a policy trips, or
     /// `max_time` elapses. Returns `&self` so callers can chain
-    /// [`Self::last_result`], [`Self::all_results`], or
+    /// [`Self::last_result`], [`Self::results`], or
     /// [`Self::tickets`] without rebinding.
     pub async fn finish(&self) -> &Self {
         if self.join_handle.lock().unwrap().is_none() {
@@ -1093,13 +1093,13 @@ impl TicketSystem {
 
     /// Most recent finished ticket's result rendered as a String.
     pub fn last_result(&self) -> Option<String> {
-        self.all_results().into_iter().next_back()
+        self.results().into_iter().next_back()
     }
 
     /// Every finished ticket's result rendered as a String, in creation
     /// order.
-    pub fn all_results(&self) -> Vec<String> {
-        self.filter(|t| t.status == Status::Finished && t.result.is_some())
+    pub fn results(&self) -> Vec<String> {
+        self.find_tickets(|t| t.status == Status::Finished && t.result.is_some())
             .iter()
             .filter_map(|t| {
                 t.result.as_ref().map(|v| match v {
@@ -1292,7 +1292,7 @@ mod tests {
     fn task_creates_ticket_with_user_reporter() {
         let (sys, _tmp) = test_system();
         sys.task("hello");
-        let t = sys.get("TICKET-1").unwrap();
+        let t = sys.get_ticket("TICKET-1").unwrap();
         assert_eq!(t.task, serde_json::Value::String("hello".into()));
         assert_eq!(t.reporter, "user");
         assert_eq!(t.status, Status::Todo);
@@ -1302,7 +1302,7 @@ mod tests {
     fn task_labeled_attaches_label_and_leaves_status_todo() {
         let (sys, _tmp) = test_system();
         sys.task_labeled("hello", "research");
-        let t = sys.get("TICKET-1").unwrap();
+        let t = sys.get_ticket("TICKET-1").unwrap();
         assert_eq!(t.labels, vec!["research".to_string()]);
         assert_eq!(t.status, Status::Todo);
     }
@@ -1311,7 +1311,7 @@ mod tests {
     fn create_with_named_label_is_born_todo_and_carries_label() {
         let (sys, _tmp) = test_system();
         sys.ticket(Ticket::new("specific work for alice").label("alice"));
-        let t = sys.get("TICKET-1").unwrap();
+        let t = sys.get_ticket("TICKET-1").unwrap();
         assert!(t.labels.iter().any(|l| l == "alice"));
         assert_eq!(t.status, Status::Todo);
     }
@@ -1321,7 +1321,7 @@ mod tests {
         let (sys, _tmp) = test_system();
         let schema = crate::schemas::Schema::parse(serde_json::json!({"type": "string"})).unwrap();
         sys.ticket(Ticket::new("x").label("urgent").schema(schema));
-        let t = sys.get("TICKET-1").unwrap();
+        let t = sys.get_ticket("TICKET-1").unwrap();
         assert_eq!(t.labels, vec!["urgent".to_string()]);
         assert!(t.schema.is_some());
     }
@@ -1334,7 +1334,7 @@ mod tests {
         alice.task("from alice");
         sys.task("from system");
         let all_keys: Vec<String> = sys
-            .filter(|t| t.status == Status::Todo)
+            .find_tickets(|t| t.status == Status::Todo)
             .iter()
             .map(|t| t.key.clone())
             .collect();
@@ -1349,7 +1349,7 @@ mod tests {
         // Bound: task() works, lands in the shared queue.
         alice.task("first");
         alice.task("second");
-        assert_eq!(sys.count(|t| t.status == Status::Todo), 2);
+        assert_eq!(sys.count_tickets(|t| t.status == Status::Todo), 2);
     }
 
     #[test]
@@ -1364,7 +1364,7 @@ mod tests {
         let (sys, _tmp) = test_system();
         sys.task("Fix Login");
         sys.task("Other thing");
-        let hits = sys.search("login");
+        let hits = sys.search_tickets("login");
         assert_eq!(hits.len(), 1);
     }
 
@@ -1380,7 +1380,7 @@ mod tests {
         sys.task("hi");
         sys.set_result("TICKET-1", serde_json::Value::String("answer".into()))
             .unwrap();
-        let stored = sys.get("TICKET-1").unwrap();
+        let stored = sys.get_ticket("TICKET-1").unwrap();
         assert_eq!(
             stored.result.as_ref(),
             Some(&serde_json::Value::String("answer".into()))
@@ -1394,7 +1394,7 @@ mod tests {
     #[test]
     fn first_returns_none_on_empty_system() {
         let (sys, _tmp) = test_system();
-        assert!(sys.first().is_none());
+        assert!(sys.first_ticket().is_none());
         assert!(sys.tickets().is_empty());
     }
 
@@ -1404,7 +1404,7 @@ mod tests {
         sys.task("first");
         sys.task("second");
         sys.task("third");
-        let first = sys.first().unwrap();
+        let first = sys.first_ticket().unwrap();
         assert_eq!(first.key, "TICKET-1");
         assert_eq!(first.task, serde_json::Value::String("first".into()));
     }
@@ -1412,11 +1412,11 @@ mod tests {
     #[test]
     fn last_returns_latest_ticket_by_creation() {
         let (sys, _tmp) = test_system();
-        assert!(sys.last().is_none());
+        assert!(sys.last_ticket().is_none());
         sys.task("first");
         sys.task("second");
         sys.task("third");
-        let last = sys.last().unwrap();
+        let last = sys.last_ticket().unwrap();
         assert_eq!(last.key, "TICKET-3");
         assert_eq!(last.task, serde_json::Value::String("third".into()));
     }
@@ -1435,14 +1435,14 @@ mod tests {
     }
 
     #[test]
-    fn all_results_returns_done_payloads_in_creation_order() {
+    fn results_return_done_payloads_in_creation_order() {
         let (sys, _tmp) = test_system();
         sys.task("a");
         sys.task("b");
         sys.task("c");
         attach_done_result(&sys, "TICKET-1", "first");
         attach_done_result(&sys, "TICKET-3", "third");
-        assert_eq!(sys.all_results(), vec!["first", "third"]);
+        assert_eq!(sys.results(), vec!["first", "third"]);
     }
 
     #[test]
@@ -1456,7 +1456,7 @@ mod tests {
     }
 
     #[test]
-    fn all_results_orders_by_creation_regardless_of_done_order() {
+    fn results_order_by_creation_regardless_of_done_order() {
         let (sys, _tmp) = test_system();
         sys.task("a");
         sys.task("b");
@@ -1464,7 +1464,7 @@ mod tests {
         attach_done_result(&sys, "TICKET-3", "third");
         attach_done_result(&sys, "TICKET-1", "first");
         attach_done_result(&sys, "TICKET-2", "second");
-        assert_eq!(sys.all_results(), vec!["first", "second", "third"]);
+        assert_eq!(sys.results(), vec!["first", "second", "third"]);
     }
 
     #[test]
@@ -1472,7 +1472,7 @@ mod tests {
         let (sys, _tmp) = test_system();
         sys.task("pending");
         assert!(sys.last_result().is_none());
-        assert!(sys.all_results().is_empty());
+        assert!(sys.results().is_empty());
     }
 
     #[test]
@@ -1484,8 +1484,8 @@ mod tests {
         sys.claim(|t| t.key == "TICKET-1", "agent");
         sys.set_finished("TICKET-1").unwrap();
         sys.set_failed("TICKET-2").unwrap();
-        let done = sys.filter(|t| t.status == Status::Finished);
-        let failed = sys.filter(|t| t.status == Status::Failed);
+        let done = sys.find_tickets(|t| t.status == Status::Finished);
+        let failed = sys.find_tickets(|t| t.status == Status::Failed);
         assert_eq!(done.len(), 1);
         assert_eq!(done[0].key, "TICKET-1");
         assert_eq!(failed.len(), 1);
@@ -1632,7 +1632,7 @@ mod tests {
         sys.task("hello");
         let key = sys.claim(|t| t.status == Status::Todo, "alice").unwrap();
         assert_eq!(key, "TICKET-1");
-        let t = sys.get(&key).unwrap();
+        let t = sys.get_ticket(&key).unwrap();
         assert_eq!(t.status, Status::InProgress);
         assert!(t.labels.iter().any(|l| l == "alice"));
         assert!(t.started_at.is_some());
@@ -1686,7 +1686,7 @@ mod tests {
         sys.task("hello");
         sys.claim(|t| t.status == Status::Todo, "alice");
         sys.set_finished("TICKET-1").unwrap();
-        let t = sys.get("TICKET-1").unwrap();
+        let t = sys.get_ticket("TICKET-1").unwrap();
         assert_eq!(t.status, Status::Finished);
         assert!(t.finished_at.is_some());
     }
@@ -1697,7 +1697,7 @@ mod tests {
         sys.task("hello");
         sys.claim(|t| t.status == Status::Todo, "alice");
         sys.set_failed("TICKET-1").unwrap();
-        let t = sys.get("TICKET-1").unwrap();
+        let t = sys.get_ticket("TICKET-1").unwrap();
         assert_eq!(t.status, Status::Failed);
         assert!(t.failed_at.is_some());
     }
@@ -1706,7 +1706,7 @@ mod tests {
     fn ticket_parent_builder_round_trips() {
         let (sys, _tmp) = test_system();
         sys.ticket(Ticket::new("child body").parent("TICKET-1"));
-        let stored = sys.get("TICKET-1").unwrap();
+        let stored = sys.get_ticket("TICKET-1").unwrap();
         assert_eq!(stored.parent.as_deref(), Some("TICKET-1"));
     }
 
@@ -1772,7 +1772,7 @@ mod tests {
         drop(original);
 
         let resumed = TicketSystem::load(dir.path()).unwrap();
-        let t = resumed.get("TICKET-1").unwrap();
+        let t = resumed.get_ticket("TICKET-1").unwrap();
         assert_eq!(t.status, Status::Finished);
         assert_eq!(t.result.as_ref(), Some(&serde_json::json!({"ok": true})));
         assert_eq!(t.task, serde_json::Value::String("seed work".into()));
@@ -1790,7 +1790,7 @@ mod tests {
         drop(original);
 
         let resumed = TicketSystem::load(dir.path()).unwrap();
-        let t = resumed.get("TICKET-1").unwrap();
+        let t = resumed.get_ticket("TICKET-1").unwrap();
         assert_eq!(t.status, Status::InProgress);
         assert!(t.labels.iter().any(|l| l == "alice"));
     }
@@ -1836,8 +1836,8 @@ mod tests {
         std::fs::write(broken_dir.join("ticket.123.json"), "not json").unwrap();
 
         let resumed = TicketSystem::load(dir.path()).unwrap();
-        assert!(resumed.get("TICKET-1").is_some());
-        assert!(resumed.get("TICKET-99").is_none());
+        assert!(resumed.get_ticket("TICKET-1").is_some());
+        assert!(resumed.get_ticket("TICKET-99").is_none());
     }
 
     #[test]
@@ -1869,7 +1869,7 @@ mod tests {
         .unwrap();
 
         let sys = TicketSystem::load(dir.path()).unwrap();
-        let t = sys.get("TICKET-1").unwrap();
+        let t = sys.get_ticket("TICKET-1").unwrap();
         assert_eq!(t.task, serde_json::Value::String("new body".into()));
         assert_eq!(t.created_at, 200);
     }
@@ -1938,7 +1938,7 @@ mod tests {
         drop(original);
 
         let resumed = TicketSystem::load(dir.path()).unwrap();
-        let t = resumed.get("TICKET-1").unwrap();
+        let t = resumed.get_ticket("TICKET-1").unwrap();
         let restored = t.schema.expect("JSON schema must restore");
         assert!(restored.validate(&serde_json::json!({"n": 3})).is_ok());
         assert!(restored.validate(&serde_json::json!({})).is_err());

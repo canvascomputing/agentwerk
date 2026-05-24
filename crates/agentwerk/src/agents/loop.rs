@@ -103,7 +103,7 @@ async fn try_compact<F: Fn(EventKind)>(
     scope: &TicketScope<'_, F>,
 ) -> LoopAction {
     (scope.emit)(EventKind::CompactionStarted { reason });
-    let Some(ticket) = scope.ticket_system.get(scope.key) else {
+    let Some(ticket) = scope.ticket_system.get_ticket(scope.key) else {
         return LoopAction::Stop;
     };
     let messages = to_messages(&ticket.comments);
@@ -111,7 +111,7 @@ async fn try_compact<F: Fn(EventKind)>(
         Ok(summary) => {
             if let Some(summary) = summary {
                 let dir = scope.ticket_system.dir_value();
-                if let Some(t) = scope.ticket_system.get(scope.key) {
+                if let Some(t) = scope.ticket_system.get_ticket(scope.key) {
                     use crate::persistence::Persist;
                     let _ = t.save(&dir);
                 }
@@ -124,7 +124,7 @@ async fn try_compact<F: Fn(EventKind)>(
                 {
                     t.summarize(summary);
                 }
-                if let Some(t) = scope.ticket_system.get(scope.key) {
+                if let Some(t) = scope.ticket_system.get_ticket(scope.key) {
                     use crate::persistence::Persist;
                     let _ = t.save(&dir);
                 }
@@ -190,7 +190,7 @@ pub(super) async fn handle_tickets(agent: Agent) {
             )
             .or_else(|| {
                 ticket_system
-                    .find(|t| {
+                    .find_ticket(|t| {
                         t.status == Status::InProgress
                             && t.labels.iter().any(|l| l == agent.get_name())
                             && t.is_waiting_for_response()
@@ -218,7 +218,7 @@ async fn process_ticket(
 
     ticket_system.stats.record_turn();
 
-    let Some(ticket) = ticket_system.get(key) else {
+    let Some(ticket) = ticket_system.get_ticket(key) else {
         return;
     };
     let labels = ticket.labels.clone();
@@ -295,7 +295,7 @@ async fn process_ticket(
         if interrupt_signal.load(Ordering::Relaxed) {
             return;
         }
-        let ticket = match ticket_system.get(key) {
+        let ticket = match ticket_system.get_ticket(key) {
             Some(t) if matches!(t.status, Status::Finished | Status::Failed) => {
                 emit(event_for_status(t.status, key));
                 return;
@@ -325,7 +325,7 @@ async fn process_ticket(
                     // ticket's tail; re-read so the request below sees
                     // the post-compaction transcript.
                     messages = ticket_system
-                        .get(key)
+                        .get_ticket(key)
                         .map(|t| to_messages(&t.comments))
                         .unwrap_or_default();
                 }
@@ -456,7 +456,7 @@ async fn process_ticket(
 
         if calls.is_empty() {
             let has_schema = ticket_system
-                .get(key)
+                .get_ticket(key)
                 .map(|t| t.schema.is_some())
                 .unwrap_or(false);
             if has_schema {
@@ -878,7 +878,7 @@ mod tests {
 
         let _ = tickets.finish().await;
         let events = collected.lock().unwrap().clone();
-        let ticket = tickets.first().expect("ticket must exist");
+        let ticket = tickets.first_ticket().expect("ticket must exist");
         (events, provider, ticket)
     }
 
@@ -1854,12 +1854,12 @@ mod tests {
         tickets.task("a");
         tickets.task("b");
 
-        let results = tokio::time::timeout(Duration::from_secs(5), tickets.finish())
+        tokio::time::timeout(Duration::from_secs(5), tickets.finish())
             .await
             .expect("finish did not finish within 5s");
 
-        assert_eq!(results.all_results().len(), 2);
-        assert_eq!(results.last_result().as_deref(), Some("b-done"));
+        assert_eq!(tickets.results().len(), 2);
+        assert_eq!(tickets.last_result().as_deref(), Some("b-done"));
     }
 
     #[tokio::test]
@@ -2107,7 +2107,7 @@ mod tests {
 
         let _ = tickets.finish().await;
         let events = collected.lock().unwrap().clone();
-        let ticket = tickets.first().expect("ticket must exist");
+        let ticket = tickets.first_ticket().expect("ticket must exist");
         (events, provider, ticket)
     }
 
@@ -2401,7 +2401,7 @@ mod tests {
 
         let _ = tickets.finish().await;
         let events = collected.lock().unwrap().clone();
-        let ticket = tickets.first().expect("ticket must exist");
+        let ticket = tickets.first_ticket().expect("ticket must exist");
 
         assert_eq!(provider.requests(), 2);
         assert_eq!(
@@ -2584,7 +2584,7 @@ mod tests {
         tickets.task("go");
 
         let _ = tickets.finish().await;
-        let ticket = tickets.first().expect("ticket must exist");
+        let ticket = tickets.first_ticket().expect("ticket must exist");
         assert_eq!(ticket.status, Status::Finished);
 
         // The second request carries one stub (for c1) and four

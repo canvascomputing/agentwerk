@@ -81,7 +81,7 @@ pub(super) fn resolve_current_key(
         ToolResult::error("Missing `key` and no agent_name set on this tool context")
     })?;
     match ticket_system
-        .find(|t| t.status == Status::InProgress && t.labels.iter().any(|l| l == agent_name))
+        .find_ticket(|t| t.status == Status::InProgress && t.labels.iter().any(|l| l == agent_name))
     {
         Some(t) => Ok(t.key.clone()),
         None => Err(ToolResult::error(
@@ -192,7 +192,7 @@ fn action_get(ticket_system: &TicketSystem, input: &Value, ctx: &ToolContext) ->
         Ok(k) => k,
         Err(e) => return e,
     };
-    match ticket_system.get(&key) {
+    match ticket_system.get_ticket(&key) {
         Some(t) => ToolResult::success(render_ticket(&t)),
         None => ToolResult::error(format!("Ticket {key} not found")),
     }
@@ -207,7 +207,7 @@ fn action_list(ticket_system: &TicketSystem, input: &Value) -> ToolResult {
         None => None,
     };
 
-    let pool: Vec<Ticket> = ticket_system.filter(|t| {
+    let pool: Vec<Ticket> = ticket_system.find_tickets(|t| {
         let status_ok = match status {
             Some(s) => t.status == s,
             None => true,
@@ -241,7 +241,7 @@ fn action_search(ticket_system: &TicketSystem, input: &Value) -> ToolResult {
         Some(q) => q,
         None => return ToolResult::error("Missing required parameter: query"),
     };
-    let hits = ticket_system.search(query);
+    let hits = ticket_system.search_tickets(query);
     if hits.is_empty() {
         return ToolResult::success("(no matching tickets)".to_string());
     }
@@ -358,7 +358,7 @@ pub(super) fn write_result(
         }
     };
 
-    let schema = ticket_system.get(key).and_then(|t| t.schema.clone());
+    let schema = ticket_system.get_ticket(key).and_then(|t| t.schema.clone());
     if let Some(schema) = schema.as_ref() {
         if let Err(violations) = schema.validate(&result) {
             return ToolResult::schema_error(format_violations(&violations));
@@ -408,8 +408,8 @@ mod tests {
     }
 
     /// Insert one Todo ticket, claim it for `agent` (atomically labels +
-    /// transitions to InProgress), so `sys.find(...)` resolves it as the
-    /// current ticket for `agent`. The system is rooted at a shared
+    /// transitions to InProgress), so `sys.find_ticket(...)` resolves it
+    /// as the current ticket for `agent`. The system is rooted at a shared
     /// per-module temp directory so the default `.agentwerk` writes
     /// never leak into the source tree.
     fn shared_with_one_ticket(agent: &str) -> (Arc<TicketSystem>, String) {
@@ -483,7 +483,7 @@ mod tests {
         )
         .await;
         assert!(matches!(result, ToolResult::Success(_)));
-        let t = sys.get("TICKET-1").unwrap();
+        let t = sys.get_ticket("TICKET-1").unwrap();
         assert_eq!(t.task, serde_json::Value::String("new ticket".into()));
         assert_eq!(t.reporter, "alice");
     }
@@ -504,7 +504,7 @@ mod tests {
         )
         .await;
         assert!(matches!(result, ToolResult::Success(_)));
-        let t = sys.get("TICKET-1").unwrap();
+        let t = sys.get_ticket("TICKET-1").unwrap();
         assert_eq!(t.labels, vec!["research".to_string()]);
         assert_eq!(t.status, Status::Todo);
     }
@@ -525,7 +525,7 @@ mod tests {
         )
         .await;
         assert!(matches!(result, ToolResult::Success(_)));
-        let t = sys.get("TICKET-1").unwrap();
+        let t = sys.get_ticket("TICKET-1").unwrap();
         assert!(t.labels.iter().any(|l| l == "alice"));
         assert_eq!(t.status, Status::Todo);
     }
@@ -546,7 +546,7 @@ mod tests {
         )
         .await;
         assert!(matches!(result, ToolResult::Success(_)));
-        assert!(sys.get("TICKET-1").unwrap().schema.is_some());
+        assert!(sys.get_ticket("TICKET-1").unwrap().schema.is_some());
     }
 
     #[tokio::test]
@@ -564,7 +564,7 @@ mod tests {
         )
         .await;
         assert!(matches!(result, ToolResult::Success(_)));
-        let t = sys.get(&key).unwrap();
+        let t = sys.get_ticket(&key).unwrap();
         assert_eq!(t.task, serde_json::Value::String("new body".into()));
         assert_eq!(t.labels, vec!["urgent".to_string(), "review".to_string()]);
     }
