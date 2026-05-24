@@ -144,10 +144,10 @@ impl Ticket {
         self.failed_at
     }
 
-    /// Elapsed duration from creation to terminal status (Done or
-    /// Failed), `None` while the ticket has not yet reached one. Mirrors
-    /// the naming convention of [`Stats::run_duration`](crate::Stats::run_duration).
-    pub fn elapsed(&self) -> Option<Duration> {
+    /// Duration from creation to terminal status (Finished or Failed),
+    /// `None` while the ticket has not yet reached one. Mirrors the
+    /// naming convention of [`Stats::run_duration`](crate::Stats::run_duration).
+    pub fn duration(&self) -> Option<Duration> {
         let terminal = self.finished_at.or(self.failed_at)?;
         Some(Duration::from_millis(
             terminal.saturating_sub(self.created_at),
@@ -955,6 +955,11 @@ impl TicketSystem {
         self.tickets().into_iter().next()
     }
 
+    /// Latest ticket by creation time, if any.
+    pub fn last(&self) -> Option<Ticket> {
+        self.tickets().into_iter().next_back()
+    }
+
     /// Substring search over the task body, case-insensitive.
     pub fn search(&self, query: &str) -> Vec<Ticket> {
         let needle = query.to_lowercase();
@@ -1274,7 +1279,7 @@ fn stamp_transition_timestamps(ticket: &mut Ticket, next: Status, now: u64) {
 /// `work_duration` is started→terminal. Both default to zero if the
 /// relevant timestamps aren't both set.
 fn terminal_durations(ticket: &Ticket) -> (Duration, Duration) {
-    let ticket_duration = ticket.elapsed().unwrap_or_default();
+    let ticket_duration = ticket.duration().unwrap_or_default();
     let work_duration = match (ticket.started_at, ticket.finished_at.or(ticket.failed_at)) {
         (Some(start), Some(end)) => Duration::from_millis(end.saturating_sub(start)),
         _ => Duration::ZERO,
@@ -1480,6 +1485,18 @@ mod tests {
         let first = sys.first().unwrap();
         assert_eq!(first.key(), "TICKET-1");
         assert_eq!(first.task, serde_json::Value::String("first".into()));
+    }
+
+    #[test]
+    fn last_returns_latest_ticket_by_creation() {
+        let (sys, _tmp) = test_system();
+        assert!(sys.last().is_none());
+        sys.task("first");
+        sys.task("second");
+        sys.task("third");
+        let last = sys.last().unwrap();
+        assert_eq!(last.key(), "TICKET-3");
+        assert_eq!(last.task, serde_json::Value::String("third".into()));
     }
 
     #[test]

@@ -188,7 +188,7 @@ tickets.ticket(
 | `pool(n, build)` | Add `n` agents built by `build(i)`, where `i` is the 0-based agent index. |
 | `dir(d)` | Set the directory where knowledge, results, and ticket logs are persisted. |
 | `task(t)` | Submit a task and return its ticket key. |
-| `task_labeled(t, l)` | Submit a task tagged with `l` for label-scoped routing. |
+| `task_labeled(t, l)` | Submit a task tagged with `l` for label-scoped routing. Shorthand for `ticket(Ticket::new(t).label(l))`. |
 | `ticket(t)` | Submit a `Ticket` with custom labels, a schema, or a parent link. |
 | `comment(key, c)` | Add a comment to an existing ticket. |
 
@@ -232,6 +232,7 @@ for ticket in tickets.tickets() {
 | `tickets()` | Return every ticket in creation order, with status, payload, and metadata. |
 | `get(key)` | Return the ticket at `key`, or `None` when it is unknown. |
 | `first()` | Return the earliest ticket by creation time. |
+| `last()` | Return the latest ticket by creation time. |
 | `search(query)` | Return tickets whose task body contains `query`, case-insensitively. |
 | `filter(predicate)` | Return tickets matching the predicate, in creation order. |
 | `find(predicate)` | Return the earliest ticket matching the predicate. |
@@ -264,7 +265,7 @@ let report: Report = ticket.result_as().unwrap();
 | `started_at()` | Return the millisecond timestamp at which an agent claimed the ticket. |
 | `finished_at()` | Return the millisecond timestamp at which the ticket was marked finished. |
 | `failed_at()` | Return the millisecond timestamp at which the ticket failed. |
-| `elapsed()` | Return the creation-to-terminal duration once the ticket is done or failed. |
+| `duration()` | Return the creation-to-terminal duration once the ticket is finished or failed. |
 
 ### Policies
 
