@@ -1,0 +1,289 @@
+//! Shared test infrastructure: mock provider, response builders, event filters, and test harnesses.
+
+use std::pin::Pin;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{Arc, Mutex};
+use std::time::Duration;
+
+use crate::agents::agent::Agent;
+use crate::agents::tickets::{Ticket, TicketSystem};
+use crate::event::Event;
+use crate::providers::types::{ModelResponse, ResponseStatus, TokenUsage};
+use crate::providers::{ContentBlock, Message, Provider, ProviderError, ProviderResult};
+use crate::schemas::Schema;
+use crate::tools::ManageTicketsTool;
+
+// ---- mock provider ----
+
+pub struct MockProvider {
+    results: Mutex<Vec<ProviderResult<ModelResponse>>>,
+    requests: AtomicUsize,
+    received: Mutex<Vec<Vec<Message>>>,
+    received_system_prompts: Mutex<Vec<String>>,
+}
+
+impl MockProvider {
+    pub fn with_results(results: Vec<ProviderResult<ModelResponse>>) -> Arc<Self> {
+        Arc::new(Self {
+            results: Mutex::new(results),
+            requests: AtomicUsize::new(0),
+            received: Mutex::new(Vec::new()),
+            received_system_prompts: Mutex::new(Vec::new()),
+        })
+    }
+
+    pub fn requests(&self) -> usize {
+        self.requests.load(Ordering::Relaxed)
+    }
+
+    pub fn received(&self) -> Vec<Vec<Message>> {
+        self.received.lock().unwrap().clone()
+    }
+
+    pub fn received_system_prompts(&self) -> Vec<String> {
+        self.received_system_prompts.lock().unwrap().clone()
+    }
+}
+
+impl Provider for MockProvider {
+    fn respond(
+        &self,
+        request: crate::providers::ModelRequest,
+        _on_event: Arc<dyn Fn(crate::providers::types::StreamEvent) + Send + Sync>,
+    ) -> Pin<Box<dyn std::future::Future<Output = ProviderResult<ModelResponse>> + Send + '_>>
+    {
+        self.received.lock().unwrap().push(request.messages.clone());
+        self.received_system_prompts
+            .lock()
+            .unwrap()
+            .push(request.system_prompt.clone());
+        self.requests.fetch_add(1, Ordering::Relaxed);
+        let next = {
+            let mut results = self.results.lock().unwrap();
+            if results.is_empty() {
+                Err(ProviderError::AuthenticationFailed {
+                    message: "MockProvider exhausted".into(),
+                })
+            } else {
+                results.remove(0)
+            }
+        };
+        Box::pin(async move {
+            tokio::task::yield_now().await;
+            next
+        })
+    }
+}
+
+// ---- response builders ----
+
+pub fn write_result_response(result: &str) -> ModelResponse {
+    ModelResponse {
+        content: vec![ContentBlock::ToolUse {
+            id: "call-1".into(),
+            name: "finish_ticket".into(),
+            input: serde_json::json!({ "result": result }),
+        }],
+        status: ResponseStatus::ToolUse,
+        usage: TokenUsage::default(),
+        model: "mock".into(),
+    }
+}
+
+pub fn write_result_value(result: serde_json::Value) -> ModelResponse {
+    ModelResponse {
+        content: vec![ContentBlock::ToolUse {
+            id: "call-1".into(),
+            name: "finish_ticket".into(),
+            input: serde_json::json!({ "result": result }),
+        }],
+        status: ResponseStatus::ToolUse,
+        usage: TokenUsage::default(),
+        model: "mock".into(),
+    }
+}
+
+pub fn knowledge_write_response(slug: &str, summary: &str, content: &str) -> ModelResponse {
+    ModelResponse {
+        content: vec![ContentBlock::ToolUse {
+            id: "call-1".into(),
+            name: "manage_knowledge".into(),
+            input: serde_json::json!({"action": "write", "slug": slug, "summary": summary, "content": content}),
+        }],
+        status: ResponseStatus::ToolUse,
+        usage: TokenUsage::default(),
+        model: "mock".into(),
+    }
+}
+
+pub fn knowledge_read_response(slug: &str) -> ModelResponse {
+    ModelResponse {
+        content: vec![ContentBlock::ToolUse {
+            id: "call-2".into(),
+            name: "manage_knowledge".into(),
+            input: serde_json::json!({"action": "read", "slug": slug}),
+        }],
+        status: ResponseStatus::ToolUse,
+        usage: TokenUsage::default(),
+        model: "mock".into(),
+    }
+}
+
+pub fn text_response(text: &str) -> ModelResponse {
+    ModelResponse {
+        content: vec![ContentBlock::Text { text: text.into() }],
+        status: ResponseStatus::EndTurn,
+        usage: TokenUsage::default(),
+        model: "mock".into(),
+    }
+}
+
+pub fn text_response_with_usage(text: &str, usage: TokenUsage) -> ModelResponse {
+    ModelResponse {
+        content: vec![ContentBlock::Text { text: text.into() }],
+        status: ResponseStatus::EndTurn,
+        usage,
+        model: "mock".into(),
+    }
+}
+
+// ---- error builders ----
+
+pub fn rate_limit() -> ProviderError {
+    ProviderError::RateLimited {
+        message: "rate limited".into(),
+        status: 429,
+        retry_delay: None,
+    }
+}
+
+pub fn connection_failed(message: &str) -> ProviderError {
+    ProviderError::ConnectionFailed {
+        message: message.into(),
+    }
+}
+
+// ---- event filters ----
+
+pub fn retries_in(events: &[Event]) -> Vec<(u32, u32, String)> {
+    events
+        .iter()
+        .filter_map(|e| match &e.kind {
+            crate::event::EventKind::RequestRetried {
+                attempt,
+                max_attempts,
+                message,
+                ..
+            } => Some((*attempt, *max_attempts, message.clone())),
+            _ => None,
+        })
+        .collect()
+}
+
+pub fn failures_in(events: &[Event]) -> Vec<String> {
+    events
+        .iter()
+        .filter_map(|e| match &e.kind {
+            crate::event::EventKind::RequestFailed { message, .. } => Some(message.clone()),
+            _ => None,
+        })
+        .collect()
+}
+
+pub fn schema_retries_in(events: &[Event]) -> Vec<(u32, u32, String)> {
+    events
+        .iter()
+        .filter_map(|e| match &e.kind {
+            crate::event::EventKind::SchemaRetried {
+                attempt,
+                max_attempts,
+                message,
+            } => Some((*attempt, *max_attempts, message.clone())),
+            _ => None,
+        })
+        .collect()
+}
+
+// ---- harnesses ----
+
+pub async fn run_one(
+    provider: Arc<MockProvider>,
+    max_request_retries: u32,
+    max_schema_retries: u32,
+    schema: Option<Schema>,
+) -> (Vec<Event>, Arc<MockProvider>, Ticket) {
+    let collected: Arc<Mutex<Vec<Event>>> = Arc::new(Mutex::new(Vec::new()));
+    let handler: Arc<dyn Fn(Event) + Send + Sync> = {
+        let c = Arc::clone(&collected);
+        Arc::new(move |e| c.lock().unwrap().push(e))
+    };
+
+    let results_dir = crate::test_util::TempDir::new().unwrap();
+    let tickets = TicketSystem::new();
+    tickets
+        .dir(results_dir.path().to_path_buf())
+        .max_request_retries(max_request_retries)
+        .request_retry_delay(Duration::from_millis(1))
+        .max_schema_retries(max_schema_retries)
+        .max_time(Duration::from_millis(200));
+
+    let agent = Agent::new()
+        .name("tester")
+        .provider(provider.clone() as Arc<dyn Provider>)
+        .model("mock")
+        .role("test")
+        .tool(ManageTicketsTool)
+        .event_handler(handler);
+    tickets.agent(agent);
+
+    if let Some(schema) = schema {
+        tickets.ticket(Ticket::new("go").schema(schema));
+    } else {
+        tickets.task("go");
+    }
+
+    let _ = tickets.finish().await;
+    let events = collected.lock().unwrap().clone();
+    let ticket = tickets.first_ticket().expect("ticket must exist");
+    (events, provider, ticket)
+}
+
+pub async fn run_compaction(
+    provider: Arc<MockProvider>,
+) -> (Vec<Event>, Arc<MockProvider>, Ticket) {
+    let collected: Arc<Mutex<Vec<Event>>> = Arc::new(Mutex::new(Vec::new()));
+    let handler: Arc<dyn Fn(Event) + Send + Sync> = {
+        let c = Arc::clone(&collected);
+        Arc::new(move |e| c.lock().unwrap().push(e))
+    };
+
+    let results_dir = crate::test_util::TempDir::new().unwrap();
+    let tickets = TicketSystem::new();
+    tickets
+        .dir(results_dir.path().to_path_buf())
+        .max_request_retries(0)
+        .request_retry_delay(Duration::from_millis(1))
+        .max_schema_retries(10)
+        .max_time(Duration::from_millis(200));
+
+    let agent = Agent::new()
+        .name("tester")
+        .provider(provider.clone() as Arc<dyn Provider>)
+        .model("claude-sonnet-4-20250514")
+        .role("test")
+        .context("static")
+        .tool(ManageTicketsTool)
+        .event_handler(handler);
+    tickets.agent(agent);
+    let schema = Schema::parse(serde_json::json!({"type": "string"})).unwrap();
+    tickets.ticket(Ticket::new("go").schema(schema));
+
+    let _ = tickets.finish().await;
+    let events = collected.lock().unwrap().clone();
+    let ticket = tickets.first_ticket().expect("ticket must exist");
+    (events, provider, ticket)
+}
+
+pub fn string_schema() -> Schema {
+    Schema::parse(serde_json::json!({"type": "string"})).expect("valid schema")
+}

@@ -1,6 +1,5 @@
-//! Retry strategies: exponential backoff for transient provider
-//! errors, immediate retry without backoff for compaction. Each
-//! strategy owns its own attempt counter — callers consume one
+//! Retry strategy: exponential backoff for transient provider errors.
+//! The strategy owns its own attempt counter; callers consume one
 //! attempt at a time via [`Retry::try_consume`] and never track the
 //! count themselves.
 
@@ -91,46 +90,6 @@ impl Retry for ExponentialRetry {
     }
 }
 
-/// Retry budget without backoff: every attempt fires as soon as the
-/// previous one returns. Used by the compaction circuit breaker,
-/// where each retry corresponds to a fresh request built from
-/// already-compacted messages and waiting adds nothing. `delay()`
-/// uses the trait's default (zero).
-pub(crate) struct ImmediateRetry {
-    max_attempts: u32,
-    attempt: u32,
-}
-
-impl ImmediateRetry {
-    pub(crate) fn new(max_attempts: u32) -> Self {
-        Self {
-            max_attempts,
-            attempt: 0,
-        }
-    }
-
-    /// Restore the budget to its starting state. Used to clear the
-    /// compaction circuit breaker after a successful (non-overflow)
-    /// response so the next overflow gets a fresh retry.
-    pub(crate) fn reset(&mut self) {
-        self.attempt = 0;
-    }
-}
-
-impl Retry for ImmediateRetry {
-    fn try_consume(&mut self) -> Option<u32> {
-        if self.attempt >= self.max_attempts {
-            return None;
-        }
-        self.attempt += 1;
-        Some(self.attempt)
-    }
-
-    fn max_attempts(&self) -> u32 {
-        self.max_attempts
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -193,27 +152,4 @@ mod tests {
         assert_eq!(policy.try_consume(), None);
     }
 
-    #[test]
-    fn immediate_retry_consumes_then_exhausts() {
-        let mut r = ImmediateRetry::new(1);
-        assert_eq!(r.max_attempts(), 1);
-        assert_eq!(r.try_consume(), Some(1));
-        assert_eq!(r.try_consume(), None);
-    }
-
-    #[test]
-    fn immediate_retry_delay_is_zero_regardless_of_hint() {
-        let r = ImmediateRetry::new(3);
-        assert_eq!(r.delay(None), Duration::ZERO);
-        assert_eq!(r.delay(Some(Duration::from_secs(60))), Duration::ZERO);
-    }
-
-    #[test]
-    fn immediate_retry_reset_restores_full_budget() {
-        let mut r = ImmediateRetry::new(1);
-        let _ = r.try_consume();
-        assert_eq!(r.try_consume(), None);
-        r.reset();
-        assert_eq!(r.try_consume(), Some(1));
-    }
 }
