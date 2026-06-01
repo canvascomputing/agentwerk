@@ -9,17 +9,17 @@ use crate::agents::retry::{ExponentialRetry, Retry};
 use crate::tools::ToolCall;
 
 use super::compaction;
-use super::turn::TicketScope;
+use super::turn::{fail_ticket, model_name, LoopContext};
 use super::{Action, Reply};
 use super::wait_for_signal;
 
 pub(super) async fn run(
-    scope: &mut TicketScope<'_>,
+    scope: &mut LoopContext<'_>,
     messages: Vec<Message>,
 ) -> Action<Reply> {
     let tools = scope.agent.tool_definitions();
-    let model_name = scope.model_name();
-    scope.emit(EventKind::RequestStarted {
+    let model_name = model_name(scope);
+    scope.agent.emit(EventKind::RequestStarted {
         model: model_name.clone(),
     });
     let request = ModelRequest {
@@ -68,7 +68,7 @@ pub(super) async fn run(
             Err(e) if e.is_retryable() => match retry.try_consume() {
                 Some(attempt) => {
                     let delay = retry.delay(e.retry_delay());
-                    scope.emit(EventKind::RequestRetried {
+                    scope.agent.emit(EventKind::RequestRetried {
                         attempt,
                         max_attempts: retry.max_attempts(),
                         kind: e.kind(),
@@ -82,26 +82,26 @@ pub(super) async fn run(
                     }
                 }
                 None => {
-                    scope.fail_ticket(&e);
+                    fail_ticket(scope, &e);
                     return Action::Replay;
                 }
             },
             Err(e) => {
-                scope.fail_ticket(&e);
+                fail_ticket(scope, &e);
                 return Action::Replay;
             }
         }
     };
 
-    scope.emit(EventKind::RequestFinished {
+    scope.agent.emit(EventKind::RequestFinished {
         model: response.model.clone(),
         usage: response.usage.clone(),
     });
     scope.last_usage = Some(response.usage.clone());
-    scope.record_request(response.usage.input_tokens, response.usage.output_tokens);
+    scope.ticket_system.stats.record_request_for(&scope.labels, response.usage.input_tokens, response.usage.output_tokens);
     scope
         .ticket_system
-        .add_comment(&scope.key, crate::agents::tickets::Comment::assistant(&response.content));
+        .add_comment(&scope.ticket_key, crate::agents::tickets::Comment::assistant(&response.content));
 
     let overflowed = response.status == ResponseStatus::ContextWindowExceeded;
 

@@ -12,7 +12,7 @@ use std::sync::{Arc, Weak};
 
 use serde::Serialize;
 
-use crate::event::{default_logger, Event};
+use crate::event::{default_logger, Event, EventKind};
 use crate::prompts::{default_context, PromptBuilder, Section};
 use crate::providers::{Model, Provider, ProviderToolDefinition};
 use crate::tools::{FinishTicketTool, ManageKnowledgeTool, ToolLike, ToolRegistry};
@@ -266,6 +266,10 @@ impl Agent {
 
     pub(super) fn resolve_event_handler(&self) -> Arc<dyn Fn(Event) + Send + Sync> {
         self.event_handler.clone().unwrap_or_else(default_logger)
+    }
+
+    pub(super) fn emit(&self, kind: EventKind) {
+        (self.resolve_event_handler())(Event::new(self.get_name(), kind));
     }
 
     /// Returns true when the agent's label scope intersects the ticket's

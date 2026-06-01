@@ -4,22 +4,21 @@ use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
-use crate::event::{Event, EventKind};
+use crate::event::EventKind;
 use crate::providers::types::TokenUsage;
 use crate::providers::{AsUserMessage, Message, ProviderError};
 use crate::agents::agent::Agent;
 use crate::agents::policy::Policies;
-use crate::agents::stats::LoopStats;
 use crate::agents::tickets::{policy_violated_kind, to_messages, Comment, Status, TicketSystem};
 
 use super::{compaction, reply, tool_call, Action, POLL_INTERVAL};
 
-pub(super) struct TicketScope<'a> {
+pub(super) struct LoopContext<'a> {
     pub(super) agent: &'a Agent,
     pub(super) ticket_system: &'a Arc<TicketSystem>,
     pub(super) interrupt_signal: Arc<AtomicBool>,
 
-    pub(super) key: String,
+    pub(super) ticket_key: String,
     pub(super) labels: Vec<String>,
     pub(super) system_prompt: String,
     pub(super) policies: Policies,
@@ -28,7 +27,7 @@ pub(super) struct TicketScope<'a> {
     pub(super) last_usage: Option<TokenUsage>,
 }
 
-impl<'a> TicketScope<'a> {
+impl<'a> LoopContext<'a> {
     pub(super) fn new(
         agent: &'a Agent,
         ticket_system: &'a Arc<TicketSystem>,
@@ -49,7 +48,7 @@ impl<'a> TicketScope<'a> {
             ticket_system,
             interrupt_signal,
 
-            key,
+            ticket_key: key,
             labels,
             system_prompt,
             policies,
@@ -58,20 +57,20 @@ impl<'a> TicketScope<'a> {
             last_usage: None,
         };
 
-        scope.record_turn();
+        scope.ticket_system.stats.record_turn_for(&scope.labels);
 
         if comments_empty {
             scope
                 .ticket_system
-                .add_comment(&scope.key, Comment::system_text(scope.system_prompt.clone()));
+                .add_comment(&scope.ticket_key, Comment::system_text(scope.system_prompt.clone()));
             if let Some(context_msg) =
                 scope
                     .agent
-                    .context_message(&scope.policies, &scope.ticket_system.stats, Some(&scope.key))
+                    .context_message(&scope.policies, &scope.ticket_system.stats, Some(&scope.ticket_key))
             {
                 scope
                     .ticket_system
-                    .add_comment(&scope.key, Comment::user_text(context_msg));
+                    .add_comment(&scope.ticket_key, Comment::user_text(context_msg));
             }
             let Message::User {
                 content: task_blocks,
@@ -81,85 +80,48 @@ impl<'a> TicketScope<'a> {
             };
             scope
                 .ticket_system
-                .add_comment(&scope.key, Comment::user(task_blocks, &HashMap::new()));
-            scope.emit(EventKind::TicketStarted {
-                key: scope.key.clone(),
+                .add_comment(&scope.ticket_key, Comment::user(task_blocks, &HashMap::new()));
+            scope.agent.emit(EventKind::TicketStarted {
+                key: scope.ticket_key.clone(),
             });
         }
 
         Some(scope)
     }
+}
 
-    pub(super) fn emit(&self, kind: EventKind) {
-        (self.agent.resolve_event_handler())(Event::new(self.agent.get_name(), kind));
-    }
+pub(super) fn model_name(scope: &LoopContext<'_>) -> String {
+    scope
+        .agent
+        .model
+        .as_ref()
+        .expect("Agent::run requires .model(...) to be set")
+        .name
+        .clone()
+}
 
-    pub(super) fn model_name(&self) -> String {
-        self.agent
-            .model
-            .as_ref()
-            .expect("Agent::run requires .model(...) to be set")
-            .name
-            .clone()
-    }
+pub(super) fn fail_ticket(scope: &LoopContext<'_>, err: &ProviderError) {
+    scope.agent.emit(EventKind::RequestFailed {
+        kind: err.kind(),
+        message: err.to_string(),
+    });
+    scope.ticket_system.stats.record_error_for(&scope.labels);
+    scope.agent.emit(EventKind::TicketFailed {
+        key: scope.ticket_key.clone(),
+    });
+}
 
-    pub(super) fn record_turn(&self) {
-        self.ticket_system.stats.record_turn();
-        for label in &self.labels {
-            self.ticket_system.stats.stats_for_label(label).record_turn();
-        }
-    }
-
-    pub(super) fn record_request(&self, input: u64, output: u64) {
-        self.ticket_system.stats.record_request(input, output);
-        for label in &self.labels {
-            self.ticket_system
-                .stats
-                .stats_for_label(label)
-                .record_request(input, output);
-        }
-    }
-
-    pub(super) fn record_tool_calls(&self, n: usize) {
-        for _ in 0..n {
-            self.ticket_system.stats.record_tool_call();
-            for label in &self.labels {
-                self.ticket_system.stats.stats_for_label(label).record_tool_call();
-            }
-        }
-    }
-
-    pub(super) fn record_error(&self) {
-        self.ticket_system.stats.record_error();
-        for label in &self.labels {
-            self.ticket_system.stats.stats_for_label(label).record_error();
-        }
-    }
-
-    pub(super) fn fail_ticket(&self, err: &ProviderError) {
-        self.emit(EventKind::RequestFailed {
-            kind: err.kind(),
-            message: err.to_string(),
-        });
-        self.record_error();
-        self.emit(EventKind::TicketFailed {
-            key: self.key.clone(),
-        });
-    }
-
-    pub(super) fn fail_ticket_schema_exhausted(&self) {
-        let max_schema_retries = self.policies.max_schema_retries.unwrap_or(u32::MAX);
-        self.emit(EventKind::PolicyViolated {
-            kind: crate::event::PolicyKind::MaxSchemaRetries,
-            limit: u64::from(max_schema_retries),
-        });
-        let _ = self.ticket_system.set_failed(&self.key);
-    }
-
+pub(super) fn fail_ticket_schema_exhausted(scope: &LoopContext<'_>) {
+    let max_schema_retries = scope.policies.max_schema_retries.unwrap_or(u32::MAX);
+    scope.agent.emit(EventKind::PolicyViolated {
+        kind: crate::event::PolicyKind::MaxSchemaRetries,
+        limit: u64::from(max_schema_retries),
+    });
+    let _ = scope.ticket_system.set_failed(&scope.ticket_key);
 }
 
 pub(super) async fn start_turn<'a>(
-    scope: &mut Option<TicketScope<'a>>,
+    scope: &mut Option<LoopContext<'a>>,
     agent: &'a Agent,
     ticket_system: &'a Arc<TicketSystem>,
 ) -> Action<Vec<Message>> {
@@ -170,11 +132,7 @@ pub(super) async fn start_turn<'a>(
     }
     let policies = ticket_system.policies();
     if let Some((kind, limit)) = policy_violated_kind(&policies, &ticket_system.stats) {
-        let handler = agent.resolve_event_handler();
-        handler(Event::new(
-            agent.get_name(),
-            EventKind::PolicyViolated { kind, limit },
-        ));
+        agent.emit(EventKind::PolicyViolated { kind, limit });
         return Action::Stop;
     }
 
@@ -200,7 +158,7 @@ pub(super) async fn start_turn<'a>(
             return Action::Replay;
         };
         let Some(fresh) =
-            TicketScope::new(agent, ticket_system, interrupt_signal, policies, key)
+            LoopContext::new(agent, ticket_system, interrupt_signal, policies, key)
         else {
             return Action::Replay;
         };
@@ -208,21 +166,21 @@ pub(super) async fn start_turn<'a>(
     }
 
     let current = scope.as_ref().expect("scope is Some after the claim branch");
-    let Some(ticket) = current.ticket_system.get_ticket(&current.key) else {
+    let Some(ticket) = current.ticket_system.get_ticket(&current.ticket_key) else {
         *scope = None;
         return Action::Replay;
     };
     if matches!(ticket.status, Status::Finished | Status::Failed) {
         let kind = match ticket.status {
             Status::Finished => EventKind::TicketFinished {
-                key: current.key.clone(),
+                key: current.ticket_key.clone(),
             },
             Status::Failed => EventKind::TicketFailed {
-                key: current.key.clone(),
+                key: current.ticket_key.clone(),
             },
             other => unreachable!("start_turn observed non-terminal status {other:?}"),
         };
-        current.emit(kind);
+        current.agent.emit(kind);
         *scope = None;
         return Action::Replay;
     }
@@ -238,7 +196,7 @@ pub(super) async fn handle_tickets(agent: Agent) {
         .ticket_system
         .upgrade()
         .expect("Agent's TicketSystem was dropped before run() finished");
-    let mut scope: Option<TicketScope<'_>> = None;
+    let mut scope: Option<LoopContext<'_>> = None;
 
     'agent: loop {
         macro_rules! phase {

@@ -6,30 +6,30 @@ use crate::providers::{Message, ProviderError};
 use crate::agents::compaction as algo;
 use crate::agents::tickets::to_messages;
 
-use super::turn::TicketScope;
+use super::turn::{fail_ticket, model_name, LoopContext};
 use super::Action;
 
-pub(super) async fn compact(scope: &mut TicketScope<'_>, reason: CompactReason) -> Action<()> {
-    scope.emit(EventKind::CompactionStarted { reason });
+pub(super) async fn compact(scope: &mut LoopContext<'_>, reason: CompactReason) -> Action<()> {
+    scope.agent.emit(EventKind::CompactionStarted { reason });
 
-    let Some(ticket) = scope.ticket_system.get_ticket(&scope.key) else {
+    let Some(ticket) = scope.ticket_system.get_ticket(&scope.ticket_key) else {
         return Action::Stop;
     };
 
-    let model_name = scope.model_name();
+    let model_name = model_name(scope);
     let messages = to_messages(&ticket.comments);
     let result = algo::compact(&scope.agent.provider_handle(), &model_name, &messages).await;
 
     if let Err(e) = result {
-        scope.emit(EventKind::CompactionFailed { reason, message: e.to_string() });
-        scope.fail_ticket(&e);
+        scope.agent.emit(EventKind::CompactionFailed { reason, message: e.to_string() });
+        fail_ticket(scope, &e);
         return Action::Stop;
     }
 
     let summary = result.unwrap();
 
     if summary.is_none() && matches!(reason, CompactReason::Reactive) {
-        scope.fail_ticket(&ProviderError::ContextWindowExceeded {
+        fail_ticket(scope, &ProviderError::ContextWindowExceeded {
             message: "context still exceeds window after compaction".into(),
         });
         return Action::Stop;
@@ -37,10 +37,10 @@ pub(super) async fn compact(scope: &mut TicketScope<'_>, reason: CompactReason) 
 
     if let Some(summary) = summary {
         let dir = scope.ticket_system.dir_value();
-        if let Some(t) = scope.ticket_system.tickets.lock().unwrap().get_mut(&scope.key) {
+        if let Some(t) = scope.ticket_system.tickets.lock().unwrap().get_mut(&scope.ticket_key) {
             t.summarize(summary);
         }
-        if let Some(t) = scope.ticket_system.get_ticket(&scope.key) {
+        if let Some(t) = scope.ticket_system.get_ticket(&scope.ticket_key) {
             use crate::persistence::Persist;
             let _ = t.save(&dir);
         }
@@ -50,7 +50,7 @@ pub(super) async fn compact(scope: &mut TicketScope<'_>, reason: CompactReason) 
             if let Some(threshold) = algo::blocking_threshold(window) {
                 let updated = scope
                     .ticket_system
-                    .get_ticket(&scope.key)
+                    .get_ticket(&scope.ticket_key)
                     .map(|t| to_messages(&t.comments))
                     .unwrap_or_default();
                 let tools = scope.agent.tool_definitions();
@@ -63,7 +63,7 @@ pub(super) async fn compact(scope: &mut TicketScope<'_>, reason: CompactReason) 
                     &tools,
                 );
                 if estimate >= threshold {
-                    scope.fail_ticket(&ProviderError::ContextWindowExceeded {
+                    fail_ticket(scope, &ProviderError::ContextWindowExceeded {
                         message: "context still exceeds window after compaction".into(),
                     });
                     return Action::Stop;
@@ -72,7 +72,7 @@ pub(super) async fn compact(scope: &mut TicketScope<'_>, reason: CompactReason) 
         }
     }
 
-    scope.emit(EventKind::CompactionFinished { reason });
+    scope.agent.emit(EventKind::CompactionFinished { reason });
     match reason {
         CompactReason::Proactive => Action::Proceed(()),
         CompactReason::Reactive => Action::Replay,
@@ -80,7 +80,7 @@ pub(super) async fn compact(scope: &mut TicketScope<'_>, reason: CompactReason) 
 }
 
 pub(super) async fn proactive_compact(
-    scope: &mut TicketScope<'_>,
+    scope: &mut LoopContext<'_>,
     mut messages: Vec<Message>,
 ) -> Action<Vec<Message>> {
     let tools = scope.agent.tool_definitions();
@@ -99,7 +99,7 @@ pub(super) async fn proactive_compact(
         }
         messages = scope
             .ticket_system
-            .get_ticket(&scope.key)
+            .get_ticket(&scope.ticket_key)
             .map(|t| to_messages(&t.comments))
             .unwrap_or_default();
     }
@@ -114,7 +114,7 @@ pub(super) async fn proactive_compact(
             &tools,
         );
         if estimate >= threshold {
-            scope.emit(EventKind::BlockingLimitExceeded {
+            scope.agent.emit(EventKind::BlockingLimitExceeded {
                 estimated_tokens: estimate,
                 threshold_tokens: threshold,
             });

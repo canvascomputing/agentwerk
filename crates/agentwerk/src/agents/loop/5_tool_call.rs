@@ -8,18 +8,18 @@ use crate::providers::ContentBlock;
 use crate::tools::{ToolContext, ToolError, TICKET_FINISHER_TOOLS};
 use crate::prompts::{retry_directive, schema_retry_detail};
 
-use super::turn::TicketScope;
+use super::turn::{fail_ticket_schema_exhausted, LoopContext};
 use super::Reply;
 use super::Action;
 
-pub(super) async fn run(scope: &mut TicketScope<'_>, reply: Reply) -> Action<()> {
+pub(super) async fn run(scope: &mut LoopContext<'_>, reply: Reply) -> Action<()> {
     let max_schema_retries = scope.policies.max_schema_retries.unwrap_or(u32::MAX);
 
     match reply {
         Reply::TextOnly => {
             let has_schema = scope
                 .ticket_system
-                .get_ticket(&scope.key)
+                .get_ticket(&scope.ticket_key)
                 .map(|t| t.schema.is_some())
                 .unwrap_or(false);
             if !has_schema {
@@ -40,23 +40,23 @@ pub(super) async fn run(scope: &mut TicketScope<'_>, reply: Reply) -> Action<()>
                  — your work is not recorded until you do.",
                 registered.join("` or `")
             );
-            scope.emit(EventKind::SchemaRetried {
+            scope.agent.emit(EventKind::SchemaRetried {
                 attempt: scope.consecutive_schema_failures,
                 max_attempts: max_schema_retries,
                 message: detail.clone(),
             });
             scope
                 .ticket_system
-                .add_comment(&scope.key, crate::agents::tickets::Comment::user_text(retry_directive(&detail)));
+                .add_comment(&scope.ticket_key, crate::agents::tickets::Comment::user_text(retry_directive(&detail)));
             if scope.consecutive_schema_failures >= max_schema_retries {
-                scope.fail_ticket_schema_exhausted();
+                fail_ticket_schema_exhausted(scope);
                 return Action::Replay;
             }
             Action::Proceed(())
         }
         Reply::Calls(calls) => {
             for call in &calls {
-                scope.emit(EventKind::ToolCallStarted {
+                scope.agent.emit(EventKind::ToolCallStarted {
                     tool_name: call.name.clone(),
                     call_id: call.id.clone(),
                     input: call.input.clone(),
@@ -67,7 +67,7 @@ pub(super) async fn run(scope: &mut TicketScope<'_>, reply: Reply) -> Action<()>
                 .registry(std::sync::Arc::new(scope.agent.tool_registry().clone()))
                 .ticket_system(std::sync::Arc::clone(scope.ticket_system))
                 .agent_name(scope.agent.get_name().to_string())
-                .ticket_key(scope.key.clone())
+                .ticket_key(scope.ticket_key.clone())
                 .knowledge(scope.agent.knowledge_or_default());
             let outcomes = scope
                 .agent
@@ -89,7 +89,7 @@ pub(super) async fn run(scope: &mut TicketScope<'_>, reply: Reply) -> Action<()>
                         {
                             scope.consecutive_schema_failures = 0;
                         }
-                        scope.emit(EventKind::ToolCallFinished {
+                        scope.agent.emit(EventKind::ToolCallFinished {
                             tool_name,
                             call_id: tool_use_id.clone(),
                             output: output.clone(),
@@ -108,7 +108,7 @@ pub(super) async fn run(scope: &mut TicketScope<'_>, reply: Reply) -> Action<()>
                             ToolError::ExecutionFailed { .. } => ToolFailureKind::ExecutionFailed,
                             ToolError::SchemaValidationFailed { .. } => ToolFailureKind::SchemaValidationFailed,
                         };
-                        scope.emit(EventKind::ToolCallFailed {
+                        scope.agent.emit(EventKind::ToolCallFailed {
                             tool_name,
                             call_id: tool_use_id.clone(),
                             message: err.message(),
@@ -128,7 +128,7 @@ pub(super) async fn run(scope: &mut TicketScope<'_>, reply: Reply) -> Action<()>
             }
             if let Some(validator_message) = &schema_failure_message {
                 let schema_detail = schema_retry_detail(validator_message);
-                scope.emit(EventKind::SchemaRetried {
+                scope.agent.emit(EventKind::SchemaRetried {
                     attempt: scope.consecutive_schema_failures,
                     max_attempts: max_schema_retries,
                     message: schema_detail.clone(),
@@ -139,12 +139,14 @@ pub(super) async fn run(scope: &mut TicketScope<'_>, reply: Reply) -> Action<()>
             }
             scope
                 .ticket_system
-                .add_comment(&scope.key, crate::agents::tickets::Comment::user(&blocks, &paths));
+                .add_comment(&scope.ticket_key, crate::agents::tickets::Comment::user(&blocks, &paths));
 
-            scope.record_tool_calls(calls.len());
+            for _ in &calls {
+                scope.ticket_system.stats.record_tool_call_for(&scope.labels);
+            }
 
             if scope.consecutive_schema_failures >= max_schema_retries {
-                scope.fail_ticket_schema_exhausted();
+                fail_ticket_schema_exhausted(scope);
                 return Action::Replay;
             }
             Action::Proceed(())
