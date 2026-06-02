@@ -12,14 +12,14 @@ use super::turn::LoopContext;
 use super::Reply;
 use super::Action;
 
-pub(super) async fn run(scope: &mut LoopContext<'_>, reply: Reply) -> Action<()> {
-    let max_schema_retries = scope.policies.max_schema_retries.unwrap_or(u32::MAX);
+pub(super) async fn run(context: &mut LoopContext<'_>, reply: Reply) -> Action<()> {
+    let max_schema_retries = context.policies.max_schema_retries.unwrap_or(u32::MAX);
 
     match reply {
         Reply::TextOnly => {
-            let has_schema = scope
+            let has_schema = context
                 .ticket_system
-                .get_ticket(&scope.ticket_key)
+                .get_ticket(&context.ticket_key)
                 .map(|t| t.schema.is_some())
                 .unwrap_or(false);
             if !has_schema {
@@ -28,49 +28,49 @@ pub(super) async fn run(scope: &mut LoopContext<'_>, reply: Reply) -> Action<()>
             let registered: Vec<&str> = TICKET_FINISHER_TOOLS
                 .iter()
                 .copied()
-                .filter(|&n| scope.agent.tool_registry().get(n).is_some())
+                .filter(|&n| context.agent.tool_registry().get(n).is_some())
                 .collect();
             if registered.is_empty() {
                 return Action::Proceed(());
             }
-            scope.consecutive_schema_failures =
-                scope.consecutive_schema_failures.saturating_add(1);
+            context.consecutive_schema_failures =
+                context.consecutive_schema_failures.saturating_add(1);
             let detail = format!(
                 "Your reply was text-only. Call `{}` to finish the ticket \
                  — your work is not recorded until you do.",
                 registered.join("` or `")
             );
-            scope.ticket_system.emit(&scope.ticket_key, scope.agent.get_name(), EventKind::SchemaRetried {
-                attempt: scope.consecutive_schema_failures,
+            context.ticket_system.emit(&context.ticket_key, context.agent.get_name(), EventKind::SchemaRetried {
+                attempt: context.consecutive_schema_failures,
                 max_attempts: max_schema_retries,
                 message: detail.clone(),
             });
-            scope
+            context
                 .ticket_system
-                .add_comment(&scope.ticket_key, crate::agents::tickets::Comment::user_text(retry_directive(&detail)));
-            if scope.consecutive_schema_failures >= max_schema_retries {
-                scope.ticket_system.emit(&scope.ticket_key, scope.agent.get_name(), EventKind::PolicyViolated { kind: PolicyKind::MaxSchemaRetries, limit: u64::from(max_schema_retries) });
-                let _ = scope.ticket_system.set_failed(&scope.ticket_key);
+                .add_comment(&context.ticket_key, crate::agents::tickets::Comment::user_text(retry_directive(&detail)));
+            if context.consecutive_schema_failures >= max_schema_retries {
+                context.ticket_system.emit(&context.ticket_key, context.agent.get_name(), EventKind::PolicyViolated { kind: PolicyKind::MaxSchemaRetries, limit: u64::from(max_schema_retries) });
+                let _ = context.ticket_system.set_failed(&context.ticket_key);
                 return Action::Replay;
             }
             Action::Proceed(())
         }
         Reply::Calls(calls) => {
             for call in &calls {
-                scope.ticket_system.emit(&scope.ticket_key, scope.agent.get_name(), EventKind::ToolCallStarted {
+                context.ticket_system.emit(&context.ticket_key, context.agent.get_name(), EventKind::ToolCallStarted {
                     tool_name: call.name.clone(),
                     call_id: call.id.clone(),
                     input: call.input.clone(),
                 });
             }
-            let tool_context = ToolContext::new(scope.agent.dir_or_default())
-                .interrupt_signal(std::sync::Arc::clone(&scope.interrupt_signal))
-                .registry(std::sync::Arc::new(scope.agent.tool_registry().clone()))
-                .ticket_system(std::sync::Arc::clone(scope.ticket_system))
-                .agent_name(scope.agent.get_name().to_string())
-                .ticket_key(scope.ticket_key.clone())
-                .knowledge(scope.agent.knowledge_or_default());
-            let outcomes = scope
+            let tool_context = ToolContext::new(context.agent.dir_or_default())
+                .interrupt_signal(std::sync::Arc::clone(&context.interrupt_signal))
+                .registry(std::sync::Arc::new(context.agent.tool_registry().clone()))
+                .ticket_system(std::sync::Arc::clone(context.ticket_system))
+                .agent_name(context.agent.get_name().to_string())
+                .ticket_key(context.ticket_key.clone())
+                .knowledge(context.agent.knowledge_or_default());
+            let outcomes = context
                 .agent
                 .tool_registry()
                 .execute(&calls, &tool_context)
@@ -88,9 +88,9 @@ pub(super) async fn run(scope: &mut LoopContext<'_>, reply: Reply) -> Action<()>
                         if call
                             .is_some_and(|c| TICKET_FINISHER_TOOLS.contains(&c.name.as_str()))
                         {
-                            scope.consecutive_schema_failures = 0;
+                            context.consecutive_schema_failures = 0;
                         }
-                        scope.ticket_system.emit(&scope.ticket_key, scope.agent.get_name(), EventKind::ToolCallFinished {
+                        context.ticket_system.emit(&context.ticket_key, context.agent.get_name(), EventKind::ToolCallFinished {
                             tool_name,
                             call_id: tool_use_id.clone(),
                             output: output.clone(),
@@ -98,8 +98,8 @@ pub(super) async fn run(scope: &mut LoopContext<'_>, reply: Reply) -> Action<()>
                     }
                     Err(err) => {
                         if matches!(err, ToolError::SchemaValidationFailed { .. }) {
-                            scope.consecutive_schema_failures =
-                                scope.consecutive_schema_failures.saturating_add(1);
+                            context.consecutive_schema_failures =
+                                context.consecutive_schema_failures.saturating_add(1);
                             if schema_failure_message.is_none() {
                                 schema_failure_message = Some(err.message());
                             }
@@ -109,7 +109,7 @@ pub(super) async fn run(scope: &mut LoopContext<'_>, reply: Reply) -> Action<()>
                             ToolError::ExecutionFailed { .. } => ToolFailureKind::ExecutionFailed,
                             ToolError::SchemaValidationFailed { .. } => ToolFailureKind::SchemaValidationFailed,
                         };
-                        scope.ticket_system.emit(&scope.ticket_key, scope.agent.get_name(), EventKind::ToolCallFailed {
+                        context.ticket_system.emit(&context.ticket_key, context.agent.get_name(), EventKind::ToolCallFailed {
                             tool_name,
                             call_id: tool_use_id.clone(),
                             message: err.message(),
@@ -129,8 +129,8 @@ pub(super) async fn run(scope: &mut LoopContext<'_>, reply: Reply) -> Action<()>
             }
             if let Some(validator_message) = &schema_failure_message {
                 let schema_detail = schema_retry_detail(validator_message);
-                scope.ticket_system.emit(&scope.ticket_key, scope.agent.get_name(), EventKind::SchemaRetried {
-                    attempt: scope.consecutive_schema_failures,
+                context.ticket_system.emit(&context.ticket_key, context.agent.get_name(), EventKind::SchemaRetried {
+                    attempt: context.consecutive_schema_failures,
                     max_attempts: max_schema_retries,
                     message: schema_detail.clone(),
                 });
@@ -138,15 +138,15 @@ pub(super) async fn run(scope: &mut LoopContext<'_>, reply: Reply) -> Action<()>
                     text: retry_directive(&schema_detail),
                 });
             }
-            scope
+            context
                 .ticket_system
-                .add_comment(&scope.ticket_key, crate::agents::tickets::Comment::user(&blocks, &paths));
+                .add_comment(&context.ticket_key, crate::agents::tickets::Comment::user(&blocks, &paths));
 
-            scope.ticket_system.emit(&scope.ticket_key, scope.agent.get_name(), EventKind::ToolCallsRecorded { count: calls.len() });
+            context.ticket_system.emit(&context.ticket_key, context.agent.get_name(), EventKind::ToolCallsRecorded { count: calls.len() });
 
-            if scope.consecutive_schema_failures >= max_schema_retries {
-                scope.ticket_system.emit(&scope.ticket_key, scope.agent.get_name(), EventKind::PolicyViolated { kind: PolicyKind::MaxSchemaRetries, limit: u64::from(max_schema_retries) });
-                let _ = scope.ticket_system.set_failed(&scope.ticket_key);
+            if context.consecutive_schema_failures >= max_schema_retries {
+                context.ticket_system.emit(&context.ticket_key, context.agent.get_name(), EventKind::PolicyViolated { kind: PolicyKind::MaxSchemaRetries, limit: u64::from(max_schema_retries) });
+                let _ = context.ticket_system.set_failed(&context.ticket_key);
                 return Action::Replay;
             }
             Action::Proceed(())

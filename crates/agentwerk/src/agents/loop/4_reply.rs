@@ -14,40 +14,40 @@ use super::{Action, Reply};
 use super::wait_for_signal;
 
 pub(super) async fn run(
-    scope: &mut LoopContext<'_>,
+    context: &mut LoopContext<'_>,
     messages: Vec<Message>,
 ) -> Action<Reply> {
-    let tools = scope.agent.tool_definitions();
-    let model_name = model_name(scope);
-    scope.ticket_system.emit(&scope.ticket_key, scope.agent.get_name(), EventKind::RequestStarted {
+    let tools = context.agent.tool_definitions();
+    let model_name = model_name(context);
+    context.ticket_system.emit(&context.ticket_key, context.agent.get_name(), EventKind::RequestStarted {
         model: model_name.clone(),
     });
     let request = ModelRequest {
         model: model_name,
-        system_prompt: scope.system_prompt.clone(),
+        system_prompt: context.system_prompt.clone(),
         messages,
         tools,
-        max_request_tokens: scope.policies.max_request_tokens,
+        max_request_tokens: context.policies.max_request_tokens,
         tool_choice: None,
     };
 
     let mut retry = ExponentialRetry::new(
-        scope.policies.request_retry_delay,
-        scope.policies.max_request_retries,
+        context.policies.request_retry_delay,
+        context.policies.max_request_retries,
     );
     let response = loop {
         let outcome = {
-            let provider = scope.agent.provider_handle();
-            let agent_name = scope.agent.get_name().to_string();
-            let ticket_key = scope.ticket_key.clone();
-            let ts = Arc::clone(scope.ticket_system);
+            let provider = context.agent.provider_handle();
+            let agent_name = context.agent.get_name().to_string();
+            let ticket_key = context.ticket_key.clone();
+            let ts = Arc::clone(context.ticket_system);
             let emit_stream: Arc<dyn Fn(StreamEvent) + Send + Sync> =
                 Arc::new(move |event| {
                     if let StreamEvent::TextDelta { text, .. } = event {
                         ts.emit(&ticket_key, &agent_name, EventKind::TextChunkReceived { content: text });
                     }
                 });
-            let interrupt = &scope.interrupt_signal;
+            let interrupt = &context.interrupt_signal;
             tokio::select! {
                 biased;
                 _ = wait_for_signal(interrupt) => return Action::Stop,
@@ -57,7 +57,7 @@ pub(super) async fn run(
         match outcome {
             Ok(resp) => break resp,
             Err(ProviderError::ContextWindowExceeded { .. }) => {
-                match compaction::compact(scope, CompactReason::Reactive).await {
+                match compaction::compact(context, CompactReason::Reactive).await {
                     Action::Stop => return Action::Stop,
                     Action::Replay => return Action::Replay,
                     Action::Proceed(()) => {}
@@ -66,13 +66,13 @@ pub(super) async fn run(
             Err(e) if e.is_retryable() => match retry.try_consume() {
                 Some(attempt) => {
                     let delay = retry.delay(e.retry_delay());
-                    scope.ticket_system.emit(&scope.ticket_key, scope.agent.get_name(), EventKind::RequestRetried {
+                    context.ticket_system.emit(&context.ticket_key, context.agent.get_name(), EventKind::RequestRetried {
                         attempt,
                         max_attempts: retry.max_attempts(),
                         kind: e.kind(),
                         message: e.to_string(),
                     });
-                    let interrupt = &scope.interrupt_signal;
+                    let interrupt = &context.interrupt_signal;
                     tokio::select! {
                         biased;
                         _ = wait_for_signal(interrupt) => return Action::Stop,
@@ -80,24 +80,24 @@ pub(super) async fn run(
                     }
                 }
                 None => {
-                    scope.ticket_system.emit(&scope.ticket_key, scope.agent.get_name(), EventKind::RequestFailed { kind: e.kind(), message: e.to_string() });
-                    scope.ticket_system.emit(&scope.ticket_key, scope.agent.get_name(), EventKind::TicketFailed { key: scope.ticket_key.clone() });
+                    context.ticket_system.emit(&context.ticket_key, context.agent.get_name(), EventKind::RequestFailed { kind: e.kind(), message: e.to_string() });
+                    context.ticket_system.emit(&context.ticket_key, context.agent.get_name(), EventKind::TicketFailed { key: context.ticket_key.clone() });
                     return Action::Replay;
                 }
             },
             Err(e) => {
-                scope.ticket_system.emit(&scope.ticket_key, scope.agent.get_name(), EventKind::RequestFailed { kind: e.kind(), message: e.to_string() });
-                scope.ticket_system.emit(&scope.ticket_key, scope.agent.get_name(), EventKind::TicketFailed { key: scope.ticket_key.clone() });
+                context.ticket_system.emit(&context.ticket_key, context.agent.get_name(), EventKind::RequestFailed { kind: e.kind(), message: e.to_string() });
+                context.ticket_system.emit(&context.ticket_key, context.agent.get_name(), EventKind::TicketFailed { key: context.ticket_key.clone() });
                 return Action::Replay;
             }
         }
     };
 
-    scope.last_usage = Some(response.usage.clone());
-    scope.ticket_system.emit(&scope.ticket_key, scope.agent.get_name(), EventKind::RequestFinished { model: response.model.clone(), usage: response.usage.clone() });
-    scope
+    context.last_usage = Some(response.usage.clone());
+    context.ticket_system.emit(&context.ticket_key, context.agent.get_name(), EventKind::RequestFinished { model: response.model.clone(), usage: response.usage.clone() });
+    context
         .ticket_system
-        .add_comment(&scope.ticket_key, crate::agents::tickets::Comment::assistant(&response.content));
+        .add_comment(&context.ticket_key, crate::agents::tickets::Comment::assistant(&response.content));
 
     let overflowed = response.status == ResponseStatus::ContextWindowExceeded;
 
@@ -121,7 +121,7 @@ pub(super) async fn run(
     };
 
     if overflowed {
-        match compaction::compact(scope, CompactReason::Reactive).await {
+        match compaction::compact(context, CompactReason::Reactive).await {
             Action::Stop => return Action::Stop,
             Action::Replay => return Action::Replay,
             Action::Proceed(()) => {}

@@ -22,7 +22,9 @@ pub(super) struct LoopContext<'a> {
     pub(super) system_prompt: String,
     pub(super) policies: Policies,
 
+    // Spans turns; trips max_schema_retries.
     pub(super) consecutive_schema_failures: u32,
+    // Spans turns; feeds compaction sizing.
     pub(super) last_usage: Option<TokenUsage>,
 }
 
@@ -32,63 +34,26 @@ impl<'a> LoopContext<'a> {
         ticket_system: &'a Arc<TicketSystem>,
         interrupt_signal: Arc<AtomicBool>,
         policies: Policies,
-        key: String,
-    ) -> Option<Self> {
-        let ticket = ticket_system.get_ticket(&key)?;
-        let task_message = ticket.as_user_message();
-        let comments_empty = ticket.comments.is_empty();
-
-        let knowledge_index = agent.knowledge_or_default().index();
-        let system_prompt = agent.system_prompt(Some(&knowledge_index));
-
-        let scope = Self {
+        ticket_key: String,
+        system_prompt: String,
+    ) -> Self {
+        Self {
             agent,
             ticket_system,
             interrupt_signal,
 
-            ticket_key: key,
+            ticket_key,
             system_prompt,
             policies,
 
             consecutive_schema_failures: 0,
             last_usage: None,
-        };
-
-        scope.ticket_system.emit(&scope.ticket_key, scope.agent.get_name(), EventKind::TurnStarted);
-
-        if comments_empty {
-            scope
-                .ticket_system
-                .add_comment(&scope.ticket_key, Comment::system_text(scope.system_prompt.clone()));
-            if let Some(context_msg) =
-                scope
-                    .agent
-                    .context_message(&scope.policies, &scope.ticket_system.stats, Some(&scope.ticket_key))
-            {
-                scope
-                    .ticket_system
-                    .add_comment(&scope.ticket_key, Comment::user_text(context_msg));
-            }
-            let Message::User {
-                content: task_blocks,
-            } = &task_message
-            else {
-                unreachable!("Ticket::as_user_message returns Message::User");
-            };
-            scope
-                .ticket_system
-                .add_comment(&scope.ticket_key, Comment::user(task_blocks, &HashMap::new()));
-            scope.ticket_system.emit(&scope.ticket_key, scope.agent.get_name(), EventKind::TicketStarted {
-                key: scope.ticket_key.clone(),
-            });
         }
-
-        Some(scope)
     }
 }
 
-pub(super) fn model_name(scope: &LoopContext<'_>) -> String {
-    scope
+pub(super) fn model_name(context: &LoopContext<'_>) -> String {
+    context
         .agent
         .model
         .as_ref()
@@ -98,7 +63,7 @@ pub(super) fn model_name(scope: &LoopContext<'_>) -> String {
 }
 
 pub(super) async fn start_turn<'a>(
-    scope: &mut Option<LoopContext<'a>>,
+    context: &mut Option<LoopContext<'a>>,
     agent: &'a Agent,
     ticket_system: &'a Arc<TicketSystem>,
 ) -> Action<Vec<Message>> {
@@ -113,8 +78,8 @@ pub(super) async fn start_turn<'a>(
         return Action::Stop;
     }
 
-    if scope.is_none() {
-        fn claim_or_reclaim(ticket_system: &Arc<TicketSystem>, agent: &Agent) -> Option<String> {
+    if context.is_none() {
+        fn next_ticket_key(ticket_system: &Arc<TicketSystem>, agent: &Agent) -> Option<String> {
             ticket_system
                 .claim(
                     |t| t.status == Status::Todo && agent.handles_labels(&t.labels),
@@ -130,35 +95,61 @@ pub(super) async fn start_turn<'a>(
                         .map(|t| t.key.clone())
                 })
         }
-        let Some(key) = claim_or_reclaim(ticket_system, agent) else {
+        let Some(ticket_key) = next_ticket_key(ticket_system, agent) else {
             tokio::time::sleep(POLL_INTERVAL).await;
             return Action::Replay;
         };
-        let Some(fresh) =
-            LoopContext::new(agent, ticket_system, interrupt_signal, policies, key)
-        else {
+        let Some(ticket) = ticket_system.get_ticket(&ticket_key) else {
             return Action::Replay;
         };
-        *scope = Some(fresh);
+        let knowledge_index = agent.knowledge_or_default().index();
+        // Lets the model see what knowledge pages it can read.
+        let system_prompt = agent.system_prompt(Some(&knowledge_index));
+        let agent_name = agent.get_name();
+
+        ticket_system.emit(&ticket_key, agent_name, EventKind::TurnStarted);
+
+        if ticket.comments.is_empty() {
+            ticket_system.add_comment(&ticket_key, Comment::system_text(system_prompt.clone()));
+            if let Some(context_msg) =
+                agent.context_message(&policies, &ticket_system.stats, Some(&ticket_key))
+            {
+                ticket_system.add_comment(&ticket_key, Comment::user_text(context_msg));
+            }
+            let Message::User { content: task_blocks } = ticket.as_user_message() else {
+                unreachable!("Ticket::as_user_message returns Message::User");
+            };
+            ticket_system.add_comment(&ticket_key, Comment::user(&task_blocks, &HashMap::new()));
+            ticket_system.emit(
+                &ticket_key,
+                agent_name,
+                EventKind::TicketStarted { key: ticket_key.clone() },
+            );
+        }
+
+        *context = Some(LoopContext::new(
+            agent,
+            ticket_system,
+            interrupt_signal,
+            policies,
+            ticket_key,
+            system_prompt,
+        ));
     }
 
-    let current = scope.as_ref().expect("scope is Some after the claim branch");
-    let Some(ticket) = current.ticket_system.get_ticket(&current.ticket_key) else {
-        *scope = None;
+    let context_ref = context.as_ref().expect("context is Some after the claim branch");
+    let Some(ticket) = context_ref.ticket_system.get_ticket(&context_ref.ticket_key) else {
+        *context = None;
         return Action::Replay;
     };
-    if matches!(ticket.status, Status::Finished | Status::Failed) {
-        let kind = match ticket.status {
-            Status::Finished => EventKind::TicketFinished {
-                key: current.ticket_key.clone(),
-            },
-            Status::Failed => EventKind::TicketFailed {
-                key: current.ticket_key.clone(),
-            },
-            other => unreachable!("start_turn observed non-terminal status {other:?}"),
-        };
-        current.ticket_system.emit(&current.ticket_key, current.agent.get_name(), kind);
-        *scope = None;
+    let status = match ticket.status {
+        Status::Finished => Some(EventKind::TicketFinished { key: context_ref.ticket_key.clone() }),
+        Status::Failed => Some(EventKind::TicketFailed { key: context_ref.ticket_key.clone() }),
+        _ => None,
+    };
+    if let Some(kind) = status {
+        context_ref.ticket_system.emit(&context_ref.ticket_key, context_ref.agent.get_name(), kind);
+        *context = None;
         return Action::Replay;
     }
     if !ticket.is_waiting_for_response() {
@@ -173,7 +164,7 @@ pub(super) async fn run_agent(agent: Agent) {
         .ticket_system
         .upgrade()
         .expect("Agent's TicketSystem was dropped before run() finished");
-    let mut scope: Option<LoopContext<'_>> = None;
+    let mut context: Option<LoopContext<'_>> = None;
 
     'agent: loop {
         macro_rules! phase {
@@ -186,14 +177,14 @@ pub(super) async fn run_agent(agent: Agent) {
             };
         }
 
-        let messages = phase!(start_turn(&mut scope, &agent, &ticket_system).await);
-        let scope_ref = scope
+        let messages = phase!(start_turn(&mut context, &agent, &ticket_system).await);
+        let context_ref = context
             .as_mut()
-            .expect("start_turn populates scope on Proceed");
+            .expect("start_turn populates context on Proceed");
 
-        let messages = phase!(compaction::proactive_compact(scope_ref, messages).await);
-        let reply_val = phase!(reply::run(scope_ref, messages).await);
-        phase!(tool_call::run(scope_ref, reply_val).await);
+        let messages = phase!(compaction::proactive_compact(context_ref, messages).await);
+        let reply_val = phase!(reply::run(context_ref, messages).await);
+        phase!(tool_call::run(context_ref, reply_val).await);
     }
 }
 
