@@ -17,6 +17,7 @@ use serde::Serialize;
 use tokio::task::JoinHandle;
 
 use crate::event::{default_logger, Event, EventKind};
+use crate::persistence::{Append, Persist, TicketEvents};
 use crate::providers::{AsUserMessage, ContentBlock, Message};
 
 use super::agent::Agent;
@@ -55,7 +56,10 @@ pub struct Ticket {
     /// the provider for this ticket, plus a leading `system` entry for
     /// the system prompt and synthetic `system` entries marking
     /// compaction boundaries. System-managed: callers cannot push
-    /// directly.
+    /// directly. Persisted to `tickets/<key>/comments.jsonl` (and the
+    /// per-compaction `comments.<ts>.jsonl` files), never as part of
+    /// `ticket.json`.
+    #[serde(skip)]
     pub comments: Vec<Comment>,
 }
 
@@ -144,23 +148,88 @@ impl crate::persistence::Persist for Ticket {
     type Key = String;
 
     fn save(&self, dir: &Path) -> io::Result<()> {
-        let path = dir
-            .join("tickets")
-            .join(&self.key)
-            .join(format!("ticket.{}.json", now_millis()));
+        let path = ticket_header_path(dir, &self.key);
         let body = serde_json::to_vec_pretty(self).map_err(io::Error::other)?;
         crate::persistence::write_atomic(&path, &body)
     }
 
     fn load(dir: &Path, key: &Self::Key) -> io::Result<Self> {
-        let ticket_dir = dir.join("tickets").join(key);
-        let path = crate::persistence::latest_path(&ticket_dir).ok_or_else(|| {
-            io::Error::new(io::ErrorKind::NotFound, format!("no ticket file for {key}"))
-        })?;
-        let bytes = std::fs::read(&path)?;
-        serde_json::from_slice::<Ticket>(&bytes).map_err(io::Error::other)
+        let bytes = std::fs::read(ticket_header_path(dir, key))?;
+        let mut ticket: Ticket = serde_json::from_slice(&bytes).map_err(io::Error::other)?;
+        ticket.comments = Comments::load(dir, key)?;
+        Ok(ticket)
     }
 }
+
+/// Per-ticket transcript log on disk. `tickets/<key>/comments.jsonl` is
+/// the strictly append-only running log; every comment ever appended
+/// lands there. Each compaction event creates an immutable pair
+/// `(ticket.<ts>.json, comments.<ts>.jsonl)`; on load the newest such
+/// pair becomes the base and any `comments.jsonl` entries with a
+/// strictly greater `created_at` are merged on top.
+pub(crate) struct Comments;
+
+impl Comments {
+    /// Append one comment as a single JSON line.
+    pub(crate) fn append(dir: &Path, key: &str, comment: &Comment) -> io::Result<()> {
+        let line = serde_json::to_string(comment).map_err(io::Error::other)?;
+        crate::persistence::append_line(&running_log_path(dir, key), &line)
+    }
+
+    /// Reconstruct the transcript for `key` per the rule on the type doc.
+    pub(crate) fn load(dir: &Path, key: &str) -> io::Result<Vec<Comment>> {
+        // Find the most recent compaction whose paired files both exist.
+        // `ticket.<ts>.json` is the commit marker: an orphan
+        // `comments.<ts>.jsonl` from a mid-compaction crash is ignored.
+        fn last_committed_compaction_at(ticket_dir: &Path) -> Option<u64> {
+            std::fs::read_dir(ticket_dir)
+                .ok()?
+                .flatten()
+                .filter_map(|e| {
+                    let name = e.file_name().into_string().ok()?;
+                    name.strip_prefix("ticket.")?
+                        .strip_suffix(".json")?
+                        .parse::<u64>()
+                        .ok()
+                })
+                .filter(|at| ticket_dir.join(format!("comments.{at}.jsonl")).is_file())
+                .max()
+        }
+
+        fn read_jsonl(path: &Path) -> io::Result<Vec<Comment>> {
+            let body = std::fs::read_to_string(path)?;
+            body.lines()
+                .filter(|l| !l.is_empty())
+                .map(|l| serde_json::from_str::<Comment>(l).map_err(io::Error::other))
+                .collect()
+        }
+
+        let ticket_dir = dir.join("tickets").join(key);
+        let restart_at = last_committed_compaction_at(&ticket_dir);
+        let mut comments = match restart_at {
+            Some(at) => read_jsonl(&ticket_dir.join(format!("comments.{at}.jsonl")))?,
+            None => Vec::new(),
+        };
+        let running = running_log_path(dir, key);
+        if running.exists() {
+            let mut tail = read_jsonl(&running)?;
+            tail.retain(|c| restart_at.is_none_or(|at| c.created_at > at));
+            comments.extend(tail);
+        }
+        Ok(comments)
+    }
+}
+
+/// Path of the active header file for `key`: `tickets/<key>/ticket.json`.
+fn ticket_header_path(dir: &Path, key: &str) -> PathBuf {
+    dir.join("tickets").join(key).join("ticket.json")
+}
+
+/// Path of the running append-only comments log for `key`.
+fn running_log_path(dir: &Path, key: &str) -> PathBuf {
+    dir.join("tickets").join(key).join("comments.jsonl")
+}
+
 
 impl AsUserMessage for Ticket {
     fn as_user_message(&self) -> Message {
@@ -433,16 +502,14 @@ impl TicketSystem {
         if let Ok(entries) = std::fs::read_dir(tickets_dir.join("tickets")) {
             for entry in entries.flatten() {
                 let key_dir = entry.path();
-                if !key_dir.is_dir() {
+                if !key_dir.is_dir() || !key_dir.join("ticket.json").is_file() {
                     continue;
                 }
-                let Some(path) = crate::persistence::latest_path(&key_dir) else {
+                let Some(key) = key_dir.file_name().and_then(|n| n.to_str()).map(str::to_owned)
+                else {
                     continue;
                 };
-                let Ok(bytes) = std::fs::read(&path) else {
-                    continue;
-                };
-                let Ok(ticket) = serde_json::from_slice::<Ticket>(&bytes) else {
+                let Ok(ticket) = Ticket::load(&tickets_dir, &key) else {
                     continue;
                 };
                 tickets.insert(ticket.key.clone(), ticket);
@@ -660,7 +727,6 @@ impl TicketSystem {
     /// Write the ticket at `key` to disk. No-op when the ticket is missing.
     fn save_ticket(&self, key: &str) {
         if let Some(t) = self.get_ticket(key) {
-            use crate::persistence::Persist;
             let _ = t.save(&self.dir_value());
         }
     }
@@ -671,7 +737,6 @@ impl TicketSystem {
     /// observational state. Errors are swallowed: persistence is
     /// best-effort, not load-bearing for run correctness.
     pub(crate) fn append_ticket_event(&self, event: serde_json::Value) {
-        use crate::persistence::{Append, Persist, TicketEvents};
         let dir = self.dir_value();
         let _guard = self.tickets_log_lock.lock().unwrap();
         let _ = TicketEvents::append(&dir, &event);
@@ -742,18 +807,15 @@ impl TicketSystem {
 
     /// Append `comment` to the ticket's transcript. No-op when the
     /// ticket is missing: the loop drops out shortly afterwards on the
-    /// same condition.
+    /// same condition. The header file is not rewritten; the transcript
+    /// lives only in `comments.jsonl`.
     pub(crate) fn add_comment(&self, key: &str, comment: Comment) {
-        let ticket_copy = {
+        {
             let mut store = self.tickets.lock().unwrap();
             let Some(t) = store.get_mut(key) else { return };
-            t.comments.push(comment);
-            t.clone()
-        };
-        {
-            use crate::persistence::Persist;
-            let _ = ticket_copy.save(&self.dir_value());
+            t.comments.push(comment.clone());
         }
+        let _ = Comments::append(&self.dir_value(), key, &comment);
     }
 
     /// Transition a ticket to `Finished`.
@@ -860,10 +922,7 @@ impl TicketSystem {
             ticket.result = Some(result);
             ticket.clone()
         };
-        {
-            use crate::persistence::Persist;
-            let _ = ticket_copy.save(&self.dir_value());
-        }
+        let _ = ticket_copy.save(&self.dir_value());
         Ok(())
     }
 
@@ -1862,16 +1921,18 @@ mod tests {
     }
 
     #[test]
-    fn load_skips_malformed_ticket_file() {
+    fn load_skips_dir_without_ticket_json() {
         let dir = crate::test_util::TempDir::new().unwrap();
         let original = TicketSystem::new();
         original.dir(dir.path().to_path_buf());
         original.task("valid");
         drop(original);
 
-        let broken_dir = dir.path().join("tickets").join("TICKET-99");
-        std::fs::create_dir_all(&broken_dir).unwrap();
-        std::fs::write(broken_dir.join("ticket.123.json"), "not json").unwrap();
+        // A leftover directory with no `ticket.json` is ignored by the
+        // loader: there is no migration from the pre-split layout.
+        let stray_dir = dir.path().join("tickets").join("TICKET-99");
+        std::fs::create_dir_all(&stray_dir).unwrap();
+        std::fs::write(stray_dir.join("anything.json"), "not json").unwrap();
 
         let resumed = TicketSystem::load(dir.path()).unwrap();
         assert!(resumed.get_ticket("TICKET-1").is_some());
@@ -1879,37 +1940,172 @@ mod tests {
     }
 
     #[test]
-    fn load_picks_latest_ticket_file_per_key() {
+    fn load_skips_dir_with_malformed_ticket_json() {
         let dir = crate::test_util::TempDir::new().unwrap();
-        let key_dir = dir.path().join("tickets").join("TICKET-1");
-        std::fs::create_dir_all(&key_dir).unwrap();
-        let older = serde_json::json!({
-            "task": "old body", "labels": [], "key": "TICKET-1",
-            "status": "Todo", "reporter": "user", "created_at": 100,
-            "started_at": null, "finished_at": null, "failed_at": null,
-            "result": null, "parent": null, "comments": []
-        });
-        let newer = serde_json::json!({
-            "task": "new body", "labels": [], "key": "TICKET-1",
-            "status": "Todo", "reporter": "user", "created_at": 200,
-            "started_at": null, "finished_at": null, "failed_at": null,
-            "result": null, "parent": null, "comments": []
-        });
+        std::fs::create_dir_all(dir.path().join("tickets").join("TICKET-7")).unwrap();
         std::fs::write(
-            key_dir.join("ticket.100.json"),
-            serde_json::to_string(&older).unwrap(),
+            dir.path().join("tickets").join("TICKET-7").join("ticket.json"),
+            "not json",
         )
         .unwrap();
+        let sys = TicketSystem::load(dir.path()).unwrap();
+        assert!(sys.get_ticket("TICKET-7").is_none());
+    }
+
+    #[test]
+    fn ticket_json_does_not_carry_comments_field() {
+        let dir = crate::test_util::TempDir::new().unwrap();
+        let sys = TicketSystem::new();
+        sys.dir(dir.path().to_path_buf());
+        sys.task("hello");
+        let stored = std::fs::read_to_string(
+            dir.path().join("tickets").join("TICKET-1").join("ticket.json"),
+        )
+        .unwrap();
+        let v: serde_json::Value = serde_json::from_str(&stored).unwrap();
+        assert!(
+            v.as_object().unwrap().get("comments").is_none(),
+            "ticket.json must not carry a `comments` field; got: {stored}",
+        );
+    }
+
+    #[test]
+    fn add_comment_appends_one_line_to_comments_jsonl() {
+        let (sys, dir) = test_system();
+        sys.task("hello");
+        sys.comment("TICKET-1", "first");
+        sys.comment("TICKET-1", "second");
+        let body = std::fs::read_to_string(
+            dir.path().join("tickets").join("TICKET-1").join("comments.jsonl"),
+        )
+        .unwrap();
+        let lines: Vec<_> = body.lines().collect();
+        assert_eq!(lines.len(), 2);
+        // Each line is a single, parseable JSON object.
+        let _: Comment = serde_json::from_str(lines[0]).unwrap();
+        let _: Comment = serde_json::from_str(lines[1]).unwrap();
+    }
+
+    #[test]
+    fn load_replays_comments_jsonl_into_in_memory_ticket() {
+        let dir = crate::test_util::TempDir::new().unwrap();
+        {
+            let sys = TicketSystem::new();
+            sys.dir(dir.path().to_path_buf());
+            sys.task("hello");
+            sys.comment("TICKET-1", "first");
+            sys.comment("TICKET-1", "second");
+        }
+        let resumed = TicketSystem::load(dir.path()).unwrap();
+        let t = resumed.get_ticket("TICKET-1").unwrap();
+        let texts: Vec<_> = t
+            .comments
+            .iter()
+            .filter_map(|c| match c.content.first()? {
+                CommentContent::Text(s) => Some(s.as_str()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(texts, vec!["first", "second"]);
+    }
+
+    #[test]
+    fn compaction_pair_without_ticket_header_is_ignored_on_load() {
+        let dir = crate::test_util::TempDir::new().unwrap();
+        {
+            let sys = TicketSystem::new();
+            sys.dir(dir.path().to_path_buf());
+            sys.task("hello");
+            sys.comment("TICKET-1", "first");
+        }
+        // Drop a stray `comments.<ts>.jsonl` with NO paired `ticket.<ts>.json`.
+        // The loader's paired-check rule must ignore it and fall back to the
+        // running `comments.jsonl`.
+        let key_dir = dir.path().join("tickets").join("TICKET-1");
+        let orphan = Comment {
+            author: "user".into(),
+            content: vec![CommentContent::Text("orphan".into())],
+            created_at: 9_999_999_999_999,
+        };
         std::fs::write(
-            key_dir.join("ticket.200.json"),
-            serde_json::to_string(&newer).unwrap(),
+            key_dir.join("comments.9999999999999.jsonl"),
+            format!("{}\n", serde_json::to_string(&orphan).unwrap()),
         )
         .unwrap();
 
+        let resumed = TicketSystem::load(dir.path()).unwrap();
+        let t = resumed.get_ticket("TICKET-1").unwrap();
+        let texts: Vec<_> = t
+            .comments
+            .iter()
+            .filter_map(|c| match c.content.first()? {
+                CommentContent::Text(s) => Some(s.as_str()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(texts, vec!["first"]);
+        assert!(
+            !texts.contains(&"orphan"),
+            "orphan compaction file must not be selected as base"
+        );
+    }
+
+    #[test]
+    fn load_replays_via_newest_compaction_pair_plus_tail() {
+        let dir = crate::test_util::TempDir::new().unwrap();
+        let key_dir = dir.path().join("tickets").join("TICKET-1");
+        std::fs::create_dir_all(&key_dir).unwrap();
+
+        // Active header.
+        let header = serde_json::json!({
+            "task": "hello", "labels": [], "key": "TICKET-1",
+            "status": "Todo", "reporter": "user", "created_at": 1,
+            "started_at": null, "finished_at": null, "failed_at": null,
+            "result": null, "parent": null
+        });
+        std::fs::write(key_dir.join("ticket.json"), serde_json::to_string(&header).unwrap())
+            .unwrap();
+
+        // Running log carries the full history including pre-compaction entries.
+        for c in [50, 150, 250, 350].iter() {
+            let line = serde_json::json!({
+                "author": "user",
+                "content": [{ "Text": format!("c{c}") }],
+                "created_at": c,
+            });
+            crate::persistence::append_line(
+                &key_dir.join("comments.jsonl"),
+                &serde_json::to_string(&line).unwrap(),
+            )
+            .unwrap();
+        }
+
+        // Compaction file pair captured at ts=200 contains only the summary.
+        let summary = serde_json::json!({
+            "author": "user",
+            "content": [{ "Text": "summary" }],
+            "created_at": 200,
+        });
+        std::fs::write(
+            key_dir.join("comments.200.jsonl"),
+            format!("{}\n", serde_json::to_string(&summary).unwrap()),
+        )
+        .unwrap();
+        std::fs::write(key_dir.join("ticket.200.json"), serde_json::to_string(&header).unwrap())
+            .unwrap();
+
         let sys = TicketSystem::load(dir.path()).unwrap();
         let t = sys.get_ticket("TICKET-1").unwrap();
-        assert_eq!(t.task, serde_json::Value::String("new body".into()));
-        assert_eq!(t.created_at, 200);
+        let texts: Vec<_> = t
+            .comments
+            .iter()
+            .filter_map(|c| match c.content.first()? {
+                CommentContent::Text(s) => Some(s.clone()),
+                _ => None,
+            })
+            .collect();
+        // Base = "summary"; tail = entries with created_at > 200 → c250, c350.
+        assert_eq!(texts, vec!["summary".to_string(), "c250".into(), "c350".into()]);
     }
 
     #[test]

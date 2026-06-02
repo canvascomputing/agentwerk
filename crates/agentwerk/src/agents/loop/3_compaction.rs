@@ -40,12 +40,36 @@ pub(super) async fn compact(context: &mut LoopContext<'_>, reason: CompactReason
 
     if let Some(summary) = summary {
         let dir = context.ticket_system.dir_value();
+
         if let Some(t) = context.ticket_system.tickets.lock().unwrap().get_mut(&context.ticket_key) {
             t.summarize(summary);
         }
+
+        // Compaction file pair: comments file first, then header as commit
+        // marker. A crash in between leaves an orphan `comments.<ts>.jsonl`
+        // that `Comments::load` skips via the paired-check rule.
         if let Some(t) = context.ticket_system.get_ticket(&context.ticket_key) {
-            use crate::persistence::Persist;
-            let _ = t.save(&dir);
+            let compaction_at = crate::agents::tickets::now_millis();
+            let comments_path = dir
+                .join("tickets")
+                .join(&context.ticket_key)
+                .join(format!("comments.{compaction_at}.jsonl"));
+            let mut body = String::new();
+            for c in &t.comments {
+                if let Ok(line) = serde_json::to_string(c) {
+                    body.push_str(&line);
+                    body.push('\n');
+                }
+            }
+            let _ = crate::persistence::write_atomic(&comments_path, body.as_bytes());
+
+            let header_path = dir
+                .join("tickets")
+                .join(&context.ticket_key)
+                .join(format!("ticket.{compaction_at}.json"));
+            if let Ok(header_body) = serde_json::to_vec_pretty(&t) {
+                let _ = crate::persistence::write_atomic(&header_path, &header_body);
+            }
         }
 
         if matches!(reason, CompactReason::Reactive) {

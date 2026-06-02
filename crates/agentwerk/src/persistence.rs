@@ -80,28 +80,6 @@ pub(crate) fn append_line(path: &Path, line: &str) -> io::Result<()> {
     file.write_all(b"\n")
 }
 
-/// Newest `ticket.<ts>.json` file in `dir`, or `None` when the directory
-/// is absent or empty.
-pub(crate) fn latest_path(dir: &Path) -> Option<PathBuf> {
-    fs::read_dir(dir)
-        .ok()?
-        .flatten()
-        .filter_map(|e| {
-            let name = e.file_name();
-            let ts = parse_filename_ts(name.to_string_lossy().as_ref())?;
-            Some((ts, e.path()))
-        })
-        .max_by_key(|(ts, _)| *ts)
-        .map(|(_, path)| path)
-}
-
-pub(crate) fn parse_filename_ts(name: &str) -> Option<u64> {
-    name.strip_prefix("ticket.")?
-        .strip_suffix(".json")?
-        .parse()
-        .ok()
-}
-
 /// Relative path of a tool's output file under a tickets dir:
 /// `tickets/<key>/outputs/<id>.txt`. Callers join with the tickets dir
 /// to write; storing the relative form keeps comment transcripts portable.
@@ -141,39 +119,6 @@ mod tests {
         append_line(&path, "first").unwrap();
         append_line(&path, "second").unwrap();
         assert_eq!(fs::read_to_string(&path).unwrap(), "first\nsecond\n");
-    }
-
-    #[test]
-    fn latest_path_picks_highest_timestamp() {
-        let dir = TempDir::new().unwrap();
-        let d = dir.path();
-        fs::write(d.join("ticket.10.json"), "").unwrap();
-        fs::write(d.join("ticket.30.json"), "").unwrap();
-        fs::write(d.join("ticket.20.json"), "").unwrap();
-        let picked = latest_path(d).unwrap();
-        assert_eq!(picked.file_name().unwrap(), "ticket.30.json");
-    }
-
-    #[test]
-    fn latest_path_ignores_unrelated_files() {
-        let dir = TempDir::new().unwrap();
-        let d = dir.path();
-        fs::write(d.join("ticket.1.json"), "").unwrap();
-        fs::write(d.join("README.md"), "").unwrap();
-        let picked = latest_path(d).unwrap();
-        assert_eq!(picked.file_name().unwrap(), "ticket.1.json");
-    }
-
-    #[test]
-    fn parse_filename_ts_accepts_well_formed() {
-        assert_eq!(parse_filename_ts("ticket.123.json"), Some(123));
-    }
-
-    #[test]
-    fn parse_filename_ts_rejects_malformed() {
-        assert_eq!(parse_filename_ts("ticket.abc.json"), None);
-        assert_eq!(parse_filename_ts("note.123.json"), None);
-        assert_eq!(parse_filename_ts("ticket.123.txt"), None);
     }
 
     #[test]
