@@ -6,7 +6,7 @@ use std::sync::Arc;
 
 use crate::event::EventKind;
 use crate::providers::types::TokenUsage;
-use crate::providers::{AsUserMessage, Message};
+use crate::providers::{AsUserMessage, Message, Model};
 use crate::agents::agent::Agent;
 use crate::agents::policy::Policies;
 use crate::agents::tickets::{policy_violated_kind, to_messages, Comment, Status, TicketSystem};
@@ -15,6 +15,7 @@ use super::{compaction, reply, tool_call, Action, POLL_INTERVAL};
 
 pub(super) struct LoopContext<'a> {
     pub(super) agent: &'a Agent,
+    pub(super) model: &'a Model,
     pub(super) ticket_system: &'a Arc<TicketSystem>,
     pub(super) interrupt_signal: Arc<AtomicBool>,
 
@@ -31,6 +32,7 @@ pub(super) struct LoopContext<'a> {
 impl<'a> LoopContext<'a> {
     pub(super) fn new(
         agent: &'a Agent,
+        model: &'a Model,
         ticket_system: &'a Arc<TicketSystem>,
         interrupt_signal: Arc<AtomicBool>,
         policies: Policies,
@@ -39,6 +41,7 @@ impl<'a> LoopContext<'a> {
     ) -> Self {
         Self {
             agent,
+            model,
             ticket_system,
             interrupt_signal,
 
@@ -50,16 +53,6 @@ impl<'a> LoopContext<'a> {
             last_usage: None,
         }
     }
-}
-
-pub(super) fn model_name(context: &LoopContext<'_>) -> String {
-    context
-        .agent
-        .model
-        .as_ref()
-        .expect("Agent::run requires .model(...) to be set")
-        .name
-        .clone()
 }
 
 pub(super) async fn start_turn<'a>(
@@ -127,8 +120,13 @@ pub(super) async fn start_turn<'a>(
             );
         }
 
+        let model = agent
+            .model
+            .as_ref()
+            .expect("Agent::run requires .model(...) to be set");
         *context = Some(LoopContext::new(
             agent,
+            model,
             ticket_system,
             interrupt_signal,
             policies,

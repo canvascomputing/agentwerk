@@ -9,7 +9,7 @@ use crate::agents::retry::{ExponentialRetry, Retry};
 use crate::tools::ToolCall;
 
 use super::compaction;
-use super::turn::{model_name, LoopContext};
+use super::turn::LoopContext;
 use super::{Action, Reply};
 use super::wait_for_signal;
 
@@ -18,7 +18,7 @@ pub(super) async fn run(
     messages: Vec<Message>,
 ) -> Action<Reply> {
     let tools = context.agent.tool_definitions();
-    let model_name = model_name(context);
+    let model_name = context.model.name.clone();
     context.ticket_system.emit(&context.ticket_key, context.agent.get_name(), EventKind::RequestStarted {
         model: model_name.clone(),
     });

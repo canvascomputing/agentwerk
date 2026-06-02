@@ -6,7 +6,7 @@ use crate::providers::Message;
 use crate::agents::compaction as algo;
 use crate::agents::tickets::to_messages;
 
-use super::turn::{model_name, LoopContext};
+use super::turn::LoopContext;
 use super::Action;
 
 pub(super) async fn compact(context: &mut LoopContext<'_>, reason: CompactReason) -> Action<()> {
@@ -16,7 +16,7 @@ pub(super) async fn compact(context: &mut LoopContext<'_>, reason: CompactReason
         return Action::Stop;
     };
 
-    let model_name = model_name(context);
+    let model_name = context.model.name.clone();
     let messages = to_messages(&ticket.comments);
     let result = algo::compact(&context.agent.provider_handle(), &model_name, &messages).await;
 
@@ -49,7 +49,7 @@ pub(super) async fn compact(context: &mut LoopContext<'_>, reason: CompactReason
         }
 
         if matches!(reason, CompactReason::Reactive) {
-            let window = context.agent.model.as_ref().and_then(|m| m.context_window);
+            let window = context.model.context_window;
             if let Some(threshold) = algo::blocking_threshold(window) {
                 let updated = context
                     .ticket_system
@@ -89,7 +89,7 @@ pub(super) async fn proactive_compact(
     mut messages: Vec<Message>,
 ) -> Action<Vec<Message>> {
     let tools = context.agent.tool_definitions();
-    let window = context.agent.model.as_ref().and_then(|m| m.context_window);
+    let window = context.model.context_window;
 
     let exceeds_proactive_threshold = context
         .last_usage

@@ -371,6 +371,8 @@ impl std::error::Error for TicketError {}
 /// `Arc<TicketSystem>` — `new()` returns `Arc<Self>` so each bound
 /// `Agent` can hold a `Weak<TicketSystem>` without creating an Arc
 /// cycle through the system's `Vec<Agent>`.
+type EventHandler = dyn Fn(Event) + Send + Sync;
+
 pub struct TicketSystem {
     weak_self: Weak<TicketSystem>,
     pub(crate) tickets: Mutex<HashMap<String, Ticket>>,
@@ -378,7 +380,7 @@ pub struct TicketSystem {
     policies: Mutex<Policies>,
     pub(crate) interrupt_signal: Mutex<Arc<AtomicBool>>,
     pub(crate) stats: Stats,
-    event_handler: Mutex<Option<Arc<dyn Fn(Event) + Send + Sync>>>,
+    event_handler: Mutex<Option<Arc<EventHandler>>>,
     dir: Mutex<PathBuf>,
     tickets_log_lock: Mutex<()>,
     join_handle: Mutex<Option<JoinHandle<()>>>,
