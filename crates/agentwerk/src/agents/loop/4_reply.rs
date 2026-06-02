@@ -95,11 +95,13 @@ pub(super) async fn run(
 
     context.last_usage = Some(response.usage.clone());
     context.ticket_system.emit(&context.ticket_key, context.agent.get_name(), EventKind::RequestFinished { model: response.model.clone(), usage: response.usage.clone() });
-    context
-        .ticket_system
-        .add_comment(&context.ticket_key, crate::agents::tickets::Comment::assistant(&response.content));
 
     let overflowed = response.status == ResponseStatus::ContextWindowExceeded;
+    if !overflowed {
+        context
+            .ticket_system
+            .add_comment(&context.ticket_key, crate::agents::tickets::Comment::assistant(&response.content));
+    }
 
     let calls: Vec<ToolCall> = response
         .content
