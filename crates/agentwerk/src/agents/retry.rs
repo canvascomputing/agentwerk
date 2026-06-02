@@ -151,5 +151,4 @@ mod tests {
         assert_eq!(policy.try_consume(), None);
         assert_eq!(policy.try_consume(), None);
     }
-
 }

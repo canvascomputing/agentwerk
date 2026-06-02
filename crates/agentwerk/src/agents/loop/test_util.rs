@@ -50,8 +50,7 @@ impl Provider for MockProvider {
         &self,
         request: crate::providers::ModelRequest,
         _on_event: Arc<dyn Fn(crate::providers::types::StreamEvent) + Send + Sync>,
-    ) -> Pin<Box<dyn std::future::Future<Output = ProviderResult<ModelResponse>> + Send + '_>>
-    {
+    ) -> Pin<Box<dyn std::future::Future<Output = ProviderResult<ModelResponse>> + Send + '_>> {
         self.received.lock().unwrap().push(request.messages.clone());
         self.received_system_prompts
             .lock()

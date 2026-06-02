@@ -4,12 +4,12 @@ use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
+use crate::agents::agent::Agent;
+use crate::agents::policy::Policies;
+use crate::agents::tickets::{policy_violated_kind, to_messages, Reply, Status, TicketSystem};
 use crate::event::EventKind;
 use crate::providers::types::TokenUsage;
 use crate::providers::{AsUserMessage, Message, Model};
-use crate::agents::agent::Agent;
-use crate::agents::policy::Policies;
-use crate::agents::tickets::{policy_violated_kind, to_messages, Comment, Status, TicketSystem};
 
 use super::{compaction, reply, tool_call, Action, POLL_INTERVAL};
 
@@ -67,7 +67,11 @@ pub(super) async fn start_turn<'a>(
     }
     let policies = ticket_system.policies();
     if let Some((kind, limit)) = policy_violated_kind(&policies, &ticket_system.stats) {
-        ticket_system.emit("", agent.get_name(), EventKind::PolicyViolated { kind, limit });
+        ticket_system.emit(
+            "",
+            agent.get_name(),
+            EventKind::PolicyViolated { kind, limit },
+        );
         return Action::Stop;
     }
 
@@ -102,21 +106,26 @@ pub(super) async fn start_turn<'a>(
 
         ticket_system.emit(&ticket_key, agent_name, EventKind::TurnStarted);
 
-        if ticket.comments.is_empty() {
-            ticket_system.add_comment(&ticket_key, Comment::system_text(system_prompt.clone()));
+        if ticket.replies.is_empty() {
+            ticket_system.add_reply(&ticket_key, Reply::system_text(system_prompt.clone()));
             if let Some(context_msg) =
                 agent.context_message(&policies, &ticket_system.stats, Some(&ticket_key))
             {
-                ticket_system.add_comment(&ticket_key, Comment::user_text(context_msg));
+                ticket_system.add_reply(&ticket_key, Reply::user_text(context_msg));
             }
-            let Message::User { content: task_blocks } = ticket.as_user_message() else {
+            let Message::User {
+                content: task_blocks,
+            } = ticket.as_user_message()
+            else {
                 unreachable!("Ticket::as_user_message returns Message::User");
             };
-            ticket_system.add_comment(&ticket_key, Comment::user(&task_blocks, &HashMap::new()));
+            ticket_system.add_reply(&ticket_key, Reply::user(&task_blocks, &HashMap::new()));
             ticket_system.emit(
                 &ticket_key,
                 agent_name,
-                EventKind::TicketStarted { key: ticket_key.clone() },
+                EventKind::TicketStarted {
+                    key: ticket_key.clone(),
+                },
             );
         }
 
@@ -135,18 +144,29 @@ pub(super) async fn start_turn<'a>(
         ));
     }
 
-    let context_ref = context.as_ref().expect("context is Some after the claim branch");
-    let Some(ticket) = context_ref.ticket_system.get_ticket(&context_ref.ticket_key) else {
+    let context_ref = context
+        .as_ref()
+        .expect("context is Some after the claim branch");
+    let Some(ticket) = context_ref
+        .ticket_system
+        .get_ticket(&context_ref.ticket_key)
+    else {
         *context = None;
         return Action::Replay;
     };
     let status = match ticket.status {
-        Status::Finished => Some(EventKind::TicketFinished { key: context_ref.ticket_key.clone() }),
-        Status::Failed => Some(EventKind::TicketFailed { key: context_ref.ticket_key.clone() }),
+        Status::Finished => Some(EventKind::TicketFinished {
+            key: context_ref.ticket_key.clone(),
+        }),
+        Status::Failed => Some(EventKind::TicketFailed {
+            key: context_ref.ticket_key.clone(),
+        }),
         _ => None,
     };
     if let Some(kind) = status {
-        context_ref.ticket_system.emit(&context_ref.ticket_key, context_ref.agent.get_name(), kind);
+        context_ref
+            .ticket_system
+            .emit(&context_ref.ticket_key, context_ref.agent.get_name(), kind);
         *context = None;
         return Action::Replay;
     }
@@ -154,7 +174,7 @@ pub(super) async fn start_turn<'a>(
         tokio::time::sleep(POLL_INTERVAL).await;
         return Action::Replay;
     }
-    Action::Proceed(to_messages(&ticket.comments))
+    Action::Proceed(to_messages(&ticket.replies))
 }
 
 pub(super) async fn run_agent(agent: Agent) {
@@ -191,9 +211,9 @@ mod tests {
     use std::sync::Arc;
     use std::time::Duration;
 
+    use crate::agents::agent::Agent;
     use crate::agents::r#loop::test_util::*;
     use crate::agents::tickets::{Status, Ticket, TicketSystem};
-    use crate::agents::agent::Agent;
     use crate::agents::Knowledge;
     use crate::providers::Provider;
     use crate::tools::ManageTicketsTool;
@@ -312,7 +332,7 @@ mod tests {
 
     #[tokio::test]
     async fn huge_tool_result_is_persisted_to_ticket_outputs_dir_and_ticket_finishes_done() {
-        use crate::agents::tickets::CommentContent;
+        use crate::agents::tickets::ReplyContent;
         use crate::tools::{Tool, ToolResult};
 
         let provider = MockProvider::with_results(vec![
@@ -368,15 +388,16 @@ mod tests {
         assert!(failures_in(&events).is_empty());
         assert_eq!(ticket.status, Status::Finished);
 
-        let relative_path: std::path::PathBuf =
-            ["tickets", "TICKET-1", "outputs", "call-1.txt"].iter().collect();
+        let relative_path: std::path::PathBuf = ["tickets", "TICKET-1", "outputs", "call-1.txt"]
+            .iter()
+            .collect();
         let output_path = results_dir.path().join(&relative_path);
         let body = std::fs::read_to_string(&output_path).expect("offload file must exist");
         assert_eq!(body, "x".repeat(800_000));
 
-        let tool_result_path = ticket.comments.iter().find_map(|c| {
-            c.content.iter().find_map(|b| match b {
-                CommentContent::ToolResult { id, path, .. } if id == "call-1" => path.clone(),
+        let tool_result_path = ticket.replies.iter().find_map(|r| {
+            r.content.iter().find_map(|b| match b {
+                ReplyContent::ToolResult { id, path, .. } if id == "call-1" => path.clone(),
                 _ => None,
             })
         });
@@ -513,10 +534,12 @@ mod tests {
         messages
             .iter()
             .filter_map(|m| match m {
-                crate::providers::Message::User { content } => content.iter().find_map(|b| match b {
-                    crate::providers::ContentBlock::Text { text } => Some(text.clone()),
-                    _ => None,
-                }),
+                crate::providers::Message::User { content } => {
+                    content.iter().find_map(|b| match b {
+                        crate::providers::ContentBlock::Text { text } => Some(text.clone()),
+                        _ => None,
+                    })
+                }
                 _ => None,
             })
             .filter(|text| !text.starts_with("## Context\n\n"))
@@ -748,13 +771,35 @@ mod tests {
             "ticket 1 turn 1 should not have Knowledge section: {:?}",
             prompts[0]
         );
-        assert_eq!(prompts[0], prompts[1], "ticket 1 turn 2 prompt must be byte-identical to turn 1");
-        assert_eq!(prompts[0], prompts[2], "ticket 1 turn 3 prompt must be byte-identical to turn 1");
+        assert_eq!(
+            prompts[0], prompts[1],
+            "ticket 1 turn 2 prompt must be byte-identical to turn 1"
+        );
+        assert_eq!(
+            prompts[0], prompts[2],
+            "ticket 1 turn 3 prompt must be byte-identical to turn 1"
+        );
 
-        assert!(prompts[3].contains("## Knowledge"), "ticket 2 should render the knowledge section: {:?}", prompts[3]);
-        assert!(prompts[3].contains("api-config"), "ticket 2 should see the page slug: {:?}", prompts[3]);
-        assert!(prompts[3].contains("API runs on port 3000"), "ticket 2 should see the index summary: {:?}", prompts[3]);
-        assert!(!prompts[3].contains("Rate limit: 100 req/min"), "ticket 2 should NOT contain full page body: {:?}", prompts[3]);
+        assert!(
+            prompts[3].contains("## Knowledge"),
+            "ticket 2 should render the knowledge section: {:?}",
+            prompts[3]
+        );
+        assert!(
+            prompts[3].contains("api-config"),
+            "ticket 2 should see the page slug: {:?}",
+            prompts[3]
+        );
+        assert!(
+            prompts[3].contains("API runs on port 3000"),
+            "ticket 2 should see the index summary: {:?}",
+            prompts[3]
+        );
+        assert!(
+            !prompts[3].contains("Rate limit: 100 req/min"),
+            "ticket 2 should NOT contain full page body: {:?}",
+            prompts[3]
+        );
 
         let page_path = knowledge_dir.path().join("pages").join("api-config.md");
         assert!(page_path.exists(), "page file should exist on disk");
@@ -776,7 +821,9 @@ mod tests {
                     content
                         .iter()
                         .filter_map(|b| match b {
-                            crate::providers::ContentBlock::ToolResult { content, .. } => Some(content),
+                            crate::providers::ContentBlock::ToolResult { content, .. } => {
+                                Some(content)
+                            }
                             _ => None,
                         })
                         .collect::<Vec<_>>(),
@@ -789,14 +836,26 @@ mod tests {
             .iter()
             .find(|r| !r.starts_with("page written"))
             .expect("should have a non-write tool result (the read result)");
-        assert!(!read_result.contains("---"), "read result should not contain frontmatter delimiters: {read_result}");
-        assert!(!read_result.contains("updated:"), "read result should not contain updated field: {read_result}");
-        assert!(read_result.contains("Rate limit: 100 req/min"), "read result should contain page body: {read_result}");
+        assert!(
+            !read_result.contains("---"),
+            "read result should not contain frontmatter delimiters: {read_result}"
+        );
+        assert!(
+            !read_result.contains("updated:"),
+            "read result should not contain updated field: {read_result}"
+        );
+        assert!(
+            read_result.contains("Rate limit: 100 req/min"),
+            "read result should contain page body: {read_result}"
+        );
     }
 
     // Compaction
 
-    fn compaction_starts(events: &[crate::event::Event], expected: crate::event::CompactReason) -> usize {
+    fn compaction_starts(
+        events: &[crate::event::Event],
+        expected: crate::event::CompactReason,
+    ) -> usize {
         events
             .iter()
             .filter(|e| match &e.kind {
@@ -806,7 +865,10 @@ mod tests {
             .count()
     }
 
-    fn compaction_finishes(events: &[crate::event::Event], expected: crate::event::CompactReason) -> usize {
+    fn compaction_finishes(
+        events: &[crate::event::Event],
+        expected: crate::event::CompactReason,
+    ) -> usize {
         events
             .iter()
             .filter(|e| match &e.kind {
@@ -819,7 +881,12 @@ mod tests {
     fn blocking_limit_events(events: &[crate::event::Event]) -> usize {
         events
             .iter()
-            .filter(|e| matches!(e.kind, crate::event::EventKind::BlockingLimitExceeded { .. }))
+            .filter(|e| {
+                matches!(
+                    e.kind,
+                    crate::event::EventKind::BlockingLimitExceeded { .. }
+                )
+            })
             .count()
     }
 
@@ -829,7 +896,10 @@ mod tests {
             Err(crate::providers::ProviderError::ContextWindowExceeded {
                 message: "prompt is 250000 tokens, exceeds 200000".into(),
             }),
-            Ok(text_response_with_usage("SUMMARY", crate::providers::types::TokenUsage::default())),
+            Ok(text_response_with_usage(
+                "SUMMARY",
+                crate::providers::types::TokenUsage::default(),
+            )),
         ]);
         let (events, _, _) = run_one(provider, 0, 10, None).await;
 
@@ -857,7 +927,10 @@ mod tests {
             Err(crate::providers::ProviderError::ContextWindowExceeded {
                 message: "exceeded".into(),
             }),
-            Ok(text_response_with_usage("SUMMARY", crate::providers::types::TokenUsage::default())),
+            Ok(text_response_with_usage(
+                "SUMMARY",
+                crate::providers::types::TokenUsage::default(),
+            )),
             Ok(write_result_response("ok")),
         ]);
         let (events, provider, ticket) = run_one(provider, 0, 10, Some(string_schema())).await;
@@ -879,14 +952,20 @@ mod tests {
             Err(crate::providers::ProviderError::ContextWindowExceeded {
                 message: "first overflow".into(),
             }),
-            Ok(text_response_with_usage("SUMMARY", crate::providers::types::TokenUsage::default())),
+            Ok(text_response_with_usage(
+                "SUMMARY",
+                crate::providers::types::TokenUsage::default(),
+            )),
             Err(crate::providers::ProviderError::ContextWindowExceeded {
                 message: "second overflow".into(),
             }),
         ]);
         let (events, _, _) = run_one(provider, 0, 10, Some(string_schema())).await;
 
-        assert_eq!(compaction_finishes(&events, crate::event::CompactReason::Reactive), 1);
+        assert_eq!(
+            compaction_finishes(&events, crate::event::CompactReason::Reactive),
+            1
+        );
         let failures = failures_in(&events);
         assert!(!failures.is_empty());
     }
@@ -902,7 +981,10 @@ mod tests {
                     output_tokens: 0,
                 },
             )),
-            Ok(text_response_with_usage("SUMMARY", crate::providers::types::TokenUsage::default())),
+            Ok(text_response_with_usage(
+                "SUMMARY",
+                crate::providers::types::TokenUsage::default(),
+            )),
             Ok(write_result_response("done")),
         ]);
         let (events, provider, ticket) = run_compaction(provider).await;
@@ -933,7 +1015,9 @@ mod tests {
         let request_started: Vec<usize> = events
             .iter()
             .enumerate()
-            .filter_map(|(i, e)| matches!(&e.kind, crate::event::EventKind::RequestStarted { .. }).then_some(i))
+            .filter_map(|(i, e)| {
+                matches!(&e.kind, crate::event::EventKind::RequestStarted { .. }).then_some(i)
+            })
             .collect();
         assert!(request_started.len() >= 2);
         assert!(started_idx > request_started[0] && started_idx < request_started[1]);
@@ -954,16 +1038,17 @@ mod tests {
         ]);
         let (events, _, _) = run_compaction(provider).await;
 
-        assert_eq!(compaction_starts(&events, crate::event::CompactReason::Proactive), 1);
-        assert!(
-            events.iter().any(|e| matches!(
-                &e.kind,
-                crate::event::EventKind::CompactionFailed {
-                    reason: crate::event::CompactReason::Proactive,
-                    message,
-                } if message.contains("rate limited"),
-            )),
+        assert_eq!(
+            compaction_starts(&events, crate::event::CompactReason::Proactive),
+            1
         );
+        assert!(events.iter().any(|e| matches!(
+            &e.kind,
+            crate::event::EventKind::CompactionFailed {
+                reason: crate::event::CompactReason::Proactive,
+                message,
+            } if message.contains("rate limited"),
+        )),);
         assert!(retries_in(&events).is_empty());
         let failures = failures_in(&events);
         assert!(!failures.is_empty());
@@ -980,13 +1065,22 @@ mod tests {
                     output_tokens: 0,
                 },
             )),
-            Ok(text_response_with_usage("", crate::providers::types::TokenUsage::default())),
+            Ok(text_response_with_usage(
+                "",
+                crate::providers::types::TokenUsage::default(),
+            )),
             Ok(write_result_response("done")),
         ]);
         let (events, provider, ticket) = run_compaction(provider).await;
 
-        assert_eq!(compaction_starts(&events, crate::event::CompactReason::Proactive), 1);
-        assert_eq!(compaction_finishes(&events, crate::event::CompactReason::Proactive), 1);
+        assert_eq!(
+            compaction_starts(&events, crate::event::CompactReason::Proactive),
+            1
+        );
+        assert_eq!(
+            compaction_finishes(&events, crate::event::CompactReason::Proactive),
+            1
+        );
         assert_eq!(ticket.status, Status::Finished);
 
         let third = &provider.received()[2];
@@ -1004,20 +1098,34 @@ mod tests {
     async fn response_status_context_window_exceeded_triggers_reactive_compaction() {
         use crate::providers::types::ModelResponse;
         let provider = MockProvider::with_results(vec![
-            Ok(text_response_with_usage("thinking", crate::providers::types::TokenUsage::default())),
+            Ok(text_response_with_usage(
+                "thinking",
+                crate::providers::types::TokenUsage::default(),
+            )),
             Ok(ModelResponse {
-                content: vec![crate::providers::ContentBlock::Text { text: "oops".into() }],
+                content: vec![crate::providers::ContentBlock::Text {
+                    text: "oops".into(),
+                }],
                 status: crate::providers::types::ResponseStatus::ContextWindowExceeded,
                 usage: crate::providers::types::TokenUsage::default(),
                 model: "mock".into(),
             }),
-            Ok(text_response_with_usage("SUMMARY", crate::providers::types::TokenUsage::default())),
+            Ok(text_response_with_usage(
+                "SUMMARY",
+                crate::providers::types::TokenUsage::default(),
+            )),
             Ok(write_result_response("recovered")),
         ]);
         let (events, _, ticket) = run_compaction(provider).await;
 
-        assert_eq!(compaction_starts(&events, crate::event::CompactReason::Reactive), 1);
-        assert_eq!(compaction_finishes(&events, crate::event::CompactReason::Reactive), 1);
+        assert_eq!(
+            compaction_starts(&events, crate::event::CompactReason::Reactive),
+            1
+        );
+        assert_eq!(
+            compaction_finishes(&events, crate::event::CompactReason::Reactive),
+            1
+        );
         assert_eq!(ticket.status, Status::Finished);
     }
 
@@ -1025,9 +1133,14 @@ mod tests {
     async fn response_status_context_window_exceeded_consumes_compaction_retry_budget() {
         use crate::providers::types::ModelResponse;
         let provider = MockProvider::with_results(vec![
-            Ok(text_response_with_usage("thinking", crate::providers::types::TokenUsage::default())),
+            Ok(text_response_with_usage(
+                "thinking",
+                crate::providers::types::TokenUsage::default(),
+            )),
             Ok(ModelResponse {
-                content: vec![crate::providers::ContentBlock::Text { text: "first overflow".into() }],
+                content: vec![crate::providers::ContentBlock::Text {
+                    text: "first overflow".into(),
+                }],
                 status: crate::providers::types::ResponseStatus::ContextWindowExceeded,
                 usage: crate::providers::types::TokenUsage {
                     input_tokens: 198_000,
@@ -1035,11 +1148,17 @@ mod tests {
                 },
                 model: "mock".into(),
             }),
-            Ok(text_response_with_usage("SUMMARY", crate::providers::types::TokenUsage::default())),
+            Ok(text_response_with_usage(
+                "SUMMARY",
+                crate::providers::types::TokenUsage::default(),
+            )),
         ]);
         let (events, _, _) = run_compaction(provider).await;
 
-        assert_eq!(compaction_starts(&events, crate::event::CompactReason::Reactive), 1);
+        assert_eq!(
+            compaction_starts(&events, crate::event::CompactReason::Reactive),
+            1
+        );
         let failures = failures_in(&events);
         assert!(!failures.is_empty());
         assert!(failures[0].contains("after compaction"));
@@ -1051,14 +1170,26 @@ mod tests {
         let provider = MockProvider::with_results(vec![
             Ok(text_response_with_usage(
                 "thinking...",
-                crate::providers::types::TokenUsage { input_tokens: 170_000, output_tokens: 0 },
+                crate::providers::types::TokenUsage {
+                    input_tokens: 170_000,
+                    output_tokens: 0,
+                },
             )),
-            Ok(text_response_with_usage("SUMMARY-A", crate::providers::types::TokenUsage::default())),
-            Ok(text_response_with_usage("thinking again", crate::providers::types::TokenUsage::default())),
+            Ok(text_response_with_usage(
+                "SUMMARY-A",
+                crate::providers::types::TokenUsage::default(),
+            )),
+            Ok(text_response_with_usage(
+                "thinking again",
+                crate::providers::types::TokenUsage::default(),
+            )),
             Err(crate::providers::ProviderError::ContextWindowExceeded {
                 message: "main request overflow after proactive".into(),
             }),
-            Ok(text_response_with_usage("SUMMARY-B", crate::providers::types::TokenUsage::default())),
+            Ok(text_response_with_usage(
+                "SUMMARY-B",
+                crate::providers::types::TokenUsage::default(),
+            )),
             Ok(write_result_response("done")),
         ]);
         let (events, provider, ticket) = run_compaction(provider).await;
@@ -1080,26 +1211,39 @@ mod tests {
         let provider = MockProvider::with_results(vec![
             Ok(text_response_with_usage(
                 "thinking",
-                crate::providers::types::TokenUsage { input_tokens: 198_000, output_tokens: 0 },
+                crate::providers::types::TokenUsage {
+                    input_tokens: 198_000,
+                    output_tokens: 0,
+                },
             )),
-            Ok(text_response_with_usage("SUMMARY-A", crate::providers::types::TokenUsage::default())),
-            Ok(text_response_with_usage("SUMMARY-B", crate::providers::types::TokenUsage::default())),
-            Ok(text_response_with_usage("SUMMARY-C", crate::providers::types::TokenUsage::default())),
+            Ok(text_response_with_usage(
+                "SUMMARY-A",
+                crate::providers::types::TokenUsage::default(),
+            )),
+            Ok(text_response_with_usage(
+                "SUMMARY-B",
+                crate::providers::types::TokenUsage::default(),
+            )),
+            Ok(text_response_with_usage(
+                "SUMMARY-C",
+                crate::providers::types::TokenUsage::default(),
+            )),
         ]);
         let (events, _, _) = run_compaction(provider).await;
 
         assert!(blocking_limit_events(&events) >= 1);
 
         for window in events.windows(2) {
-            if matches!(&window[0].kind, crate::event::EventKind::BlockingLimitExceeded { .. }) {
-                assert!(
-                    matches!(
-                        &window[1].kind,
-                        crate::event::EventKind::CompactionStarted {
-                            reason: CompactReason::Reactive
-                        } | crate::event::EventKind::RequestFailed { .. },
-                    ),
-                );
+            if matches!(
+                &window[0].kind,
+                crate::event::EventKind::BlockingLimitExceeded { .. }
+            ) {
+                assert!(matches!(
+                    &window[1].kind,
+                    crate::event::EventKind::CompactionStarted {
+                        reason: CompactReason::Reactive
+                    } | crate::event::EventKind::RequestFailed { .. },
+                ),);
             }
         }
     }
@@ -1107,14 +1251,29 @@ mod tests {
     #[tokio::test]
     async fn blocking_limit_uses_compaction_retry_budget() {
         let provider = MockProvider::with_results(vec![
-            Ok(text_response_with_usage("low", crate::providers::types::TokenUsage::default())),
+            Ok(text_response_with_usage(
+                "low",
+                crate::providers::types::TokenUsage::default(),
+            )),
             Ok(text_response_with_usage(
                 "huge",
-                crate::providers::types::TokenUsage { input_tokens: 198_000, output_tokens: 0 },
+                crate::providers::types::TokenUsage {
+                    input_tokens: 198_000,
+                    output_tokens: 0,
+                },
             )),
-            Ok(text_response_with_usage("SUMMARY-A", crate::providers::types::TokenUsage::default())),
-            Ok(text_response_with_usage("SUMMARY-B", crate::providers::types::TokenUsage::default())),
-            Ok(text_response_with_usage("SUMMARY-C", crate::providers::types::TokenUsage::default())),
+            Ok(text_response_with_usage(
+                "SUMMARY-A",
+                crate::providers::types::TokenUsage::default(),
+            )),
+            Ok(text_response_with_usage(
+                "SUMMARY-B",
+                crate::providers::types::TokenUsage::default(),
+            )),
+            Ok(text_response_with_usage(
+                "SUMMARY-C",
+                crate::providers::types::TokenUsage::default(),
+            )),
         ]);
         let (events, _, _) = run_compaction(provider).await;
 
@@ -1140,11 +1299,23 @@ mod tests {
         let provider = MockProvider::with_results(vec![
             Ok(text_response_with_usage(
                 "thinking",
-                crate::providers::types::TokenUsage { input_tokens: 195_500, output_tokens: 0 },
+                crate::providers::types::TokenUsage {
+                    input_tokens: 195_500,
+                    output_tokens: 0,
+                },
             )),
-            Ok(text_response_with_usage("SUMMARY-A", crate::providers::types::TokenUsage::default())),
-            Ok(text_response_with_usage("SUMMARY-B", crate::providers::types::TokenUsage::default())),
-            Ok(text_response_with_usage("SUMMARY-C", crate::providers::types::TokenUsage::default())),
+            Ok(text_response_with_usage(
+                "SUMMARY-A",
+                crate::providers::types::TokenUsage::default(),
+            )),
+            Ok(text_response_with_usage(
+                "SUMMARY-B",
+                crate::providers::types::TokenUsage::default(),
+            )),
+            Ok(text_response_with_usage(
+                "SUMMARY-C",
+                crate::providers::types::TokenUsage::default(),
+            )),
         ]);
 
         let collected: Arc<std::sync::Mutex<Vec<crate::event::Event>>> =
@@ -1193,10 +1364,12 @@ mod tests {
         messages
             .iter()
             .filter_map(|m| match m {
-                crate::providers::Message::User { content } => content.iter().find_map(|b| match b {
-                    crate::providers::ContentBlock::Text { text } => Some(text.clone()),
-                    _ => None,
-                }),
+                crate::providers::Message::User { content } => {
+                    content.iter().find_map(|b| match b {
+                        crate::providers::ContentBlock::Text { text } => Some(text.clone()),
+                        _ => None,
+                    })
+                }
                 _ => None,
             })
             .filter(|text| !text.starts_with("## Context\n\n"))

@@ -28,7 +28,7 @@ use super::stats::{Stats, TicketStats};
 /// A ticket. Caller-settable fields: `task`, `labels`, `schema`,
 /// `parent`. System-managed fields (`key`, `status`, `reporter`,
 /// `created_at`, `started_at`, `finished_at`, `failed_at`, `result`,
-/// `comments`) are stamped by the ticket system and the agent loop.
+/// `replies`) are stamped by the ticket system and the agent loop.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct Ticket {
     pub task: serde_json::Value,
@@ -56,11 +56,11 @@ pub struct Ticket {
     /// the provider for this ticket, plus a leading `system` entry for
     /// the system prompt and synthetic `system` entries marking
     /// compaction boundaries. System-managed: callers cannot push
-    /// directly. Persisted to `tickets/<key>/comments.jsonl` (and the
-    /// per-compaction `comments.<ts>.jsonl` files), never as part of
+    /// directly. Persisted to `tickets/<key>/replies.jsonl` (and the
+    /// per-compaction `replies.<ts>.jsonl` files), never as part of
     /// `ticket.json`.
     #[serde(skip)]
-    pub comments: Vec<Comment>,
+    pub replies: Vec<Reply>,
 }
 
 impl Ticket {
@@ -83,7 +83,7 @@ impl Ticket {
             failed_at: None,
             result: None,
             parent: None,
-            comments: Vec::new(),
+            replies: Vec::new(),
         }
     }
 
@@ -118,29 +118,29 @@ impl Ticket {
     }
 
     /// True when the model owes a turn: the transcript is empty, the
-    /// last comment is user-side, or the model's last reply still has
+    /// last reply is user-side, or the model's last reply still has
     /// unresolved tool calls. Used by the loop's wait-for-response
     /// branch and by `pending_count`.
     pub(crate) fn is_waiting_for_response(&self) -> bool {
-        let Some(c) = self.comments.last() else {
+        let Some(r) = self.replies.last() else {
             return true;
         };
-        if c.author != "assistant" {
+        if r.author != "assistant" {
             return true;
         }
-        c.content
+        r.content
             .iter()
-            .any(|x| matches!(x, CommentContent::ToolUse { .. }))
+            .any(|x| matches!(x, ReplyContent::ToolUse { .. }))
     }
 
     /// Reduce the transcript to just `summary_text`: every non-system
-    /// comment is dropped and a single `user` comment carrying
-    /// `summary_text` is appended. System-author comments (the system
+    /// reply is dropped and a single `user` reply carrying
+    /// `summary_text` is appended. System-author replies (the system
     /// prompt) survive unchanged. Used by the loop after a successful
     /// compaction.
     pub(crate) fn summarize(&mut self, summary_text: String) {
-        self.comments.retain(|c| c.author == "system");
-        self.comments.push(Comment::user_text(summary_text));
+        self.replies.retain(|r| r.author == "system");
+        self.replies.push(Reply::user_text(summary_text));
     }
 }
 
@@ -156,31 +156,31 @@ impl crate::persistence::Persist for Ticket {
     fn load(dir: &Path, key: &Self::Key) -> io::Result<Self> {
         let bytes = std::fs::read(ticket_header_path(dir, key))?;
         let mut ticket: Ticket = serde_json::from_slice(&bytes).map_err(io::Error::other)?;
-        ticket.comments = Comments::load(dir, key)?;
+        ticket.replies = Replies::load(dir, key)?;
         Ok(ticket)
     }
 }
 
-/// Per-ticket transcript log on disk. `tickets/<key>/comments.jsonl` is
-/// the strictly append-only running log; every comment ever appended
+/// Per-ticket transcript log on disk. `tickets/<key>/replies.jsonl` is
+/// the strictly append-only running log; every reply ever appended
 /// lands there. Each compaction event creates an immutable pair
-/// `(ticket.<ts>.json, comments.<ts>.jsonl)`; on load the newest such
-/// pair becomes the base and any `comments.jsonl` entries with a
+/// `(ticket.<ts>.json, replies.<ts>.jsonl)`; on load the newest such
+/// pair becomes the base and any `replies.jsonl` entries with a
 /// strictly greater `created_at` are merged on top.
-pub(crate) struct Comments;
+pub(crate) struct Replies;
 
-impl Comments {
-    /// Append one comment as a single JSON line.
-    pub(crate) fn append(dir: &Path, key: &str, comment: &Comment) -> io::Result<()> {
-        let line = serde_json::to_string(comment).map_err(io::Error::other)?;
+impl Replies {
+    /// Append one reply as a single JSON line.
+    pub(crate) fn append(dir: &Path, key: &str, reply: &Reply) -> io::Result<()> {
+        let line = serde_json::to_string(reply).map_err(io::Error::other)?;
         crate::persistence::append_line(&running_log_path(dir, key), &line)
     }
 
     /// Reconstruct the transcript for `key` per the rule on the type doc.
-    pub(crate) fn load(dir: &Path, key: &str) -> io::Result<Vec<Comment>> {
+    pub(crate) fn load(dir: &Path, key: &str) -> io::Result<Vec<Reply>> {
         // Find the most recent compaction whose paired files both exist.
         // `ticket.<ts>.json` is the commit marker: an orphan
-        // `comments.<ts>.jsonl` from a mid-compaction crash is ignored.
+        // `replies.<ts>.jsonl` from a mid-compaction crash is ignored.
         fn last_committed_compaction_at(ticket_dir: &Path) -> Option<u64> {
             std::fs::read_dir(ticket_dir)
                 .ok()?
@@ -192,31 +192,31 @@ impl Comments {
                         .parse::<u64>()
                         .ok()
                 })
-                .filter(|at| ticket_dir.join(format!("comments.{at}.jsonl")).is_file())
+                .filter(|at| ticket_dir.join(format!("replies.{at}.jsonl")).is_file())
                 .max()
         }
 
-        fn read_jsonl(path: &Path) -> io::Result<Vec<Comment>> {
+        fn read_jsonl(path: &Path) -> io::Result<Vec<Reply>> {
             let body = std::fs::read_to_string(path)?;
             body.lines()
                 .filter(|l| !l.is_empty())
-                .map(|l| serde_json::from_str::<Comment>(l).map_err(io::Error::other))
+                .map(|l| serde_json::from_str::<Reply>(l).map_err(io::Error::other))
                 .collect()
         }
 
         let ticket_dir = dir.join("tickets").join(key);
         let restart_at = last_committed_compaction_at(&ticket_dir);
-        let mut comments = match restart_at {
-            Some(at) => read_jsonl(&ticket_dir.join(format!("comments.{at}.jsonl")))?,
+        let mut replies = match restart_at {
+            Some(at) => read_jsonl(&ticket_dir.join(format!("replies.{at}.jsonl")))?,
             None => Vec::new(),
         };
         let running = running_log_path(dir, key);
         if running.exists() {
             let mut tail = read_jsonl(&running)?;
             tail.retain(|c| restart_at.is_none_or(|at| c.created_at > at));
-            comments.extend(tail);
+            replies.extend(tail);
         }
-        Ok(comments)
+        Ok(replies)
     }
 }
 
@@ -225,11 +225,10 @@ fn ticket_header_path(dir: &Path, key: &str) -> PathBuf {
     dir.join("tickets").join(key).join("ticket.json")
 }
 
-/// Path of the running append-only comments log for `key`.
+/// Path of the running append-only replies log for `key`.
 fn running_log_path(dir: &Path, key: &str) -> PathBuf {
-    dir.join("tickets").join(key).join("comments.jsonl")
+    dir.join("tickets").join(key).join("replies.jsonl")
 }
-
 
 impl AsUserMessage for Ticket {
     fn as_user_message(&self) -> Message {
@@ -266,13 +265,13 @@ impl fmt::Display for Status {
 
 /// One entry in a ticket's transcript.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-pub struct Comment {
+pub struct Reply {
     /// Role of the originating message: `"user"` or `"assistant"`. The
     /// agent loop also writes `"system"` entries for the system prompt
     /// and for compaction boundaries; those are filtered when
-    /// projecting comments back into `Message` values for the provider.
+    /// projecting replies back into `Message` values for the provider.
     pub author: String,
-    pub content: Vec<CommentContent>,
+    pub content: Vec<ReplyContent>,
     /// Millis since epoch.
     pub created_at: u64,
 }
@@ -281,7 +280,7 @@ pub struct Comment {
 /// surface free of provider types while still recording every payload
 /// shape the agent loop sends.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-pub enum CommentContent {
+pub enum ReplyContent {
     Text(String),
     ToolUse {
         id: String,
@@ -300,71 +299,71 @@ pub enum CommentContent {
     },
 }
 
-impl Comment {
-    /// Build a `"user"` comment from the provider blocks the loop sent.
+impl Reply {
+    /// Build a `"user"` reply from the provider blocks the loop sent.
     /// `paths` maps `tool_use_id → absolute path` for tool results whose
     /// full output was offloaded to disk; empty when nothing was offloaded.
     pub(crate) fn user(blocks: &[ContentBlock], paths: &HashMap<String, PathBuf>) -> Self {
         Self {
             author: "user".into(),
-            content: to_comment_content(blocks, paths),
+            content: to_reply_content(blocks, paths),
             created_at: now_millis(),
         }
     }
 
-    /// Build a `"user"` comment carrying a single text payload.
+    /// Build a `"user"` reply carrying a single text payload.
     pub(crate) fn user_text(text: impl Into<String>) -> Self {
         Self {
             author: "user".into(),
-            content: vec![CommentContent::Text(text.into())],
+            content: vec![ReplyContent::Text(text.into())],
             created_at: now_millis(),
         }
     }
 
-    /// Build an `"assistant"` comment from the model's reply content.
+    /// Build an `"assistant"` reply from the model's response content.
     /// Assistant content never carries tool-result blocks, so no paths
     /// map is needed.
     pub(crate) fn assistant(blocks: &[ContentBlock]) -> Self {
         Self {
             author: "assistant".into(),
-            content: to_comment_content(blocks, &HashMap::new()),
+            content: to_reply_content(blocks, &HashMap::new()),
             created_at: now_millis(),
         }
     }
 
-    /// Build a `"system"` comment carrying a single text payload. Used
+    /// Build a `"system"` reply carrying a single text payload. Used
     /// for the leading system-prompt entry and compaction boundaries.
     pub(crate) fn system_text(text: impl Into<String>) -> Self {
         Self {
             author: "system".into(),
-            content: vec![CommentContent::Text(text.into())],
+            content: vec![ReplyContent::Text(text.into())],
             created_at: now_millis(),
         }
     }
 }
 
-/// Project a slice of comments into the provider's `Message` values.
-/// Skips `system`-author comments: the system prompt is passed via
-/// `request.system_prompt`, and compaction-boundary comments are
+/// Project a slice of replies into the provider's `Message` values.
+/// Skips `system`-author replies: the system prompt is passed via
+/// `request.system_prompt`, and compaction-boundary replies are
 /// audit markers only.
-pub(crate) fn to_messages(comments: &[Comment]) -> Vec<Message> {
-    comments.iter().filter_map(comment_to_message).collect()
+pub(crate) fn to_messages(replies: &[Reply]) -> Vec<Message> {
+    replies.iter().filter_map(reply_to_message).collect()
 }
 
-fn to_comment_content(
+fn to_reply_content(
     blocks: &[ContentBlock],
     paths: &HashMap<String, PathBuf>,
-) -> Vec<CommentContent> {
+) -> Vec<ReplyContent> {
     blocks
         .iter()
-        .map(|b| content_block_to_comment(b, paths))
+        .map(|b| content_block_to_reply(b, paths))
         .collect()
 }
 
-fn content_block_to_comment(b: &ContentBlock, paths: &HashMap<String, PathBuf>) -> CommentContent {
+fn content_block_to_reply(b: &ContentBlock, paths: &HashMap<String, PathBuf>) -> ReplyContent {
     match b {
-        ContentBlock::Text { text } => CommentContent::Text(text.clone()),
-        ContentBlock::ToolUse { id, name, input } => CommentContent::ToolUse {
+        ContentBlock::Text { text } => ReplyContent::Text(text.clone()),
+        ContentBlock::ToolUse { id, name, input } => ReplyContent::ToolUse {
             id: id.clone(),
             name: name.clone(),
             input: input.clone(),
@@ -373,7 +372,7 @@ fn content_block_to_comment(b: &ContentBlock, paths: &HashMap<String, PathBuf>) 
             tool_use_id,
             content,
             succeeded,
-        } => CommentContent::ToolResult {
+        } => ReplyContent::ToolResult {
             id: tool_use_id.clone(),
             output: content.clone(),
             succeeded: *succeeded,
@@ -382,17 +381,17 @@ fn content_block_to_comment(b: &ContentBlock, paths: &HashMap<String, PathBuf>) 
     }
 }
 
-fn to_content_blocks(content: &[CommentContent]) -> Vec<ContentBlock> {
+fn to_content_blocks(content: &[ReplyContent]) -> Vec<ContentBlock> {
     content
         .iter()
         .map(|c| match c {
-            CommentContent::Text(text) => ContentBlock::Text { text: text.clone() },
-            CommentContent::ToolUse { id, name, input } => ContentBlock::ToolUse {
+            ReplyContent::Text(text) => ContentBlock::Text { text: text.clone() },
+            ReplyContent::ToolUse { id, name, input } => ContentBlock::ToolUse {
                 id: id.clone(),
                 name: name.clone(),
                 input: input.clone(),
             },
-            CommentContent::ToolResult {
+            ReplyContent::ToolResult {
                 id,
                 output,
                 succeeded,
@@ -406,9 +405,9 @@ fn to_content_blocks(content: &[CommentContent]) -> Vec<ContentBlock> {
         .collect()
 }
 
-fn comment_to_message(c: &Comment) -> Option<Message> {
-    let content = to_content_blocks(&c.content);
-    match c.author.as_str() {
+fn reply_to_message(r: &Reply) -> Option<Message> {
+    let content = to_content_blocks(&r.content);
+    match r.author.as_str() {
         "user" => Some(Message::User { content }),
         "assistant" => Some(Message::Assistant { content }),
         _ => None,
@@ -505,7 +504,10 @@ impl TicketSystem {
                 if !key_dir.is_dir() || !key_dir.join("ticket.json").is_file() {
                     continue;
                 }
-                let Some(key) = key_dir.file_name().and_then(|n| n.to_str()).map(str::to_owned)
+                let Some(key) = key_dir
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                    .map(str::to_owned)
                 else {
                     continue;
                 };
@@ -548,10 +550,13 @@ impl TicketSystem {
         let labels = self.labels_for(key);
         match &kind {
             EventKind::TurnStarted => self.stats.record_turn_for(&labels),
-            EventKind::ToolCallsRecorded { count } =>
-                (0..*count).for_each(|_| self.stats.record_tool_call_for(&labels)),
-            EventKind::RequestFinished { usage, .. } =>
-                self.stats.record_request_for(&labels, usage.input_tokens, usage.output_tokens),
+            EventKind::ToolCallsRecorded { count } => {
+                (0..*count).for_each(|_| self.stats.record_tool_call_for(&labels))
+            }
+            EventKind::RequestFinished { usage, .. } => {
+                self.stats
+                    .record_request_for(&labels, usage.input_tokens, usage.output_tokens)
+            }
             EventKind::RequestFailed { .. } => self.stats.record_error_for(&labels),
             _ => {}
         }
@@ -668,13 +673,13 @@ impl TicketSystem {
         self.dispatch(ticket)
     }
 
-    /// Append a user-side text comment to an existing ticket. The
+    /// Append a user-side text reply to an existing ticket. The
     /// agent loop's wait-for-input branch picks it up on the next
     /// iteration; the model sees it as the next `user` message in
     /// the conversation. Use this to drive multi-turn chats on one
     /// ticket instead of creating a new ticket per turn.
-    pub fn comment(&self, key: &str, content: impl Into<String>) -> &Self {
-        self.add_comment(key, Comment::user_text(content));
+    pub fn reply(&self, key: &str, content: impl Into<String>) -> &Self {
+        self.add_reply(key, Reply::user_text(content));
         self
     }
 
@@ -745,7 +750,7 @@ impl TicketSystem {
 
     /// Write a tool's full output to `<dir>/tickets/<key>/outputs/<tool_use_id>.txt`.
     /// Returns the path relative to the configured `dir` on success,
-    /// `None` when the write fails. The relative form keeps the comment
+    /// `None` when the write fails. The relative form keeps the reply
     /// transcript portable across moves of the tickets dir; join with
     /// [`Self::dir_value`] to recover the on-disk path. Best-effort,
     /// matching the surrounding observational-persistence contract.
@@ -805,17 +810,17 @@ impl TicketSystem {
         Some(key)
     }
 
-    /// Append `comment` to the ticket's transcript. No-op when the
+    /// Append `reply` to the ticket's transcript. No-op when the
     /// ticket is missing: the loop drops out shortly afterwards on the
     /// same condition. The header file is not rewritten; the transcript
-    /// lives only in `comments.jsonl`.
-    pub(crate) fn add_comment(&self, key: &str, comment: Comment) {
+    /// lives only in `replies.jsonl`.
+    pub(crate) fn add_reply(&self, key: &str, reply: Reply) {
         {
             let mut store = self.tickets.lock().unwrap();
             let Some(t) = store.get_mut(key) else { return };
-            t.comments.push(comment.clone());
+            t.replies.push(reply.clone());
         }
-        let _ = Comments::append(&self.dir_value(), key, &comment);
+        let _ = Replies::append(&self.dir_value(), key, &reply);
     }
 
     /// Transition a ticket to `Finished`.
@@ -1857,7 +1862,7 @@ mod tests {
     }
 
     #[test]
-    fn load_restores_done_ticket_with_result_and_comments() {
+    fn load_restores_done_ticket_with_result_and_replies() {
         let dir = crate::test_util::TempDir::new().unwrap();
         let original = TicketSystem::new();
         original.dir(dir.path().to_path_buf());
@@ -1944,7 +1949,10 @@ mod tests {
         let dir = crate::test_util::TempDir::new().unwrap();
         std::fs::create_dir_all(dir.path().join("tickets").join("TICKET-7")).unwrap();
         std::fs::write(
-            dir.path().join("tickets").join("TICKET-7").join("ticket.json"),
+            dir.path()
+                .join("tickets")
+                .join("TICKET-7")
+                .join("ticket.json"),
             "not json",
         )
         .unwrap();
@@ -1953,56 +1961,62 @@ mod tests {
     }
 
     #[test]
-    fn ticket_json_does_not_carry_comments_field() {
+    fn ticket_json_does_not_carry_replies_field() {
         let dir = crate::test_util::TempDir::new().unwrap();
         let sys = TicketSystem::new();
         sys.dir(dir.path().to_path_buf());
         sys.task("hello");
         let stored = std::fs::read_to_string(
-            dir.path().join("tickets").join("TICKET-1").join("ticket.json"),
+            dir.path()
+                .join("tickets")
+                .join("TICKET-1")
+                .join("ticket.json"),
         )
         .unwrap();
         let v: serde_json::Value = serde_json::from_str(&stored).unwrap();
         assert!(
-            v.as_object().unwrap().get("comments").is_none(),
-            "ticket.json must not carry a `comments` field; got: {stored}",
+            v.as_object().unwrap().get("replies").is_none(),
+            "ticket.json must not carry a `replies` field; got: {stored}",
         );
     }
 
     #[test]
-    fn add_comment_appends_one_line_to_comments_jsonl() {
+    fn add_reply_appends_one_line_to_replies_jsonl() {
         let (sys, dir) = test_system();
         sys.task("hello");
-        sys.comment("TICKET-1", "first");
-        sys.comment("TICKET-1", "second");
+        sys.reply("TICKET-1", "first");
+        sys.reply("TICKET-1", "second");
         let body = std::fs::read_to_string(
-            dir.path().join("tickets").join("TICKET-1").join("comments.jsonl"),
+            dir.path()
+                .join("tickets")
+                .join("TICKET-1")
+                .join("replies.jsonl"),
         )
         .unwrap();
         let lines: Vec<_> = body.lines().collect();
         assert_eq!(lines.len(), 2);
         // Each line is a single, parseable JSON object.
-        let _: Comment = serde_json::from_str(lines[0]).unwrap();
-        let _: Comment = serde_json::from_str(lines[1]).unwrap();
+        let _: Reply = serde_json::from_str(lines[0]).unwrap();
+        let _: Reply = serde_json::from_str(lines[1]).unwrap();
     }
 
     #[test]
-    fn load_replays_comments_jsonl_into_in_memory_ticket() {
+    fn load_replays_replies_jsonl_into_in_memory_ticket() {
         let dir = crate::test_util::TempDir::new().unwrap();
         {
             let sys = TicketSystem::new();
             sys.dir(dir.path().to_path_buf());
             sys.task("hello");
-            sys.comment("TICKET-1", "first");
-            sys.comment("TICKET-1", "second");
+            sys.reply("TICKET-1", "first");
+            sys.reply("TICKET-1", "second");
         }
         let resumed = TicketSystem::load(dir.path()).unwrap();
         let t = resumed.get_ticket("TICKET-1").unwrap();
         let texts: Vec<_> = t
-            .comments
+            .replies
             .iter()
-            .filter_map(|c| match c.content.first()? {
-                CommentContent::Text(s) => Some(s.as_str()),
+            .filter_map(|r| match r.content.first()? {
+                ReplyContent::Text(s) => Some(s.as_str()),
                 _ => None,
             })
             .collect();
@@ -2016,19 +2030,19 @@ mod tests {
             let sys = TicketSystem::new();
             sys.dir(dir.path().to_path_buf());
             sys.task("hello");
-            sys.comment("TICKET-1", "first");
+            sys.reply("TICKET-1", "first");
         }
-        // Drop a stray `comments.<ts>.jsonl` with NO paired `ticket.<ts>.json`.
+        // Drop a stray `replies.<ts>.jsonl` with NO paired `ticket.<ts>.json`.
         // The loader's paired-check rule must ignore it and fall back to the
-        // running `comments.jsonl`.
+        // running `replies.jsonl`.
         let key_dir = dir.path().join("tickets").join("TICKET-1");
-        let orphan = Comment {
+        let orphan = Reply {
             author: "user".into(),
-            content: vec![CommentContent::Text("orphan".into())],
+            content: vec![ReplyContent::Text("orphan".into())],
             created_at: 9_999_999_999_999,
         };
         std::fs::write(
-            key_dir.join("comments.9999999999999.jsonl"),
+            key_dir.join("replies.9999999999999.jsonl"),
             format!("{}\n", serde_json::to_string(&orphan).unwrap()),
         )
         .unwrap();
@@ -2036,10 +2050,10 @@ mod tests {
         let resumed = TicketSystem::load(dir.path()).unwrap();
         let t = resumed.get_ticket("TICKET-1").unwrap();
         let texts: Vec<_> = t
-            .comments
+            .replies
             .iter()
-            .filter_map(|c| match c.content.first()? {
-                CommentContent::Text(s) => Some(s.as_str()),
+            .filter_map(|r| match r.content.first()? {
+                ReplyContent::Text(s) => Some(s.as_str()),
                 _ => None,
             })
             .collect();
@@ -2063,8 +2077,11 @@ mod tests {
             "started_at": null, "finished_at": null, "failed_at": null,
             "result": null, "parent": null
         });
-        std::fs::write(key_dir.join("ticket.json"), serde_json::to_string(&header).unwrap())
-            .unwrap();
+        std::fs::write(
+            key_dir.join("ticket.json"),
+            serde_json::to_string(&header).unwrap(),
+        )
+        .unwrap();
 
         // Running log carries the full history including pre-compaction entries.
         for c in [50, 150, 250, 350].iter() {
@@ -2074,7 +2091,7 @@ mod tests {
                 "created_at": c,
             });
             crate::persistence::append_line(
-                &key_dir.join("comments.jsonl"),
+                &key_dir.join("replies.jsonl"),
                 &serde_json::to_string(&line).unwrap(),
             )
             .unwrap();
@@ -2087,25 +2104,31 @@ mod tests {
             "created_at": 200,
         });
         std::fs::write(
-            key_dir.join("comments.200.jsonl"),
+            key_dir.join("replies.200.jsonl"),
             format!("{}\n", serde_json::to_string(&summary).unwrap()),
         )
         .unwrap();
-        std::fs::write(key_dir.join("ticket.200.json"), serde_json::to_string(&header).unwrap())
-            .unwrap();
+        std::fs::write(
+            key_dir.join("ticket.200.json"),
+            serde_json::to_string(&header).unwrap(),
+        )
+        .unwrap();
 
         let sys = TicketSystem::load(dir.path()).unwrap();
         let t = sys.get_ticket("TICKET-1").unwrap();
         let texts: Vec<_> = t
-            .comments
+            .replies
             .iter()
-            .filter_map(|c| match c.content.first()? {
-                CommentContent::Text(s) => Some(s.clone()),
+            .filter_map(|r| match r.content.first()? {
+                ReplyContent::Text(s) => Some(s.clone()),
                 _ => None,
             })
             .collect();
         // Base = "summary"; tail = entries with created_at > 200 → c250, c350.
-        assert_eq!(texts, vec!["summary".to_string(), "c250".into(), "c350".into()]);
+        assert_eq!(
+            texts,
+            vec!["summary".to_string(), "c250".into(), "c350".into()]
+        );
     }
 
     #[test]

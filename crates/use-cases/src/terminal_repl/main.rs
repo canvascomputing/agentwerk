@@ -1,7 +1,7 @@
 //! Interactive terminal chat. One `TicketSystem` + `Agent` + `Knowledge`
 //! lives for the whole session, and one chat ticket spans every turn:
 //! the first input creates the ticket via `tickets.task(...)`, every
-//! subsequent input lands as a user comment via `tickets.comment(&key, ...)`.
+//! subsequent input lands as a user reply via `tickets.reply(&key, ...)`.
 //! The agent loop's wait-for-input branch picks each comment up and
 //! drives the next model turn on the same growing transcript. Tickets
 //! and knowledge both persist to `./.agentwerk/`, so an existing chat
@@ -148,11 +148,11 @@ async fn main() {
                     let active = chat_key.as_deref() == Some(t.key.as_str());
                     let mark = if active { "▸ " } else { "  " };
                     eprintln!(
-                        "{}{mark}{} [{}] · {} comments · {}{}",
+                        "{}{mark}{} [{}] · {} replies · {}{}",
                         style.dim,
                         t.key,
                         t.status,
-                        t.comments.len(),
+                        t.replies.len(),
                         preview,
                         style.reset,
                     );
@@ -194,7 +194,7 @@ async fn main() {
                     .iter()
                     .any(|t| t.key == k && t.status.to_string() == "in_progress") =>
             {
-                tickets.comment(k, line);
+                tickets.reply(k, line);
                 k.to_string()
             }
             _ => tickets.task(line),

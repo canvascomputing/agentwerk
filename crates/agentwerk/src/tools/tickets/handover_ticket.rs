@@ -425,7 +425,10 @@ mod tests {
             let outcome = HandoverTicketTool.call(non_string, &ctx).await.unwrap();
             assert!(matches!(outcome, ToolResult::Error(_)));
         }
-        assert_eq!(sys.get_ticket(&parent_key).unwrap().status, Status::InProgress);
+        assert_eq!(
+            sys.get_ticket(&parent_key).unwrap().status,
+            Status::InProgress
+        );
         assert!(!dir.path().join("results.jsonl").exists());
     }
 

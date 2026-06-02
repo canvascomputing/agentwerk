@@ -2,26 +2,27 @@
 
 use std::sync::Arc;
 
+use crate::agents::retry::{ExponentialRetry, Retry};
 use crate::event::{CompactReason, EventKind};
 use crate::providers::types::{ResponseStatus, StreamEvent};
 use crate::providers::{ContentBlock, Message, ModelRequest, ProviderError};
-use crate::agents::retry::{ExponentialRetry, Retry};
 use crate::tools::ToolCall;
 
 use super::compaction;
 use super::turn::LoopContext;
-use super::{Action, Reply};
 use super::wait_for_signal;
+use super::{Action, Reply};
 
-pub(super) async fn run(
-    context: &mut LoopContext<'_>,
-    messages: Vec<Message>,
-) -> Action<Reply> {
+pub(super) async fn run(context: &mut LoopContext<'_>, messages: Vec<Message>) -> Action<Reply> {
     let tools = context.agent.tool_definitions();
     let model_name = context.model.name.clone();
-    context.ticket_system.emit(&context.ticket_key, context.agent.get_name(), EventKind::RequestStarted {
-        model: model_name.clone(),
-    });
+    context.ticket_system.emit(
+        &context.ticket_key,
+        context.agent.get_name(),
+        EventKind::RequestStarted {
+            model: model_name.clone(),
+        },
+    );
     let request = ModelRequest {
         model: model_name,
         system_prompt: context.system_prompt.clone(),
@@ -41,12 +42,15 @@ pub(super) async fn run(
             let agent_name = context.agent.get_name().to_string();
             let ticket_key = context.ticket_key.clone();
             let ts = Arc::clone(context.ticket_system);
-            let emit_stream: Arc<dyn Fn(StreamEvent) + Send + Sync> =
-                Arc::new(move |event| {
-                    if let StreamEvent::TextDelta { text, .. } = event {
-                        ts.emit(&ticket_key, &agent_name, EventKind::TextChunkReceived { content: text });
-                    }
-                });
+            let emit_stream: Arc<dyn Fn(StreamEvent) + Send + Sync> = Arc::new(move |event| {
+                if let StreamEvent::TextDelta { text, .. } = event {
+                    ts.emit(
+                        &ticket_key,
+                        &agent_name,
+                        EventKind::TextChunkReceived { content: text },
+                    );
+                }
+            });
             let interrupt = &context.interrupt_signal;
             tokio::select! {
                 biased;
@@ -66,12 +70,16 @@ pub(super) async fn run(
             Err(e) if e.is_retryable() => match retry.try_consume() {
                 Some(attempt) => {
                     let delay = retry.delay(e.retry_delay());
-                    context.ticket_system.emit(&context.ticket_key, context.agent.get_name(), EventKind::RequestRetried {
-                        attempt,
-                        max_attempts: retry.max_attempts(),
-                        kind: e.kind(),
-                        message: e.to_string(),
-                    });
+                    context.ticket_system.emit(
+                        &context.ticket_key,
+                        context.agent.get_name(),
+                        EventKind::RequestRetried {
+                            attempt,
+                            max_attempts: retry.max_attempts(),
+                            kind: e.kind(),
+                            message: e.to_string(),
+                        },
+                    );
                     let interrupt = &context.interrupt_signal;
                     tokio::select! {
                         biased;
@@ -80,27 +88,61 @@ pub(super) async fn run(
                     }
                 }
                 None => {
-                    context.ticket_system.emit(&context.ticket_key, context.agent.get_name(), EventKind::RequestFailed { kind: e.kind(), message: e.to_string() });
-                    context.ticket_system.emit(&context.ticket_key, context.agent.get_name(), EventKind::TicketFailed { key: context.ticket_key.clone() });
+                    context.ticket_system.emit(
+                        &context.ticket_key,
+                        context.agent.get_name(),
+                        EventKind::RequestFailed {
+                            kind: e.kind(),
+                            message: e.to_string(),
+                        },
+                    );
+                    context.ticket_system.emit(
+                        &context.ticket_key,
+                        context.agent.get_name(),
+                        EventKind::TicketFailed {
+                            key: context.ticket_key.clone(),
+                        },
+                    );
                     return Action::Replay;
                 }
             },
             Err(e) => {
-                context.ticket_system.emit(&context.ticket_key, context.agent.get_name(), EventKind::RequestFailed { kind: e.kind(), message: e.to_string() });
-                context.ticket_system.emit(&context.ticket_key, context.agent.get_name(), EventKind::TicketFailed { key: context.ticket_key.clone() });
+                context.ticket_system.emit(
+                    &context.ticket_key,
+                    context.agent.get_name(),
+                    EventKind::RequestFailed {
+                        kind: e.kind(),
+                        message: e.to_string(),
+                    },
+                );
+                context.ticket_system.emit(
+                    &context.ticket_key,
+                    context.agent.get_name(),
+                    EventKind::TicketFailed {
+                        key: context.ticket_key.clone(),
+                    },
+                );
                 return Action::Replay;
             }
         }
     };
 
     context.last_usage = Some(response.usage.clone());
-    context.ticket_system.emit(&context.ticket_key, context.agent.get_name(), EventKind::RequestFinished { model: response.model.clone(), usage: response.usage.clone() });
+    context.ticket_system.emit(
+        &context.ticket_key,
+        context.agent.get_name(),
+        EventKind::RequestFinished {
+            model: response.model.clone(),
+            usage: response.usage.clone(),
+        },
+    );
 
     let overflowed = response.status == ResponseStatus::ContextWindowExceeded;
     if !overflowed {
-        context
-            .ticket_system
-            .add_comment(&context.ticket_key, crate::agents::tickets::Comment::assistant(&response.content));
+        context.ticket_system.add_reply(
+            &context.ticket_key,
+            crate::agents::tickets::Reply::assistant(&response.content),
+        );
     }
 
     let calls: Vec<ToolCall> = response
@@ -159,11 +201,11 @@ mod tests {
 
     #[tokio::test]
     async fn no_retry_on_auth_error() {
-        let provider = MockProvider::with_results(vec![
-            Err(crate::providers::ProviderError::AuthenticationFailed {
+        let provider = MockProvider::with_results(vec![Err(
+            crate::providers::ProviderError::AuthenticationFailed {
                 message: "unauthorized".into(),
-            }),
-        ]);
+            },
+        )]);
         let (events, _, _) = run_one(provider, 3, 10, None).await;
 
         assert!(retries_in(&events).is_empty());
@@ -209,7 +251,11 @@ mod tests {
             let (events, _, _) = run_one(provider, max_retries, 10, None).await;
 
             let retries = retries_in(&events);
-            assert_eq!(retries.len() as u32, max_retries, "max_retries={max_retries}");
+            assert_eq!(
+                retries.len() as u32,
+                max_retries,
+                "max_retries={max_retries}"
+            );
             for (_, evt_max, _) in &retries {
                 assert_eq!(*evt_max, max_retries);
             }
@@ -256,23 +302,33 @@ mod tests {
         use crate::providers::ProviderError;
         let cases: Vec<(ProviderError, &'static str)> = vec![
             (
-                ProviderError::AuthenticationFailed { message: "bad key 401".into() },
+                ProviderError::AuthenticationFailed {
+                    message: "bad key 401".into(),
+                },
                 "bad key 401",
             ),
             (
-                ProviderError::PermissionDenied { message: "no access 403".into() },
+                ProviderError::PermissionDenied {
+                    message: "no access 403".into(),
+                },
                 "no access 403",
             ),
             (
-                ProviderError::ModelNotFound { message: "unknown-model-xyz".into() },
+                ProviderError::ModelNotFound {
+                    message: "unknown-model-xyz".into(),
+                },
                 "unknown-model-xyz",
             ),
             (
-                ProviderError::SafetyFilterTriggered { message: "blocked by safety-filter-7".into() },
+                ProviderError::SafetyFilterTriggered {
+                    message: "blocked by safety-filter-7".into(),
+                },
                 "safety-filter-7",
             ),
             (
-                ProviderError::ResponseMalformed { message: "malformed-json-token".into() },
+                ProviderError::ResponseMalformed {
+                    message: "malformed-json-token".into(),
+                },
                 "malformed-json-token",
             ),
         ];
@@ -292,11 +348,11 @@ mod tests {
 
     #[tokio::test(start_paused = true)]
     async fn request_retried_fires_after_backoff_sleep_not_before() {
-        use std::sync::{Arc, Mutex};
-        use crate::agents::tickets::TicketSystem;
         use crate::agents::agent::Agent;
+        use crate::agents::tickets::TicketSystem;
         use crate::event::EventKind;
         use crate::providers::Provider;
+        use std::sync::{Arc, Mutex};
 
         let provider = MockProvider::with_results(vec![
             Err(crate::providers::ProviderError::RateLimited {
@@ -361,18 +417,17 @@ mod tests {
 
     #[tokio::test(start_paused = true)]
     async fn cancel_during_backoff_sleep_aborts_immediately() {
-        use std::sync::{Arc, Mutex};
-        use crate::agents::tickets::TicketSystem;
         use crate::agents::agent::Agent;
+        use crate::agents::tickets::TicketSystem;
         use crate::providers::Provider;
+        use std::sync::{Arc, Mutex};
 
-        let provider = MockProvider::with_results(vec![
-            Err(crate::providers::ProviderError::RateLimited {
+        let provider =
+            MockProvider::with_results(vec![Err(crate::providers::ProviderError::RateLimited {
                 message: "rl".into(),
                 status: 429,
                 retry_delay: Some(Duration::from_secs(60)),
-            }),
-        ]);
+            })]);
         let collected: Arc<Mutex<Vec<crate::event::Event>>> = Arc::new(Mutex::new(Vec::new()));
         let handler: Arc<dyn Fn(crate::event::Event) + Send + Sync> = {
             let c = Arc::clone(&collected);

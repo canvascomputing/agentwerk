@@ -41,9 +41,9 @@ mod tests {
     use std::sync::Arc;
     use std::time::Duration;
 
+    use crate::agents::agent::Agent;
     use crate::agents::r#loop::test_util::*;
     use crate::agents::tickets::{Status, Ticket, TicketSystem};
-    use crate::agents::agent::Agent;
     use crate::providers::Provider;
     use crate::tools::ManageTicketsTool;
 

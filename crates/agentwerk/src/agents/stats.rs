@@ -103,22 +103,31 @@ impl Stats {
 
     pub fn record_turn_for(&self, labels: &[String]) {
         self.record_turn();
-        for label in labels { self.stats_for_label(label).record_turn(); }
+        for label in labels {
+            self.stats_for_label(label).record_turn();
+        }
     }
 
     pub fn record_request_for(&self, labels: &[String], input_tokens: u64, output_tokens: u64) {
         self.record_request(input_tokens, output_tokens);
-        for label in labels { self.stats_for_label(label).record_request(input_tokens, output_tokens); }
+        for label in labels {
+            self.stats_for_label(label)
+                .record_request(input_tokens, output_tokens);
+        }
     }
 
     pub fn record_tool_call_for(&self, labels: &[String]) {
         self.record_tool_call();
-        for label in labels { self.stats_for_label(label).record_tool_call(); }
+        for label in labels {
+            self.stats_for_label(label).record_tool_call();
+        }
     }
 
     pub fn record_error_for(&self, labels: &[String]) {
         self.record_error();
-        for label in labels { self.stats_for_label(label).record_error(); }
+        for label in labels {
+            self.stats_for_label(label).record_error();
+        }
     }
 
     pub fn turns(&self) -> u64 {

@@ -4,13 +4,13 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 
 use crate::event::{EventKind, PolicyKind, ToolFailureKind};
+use crate::prompts::{retry_directive, schema_retry_detail};
 use crate::providers::ContentBlock;
 use crate::tools::{ToolContext, ToolError, TICKET_FINISHER_TOOLS};
-use crate::prompts::{retry_directive, schema_retry_detail};
 
 use super::turn::LoopContext;
-use super::Reply;
 use super::Action;
+use super::Reply;
 
 pub(super) async fn run(context: &mut LoopContext<'_>, reply: Reply) -> Action<()> {
     let max_schema_retries = context.policies.max_schema_retries.unwrap_or(u32::MAX);
@@ -40,16 +40,28 @@ pub(super) async fn run(context: &mut LoopContext<'_>, reply: Reply) -> Action<(
                  — your work is not recorded until you do.",
                 registered.join("` or `")
             );
-            context.ticket_system.emit(&context.ticket_key, context.agent.get_name(), EventKind::SchemaRetried {
-                attempt: context.consecutive_schema_failures,
-                max_attempts: max_schema_retries,
-                message: detail.clone(),
-            });
-            context
-                .ticket_system
-                .add_comment(&context.ticket_key, crate::agents::tickets::Comment::user_text(retry_directive(&detail)));
+            context.ticket_system.emit(
+                &context.ticket_key,
+                context.agent.get_name(),
+                EventKind::SchemaRetried {
+                    attempt: context.consecutive_schema_failures,
+                    max_attempts: max_schema_retries,
+                    message: detail.clone(),
+                },
+            );
+            context.ticket_system.add_reply(
+                &context.ticket_key,
+                crate::agents::tickets::Reply::user_text(retry_directive(&detail)),
+            );
             if context.consecutive_schema_failures >= max_schema_retries {
-                context.ticket_system.emit(&context.ticket_key, context.agent.get_name(), EventKind::PolicyViolated { kind: PolicyKind::MaxSchemaRetries, limit: u64::from(max_schema_retries) });
+                context.ticket_system.emit(
+                    &context.ticket_key,
+                    context.agent.get_name(),
+                    EventKind::PolicyViolated {
+                        kind: PolicyKind::MaxSchemaRetries,
+                        limit: u64::from(max_schema_retries),
+                    },
+                );
                 let _ = context.ticket_system.set_failed(&context.ticket_key);
                 return Action::Replay;
             }
@@ -57,11 +69,15 @@ pub(super) async fn run(context: &mut LoopContext<'_>, reply: Reply) -> Action<(
         }
         Reply::Calls(calls) => {
             for call in &calls {
-                context.ticket_system.emit(&context.ticket_key, context.agent.get_name(), EventKind::ToolCallStarted {
-                    tool_name: call.name.clone(),
-                    call_id: call.id.clone(),
-                    input: call.input.clone(),
-                });
+                context.ticket_system.emit(
+                    &context.ticket_key,
+                    context.agent.get_name(),
+                    EventKind::ToolCallStarted {
+                        tool_name: call.name.clone(),
+                        call_id: call.id.clone(),
+                        input: call.input.clone(),
+                    },
+                );
             }
             let tool_context = ToolContext::new(context.agent.dir_or_default())
                 .interrupt_signal(std::sync::Arc::clone(&context.interrupt_signal))
@@ -85,16 +101,18 @@ pub(super) async fn run(context: &mut LoopContext<'_>, reply: Reply) -> Action<(
                 let tool_name = call.map(|c| c.name.clone()).unwrap_or_default();
                 match tool_result {
                     Ok(output) => {
-                        if call
-                            .is_some_and(|c| TICKET_FINISHER_TOOLS.contains(&c.name.as_str()))
-                        {
+                        if call.is_some_and(|c| TICKET_FINISHER_TOOLS.contains(&c.name.as_str())) {
                             context.consecutive_schema_failures = 0;
                         }
-                        context.ticket_system.emit(&context.ticket_key, context.agent.get_name(), EventKind::ToolCallFinished {
-                            tool_name,
-                            call_id: tool_use_id.clone(),
-                            output: output.clone(),
-                        });
+                        context.ticket_system.emit(
+                            &context.ticket_key,
+                            context.agent.get_name(),
+                            EventKind::ToolCallFinished {
+                                tool_name,
+                                call_id: tool_use_id.clone(),
+                                output: output.clone(),
+                            },
+                        );
                     }
                     Err(err) => {
                         if matches!(err, ToolError::SchemaValidationFailed { .. }) {
@@ -107,14 +125,20 @@ pub(super) async fn run(context: &mut LoopContext<'_>, reply: Reply) -> Action<(
                         let failure_kind = match err {
                             ToolError::ToolNotFound { .. } => ToolFailureKind::ToolNotFound,
                             ToolError::ExecutionFailed { .. } => ToolFailureKind::ExecutionFailed,
-                            ToolError::SchemaValidationFailed { .. } => ToolFailureKind::SchemaValidationFailed,
+                            ToolError::SchemaValidationFailed { .. } => {
+                                ToolFailureKind::SchemaValidationFailed
+                            }
                         };
-                        context.ticket_system.emit(&context.ticket_key, context.agent.get_name(), EventKind::ToolCallFailed {
-                            tool_name,
-                            call_id: tool_use_id.clone(),
-                            message: err.message(),
-                            kind: failure_kind,
-                        });
+                        context.ticket_system.emit(
+                            &context.ticket_key,
+                            context.agent.get_name(),
+                            EventKind::ToolCallFailed {
+                                tool_name,
+                                call_id: tool_use_id.clone(),
+                                message: err.message(),
+                                kind: failure_kind,
+                            },
+                        );
                     }
                 }
             }
@@ -129,23 +153,39 @@ pub(super) async fn run(context: &mut LoopContext<'_>, reply: Reply) -> Action<(
             }
             if let Some(validator_message) = &schema_failure_message {
                 let schema_detail = schema_retry_detail(validator_message);
-                context.ticket_system.emit(&context.ticket_key, context.agent.get_name(), EventKind::SchemaRetried {
-                    attempt: context.consecutive_schema_failures,
-                    max_attempts: max_schema_retries,
-                    message: schema_detail.clone(),
-                });
+                context.ticket_system.emit(
+                    &context.ticket_key,
+                    context.agent.get_name(),
+                    EventKind::SchemaRetried {
+                        attempt: context.consecutive_schema_failures,
+                        max_attempts: max_schema_retries,
+                        message: schema_detail.clone(),
+                    },
+                );
                 blocks.push(ContentBlock::Text {
                     text: retry_directive(&schema_detail),
                 });
             }
-            context
-                .ticket_system
-                .add_comment(&context.ticket_key, crate::agents::tickets::Comment::user(&blocks, &paths));
+            context.ticket_system.add_reply(
+                &context.ticket_key,
+                crate::agents::tickets::Reply::user(&blocks, &paths),
+            );
 
-            context.ticket_system.emit(&context.ticket_key, context.agent.get_name(), EventKind::ToolCallsRecorded { count: calls.len() });
+            context.ticket_system.emit(
+                &context.ticket_key,
+                context.agent.get_name(),
+                EventKind::ToolCallsRecorded { count: calls.len() },
+            );
 
             if context.consecutive_schema_failures >= max_schema_retries {
-                context.ticket_system.emit(&context.ticket_key, context.agent.get_name(), EventKind::PolicyViolated { kind: PolicyKind::MaxSchemaRetries, limit: u64::from(max_schema_retries) });
+                context.ticket_system.emit(
+                    &context.ticket_key,
+                    context.agent.get_name(),
+                    EventKind::PolicyViolated {
+                        kind: PolicyKind::MaxSchemaRetries,
+                        limit: u64::from(max_schema_retries),
+                    },
+                );
                 let _ = context.ticket_system.set_failed(&context.ticket_key);
                 return Action::Replay;
             }

@@ -6,16 +6,16 @@ use std::time::Duration;
 
 use crate::tools::ToolCall;
 
-#[path = "1_main.rs"]
-mod main;
-#[path = "2_turn.rs"]
-mod turn;
 #[path = "3_compaction.rs"]
 mod compaction;
+#[path = "1_main.rs"]
+mod main;
 #[path = "4_reply.rs"]
 mod reply;
 #[path = "5_tool_call.rs"]
 mod tool_call;
+#[path = "2_turn.rs"]
+mod turn;
 
 pub(super) use self::main::run_main_loop;
 use self::main::wait_for_signal;
@@ -39,56 +39,50 @@ pub(crate) mod test_util;
 #[cfg(test)]
 mod tests {
     use crate::agents::r#loop::test_util::*;
-    use crate::agents::tickets::CommentContent;
+    use crate::agents::tickets::ReplyContent;
     use crate::schemas::Schema;
 
-    // Comment transcript
+    // Reply transcript
 
     #[tokio::test]
-    async fn comments_capture_full_transcript() {
+    async fn replies_capture_full_transcript() {
         let provider = MockProvider::with_results(vec![Ok(write_result_response("ok"))]);
         let (_, _, ticket) = run_one(provider, 3, 10, None).await;
 
-        let comments = &ticket.comments;
-        assert_eq!(comments.len(), 5, "got {comments:?}");
+        let replies = &ticket.replies;
+        assert_eq!(replies.len(), 5, "got {replies:?}");
 
-        assert_eq!(comments[0].author, "system");
-        assert!(matches!(
-            &comments[0].content[..],
-            [CommentContent::Text(_)]
-        ));
+        assert_eq!(replies[0].author, "system");
+        assert!(matches!(&replies[0].content[..], [ReplyContent::Text(_)]));
 
-        assert_eq!(comments[1].author, "user");
+        assert_eq!(replies[1].author, "user");
         assert!(
-            matches!(&comments[1].content[..], [CommentContent::Text(t)] if t.starts_with("## Context")),
-            "second comment must be the auto-injected context prelude",
+            matches!(&replies[1].content[..], [ReplyContent::Text(t)] if t.starts_with("## Context")),
+            "second reply must be the auto-injected context prelude",
         );
 
-        assert_eq!(comments[2].author, "user");
+        assert_eq!(replies[2].author, "user");
         assert!(
-            matches!(&comments[2].content[..], [CommentContent::Text(t)] if t == "go"),
-            "third comment must carry the task body",
+            matches!(&replies[2].content[..], [ReplyContent::Text(t)] if t == "go"),
+            "third reply must carry the task body",
         );
 
-        assert_eq!(comments[3].author, "assistant");
+        assert_eq!(replies[3].author, "assistant");
         assert!(
-            matches!(&comments[3].content[..], [CommentContent::ToolUse { name, .. }] if name == "finish_ticket"),
-            "assistant comment must mirror the model's ToolUse block",
+            matches!(&replies[3].content[..], [ReplyContent::ToolUse { name, .. }] if name == "finish_ticket"),
+            "assistant reply must mirror the model's ToolUse block",
         );
 
-        assert_eq!(comments[4].author, "user");
+        assert_eq!(replies[4].author, "user");
         assert!(
-            matches!(
-                &comments[4].content[..],
-                [CommentContent::ToolResult { .. }]
-            ),
-            "tool-result comment must carry a ToolResult block",
+            matches!(&replies[4].content[..], [ReplyContent::ToolResult { .. }]),
+            "tool-result reply must carry a ToolResult block",
         );
 
-        for w in comments.windows(2) {
+        for w in replies.windows(2) {
             assert!(
                 w[0].created_at <= w[1].created_at,
-                "comment timestamps must be monotonic",
+                "reply timestamps must be monotonic",
             );
         }
     }
@@ -107,20 +101,20 @@ mod tests {
         .expect("valid schema");
         let (_, _, ticket) = run_one(provider, 3, 10, Some(schema)).await;
 
-        let comments = &ticket.comments;
+        let replies = &ticket.replies;
 
-        let first_assistant = comments
+        let first_assistant = replies
             .iter()
-            .position(|c| {
-                c.author == "assistant"
-                    && matches!(&c.content[..], [CommentContent::Text(t)] if t == "Hello!")
+            .position(|r| {
+                r.author == "assistant"
+                    && matches!(&r.content[..], [ReplyContent::Text(t)] if t == "Hello!")
             })
             .expect("expected the text-only assistant reply in the transcript");
 
-        let directive = &comments[first_assistant + 1];
+        let directive = &replies[first_assistant + 1];
         assert_eq!(directive.author, "user");
         let directive_text = match &directive.content[..] {
-            [CommentContent::Text(t)] => t,
+            [ReplyContent::Text(t)] => t,
             other => panic!("expected a single text block for the directive, got {other:?}"),
         };
         assert!(
@@ -128,21 +122,21 @@ mod tests {
             "directive must name the missing finisher: {directive_text}",
         );
 
-        let second_assistant = comments
+        let second_assistant = replies
             .iter()
             .skip(first_assistant + 2)
-            .find(|c| {
-                c.author == "assistant"
-                    && matches!(&c.content[..], [CommentContent::ToolUse { name, .. }] if name == "finish_ticket")
+            .find(|r| {
+                r.author == "assistant"
+                    && matches!(&r.content[..], [ReplyContent::ToolUse { name, .. }] if name == "finish_ticket")
             });
         assert!(
             second_assistant.is_some(),
-            "expected a recovering ToolUse assistant comment after the directive",
+            "expected a recovering ToolUse assistant reply after the directive",
         );
     }
 
     #[tokio::test]
-    async fn comments_after_compaction_keep_only_system_and_summary() {
+    async fn replies_after_compaction_keep_only_system_and_summary() {
         let provider = MockProvider::with_results(vec![
             Ok(text_response("turn 1")),
             Err(crate::providers::ProviderError::ContextWindowExceeded {
@@ -156,24 +150,24 @@ mod tests {
         ]);
         let (_, _, ticket) = run_one(provider, 0, 10, Some(string_schema())).await;
 
-        let comments = &ticket.comments;
+        let replies = &ticket.replies;
 
-        assert_eq!(comments[0].author, "system");
+        assert_eq!(replies[0].author, "system");
 
-        let summary_idx = comments
+        let summary_idx = replies
             .iter()
-            .position(|c| {
-                c.author == "user"
-                    && matches!(&c.content[..], [CommentContent::Text(t)] if t == "SUMMARY")
+            .position(|r| {
+                r.author == "user"
+                    && matches!(&r.content[..], [ReplyContent::Text(t)] if t == "SUMMARY")
             })
-            .expect("expected a `user` comment carrying the summariser text");
+            .expect("expected a `user` reply carrying the summariser text");
         assert!(summary_idx >= 1, "summary must follow the system prompt");
 
         assert!(
-            !comments.iter().any(|c| {
-                matches!(&c.content[..], [CommentContent::Text(t)] if t == "turn 1" || t == "go")
+            !replies.iter().any(|r| {
+                matches!(&r.content[..], [ReplyContent::Text(t)] if t == "turn 1" || t == "go")
             }),
-            "compaction must drop pre-compaction non-system comments",
+            "compaction must drop pre-compaction non-system replies",
         );
     }
 }

@@ -181,7 +181,7 @@ async fn summariser_condenses_transcript_and_ticket_completes(
         .tickets()
         .iter()
         .flat_map(|t| {
-            t.comments
+            t.replies
                 .iter()
                 .filter(|c| c.author == "user")
                 .flat_map(|c| {

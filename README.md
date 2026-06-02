@@ -190,7 +190,7 @@ tickets.ticket(
 | `task(t)` | Submit a task and return its ticket key. |
 | `task_labeled(t, l)` | Submit a task tagged with `l` for label-scoped routing. Shorthand for `ticket(Ticket::new(t).label(l))`. |
 | `ticket(t)` | Submit a `Ticket` with custom labels, a schema, or a parent link. |
-| `comment(key, c)` | Add a comment to an existing ticket. |
+| `reply(key, c)` | Append a user-side reply to an existing ticket. |
 
 ### Execution
 
@@ -256,7 +256,7 @@ let report: Report = serde_json::from_value(ticket.result.clone().unwrap()).unwr
 | `key` | Stable identifier (`TICKET-N`). |
 | `status` | Lifecycle status as a `Status` enum (`Todo`, `InProgress`, `Finished`, `Failed`). |
 | `result` | Raw JSON result payload, `Option<serde_json::Value>`. |
-| `comments` | Transcript of messages exchanged with the model. |
+| `replies` | Transcript of messages exchanged with the model. |
 | `labels` | Labels carried by the ticket. |
 | `parent` | Parent ticket key when one was set, `Option<String>`. |
 | `created_at` | Millisecond timestamp at which the ticket was created. |
