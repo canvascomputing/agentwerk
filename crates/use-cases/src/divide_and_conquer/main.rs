@@ -54,6 +54,7 @@ async fn main() {
     }
 
     let event_handler = build_event_handler(args.verbose, style.clone(), partitions.len());
+    tickets.event_handler(move |e| event_handler(e));
     tickets.pool(workers, |w| {
         Agent::new()
             .name(format!("worker_{w}"))
@@ -63,7 +64,6 @@ async fn main() {
             .label("worker")
             .tool(python_tool())
             .tool(ManageTicketsTool)
-            .event_handler(Arc::clone(&event_handler))
     });
 
     let started = Instant::now();

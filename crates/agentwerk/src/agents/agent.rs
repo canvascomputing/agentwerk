@@ -2,7 +2,7 @@
 //! system. Holds a `Weak<TicketSystem>`; `Default` produces a dangling
 //! `Weak`, and `tickets.agent(agent)` (or `agent.ticket_system(&shared)`)
 //! stamps the system's `Weak<Self>` onto the agent. The loop upgrades it
-//! once at the start of `handle_tickets` and accesses `tickets`,
+//! once at the start of `run_agent` and accesses `tickets`,
 //! `policies`, `stats`, and `interrupt_signal` through the resulting
 //! `Arc<TicketSystem>`.
 
@@ -12,7 +12,6 @@ use std::sync::{Arc, Weak};
 
 use serde::Serialize;
 
-use crate::event::{default_logger, Event, EventKind};
 use crate::prompts::{default_context, PromptBuilder, Section};
 use crate::providers::{Model, Provider, ProviderToolDefinition};
 use crate::tools::{FinishTicketTool, ManageKnowledgeTool, ToolLike, ToolRegistry};
@@ -41,7 +40,6 @@ pub struct Agent {
     template_variables: Vec<(String, String)>,
     tools: ToolRegistry,
     dir: Option<PathBuf>,
-    event_handler: Option<Arc<dyn Fn(Event) + Send + Sync>>,
     knowledge: Option<Arc<Knowledge>>,
     pub(crate) ticket_system: Weak<TicketSystem>,
 }
@@ -60,7 +58,6 @@ impl Default for Agent {
             template_variables: Vec::new(),
             tools,
             dir: None,
-            event_handler: None,
             knowledge: None,
             ticket_system: Weak::new(),
         }
@@ -89,7 +86,6 @@ impl Agent {
             template_variables: Vec::new(),
             tools: ToolRegistry::default(),
             dir: None,
-            event_handler: None,
             knowledge: None,
             ticket_system: Weak::new(),
         }
@@ -203,13 +199,6 @@ impl Agent {
         self
     }
 
-    /// Install an event observer. The handler must be cheap and non-blocking.
-    /// When not set, [`default_logger`] is used.
-    pub fn event_handler(mut self, h: Arc<dyn Fn(Event) + Send + Sync>) -> Self {
-        self.event_handler = Some(h);
-        self
-    }
-
     /// Knowledge store the agent uses for its long-term memory. Share
     /// one store across multiple agents the same way
     /// `ticket_system(&shared)` shares a queue. Defaults to a fresh
@@ -262,14 +251,6 @@ impl Agent {
 
     pub(super) fn get_name(&self) -> &str {
         &self.name
-    }
-
-    pub(super) fn resolve_event_handler(&self) -> Arc<dyn Fn(Event) + Send + Sync> {
-        self.event_handler.clone().unwrap_or_else(default_logger)
-    }
-
-    pub(super) fn emit(&self, kind: EventKind) {
-        (self.resolve_event_handler())(Event::new(self.get_name(), kind));
     }
 
     /// Returns true when the agent's label scope intersects the ticket's

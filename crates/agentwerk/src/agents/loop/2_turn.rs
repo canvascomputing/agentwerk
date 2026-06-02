@@ -6,7 +6,7 @@ use std::sync::Arc;
 
 use crate::event::EventKind;
 use crate::providers::types::TokenUsage;
-use crate::providers::{AsUserMessage, Message, ProviderError};
+use crate::providers::{AsUserMessage, Message};
 use crate::agents::agent::Agent;
 use crate::agents::policy::Policies;
 use crate::agents::tickets::{policy_violated_kind, to_messages, Comment, Status, TicketSystem};
@@ -19,7 +19,6 @@ pub(super) struct LoopContext<'a> {
     pub(super) interrupt_signal: Arc<AtomicBool>,
 
     pub(super) ticket_key: String,
-    pub(super) labels: Vec<String>,
     pub(super) system_prompt: String,
     pub(super) policies: Policies,
 
@@ -36,7 +35,6 @@ impl<'a> LoopContext<'a> {
         key: String,
     ) -> Option<Self> {
         let ticket = ticket_system.get_ticket(&key)?;
-        let labels = ticket.labels.clone();
         let task_message = ticket.as_user_message();
         let comments_empty = ticket.comments.is_empty();
 
@@ -49,7 +47,6 @@ impl<'a> LoopContext<'a> {
             interrupt_signal,
 
             ticket_key: key,
-            labels,
             system_prompt,
             policies,
 
@@ -57,7 +54,7 @@ impl<'a> LoopContext<'a> {
             last_usage: None,
         };
 
-        scope.ticket_system.stats.record_turn_for(&scope.labels);
+        scope.ticket_system.emit(&scope.ticket_key, scope.agent.get_name(), EventKind::TurnStarted);
 
         if comments_empty {
             scope
@@ -81,7 +78,7 @@ impl<'a> LoopContext<'a> {
             scope
                 .ticket_system
                 .add_comment(&scope.ticket_key, Comment::user(task_blocks, &HashMap::new()));
-            scope.agent.emit(EventKind::TicketStarted {
+            scope.ticket_system.emit(&scope.ticket_key, scope.agent.get_name(), EventKind::TicketStarted {
                 key: scope.ticket_key.clone(),
             });
         }
@@ -100,26 +97,6 @@ pub(super) fn model_name(scope: &LoopContext<'_>) -> String {
         .clone()
 }
 
-pub(super) fn fail_ticket(scope: &LoopContext<'_>, err: &ProviderError) {
-    scope.agent.emit(EventKind::RequestFailed {
-        kind: err.kind(),
-        message: err.to_string(),
-    });
-    scope.ticket_system.stats.record_error_for(&scope.labels);
-    scope.agent.emit(EventKind::TicketFailed {
-        key: scope.ticket_key.clone(),
-    });
-}
-
-pub(super) fn fail_ticket_schema_exhausted(scope: &LoopContext<'_>) {
-    let max_schema_retries = scope.policies.max_schema_retries.unwrap_or(u32::MAX);
-    scope.agent.emit(EventKind::PolicyViolated {
-        kind: crate::event::PolicyKind::MaxSchemaRetries,
-        limit: u64::from(max_schema_retries),
-    });
-    let _ = scope.ticket_system.set_failed(&scope.ticket_key);
-}
-
 pub(super) async fn start_turn<'a>(
     scope: &mut Option<LoopContext<'a>>,
     agent: &'a Agent,
@@ -132,7 +109,7 @@ pub(super) async fn start_turn<'a>(
     }
     let policies = ticket_system.policies();
     if let Some((kind, limit)) = policy_violated_kind(&policies, &ticket_system.stats) {
-        agent.emit(EventKind::PolicyViolated { kind, limit });
+        ticket_system.emit("", agent.get_name(), EventKind::PolicyViolated { kind, limit });
         return Action::Stop;
     }
 
@@ -180,7 +157,7 @@ pub(super) async fn start_turn<'a>(
             },
             other => unreachable!("start_turn observed non-terminal status {other:?}"),
         };
-        current.agent.emit(kind);
+        current.ticket_system.emit(&current.ticket_key, current.agent.get_name(), kind);
         *scope = None;
         return Action::Replay;
     }
@@ -191,7 +168,7 @@ pub(super) async fn start_turn<'a>(
     Action::Proceed(to_messages(&ticket.comments))
 }
 
-pub(super) async fn handle_tickets(agent: Agent) {
+pub(super) async fn run_agent(agent: Agent) {
     let ticket_system = agent
         .ticket_system
         .upgrade()
@@ -382,15 +359,16 @@ mod tests {
         let dump = Tool::new("dump", "Returns ~800 KB of text")
             .handler(|_input, _ctx| async move { Ok(ToolResult::success("x".repeat(800_000))) });
 
-        let agent = Agent::new()
-            .name("tester")
-            .provider(provider.clone() as Arc<dyn Provider>)
-            .model("claude-sonnet-4-20250514")
-            .role("test")
-            .context("static")
-            .tool(dump)
-            .event_handler(handler);
-        tickets.agent(agent);
+        tickets.event_handler(move |e| handler(e));
+        tickets.agent(
+            Agent::new()
+                .name("tester")
+                .provider(provider.clone() as Arc<dyn Provider>)
+                .model("claude-sonnet-4-20250514")
+                .role("test")
+                .context("static")
+                .tool(dump),
+        );
         tickets.task("go");
 
         let _ = tickets.finish().await;
@@ -1200,6 +1178,7 @@ mod tests {
             .max_schema_retries(10)
             .max_time(std::time::Duration::from_millis(500));
 
+        tickets.event_handler(move |e| handler(e));
         tickets.agent(
             Agent::new()
                 .name("tester")
@@ -1207,8 +1186,7 @@ mod tests {
                 .model("claude-sonnet-4-20250514")
                 .role("test")
                 .context("static")
-                .tool(big_tool)
-                .event_handler(handler),
+                .tool(big_tool),
         );
         tickets.ticket(Ticket::new("go").schema(string_schema()));
 

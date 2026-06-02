@@ -82,22 +82,23 @@ async fn finds_string_buried_deep_in_line() -> std::result::Result<(), Box<dyn s
     let tickets = TicketSystem::new();
 
     tickets.max_turns(10);
-    let agent = Agent::new()
-        .provider(provider)
-        .model(&model)
-        .dir(root)
-        .role(
-            "Investigate the working directory and answer the user's question. \
-             Use the available tools — pick whichever one fits. \
-             When you have the answer, settle the ticket via \
-             `finish_ticket`.",
-        )
-        .tool(GrepTool)
-        .tool(GlobTool)
-        .tool(ListDirectoryTool)
-        .tool(ReadFileTool)
-        .event_handler(event_handler);
-    tickets.agent(agent);
+    tickets.event_handler(move |e| event_handler(e));
+    tickets.agent(
+        Agent::new()
+            .provider(provider)
+            .model(&model)
+            .dir(root)
+            .role(
+                "Investigate the working directory and answer the user's question. \
+                 Use the available tools — pick whichever one fits. \
+                 When you have the answer, settle the ticket via \
+                 `finish_ticket`.",
+            )
+            .tool(GrepTool)
+            .tool(GlobTool)
+            .tool(ListDirectoryTool)
+            .tool(ReadFileTool),
+    );
     tickets.task(format!(
         "Which source file contains the string `{NEEDLE}`? \
          Answer with the file path.",
@@ -221,20 +222,21 @@ async fn reads_column_slice_after_grep_locates_needle(
     let tickets = TicketSystem::new();
 
     tickets.max_turns(10);
-    let agent = Agent::new()
-        .provider(provider)
-        .model(&model)
-        .dir(root)
-        .role(
-            "Investigate the working directory and answer the user's question. \
-             Use the available tools — pick whichever one fits. \
-             When you have the answer, settle the ticket via \
-             `finish_ticket`.",
-        )
-        .tool(GrepTool)
-        .tool(ReadFileTool)
-        .event_handler(event_handler);
-    tickets.agent(agent);
+    tickets.event_handler(move |e| event_handler(e));
+    tickets.agent(
+        Agent::new()
+            .provider(provider)
+            .model(&model)
+            .dir(root)
+            .role(
+                "Investigate the working directory and answer the user's question. \
+                 Use the available tools — pick whichever one fits. \
+                 When you have the answer, settle the ticket via \
+                 `finish_ticket`.",
+            )
+            .tool(GrepTool)
+            .tool(ReadFileTool),
+    );
     tickets.task(format!(
         "Find the string `{NEEDLE}` in the working directory. \
          Use grep to locate it, then use read_file_tool with col_offset \

@@ -5,7 +5,7 @@ use std::sync::Arc;
 
 use crate::agents::tickets::TicketSystem;
 
-use super::turn::handle_tickets;
+use super::turn::run_agent;
 use super::POLL_INTERVAL;
 
 pub(in crate::agents) async fn run_main_loop(ticket_system: &TicketSystem) {
@@ -16,7 +16,7 @@ pub(in crate::agents) async fn run_main_loop(ticket_system: &TicketSystem) {
     while !shutdown_requested.load(Ordering::Relaxed) {
         let registry = ticket_system.clone_agents();
         for newly_registered_agent in registry.into_iter().skip(agents_already_started) {
-            running_agents.push(tokio::spawn(handle_tickets(newly_registered_agent)));
+            running_agents.push(tokio::spawn(run_agent(newly_registered_agent)));
             agents_already_started += 1;
         }
         tokio::time::sleep(POLL_INTERVAL).await;

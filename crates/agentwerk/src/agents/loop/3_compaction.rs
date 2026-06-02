@@ -2,15 +2,15 @@
 
 use crate::event::{CompactReason, EventKind};
 use crate::providers::types::TokenUsage;
-use crate::providers::{Message, ProviderError};
+use crate::providers::Message;
 use crate::agents::compaction as algo;
 use crate::agents::tickets::to_messages;
 
-use super::turn::{fail_ticket, model_name, LoopContext};
+use super::turn::{model_name, LoopContext};
 use super::Action;
 
 pub(super) async fn compact(scope: &mut LoopContext<'_>, reason: CompactReason) -> Action<()> {
-    scope.agent.emit(EventKind::CompactionStarted { reason });
+    scope.ticket_system.emit(&scope.ticket_key, scope.agent.get_name(), EventKind::CompactionStarted { reason });
 
     let Some(ticket) = scope.ticket_system.get_ticket(&scope.ticket_key) else {
         return Action::Stop;
@@ -21,17 +21,20 @@ pub(super) async fn compact(scope: &mut LoopContext<'_>, reason: CompactReason) 
     let result = algo::compact(&scope.agent.provider_handle(), &model_name, &messages).await;
 
     if let Err(e) = result {
-        scope.agent.emit(EventKind::CompactionFailed { reason, message: e.to_string() });
-        fail_ticket(scope, &e);
+        scope.ticket_system.emit(&scope.ticket_key, scope.agent.get_name(), EventKind::CompactionFailed { reason, message: e.to_string() });
+        scope.ticket_system.emit(&scope.ticket_key, scope.agent.get_name(), EventKind::RequestFailed { kind: e.kind(), message: e.to_string() });
+        scope.ticket_system.emit(&scope.ticket_key, scope.agent.get_name(), EventKind::TicketFailed { key: scope.ticket_key.clone() });
         return Action::Stop;
     }
 
     let summary = result.unwrap();
 
     if summary.is_none() && matches!(reason, CompactReason::Reactive) {
-        fail_ticket(scope, &ProviderError::ContextWindowExceeded {
+        scope.ticket_system.emit(&scope.ticket_key, scope.agent.get_name(), EventKind::RequestFailed {
+            kind: crate::providers::RequestErrorKind::ContextWindowExceeded,
             message: "context still exceeds window after compaction".into(),
         });
+        scope.ticket_system.emit(&scope.ticket_key, scope.agent.get_name(), EventKind::TicketFailed { key: scope.ticket_key.clone() });
         return Action::Stop;
     }
 
@@ -63,16 +66,18 @@ pub(super) async fn compact(scope: &mut LoopContext<'_>, reason: CompactReason) 
                     &tools,
                 );
                 if estimate >= threshold {
-                    fail_ticket(scope, &ProviderError::ContextWindowExceeded {
+                    scope.ticket_system.emit(&scope.ticket_key, scope.agent.get_name(), EventKind::RequestFailed {
+                        kind: crate::providers::RequestErrorKind::ContextWindowExceeded,
                         message: "context still exceeds window after compaction".into(),
                     });
+                    scope.ticket_system.emit(&scope.ticket_key, scope.agent.get_name(), EventKind::TicketFailed { key: scope.ticket_key.clone() });
                     return Action::Stop;
                 }
             }
         }
     }
 
-    scope.agent.emit(EventKind::CompactionFinished { reason });
+    scope.ticket_system.emit(&scope.ticket_key, scope.agent.get_name(), EventKind::CompactionFinished { reason });
     match reason {
         CompactReason::Proactive => Action::Proceed(()),
         CompactReason::Reactive => Action::Replay,
@@ -114,7 +119,7 @@ pub(super) async fn proactive_compact(
             &tools,
         );
         if estimate >= threshold {
-            scope.agent.emit(EventKind::BlockingLimitExceeded {
+            scope.ticket_system.emit(&scope.ticket_key, scope.agent.get_name(), EventKind::BlockingLimitExceeded {
                 estimated_tokens: estimate,
                 threshold_tokens: threshold,
             });

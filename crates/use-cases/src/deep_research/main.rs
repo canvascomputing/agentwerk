@@ -44,6 +44,7 @@ async fn main() {
 
     let tickets = TicketSystem::new();
     tickets.cancel_on_ctrl_c().dir(workdir.clone());
+    tickets.event_handler(move |e| event_handler(e));
 
     let researcher_1 = Agent::empty()
         .name("researcher_1")
@@ -53,8 +54,7 @@ async fn main() {
         .label("researcher_1")
         .tool(brave_search_tool(brave_key.clone()))
         .tool(ReadTicketsTool)
-        .tool(HandoverTicketTool)
-        .event_handler(Arc::clone(&event_handler));
+        .tool(HandoverTicketTool);
 
     let researcher_2 = Agent::empty()
         .name("researcher_2")
@@ -65,8 +65,7 @@ async fn main() {
         .template_variable("schema_json", schema_json_pretty.clone())
         .tool(brave_search_tool(brave_key.clone()))
         .tool(ReadTicketsTool)
-        .tool(HandoverTicketTool)
-        .event_handler(Arc::clone(&event_handler));
+        .tool(HandoverTicketTool);
 
     let report_writer = Agent::new()
         .name("report_writer")
@@ -74,8 +73,7 @@ async fn main() {
         .model_from_env()
         .role(REPORT_WRITER_ROLE)
         .label("report")
-        .tool(ReadTicketsTool)
-        .event_handler(Arc::clone(&event_handler));
+        .tool(ReadTicketsTool);
 
     tickets.agent(researcher_1);
     tickets.agent(researcher_2);

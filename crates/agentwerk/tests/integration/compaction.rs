@@ -129,14 +129,13 @@ async fn summariser_condenses_transcript_and_ticket_completes(
     // and balloon the context. The first call is enough to trigger and
     // verify compaction.
     tickets.max_turns(1);
-    let agent = Agent::new()
-        .provider(provider)
-        .model(Model::from_name(&model).context_window(LOCAL_CTX))
-        .event_handler(Arc::new(move |e| {
-            log.lock().unwrap().push(e);
-        }))
-        .role("Answer the question in the task by calling finish_ticket with your answer.");
-    tickets.agent(agent);
+    tickets.event_handler(move |e| log.lock().unwrap().push(e));
+    tickets.agent(
+        Agent::new()
+            .provider(provider)
+            .model(Model::from_name(&model).context_window(LOCAL_CTX))
+            .role("Answer the question in the task by calling finish_ticket with your answer."),
+    );
     tickets.ticket(Ticket::new(TASK));
     assert!(
         tickets.last_result().is_none(),

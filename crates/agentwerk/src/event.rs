@@ -71,6 +71,10 @@ pub enum EventKind {
     TicketFinished { key: String },
     /// Ticket settled with `Status::Failed`.
     TicketFailed { key: String },
+    /// Agent loop started a new turn.
+    TurnStarted,
+    /// A batch of tool calls finished; carries the call count.
+    ToolCallsRecorded { count: usize },
     /// Provider request began.
     RequestStarted { model: String },
     /// Provider request finished successfully. Carries the model and the

@@ -84,22 +84,23 @@ async fn finds_every_lib_rs_in_nested_tree() -> std::result::Result<(), Box<dyn 
     let tickets = TicketSystem::new();
 
     tickets.max_turns(10);
-    let agent = Agent::new()
-        .provider(provider)
-        .model(&model)
-        .dir(root)
-        .role(
-            "Investigate the working directory and answer the user's question. \
-             Use the available tools — pick whichever one fits the question. \
-             When you have the answer, settle the ticket via \
-             `finish_ticket`.",
-        )
-        .tool(GlobTool)
-        .tool(GrepTool)
-        .tool(ListDirectoryTool)
-        .tool(ReadFileTool)
-        .event_handler(event_handler);
-    tickets.agent(agent);
+    tickets.event_handler(move |e| event_handler(e));
+    tickets.agent(
+        Agent::new()
+            .provider(provider)
+            .model(&model)
+            .dir(root)
+            .role(
+                "Investigate the working directory and answer the user's question. \
+                 Use the available tools — pick whichever one fits the question. \
+                 When you have the answer, settle the ticket via \
+                 `finish_ticket`.",
+            )
+            .tool(GlobTool)
+            .tool(GrepTool)
+            .tool(ListDirectoryTool)
+            .tool(ReadFileTool),
+    );
     tickets.task(
         "Find every `lib.rs` file anywhere in the project tree, including nested directories.",
     );

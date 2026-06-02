@@ -16,6 +16,7 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use serde::Serialize;
 use tokio::task::JoinHandle;
 
+use crate::event::{default_logger, Event, EventKind};
 use crate::providers::{AsUserMessage, ContentBlock, Message};
 
 use super::agent::Agent;
@@ -377,6 +378,7 @@ pub struct TicketSystem {
     policies: Mutex<Policies>,
     pub(crate) interrupt_signal: Mutex<Arc<AtomicBool>>,
     pub(crate) stats: Stats,
+    event_handler: Mutex<Option<Arc<dyn Fn(Event) + Send + Sync>>>,
     dir: Mutex<PathBuf>,
     tickets_log_lock: Mutex<()>,
     join_handle: Mutex<Option<JoinHandle<()>>>,
@@ -395,6 +397,7 @@ impl TicketSystem {
             policies: Mutex::new(Policies::default()),
             interrupt_signal: Mutex::new(Arc::new(AtomicBool::new(false))),
             stats: Stats::new(),
+            event_handler: Mutex::new(None),
             dir: Mutex::new(PathBuf::from(".agentwerk")),
             tickets_log_lock: Mutex::new(()),
             join_handle: Mutex::new(None),
@@ -453,6 +456,7 @@ impl TicketSystem {
             policies: Mutex::new(Policies::default()),
             interrupt_signal: Mutex::new(Arc::new(AtomicBool::new(false))),
             stats,
+            event_handler: Mutex::new(None),
             dir: Mutex::new(tickets_dir),
             tickets_log_lock: Mutex::new(()),
             join_handle: Mutex::new(None),
@@ -462,6 +466,38 @@ impl TicketSystem {
     /// Run-time counters. Read after `run` / `finish` returns.
     pub fn stats(&self) -> &Stats {
         &self.stats
+    }
+
+    /// Install an event observer. The handler must be cheap and non-blocking.
+    /// When not set, [`default_logger`] is used.
+    pub fn event_handler(&self, h: impl Fn(Event) + Send + Sync + 'static) -> &Self {
+        *self.event_handler.lock().unwrap() = Some(Arc::new(h));
+        self
+    }
+
+    pub(crate) fn emit(&self, key: &str, agent: &str, kind: EventKind) {
+        let labels = self.labels_for(key);
+        match &kind {
+            EventKind::TurnStarted => self.stats.record_turn_for(&labels),
+            EventKind::ToolCallsRecorded { count } =>
+                (0..*count).for_each(|_| self.stats.record_tool_call_for(&labels)),
+            EventKind::RequestFinished { usage, .. } =>
+                self.stats.record_request_for(&labels, usage.input_tokens, usage.output_tokens),
+            EventKind::RequestFailed { .. } => self.stats.record_error_for(&labels),
+            _ => {}
+        }
+        let handler = self.event_handler.lock().unwrap().clone();
+        let h = handler.unwrap_or_else(default_logger);
+        h(Event::new(agent, kind));
+    }
+
+    fn labels_for(&self, key: &str) -> Vec<String> {
+        self.tickets
+            .lock()
+            .unwrap()
+            .get(key)
+            .map(|t| t.labels.clone())
+            .unwrap_or_default()
     }
 
     pub(crate) fn policies(&self) -> Policies {

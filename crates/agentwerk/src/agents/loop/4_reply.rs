@@ -2,14 +2,14 @@
 
 use std::sync::Arc;
 
-use crate::event::{CompactReason, Event, EventKind};
+use crate::event::{CompactReason, EventKind};
 use crate::providers::types::{ResponseStatus, StreamEvent};
 use crate::providers::{ContentBlock, Message, ModelRequest, ProviderError};
 use crate::agents::retry::{ExponentialRetry, Retry};
 use crate::tools::ToolCall;
 
 use super::compaction;
-use super::turn::{fail_ticket, model_name, LoopContext};
+use super::turn::{model_name, LoopContext};
 use super::{Action, Reply};
 use super::wait_for_signal;
 
@@ -19,7 +19,7 @@ pub(super) async fn run(
 ) -> Action<Reply> {
     let tools = scope.agent.tool_definitions();
     let model_name = model_name(scope);
-    scope.agent.emit(EventKind::RequestStarted {
+    scope.ticket_system.emit(&scope.ticket_key, scope.agent.get_name(), EventKind::RequestStarted {
         model: model_name.clone(),
     });
     let request = ModelRequest {
@@ -39,14 +39,12 @@ pub(super) async fn run(
         let outcome = {
             let provider = scope.agent.provider_handle();
             let agent_name = scope.agent.get_name().to_string();
-            let handler = scope.agent.resolve_event_handler();
+            let ticket_key = scope.ticket_key.clone();
+            let ts = Arc::clone(scope.ticket_system);
             let emit_stream: Arc<dyn Fn(StreamEvent) + Send + Sync> =
                 Arc::new(move |event| {
                     if let StreamEvent::TextDelta { text, .. } = event {
-                        handler(Event::new(
-                            &agent_name,
-                            EventKind::TextChunkReceived { content: text },
-                        ));
+                        ts.emit(&ticket_key, &agent_name, EventKind::TextChunkReceived { content: text });
                     }
                 });
             let interrupt = &scope.interrupt_signal;
@@ -68,7 +66,7 @@ pub(super) async fn run(
             Err(e) if e.is_retryable() => match retry.try_consume() {
                 Some(attempt) => {
                     let delay = retry.delay(e.retry_delay());
-                    scope.agent.emit(EventKind::RequestRetried {
+                    scope.ticket_system.emit(&scope.ticket_key, scope.agent.get_name(), EventKind::RequestRetried {
                         attempt,
                         max_attempts: retry.max_attempts(),
                         kind: e.kind(),
@@ -82,23 +80,21 @@ pub(super) async fn run(
                     }
                 }
                 None => {
-                    fail_ticket(scope, &e);
+                    scope.ticket_system.emit(&scope.ticket_key, scope.agent.get_name(), EventKind::RequestFailed { kind: e.kind(), message: e.to_string() });
+                    scope.ticket_system.emit(&scope.ticket_key, scope.agent.get_name(), EventKind::TicketFailed { key: scope.ticket_key.clone() });
                     return Action::Replay;
                 }
             },
             Err(e) => {
-                fail_ticket(scope, &e);
+                scope.ticket_system.emit(&scope.ticket_key, scope.agent.get_name(), EventKind::RequestFailed { kind: e.kind(), message: e.to_string() });
+                scope.ticket_system.emit(&scope.ticket_key, scope.agent.get_name(), EventKind::TicketFailed { key: scope.ticket_key.clone() });
                 return Action::Replay;
             }
         }
     };
 
-    scope.agent.emit(EventKind::RequestFinished {
-        model: response.model.clone(),
-        usage: response.usage.clone(),
-    });
     scope.last_usage = Some(response.usage.clone());
-    scope.ticket_system.stats.record_request_for(&scope.labels, response.usage.input_tokens, response.usage.output_tokens);
+    scope.ticket_system.emit(&scope.ticket_key, scope.agent.get_name(), EventKind::RequestFinished { model: response.model.clone(), usage: response.usage.clone() });
     scope
         .ticket_system
         .add_comment(&scope.ticket_key, crate::agents::tickets::Comment::assistant(&response.content));
@@ -320,13 +316,14 @@ mod tests {
             .dir(results_dir.path().to_path_buf())
             .max_request_retries(3)
             .request_retry_delay(Duration::from_millis(1));
-        let agent = Agent::new()
-            .name("tester")
-            .provider(provider as Arc<dyn Provider>)
-            .model("mock")
-            .role("test")
-            .event_handler(handler);
-        tickets.agent(agent);
+        tickets.event_handler(move |e| handler(e));
+        tickets.agent(
+            Agent::new()
+                .name("tester")
+                .provider(provider as Arc<dyn Provider>)
+                .model("mock")
+                .role("test"),
+        );
         tickets.task("go");
 
         let run_fut = tickets.finish();
@@ -385,13 +382,14 @@ mod tests {
             .dir(results_dir.path().to_path_buf())
             .max_request_retries(3)
             .request_retry_delay(Duration::from_secs(60));
-        let agent = Agent::new()
-            .name("tester")
-            .provider(provider as Arc<dyn Provider>)
-            .model("mock")
-            .role("test")
-            .event_handler(handler);
-        tickets.agent(agent);
+        tickets.event_handler(move |e| handler(e));
+        tickets.agent(
+            Agent::new()
+                .name("tester")
+                .provider(provider as Arc<dyn Provider>)
+                .model("mock")
+                .role("test"),
+        );
         tickets.task("go");
 
         let run_fut = tickets.finish();

@@ -227,14 +227,15 @@ pub async fn run_one(
         .max_schema_retries(max_schema_retries)
         .max_time(Duration::from_millis(200));
 
-    let agent = Agent::new()
-        .name("tester")
-        .provider(provider.clone() as Arc<dyn Provider>)
-        .model("mock")
-        .role("test")
-        .tool(ManageTicketsTool)
-        .event_handler(handler);
-    tickets.agent(agent);
+    tickets.event_handler(move |e| handler(e));
+    tickets.agent(
+        Agent::new()
+            .name("tester")
+            .provider(provider.clone() as Arc<dyn Provider>)
+            .model("mock")
+            .role("test")
+            .tool(ManageTicketsTool),
+    );
 
     if let Some(schema) = schema {
         tickets.ticket(Ticket::new("go").schema(schema));
@@ -264,17 +265,18 @@ pub async fn run_compaction(
         .max_request_retries(0)
         .request_retry_delay(Duration::from_millis(1))
         .max_schema_retries(10)
-        .max_time(Duration::from_millis(200));
+        .max_time(Duration::from_secs(30));
 
-    let agent = Agent::new()
-        .name("tester")
-        .provider(provider.clone() as Arc<dyn Provider>)
-        .model("claude-sonnet-4-20250514")
-        .role("test")
-        .context("static")
-        .tool(ManageTicketsTool)
-        .event_handler(handler);
-    tickets.agent(agent);
+    tickets.event_handler(move |e| handler(e));
+    tickets.agent(
+        Agent::new()
+            .name("tester")
+            .provider(provider.clone() as Arc<dyn Provider>)
+            .model("claude-sonnet-4-20250514")
+            .role("test")
+            .context("static")
+            .tool(ManageTicketsTool),
+    );
     let schema = Schema::parse(serde_json::json!({"type": "string"})).unwrap();
     tickets.ticket(Ticket::new("go").schema(schema));
 

@@ -93,22 +93,23 @@ async fn finds_code_pattern_with_special_chars(
     let tickets = TicketSystem::new();
 
     tickets.max_turns(10);
-    let agent = Agent::new()
-        .provider(provider)
-        .model(&model)
-        .dir(root)
-        .role(
-            "Investigate the working directory and answer the user's question. \
-             Use the available tools — pick whichever one fits the question. \
-             When you have the answer, settle the ticket via \
-             `finish_ticket`.",
-        )
-        .tool(GrepTool)
-        .tool(GlobTool)
-        .tool(ListDirectoryTool)
-        .tool(ReadFileTool)
-        .event_handler(event_handler);
-    tickets.agent(agent);
+    tickets.event_handler(move |e| event_handler(e));
+    tickets.agent(
+        Agent::new()
+            .provider(provider)
+            .model(&model)
+            .dir(root)
+            .role(
+                "Investigate the working directory and answer the user's question. \
+                 Use the available tools — pick whichever one fits the question. \
+                 When you have the answer, settle the ticket via \
+                 `finish_ticket`.",
+            )
+            .tool(GrepTool)
+            .tool(GlobTool)
+            .tool(ListDirectoryTool)
+            .tool(ReadFileTool),
+    );
     tickets.task(format!(
         "Which source file in this project contains the exact code \
          `{TARGET_SIGNATURE}`? Answer with the file's path."
