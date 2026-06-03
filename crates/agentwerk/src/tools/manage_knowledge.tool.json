@@ -1,21 +1,26 @@
 {
   "name": "manage_knowledge",
   "summary": [
-    "Persistent knowledge base of durable facts. Pages are markdown files addressed by slug.",
-    "The index (one-line summary per page) is injected into the system prompt at each ticket start. Use `read` to load full pages on demand."
+    "Read or write pages in the shared knowledge base — durable facts injected into every ticket's system prompt.",
+    "When pages exist, their one-line summaries appear under `## Knowledge` in your system prompt. If that section is absent, the store is empty. Use `read` to load a full page body, or `list` to see all pages."
   ],
   "constraints": [
     "Save when work reveals a durable fact future tickets need.",
-    "Each page covers one topic. Slug is descriptive: `deployment-config`, `error-handling`.",
+    "Each page covers one topic. Slug is descriptive or file-path-derived: `deployment-config`, `pkg-utils-py`.",
     "The summary is one sentence shown in the index. Keep it under 80 chars.",
     "Use `[[slug]]` wikilinks in page content to cross-reference related pages.",
     "`write` is an upsert: it overwrites the full page. Use `read` first if appending.",
-    "The index has a char limit. When full, consolidate: merge pages, remove stale ones."
+    "The index has a char limit. When full, consolidate: merge pages, remove stale ones.",
+    "IMPORTANT: `write` requires slug, summary, and content — omitting any one returns an error.",
+    "IMPORTANT: only call `read` for a slug you have already seen in `## Knowledge` or via `list`. If you have not seen the slug, the page does not exist.",
+    "Example write: {\"action\":\"write\",\"slug\":\"deployment-config\",\"summary\":\"API server listens on port 3000\",\"content\":\"# Deployment Config\\n\\nPort 3000. Rate limit: 100 req/min.\"}",
+    "Example read: {\"action\":\"read\",\"slug\":\"deployment-config\"}"
   ],
   "anti_patterns": [
     "Saving task progress or TODOs. Those belong in tickets.",
     "Creating a new page for every small fact. Consolidate related facts.",
-    "Acting on a `write` from the same ticket. Mid-ticket writes do not update the system prompt."
+    "Calling `write` without slug — the most common error; all three fields are required.",
+    "Calling `read` for a slug not confirmed via `## Knowledge` or `list` — the page does not exist."
   ],
   "read_only": false,
   "input_schema": {
@@ -24,19 +29,19 @@
       "action": {
         "type": "string",
         "enum": ["write", "read", "remove", "list"],
-        "description": "The action to perform."
+        "description": "The operation to perform. 'write' upserts a page (requires slug + summary + content). 'read' returns the full page body (requires slug; only valid for slugs in the index). 'remove' deletes a page (requires slug). 'list' returns the current index."
       },
       "slug": {
         "type": "string",
-        "description": "Page identifier (lowercase, hyphens, max 60 chars). Required for write/read/remove."
+        "description": "Page identifier (lowercase, hyphens, max 60 chars). Required for write, read, and remove — omitting it returns an error. For file paths, replace dots and slashes with hyphens (e.g. pkg/utils.py → pkg-utils-py)."
       },
       "summary": {
         "type": "string",
-        "description": "One-line index summary (<80 chars). Required for write."
+        "description": "One-line index entry shown in the knowledge index. Required for write. Keep under 80 chars."
       },
       "content": {
         "type": "string",
-        "description": "Full page body in markdown. May include [[wikilinks]]. Required for write."
+        "description": "Full page body in markdown. Required for write. May include [[wikilinks]]."
       },
       "tags": {
         "type": "array",
