@@ -3,6 +3,7 @@
 
 use std::sync::Arc;
 
+use crate::agents::tickets::{to_messages, TicketSystem};
 use crate::prompts::compaction_directive;
 use crate::providers::types::StreamEvent;
 use crate::providers::{
@@ -10,36 +11,15 @@ use crate::providers::{
     ProviderToolDefinition, TokenUsage,
 };
 
-/// Tokens reserved for the model's response. The context window holds
-/// input + output combined, so the input must leave at least this much
-/// room for the next reply.
-const RESERVED_RESPONSE_TOKENS: u64 = 20_000;
+/// Distance below the window at which compaction fires. Covers the
+/// model's response budget (~20 k) plus drift in the `bytes / 4` token
+/// estimate which under-counts code and JSON (~13 k).
+const COMPACTION_HEADROOM_TOKENS: u64 = 33_000;
 
-/// Headroom below the hard window limit so the warning fires with room
-/// to spare. Also absorbs drift in the `bytes / 4` token estimate, which
-/// tends to under-count code and JSON.
-const COMPACTION_HEADROOM_TOKENS: u64 = 13_000;
-
-/// Layer 2 (blocking) headroom: a much tighter line than the proactive
-/// threshold. When the estimate crosses `window - BLOCKING_HEADROOM_TOKENS`
-/// the loop synthesizes a `ContextWindowExceeded` before the provider
-/// call goes out.
-pub(crate) const BLOCKING_HEADROOM_TOKENS: u64 = 3_000;
-
-/// Token count at which the proactive seam fires for a model with
-/// context window `window`. `None` when the window is unknown.
-pub(crate) fn threshold(window: Option<u64>) -> Option<u64> {
-    window.map(|size| {
-        size.saturating_sub(RESERVED_RESPONSE_TOKENS)
-            .saturating_sub(COMPACTION_HEADROOM_TOKENS)
-    })
-}
-
-/// Token count at which the Layer 2 blocking guard fires. Sits much
-/// closer to the actual window than [`threshold`], so it only trips
-/// when proactive compaction has already run (or could not).
-pub(crate) fn blocking_threshold(window: Option<u64>) -> Option<u64> {
-    window.map(|size| size.saturating_sub(BLOCKING_HEADROOM_TOKENS))
+/// Token count at which compaction fires for a model with context
+/// window `window`. `None` when the window is unknown.
+pub(crate) fn compaction_threshold(window: Option<u64>) -> Option<u64> {
+    window.map(|size| size.saturating_sub(COMPACTION_HEADROOM_TOKENS))
 }
 
 /// Estimate of the next request's input-token count: the last response's
@@ -55,12 +35,9 @@ pub(crate) fn estimate_next_request_tokens(
     system_prompt: &str,
     tools: &[ProviderToolDefinition],
 ) -> u64 {
-    let mut bytes: usize = messages.iter().map(message_bytes).sum();
-    bytes += system_prompt.len();
-    bytes += tools
-        .iter()
-        .map(|t| t.name.len() + t.description.len() + t.input_schema.to_string().len())
-        .sum::<usize>();
+    let bytes = messages.iter().map(message_bytes).sum::<usize>()
+        + system_prompt.len()
+        + tools.iter().map(tool_definition_bytes).sum::<usize>();
     last_usage.input_tokens + (bytes / 4) as u64
 }
 
@@ -81,6 +58,10 @@ fn block_bytes(block: &ContentBlock) -> usize {
     }
 }
 
+fn tool_definition_bytes(tool: &ProviderToolDefinition) -> usize {
+    tool.name.len() + tool.description.len() + tool.input_schema.to_string().len()
+}
+
 /// `true` when the estimated next-request input crosses the
 /// proactive compaction threshold. `false` when the window is unknown
 /// or the estimate is still under it.
@@ -91,25 +72,71 @@ pub(crate) fn should_compact_proactively(
     system_prompt: &str,
     tools: &[ProviderToolDefinition],
 ) -> bool {
-    let Some(threshold) = threshold(window) else {
+    let Some(threshold) = compaction_threshold(window) else {
         return false;
     };
     estimate_next_request_tokens(last_usage, messages, system_prompt, tools) >= threshold
 }
 
-/// Compact `messages` into a single summary line by sending them to
-/// the provider with no tools and the compaction directive as the
-/// system prompt. Returns `Ok(None)` when `messages` is too short
-/// (zero or one entry) to be worth summarising; the caller treats
-/// that as a no-op.
+/// Run one compaction round-trip for the ticket at `ticket_key`: read
+/// the current transcript, summarise it via [`compact`], and apply the
+/// result through [`TicketSystem::summarize`]. Returns `Ok(true)` when a
+/// summary was applied, `Ok(false)` when the ticket is missing or the
+/// transcript collapses to a no-op.
+pub(crate) async fn run(
+    provider: &Arc<dyn Provider>,
+    model: &str,
+    window: Option<u64>,
+    ticket_system: &TicketSystem,
+    ticket_key: &str,
+) -> ProviderResult<bool> {
+    let Some(ticket) = ticket_system.get_ticket(ticket_key) else {
+        return Ok(false);
+    };
+    let messages = to_messages(&ticket.replies);
+    let Some(summary) = compact(provider, model, &messages, window).await? else {
+        return Ok(false);
+    };
+    ticket_system.summarize(ticket_key, summary);
+    Ok(true)
+}
+
+/// Compact `messages` into a single summary by sending them to the
+/// provider with no tools and the compaction directive as the system
+/// prompt. When `window` is set and the transcript would overflow it,
+/// split the largest splittable message in half (recursively until
+/// every chunk fits) and summarise each chunk separately; the resulting
+/// partial summaries are joined with a blank line. Returns `Ok(None)`
+/// when the transcript collapses to a no-op (a single message that
+/// already fits, or nothing to summarise); the caller treats that as a
+/// no-op.
 pub(crate) async fn compact(
     provider: &Arc<dyn Provider>,
     model: &str,
     messages: &[Message],
+    window: Option<u64>,
 ) -> ProviderResult<Option<String>> {
-    if messages.len() <= 1 {
+    let chunks = chunks_for_window(messages, window);
+    if messages.len() <= 1 && chunks.len() <= 1 {
         return Ok(None);
     }
+    let mut summaries = Vec::with_capacity(chunks.len());
+    for chunk in &chunks {
+        if let Some(text) = summarize_chunk(provider, model, chunk).await? {
+            summaries.push(text);
+        }
+    }
+    if summaries.is_empty() {
+        return Ok(None);
+    }
+    Ok(Some(summaries.join("\n\n")))
+}
+
+async fn summarize_chunk(
+    provider: &Arc<dyn Provider>,
+    model: &str,
+    messages: &[Message],
+) -> ProviderResult<Option<String>> {
     let request = ModelRequest {
         model: model.to_string(),
         system_prompt: compaction_directive().to_string(),
@@ -123,14 +150,102 @@ pub(crate) async fn compact(
     let summary = response
         .content
         .iter()
-        .find_map(|b| match b {
+        .find_map(|block| match block {
             ContentBlock::Text { text } => Some(text.clone()),
             _ => None,
         })
-        .ok_or_else(|| ProviderError::ResponseMalformed {
-            message: "compaction reply contained no text".into(),
+        .ok_or_else(|| {
+            fn kind(block: &ContentBlock) -> &'static str {
+                match block {
+                    ContentBlock::Text { .. } => "text",
+                    ContentBlock::ToolUse { .. } => "tool_use",
+                    ContentBlock::ToolResult { .. } => "tool_result",
+                }
+            }
+            let kinds: Vec<&str> = response.content.iter().map(kind).collect();
+            ProviderError::ResponseMalformed {
+                message: format!(
+                    "compaction reply contained no text (status={:?}, model={}, blocks={}, kinds=[{}], usage={:?})",
+                    response.status,
+                    response.model,
+                    response.content.len(),
+                    kinds.join(", "),
+                    response.usage,
+                ),
+            }
         })?;
     Ok(Some(summary))
+}
+
+fn chunks_for_window(messages: &[Message], window: Option<u64>) -> Vec<Vec<Message>> {
+    let Some(window) = window else {
+        return vec![messages.to_vec()];
+    };
+    let max_tokens_per_chunk = window.saturating_mul(7) / 10;
+    chunks_within(messages, max_tokens_per_chunk)
+}
+
+fn chunks_within(messages: &[Message], max_tokens_per_chunk: u64) -> Vec<Vec<Message>> {
+    let bytes: usize = messages.iter().map(message_bytes).sum();
+    let estimate = (bytes / 4) as u64;
+    if estimate <= max_tokens_per_chunk {
+        return vec![messages.to_vec()];
+    }
+    let Some(index) = messages
+        .iter()
+        .enumerate()
+        .max_by_key(|(_, message)| message_bytes(message))
+        .map(|(index, _)| index)
+    else {
+        return vec![messages.to_vec()];
+    };
+    let Some(halves) = split_in_half(&messages[index]) else {
+        return vec![messages.to_vec()];
+    };
+    let before = &messages[..index];
+    let after = &messages[index + 1..];
+    let mut result = Vec::new();
+    for half in halves {
+        let mut chunk = Vec::with_capacity(before.len() + 1 + after.len());
+        chunk.extend_from_slice(before);
+        chunk.push(half);
+        chunk.extend_from_slice(after);
+        result.extend(chunks_within(&chunk, max_tokens_per_chunk));
+    }
+    result
+}
+
+fn split_in_half(message: &Message) -> Option<Vec<Message>> {
+    let Message::User { content } = message else {
+        return None;
+    };
+    if content.len() != 1 {
+        return None;
+    }
+    let ContentBlock::Text { text } = &content[0] else {
+        return None;
+    };
+    if text.is_empty() {
+        return None;
+    }
+    let split_at = find_split_index(text, text.len() / 2);
+    if split_at == 0 || split_at == text.len() {
+        return None;
+    }
+    let (first, second) = text.split_at(split_at);
+    Some(vec![Message::user(first), Message::user(second)])
+}
+
+fn find_split_index(text: &str, target: usize) -> usize {
+    let target = target.min(text.len());
+    let mut index = target;
+    while index > 0 && !text.is_char_boundary(index) {
+        index -= 1;
+    }
+    if let Some(newline_at) = text[..index].rfind('\n') {
+        return newline_at + 1;
+    }
+    index
 }
 
 #[cfg(test)]
@@ -138,14 +253,14 @@ mod tests {
     use super::*;
 
     #[test]
-    fn threshold_saturates_on_tiny_or_zero_window() {
-        assert_eq!(threshold(Some(100)), Some(0));
-        assert_eq!(threshold(Some(0)), Some(0));
+    fn compaction_threshold_saturates_on_tiny_or_zero_window() {
+        assert_eq!(compaction_threshold(Some(100)), Some(0));
+        assert_eq!(compaction_threshold(Some(0)), Some(0));
     }
 
     #[test]
-    fn threshold_is_none_for_unknown_window() {
-        assert_eq!(threshold(None), None);
+    fn compaction_threshold_is_none_for_unknown_window() {
+        assert_eq!(compaction_threshold(None), None);
     }
 
     #[test]
@@ -213,8 +328,8 @@ mod tests {
 
     #[test]
     fn should_compact_proactively_is_true_when_estimate_crosses_threshold() {
-        // Threshold = 200_000 - 20_000 - 13_000 = 167_000; estimate is
-        // last_usage's 170_000 input tokens plus a trivial message.
+        // Threshold = 200_000 - 33_000 = 167_000; estimate is last_usage's
+        // 170_000 input tokens plus a trivial message.
         let usage = TokenUsage {
             input_tokens: 170_000,
             output_tokens: 0,
@@ -227,13 +342,6 @@ mod tests {
             "",
             &[],
         ));
-    }
-
-    #[test]
-    fn blocking_threshold_is_window_minus_3k() {
-        assert_eq!(blocking_threshold(Some(200_000)), Some(197_000));
-        assert_eq!(blocking_threshold(Some(2_000)), Some(0));
-        assert_eq!(blocking_threshold(None), None);
     }
 
     // ---- compact ----
@@ -303,7 +411,7 @@ mod tests {
             Message::user("turn 1 result"),
         ];
 
-        let summary = compact(&provider, "mock", &messages)
+        let summary = compact(&provider, "mock", &messages, None)
             .await
             .expect("compact should succeed");
 
@@ -317,7 +425,7 @@ mod tests {
             let provider_handle: Arc<dyn Provider> = provider.clone();
             let messages: Vec<Message> = (0..len).map(|i| Message::user(format!("m{i}"))).collect();
 
-            let summary = compact(&provider_handle, "mock", &messages)
+            let summary = compact(&provider_handle, "mock", &messages, None)
                 .await
                 .expect("no-op should succeed");
 
@@ -338,7 +446,7 @@ mod tests {
             })]);
         let messages = vec![Message::user("task"), Message::assistant("turn 0")];
 
-        let err = compact(&provider, "mock", &messages)
+        let err = compact(&provider, "mock", &messages, None)
             .await
             .expect_err("should propagate the connection failure");
 
@@ -360,12 +468,87 @@ mod tests {
         let provider: Arc<dyn Provider> = ScriptedProvider::new(vec![Ok(no_text)]);
         let messages = vec![Message::user("task"), Message::assistant("turn 0")];
 
-        let err = compact(&provider, "mock", &messages)
+        let err = compact(&provider, "mock", &messages, None)
             .await
             .expect_err("text-less reply must fail");
 
         assert!(matches!(err, ProviderError::ResponseMalformed { .. }));
     }
+
+    // ---- chunking ----
+
+    #[test]
+    fn binary_split_at_newline_preserves_total_text() {
+        let original = "line 1\nline 2\nline 3\nline 4\n";
+        let message = Message::user(original);
+        let halves = split_in_half(&message).expect("should split");
+        assert_eq!(halves.len(), 2);
+        let joined = halves
+            .iter()
+            .map(|m| match m {
+                Message::User { content } => match &content[0] {
+                    ContentBlock::Text { text } => text.clone(),
+                    _ => panic!("not text"),
+                },
+                _ => panic!("not user"),
+            })
+            .collect::<Vec<_>>()
+            .join("");
+        assert_eq!(joined, original);
+    }
+
+    #[test]
+    fn binary_split_falls_back_to_char_midpoint_when_no_newline() {
+        let text = "x".repeat(200);
+        let message = Message::user(&text);
+        let halves = split_in_half(&message).expect("should split");
+        assert_eq!(halves.len(), 2);
+        match (&halves[0], &halves[1]) {
+            (Message::User { content: c1 }, Message::User { content: c2 }) => {
+                let len1 = match &c1[0] {
+                    ContentBlock::Text { text } => text.len(),
+                    _ => panic!(),
+                };
+                let len2 = match &c2[0] {
+                    ContentBlock::Text { text } => text.len(),
+                    _ => panic!(),
+                };
+                assert_eq!(len1 + len2, 200);
+                assert_eq!(len1, 100);
+            }
+            _ => panic!("halves must be User messages"),
+        }
+    }
+
+    #[test]
+    fn messages_within_window_pass_through_as_single_chunk() {
+        let messages = vec![Message::user("hi"), Message::assistant("ok")];
+        let chunks = chunks_for_window(&messages, Some(200_000));
+        assert_eq!(chunks.len(), 1);
+        assert_eq!(chunks[0].len(), 2);
+    }
+
+    #[test]
+    fn single_oversized_user_message_splits_into_multiple_chunks() {
+        let payload = "x".repeat(10_000);
+        let messages = vec![Message::user(payload)];
+        let chunks = chunks_for_window(&messages, Some(1_000));
+        assert!(
+            chunks.len() >= 2,
+            "expected multiple chunks, got {}",
+            chunks.len()
+        );
+        for chunk in &chunks {
+            let bytes: usize = chunk.iter().map(message_bytes).sum();
+            assert!(
+                (bytes / 4) as u64 <= 700,
+                "chunk of {bytes} bytes ({} tokens) exceeds max 700",
+                bytes / 4,
+            );
+        }
+    }
+
+    // ---- compact (continued) ----
 
     #[tokio::test]
     async fn compact_builds_a_tool_less_request() {
@@ -377,7 +560,9 @@ mod tests {
             Message::user("turn 1 result"),
         ];
 
-        compact(&provider_handle, "mock", &messages).await.unwrap();
+        compact(&provider_handle, "mock", &messages, None)
+            .await
+            .unwrap();
 
         let req = provider.last_request().expect("provider was called");
         assert!(req.tools.is_empty(), "tools must be disabled");

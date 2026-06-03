@@ -925,6 +925,42 @@ impl TicketSystem {
         Ok(())
     }
 
+    /// Collapse the ticket's transcript to `summary` and snapshot the
+    /// compaction pair. No-op when the ticket is missing.
+    pub(crate) fn summarize(&self, key: &str, summary: String) {
+        let ticket_copy = {
+            let mut store = self.tickets.lock().unwrap();
+            let Some(ticket) = store.get_mut(key) else { return };
+            ticket.summarize(summary);
+            ticket.clone()
+        };
+        self.save_compaction(key, &ticket_copy);
+    }
+
+    /// Replies file first, then header as commit marker. A crash in
+    /// between leaves an orphan `replies.<ts>.jsonl` that `Replies::load`
+    /// skips via the paired-check rule.
+    fn save_compaction(&self, key: &str, ticket: &Ticket) {
+        let dir = self.dir_value();
+        let at = now_millis();
+        let ticket_dir = dir.join("tickets").join(key);
+
+        let replies_path = ticket_dir.join(format!("replies.{at}.jsonl"));
+        let mut replies_body = String::new();
+        for reply in &ticket.replies {
+            if let Ok(line) = serde_json::to_string(reply) {
+                replies_body.push_str(&line);
+                replies_body.push('\n');
+            }
+        }
+        let _ = crate::persistence::write_atomic(&replies_path, replies_body.as_bytes());
+
+        let header_path = ticket_dir.join(format!("ticket.{at}.json"));
+        if let Ok(header_body) = serde_json::to_vec_pretty(ticket) {
+            let _ = crate::persistence::write_atomic(&header_path, &header_body);
+        }
+    }
+
     /// Edit caller-settable fields. Each `Some` overwrites; `None`
     /// leaves the field untouched. The `Option<Option<Schema>>` shape on
     /// `schema` lets callers explicitly clear it via `Some(None)`.

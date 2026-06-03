@@ -476,7 +476,6 @@ let agent = Agent::new()
 | **Compaction** | `CompactionStarted` | Compaction is about to summarize the conversation tail. |
 | | `CompactionFinished` | Compaction finished and replaced the tail with a summary. |
 | | `CompactionFailed` | The summarization call failed; the ticket is about to fail. |
-| | `BlockingLimitExceeded` | The next-request token estimate crossed the compaction threshold. |
 | **Run** | `PolicyViolated` | A policy limit was breached and execution stopped. |
 
 ## Stats

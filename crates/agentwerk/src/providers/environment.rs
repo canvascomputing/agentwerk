@@ -1,4 +1,4 @@
-//! Picks a provider from environment variables, so callers can say `provider_from_env()` without coding the detection matrix themselves.
+//! Resolves an LLM provider, model name, and runtime overrides from environment variables so callers do not have to code the detection matrix or the override knobs themselves.
 
 use std::sync::Arc;
 
@@ -83,6 +83,27 @@ where
         DetectedProvider::LiteLlm => ("LITELLM_MODEL", "claude-sonnet-4-20250514"),
     };
     Ok(filtered(model_var).unwrap_or_else(|| default_model.to_string()))
+}
+
+/// Caller-supplied override for the model's context window, read from
+/// `MODEL_CONTEXT_WINDOW`. Use when the registry guess (see
+/// [`super::Model::from_name`]) disagrees with the runtime's actual
+/// window: a local llama.cpp or vLLM deployment whose name does not
+/// match any registry entry, or a hosted model whose deployment was
+/// truncated below its native window. Returns `None` when the variable
+/// is unset, empty, or not a positive integer.
+pub fn context_window_from_env() -> Option<u64> {
+    context_window_from_env_with(|name| std::env::var(name).ok())
+}
+
+pub(crate) fn context_window_from_env_with<F>(get: F) -> Option<u64>
+where
+    F: Fn(&str) -> Option<String>,
+{
+    get("MODEL_CONTEXT_WINDOW")
+        .filter(|v| !v.is_empty())
+        .and_then(|v| v.parse::<u64>().ok())
+        .filter(|n| *n > 0)
 }
 
 /// Pure detection logic. Determines which provider to use based on env var values.
@@ -304,5 +325,42 @@ mod tests {
             model_from_env_with(env_map(&[("OPENAI_API_KEY", "key"), ("OPENAI_MODEL", "")]))
                 .unwrap();
         assert_eq!(model, "gpt-4o");
+    }
+
+    #[test]
+    fn context_window_returns_parsed_value() {
+        let n = context_window_from_env_with(env_map(&[("MODEL_CONTEXT_WINDOW", "65536")]));
+        assert_eq!(n, Some(65_536));
+    }
+
+    #[test]
+    fn context_window_unset_returns_none() {
+        assert_eq!(context_window_from_env_with(env_map(&[])), None);
+    }
+
+    #[test]
+    fn context_window_empty_returns_none() {
+        assert_eq!(
+            context_window_from_env_with(env_map(&[("MODEL_CONTEXT_WINDOW", "")])),
+            None,
+        );
+    }
+
+    #[test]
+    fn context_window_garbage_returns_none() {
+        assert_eq!(
+            context_window_from_env_with(env_map(&[("MODEL_CONTEXT_WINDOW", "huge")])),
+            None,
+        );
+    }
+
+    #[test]
+    fn context_window_zero_returns_none() {
+        // Zero is a parse success but a meaningless window; treat as unset
+        // so the registry guess still gets a chance.
+        assert_eq!(
+            context_window_from_env_with(env_map(&[("MODEL_CONTEXT_WINDOW", "0")])),
+            None,
+        );
     }
 }

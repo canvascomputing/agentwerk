@@ -294,6 +294,43 @@ pub async fn run_one(
     (events, provider, ticket)
 }
 
+pub async fn run_with_context_window(
+    provider: Arc<MockProvider>,
+    context_window_size: u64,
+    task: impl Into<String>,
+) -> (Vec<Event>, Arc<MockProvider>, Ticket) {
+    let task: String = task.into();
+    use crate::providers::Model;
+    let collected: Arc<Mutex<Vec<Event>>> = Arc::new(Mutex::new(Vec::new()));
+    let handler: Arc<dyn Fn(Event) + Send + Sync> = {
+        let c = Arc::clone(&collected);
+        Arc::new(move |e| c.lock().unwrap().push(e))
+    };
+
+    let results_dir = crate::test_util::TempDir::new().unwrap();
+    let tickets = TicketSystem::new();
+    tickets
+        .dir(results_dir.path().to_path_buf())
+        .max_request_retries(0)
+        .request_retry_delay(Duration::from_millis(1))
+        .max_schema_retries(10)
+        .max_time(Duration::from_secs(5));
+    tickets.event_handler(move |e| handler(e));
+    tickets.agent(
+        Agent::new()
+            .name("tester")
+            .provider(provider.clone() as Arc<dyn Provider>)
+            .model(Model::from_name("mock").context_window(context_window_size))
+            .role("test"),
+    );
+    tickets.task(task);
+
+    let _ = tickets.finish().await;
+    let events = collected.lock().unwrap().clone();
+    let ticket = tickets.first_ticket().expect("ticket must exist");
+    (events, provider, ticket)
+}
+
 pub async fn run_compaction(
     provider: Arc<MockProvider>,
 ) -> (Vec<Event>, Arc<MockProvider>, Ticket) {

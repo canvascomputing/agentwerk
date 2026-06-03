@@ -6,8 +6,6 @@ use std::time::Duration;
 
 use crate::tools::ToolCall;
 
-#[path = "3_compaction.rs"]
-mod compaction;
 #[path = "1_main.rs"]
 mod main;
 #[path = "4_reply.rs"]

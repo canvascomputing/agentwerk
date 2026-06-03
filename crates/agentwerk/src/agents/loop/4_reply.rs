@@ -8,7 +8,7 @@ use crate::providers::types::{ResponseStatus, StreamEvent};
 use crate::providers::{ContentBlock, Message, ModelRequest, ProviderError};
 use crate::tools::ToolCall;
 
-use super::compaction;
+use super::turn;
 use super::turn::LoopContext;
 use super::wait_for_signal;
 use super::{Action, Reply};
@@ -61,7 +61,7 @@ pub(super) async fn run(context: &mut LoopContext<'_>, messages: Vec<Message>) -
         match outcome {
             Ok(resp) => break resp,
             Err(ProviderError::ContextWindowExceeded { .. }) => {
-                match compaction::compact(context, CompactReason::Reactive).await {
+                match turn::compact(context, CompactReason::Reactive).await {
                     Action::Stop => return Action::Stop,
                     Action::Replay => return Action::Replay,
                     Action::Pause => unreachable!("compact() never returns Pause"),
@@ -166,7 +166,7 @@ pub(super) async fn run(context: &mut LoopContext<'_>, messages: Vec<Message>) -
     };
 
     if overflowed {
-        match compaction::compact(context, CompactReason::Reactive).await {
+        match turn::compact(context, CompactReason::Reactive).await {
             Action::Stop => return Action::Stop,
             Action::Replay => return Action::Replay,
             Action::Pause => unreachable!("compact() never returns Pause"),

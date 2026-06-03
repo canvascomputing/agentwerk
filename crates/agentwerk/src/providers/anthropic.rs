@@ -128,7 +128,10 @@ fn classify_400(body: &str) -> Option<ProviderError> {
     let type_ = err["type"].as_str().unwrap_or("");
     let message = err["message"].as_str().unwrap_or("").to_string();
     match type_ {
-        "invalid_request_error" if message.contains("prompt is too long") => {
+        "invalid_request_error"
+            if message.contains("prompt is too long")
+                || message.contains("input length and `max_tokens` exceed context limit") =>
+        {
             Some(ProviderError::ContextWindowExceeded { message })
         }
         "not_found_error" => Some(ProviderError::ModelNotFound { message }),

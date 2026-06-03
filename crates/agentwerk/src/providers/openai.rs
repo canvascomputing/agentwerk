@@ -184,9 +184,11 @@ fn classify_400(body: &str) -> Option<ProviderError> {
     let json: Value = serde_json::from_str(body).ok()?;
     let err = &json["error"];
     let code = err["code"].as_str().unwrap_or("");
+    let type_ = err["type"].as_str().unwrap_or("");
     let message = err["message"].as_str().unwrap_or("").to_string();
 
     let is_context_window = code == "context_length_exceeded"
+        || type_ == "exceed_context_size_error"
         || message.contains("maximum context length")
         || message.contains("context_length_exceeded");
     if is_context_window {

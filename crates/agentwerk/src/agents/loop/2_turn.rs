@@ -5,13 +5,14 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
 use crate::agents::agent::Agent;
+use crate::agents::compaction as algo;
 use crate::agents::policy::Policies;
 use crate::agents::tickets::{policy_violated_kind, to_messages, Reply, Status, TicketSystem};
-use crate::event::{EventKind, PolicyKind};
+use crate::event::{CompactReason, EventKind, PolicyKind};
 use crate::providers::types::TokenUsage;
-use crate::providers::{AsUserMessage, Message, Model};
+use crate::providers::{AsUserMessage, Message, Model, RequestErrorKind};
 
-use super::{compaction, reply, tool_call, Action, POLL_INTERVAL};
+use super::{reply, tool_call, Action, POLL_INTERVAL};
 
 const RESUME_OR_FINISH_DETAIL: &str =
     "Your last reply contained no tool call. Call `finish_ticket` with your result if the work is complete, or another tool to continue.";
@@ -55,6 +56,19 @@ impl<'a> LoopContext<'a> {
             consecutive_schema_failures: 0,
             last_usage: None,
         }
+    }
+
+    fn emit(&self, kind: EventKind) {
+        self.ticket_system
+            .emit(&self.ticket_key, self.agent.get_name(), kind);
+    }
+
+    fn fail_with(&self, kind: RequestErrorKind, message: String) {
+        self.emit(EventKind::RequestFailed { kind, message });
+        self.emit(EventKind::TicketFailed {
+            key: self.ticket_key.clone(),
+        });
+        let _ = self.ticket_system.set_failed(&self.ticket_key);
     }
 }
 
@@ -167,9 +181,7 @@ pub(super) async fn start_turn<'a>(
         _ => None,
     };
     if let Some(kind) = status {
-        context_ref
-            .ticket_system
-            .emit(&context_ref.ticket_key, context_ref.agent.get_name(), kind);
+        context_ref.emit(kind);
         *context = None;
         return Action::Replay;
     }
@@ -181,28 +193,20 @@ pub(super) async fn start_turn<'a>(
         context_ref.consecutive_schema_failures =
             context_ref.consecutive_schema_failures.saturating_add(1);
         if context_ref.consecutive_schema_failures >= max {
-            context_ref.ticket_system.emit(
-                &context_ref.ticket_key,
-                context_ref.agent.get_name(),
-                EventKind::PolicyViolated {
-                    kind: PolicyKind::MaxSchemaRetries,
-                    limit: u64::from(max),
-                },
-            );
+            context_ref.emit(EventKind::PolicyViolated {
+                kind: PolicyKind::MaxSchemaRetries,
+                limit: u64::from(max),
+            });
             let _ = context_ref
                 .ticket_system
                 .set_failed(&context_ref.ticket_key);
             return Action::Replay;
         }
-        context_ref.ticket_system.emit(
-            &context_ref.ticket_key,
-            context_ref.agent.get_name(),
-            EventKind::SchemaRetried {
-                attempt: context_ref.consecutive_schema_failures,
-                max_attempts: max,
-                message: RESUME_OR_FINISH_DETAIL.to_string(),
-            },
-        );
+        context_ref.emit(EventKind::SchemaRetried {
+            attempt: context_ref.consecutive_schema_failures,
+            max_attempts: max,
+            message: RESUME_OR_FINISH_DETAIL.to_string(),
+        });
         context_ref.ticket_system.add_reply(
             &context_ref.ticket_key,
             Reply::user_text(crate::prompts::retry_directive(RESUME_OR_FINISH_DETAIL)),
@@ -241,10 +245,76 @@ pub(super) async fn run_agent(agent: Agent) {
             .as_mut()
             .expect("start_turn populates context on Proceed");
 
-        let messages = phase!(compaction::proactive_compact(context_ref, messages).await);
+        let messages = phase!(proactive_compact(context_ref, messages).await);
         let reply_val = phase!(reply::run(context_ref, messages).await);
         phase!(tool_call::run(context_ref, reply_val).await);
     }
+}
+
+pub(super) async fn compact(context: &mut LoopContext<'_>, reason: CompactReason) -> Action<()> {
+    context.emit(EventKind::CompactionStarted { reason });
+
+    let applied = match algo::run(
+        &context.agent.provider_handle(),
+        &context.model.name,
+        context.model.context_window,
+        context.ticket_system,
+        &context.ticket_key,
+    )
+    .await
+    {
+        Ok(applied) => applied,
+        Err(e) => {
+            context.emit(EventKind::CompactionFailed {
+                reason,
+                message: e.to_string(),
+            });
+            context.fail_with(e.kind(), e.to_string());
+            return Action::Stop;
+        }
+    };
+
+    if !applied && matches!(reason, CompactReason::Reactive) {
+        context.fail_with(
+            RequestErrorKind::ContextWindowExceeded,
+            "context still exceeds window after compaction".into(),
+        );
+        return Action::Stop;
+    }
+
+    context.emit(EventKind::CompactionFinished { reason });
+    match reason {
+        CompactReason::Proactive => Action::Proceed(()),
+        CompactReason::Reactive => Action::Replay,
+    }
+}
+
+pub(super) async fn proactive_compact(
+    context: &mut LoopContext<'_>,
+    mut messages: Vec<Message>,
+) -> Action<Vec<Message>> {
+    let tools = context.agent.tool_definitions();
+    let window = context.model.context_window;
+
+    let exceeds_proactive_threshold = context.last_usage.as_ref().is_some_and(|usage| {
+        algo::should_compact_proactively(window, usage, &messages, &context.system_prompt, &tools)
+    });
+
+    if exceeds_proactive_threshold {
+        match compact(context, CompactReason::Proactive).await {
+            Action::Stop => return Action::Stop,
+            Action::Replay => return Action::Replay,
+            Action::Pause => unreachable!("compact() never returns Pause"),
+            Action::Proceed(()) => {}
+        }
+        messages = context
+            .ticket_system
+            .get_ticket(&context.ticket_key)
+            .map(|t| to_messages(&t.replies))
+            .unwrap_or_default();
+    }
+
+    Action::Proceed(messages)
 }
 
 #[cfg(test)]
@@ -254,7 +324,7 @@ mod tests {
 
     use crate::agents::agent::Agent;
     use crate::agents::r#loop::test_util::*;
-    use crate::agents::tickets::{Status, Ticket, TicketSystem};
+    use crate::agents::tickets::{Status, TicketSystem};
     use crate::agents::Knowledge;
     use crate::providers::Provider;
     use crate::tools::ManageTicketsTool;
@@ -1165,18 +1235,6 @@ mod tests {
             .count()
     }
 
-    fn blocking_limit_events(events: &[crate::event::Event]) -> usize {
-        events
-            .iter()
-            .filter(|e| {
-                matches!(
-                    e.kind,
-                    crate::event::EventKind::BlockingLimitExceeded { .. }
-                )
-            })
-            .count()
-    }
-
     #[tokio::test]
     async fn first_overflow_attempts_compaction_before_request_failed() {
         let provider = MockProvider::with_results(vec![
@@ -1233,6 +1291,123 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn reactive_overflow_recovers_with_token_arithmetic_message() {
+        use crate::event::CompactReason;
+        let provider = MockProvider::with_results(vec![
+            Ok(tool_call_response("primer")),
+            Err(crate::providers::ProviderError::ContextWindowExceeded {
+                message: "input length plus reserved output tokens exceeds the context limit"
+                    .into(),
+            }),
+            Ok(text_response_with_usage(
+                "SUMMARY",
+                crate::providers::types::TokenUsage::default(),
+            )),
+            Ok(write_result_response("ok")),
+        ]);
+        let (events, provider, ticket) = run_one(provider, 0, 10, Some(string_schema())).await;
+
+        assert_eq!(provider.requests(), 4);
+        assert_eq!(compaction_starts(&events, CompactReason::Reactive), 1);
+        assert_eq!(compaction_finishes(&events, CompactReason::Reactive), 1);
+        assert!(failures_in(&events).is_empty());
+        assert_eq!(ticket.status, Status::Finished);
+    }
+
+    #[tokio::test]
+    async fn reactive_overflow_recovers_with_context_capacity_message() {
+        use crate::event::CompactReason;
+        let provider = MockProvider::with_results(vec![
+            Ok(tool_call_response("primer")),
+            Err(crate::providers::ProviderError::ContextWindowExceeded {
+                message: "request token count exceeds the available context size".into(),
+            }),
+            Ok(text_response_with_usage(
+                "SUMMARY",
+                crate::providers::types::TokenUsage::default(),
+            )),
+            Ok(write_result_response("ok")),
+        ]);
+        let (events, provider, ticket) = run_one(provider, 0, 10, Some(string_schema())).await;
+
+        assert_eq!(provider.requests(), 4);
+        assert_eq!(compaction_starts(&events, CompactReason::Reactive), 1);
+        assert_eq!(compaction_finishes(&events, CompactReason::Reactive), 1);
+        assert!(failures_in(&events).is_empty());
+        assert_eq!(ticket.status, Status::Finished);
+    }
+
+    #[tokio::test]
+    async fn oversized_single_user_message_recovers_via_chunked_summarization() {
+        use crate::event::CompactReason;
+
+        let provider = MockProvider::with_results(vec![
+            Err(crate::providers::ProviderError::ContextWindowExceeded {
+                message: "prompt token count exceeds context window".into(),
+            }),
+            Ok(text_response_with_usage(
+                "PART_A",
+                crate::providers::types::TokenUsage::default(),
+            )),
+            Ok(text_response_with_usage(
+                "PART_B",
+                crate::providers::types::TokenUsage::default(),
+            )),
+            Ok(write_result_response("ok")),
+        ]);
+        let (events, provider, ticket) =
+            run_with_context_window(provider, 10_000, "x\n".repeat(25_000)).await;
+
+        assert_eq!(provider.requests(), 4);
+        assert_eq!(compaction_starts(&events, CompactReason::Reactive), 1);
+        assert_eq!(compaction_finishes(&events, CompactReason::Reactive), 1);
+        assert!(failures_in(&events).is_empty());
+        assert_eq!(ticket.status, Status::Finished);
+    }
+
+    #[tokio::test]
+    async fn compaction_terminal_failure_transitions_ticket_to_failed() {
+        let provider = MockProvider::with_results(vec![Err(
+            crate::providers::ProviderError::ContextWindowExceeded {
+                message: "overflow".into(),
+            },
+        )]);
+        let (events, _, ticket) =
+            run_with_context_window(provider, 10_000, "x\n".repeat(25_000)).await;
+
+        assert_eq!(
+            ticket.status,
+            Status::Failed,
+            "terminal compaction failure must transition the ticket to Failed",
+        );
+        let ticket_failed_count = events
+            .iter()
+            .filter(|e| matches!(&e.kind, crate::event::EventKind::TicketFailed { .. }))
+            .count();
+        assert_eq!(ticket_failed_count, 1);
+    }
+
+    #[tokio::test]
+    async fn still_oversized_after_compaction_transitions_ticket_to_failed() {
+        let provider = MockProvider::with_results(vec![Ok(text_response_with_usage(
+            "SUMMARY",
+            crate::providers::types::TokenUsage::default(),
+        ))]);
+        let (events, _, ticket) = run_with_context_window(provider, 1_000, "hi").await;
+
+        assert_eq!(
+            ticket.status,
+            Status::Failed,
+            "post-compaction window check must transition the ticket to Failed",
+        );
+        let ticket_failed_count = events
+            .iter()
+            .filter(|e| matches!(&e.kind, crate::event::EventKind::TicketFailed { .. }))
+            .count();
+        assert_eq!(ticket_failed_count, 1);
+    }
+
+    #[tokio::test]
     async fn reactive_overflow_twice_in_a_row_fails_the_ticket() {
         let provider = MockProvider::with_results(vec![
             Ok(tool_call_response("primer")),
@@ -1247,7 +1422,7 @@ mod tests {
                 message: "second overflow".into(),
             }),
         ]);
-        let (events, _, _) = run_one(provider, 0, 10, Some(string_schema())).await;
+        let (events, _, ticket) = run_one(provider, 0, 10, Some(string_schema())).await;
 
         assert_eq!(
             compaction_finishes(&events, crate::event::CompactReason::Reactive),
@@ -1255,6 +1430,7 @@ mod tests {
         );
         let failures = failures_in(&events);
         assert!(!failures.is_empty());
+        assert_eq!(ticket.status, Status::Failed);
     }
 
     #[tokio::test]
@@ -1414,38 +1590,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn response_status_context_window_exceeded_consumes_compaction_retry_budget() {
-        use crate::providers::types::ModelResponse;
-        let provider = MockProvider::with_results(vec![
-            Ok(tool_call_response("primer")),
-            Ok(ModelResponse {
-                content: vec![crate::providers::ContentBlock::Text {
-                    text: "first overflow".into(),
-                }],
-                status: crate::providers::types::ResponseStatus::ContextWindowExceeded,
-                usage: crate::providers::types::TokenUsage {
-                    input_tokens: 198_000,
-                    output_tokens: 0,
-                },
-                model: "mock".into(),
-            }),
-            Ok(text_response_with_usage(
-                "SUMMARY",
-                crate::providers::types::TokenUsage::default(),
-            )),
-        ]);
-        let (events, _, _) = run_compaction(provider).await;
-
-        assert_eq!(
-            compaction_starts(&events, crate::event::CompactReason::Reactive),
-            1
-        );
-        let failures = failures_in(&events);
-        assert!(!failures.is_empty());
-        assert!(failures[0].contains("after compaction"));
-    }
-
-    #[tokio::test]
     async fn proactive_compact_does_not_consume_reactive_budget() {
         use crate::event::CompactReason;
         let provider = MockProvider::with_results(vec![
@@ -1482,154 +1626,6 @@ mod tests {
     }
 
     // Blocking limit
-
-    #[tokio::test]
-    async fn blocking_limit_exceeded_emits_event_and_skips_provider_call() {
-        use crate::event::CompactReason;
-        let provider = MockProvider::with_results(vec![
-            Ok(tool_call_response_with_usage(
-                "primer",
-                crate::providers::types::TokenUsage {
-                    input_tokens: 198_000,
-                    output_tokens: 0,
-                },
-            )),
-            Ok(text_response_with_usage(
-                "SUMMARY-A",
-                crate::providers::types::TokenUsage::default(),
-            )),
-            Ok(text_response_with_usage(
-                "SUMMARY-B",
-                crate::providers::types::TokenUsage::default(),
-            )),
-            Ok(text_response_with_usage(
-                "SUMMARY-C",
-                crate::providers::types::TokenUsage::default(),
-            )),
-        ]);
-        let (events, _, _) = run_compaction(provider).await;
-
-        assert!(blocking_limit_events(&events) >= 1);
-
-        for window in events.windows(2) {
-            if matches!(
-                &window[0].kind,
-                crate::event::EventKind::BlockingLimitExceeded { .. }
-            ) {
-                assert!(matches!(
-                    &window[1].kind,
-                    crate::event::EventKind::CompactionStarted {
-                        reason: CompactReason::Reactive
-                    } | crate::event::EventKind::RequestFailed { .. },
-                ),);
-            }
-        }
-    }
-
-    #[tokio::test]
-    async fn blocking_limit_uses_compaction_retry_budget() {
-        let provider = MockProvider::with_results(vec![
-            Ok(tool_call_response("primer")),
-            Ok(tool_call_response_with_usage(
-                "primer",
-                crate::providers::types::TokenUsage {
-                    input_tokens: 198_000,
-                    output_tokens: 0,
-                },
-            )),
-            Ok(text_response_with_usage(
-                "SUMMARY-A",
-                crate::providers::types::TokenUsage::default(),
-            )),
-            Ok(text_response_with_usage(
-                "SUMMARY-B",
-                crate::providers::types::TokenUsage::default(),
-            )),
-            Ok(text_response_with_usage(
-                "SUMMARY-C",
-                crate::providers::types::TokenUsage::default(),
-            )),
-        ]);
-        let (events, _, _) = run_compaction(provider).await;
-
-        assert!(blocking_limit_events(&events) >= 1);
-        let failures = failures_in(&events);
-        assert!(!failures.is_empty());
-        assert!(failures[0].contains("after compaction"));
-    }
-
-    #[tokio::test]
-    async fn blocking_limit_does_not_fire_in_first_iteration() {
-        let provider = MockProvider::with_results(vec![Ok(write_result_response("done"))]);
-        let (events, _, ticket) = run_compaction(provider).await;
-
-        assert_eq!(blocking_limit_events(&events), 0);
-        assert_eq!(ticket.status, Status::Finished);
-    }
-
-    #[tokio::test]
-    async fn blocking_limit_includes_system_prompt_and_tools_in_estimate() {
-        use crate::tools::{Tool, ToolResult};
-
-        let provider = MockProvider::with_results(vec![
-            Ok(tool_call_response_with_usage(
-                "primer",
-                crate::providers::types::TokenUsage {
-                    input_tokens: 195_500,
-                    output_tokens: 0,
-                },
-            )),
-            Ok(text_response_with_usage(
-                "SUMMARY-A",
-                crate::providers::types::TokenUsage::default(),
-            )),
-            Ok(text_response_with_usage(
-                "SUMMARY-B",
-                crate::providers::types::TokenUsage::default(),
-            )),
-            Ok(text_response_with_usage(
-                "SUMMARY-C",
-                crate::providers::types::TokenUsage::default(),
-            )),
-        ]);
-
-        let collected: Arc<std::sync::Mutex<Vec<crate::event::Event>>> =
-            Arc::new(std::sync::Mutex::new(Vec::new()));
-        let handler: Arc<dyn Fn(crate::event::Event) + Send + Sync> = {
-            let c = Arc::clone(&collected);
-            Arc::new(move |e| c.lock().unwrap().push(e))
-        };
-
-        let big_desc = "x".repeat(6_000);
-        let big_tool = Tool::new("big_tool", big_desc)
-            .handler(|_input, _ctx| async { Ok(ToolResult::success("ok")) });
-
-        let results_dir = crate::test_util::TempDir::new().unwrap();
-        let tickets = crate::agents::tickets::TicketSystem::new();
-        tickets
-            .dir(results_dir.path().to_path_buf())
-            .max_request_retries(0)
-            .request_retry_delay(std::time::Duration::from_millis(1))
-            .max_schema_retries(10)
-            .max_time(std::time::Duration::from_millis(500));
-
-        tickets.event_handler(move |e| handler(e));
-        tickets.agent(
-            Agent::new()
-                .name("tester")
-                .provider(provider.clone() as Arc<dyn Provider>)
-                .model("claude-sonnet-4-20250514")
-                .role("test")
-                .context("static")
-                .tool(big_tool),
-        );
-        tickets.ticket(Ticket::new("go").schema(string_schema()));
-
-        let _ = tickets.finish().await;
-        let events = collected.lock().unwrap().clone();
-
-        assert!(blocking_limit_events(&events) >= 1);
-    }
 
     fn string_schema() -> crate::schemas::Schema {
         crate::schemas::Schema::parse(serde_json::json!({"type": "string"})).expect("valid schema")

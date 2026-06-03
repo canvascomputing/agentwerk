@@ -17,9 +17,9 @@ use agentwerk::{Agent, Event, Ticket, TicketSystem};
 // without any synthetic filler or intermediate tool steps.
 const LOCAL_CTX: u64 = 4_096;
 
-// A realistic debugging scenario: ~1 500 tokens, well under the 5 192-token
-// blocking limit, with enough structure (logs, code, hypotheses) to produce a
-// meaningful summary rather than just echoing the input.
+// A realistic debugging scenario: ~1 500 tokens, with enough structure
+// (logs, code, hypotheses) to produce a meaningful summary rather than
+// just echoing the input.
 const TASK: &str = "\
 You are helping investigate a production incident. Here is the full context
 collected so far. Summarise the key findings and propose a next debugging step.
@@ -167,7 +167,7 @@ async fn summariser_condenses_transcript_and_ticket_completes(
 
     assert!(
         compacted,
-        "CompactionStarted must fire before the first request (blocking limit exceeded)"
+        "CompactionStarted must fire before the first request (compaction threshold exceeded)"
     );
     assert!(
         compaction_succeeded,

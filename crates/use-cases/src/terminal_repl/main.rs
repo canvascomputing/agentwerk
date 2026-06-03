@@ -28,7 +28,7 @@ use std::sync::Arc;
 
 use agentwerk::agents::tickets::ReplyContent;
 use agentwerk::event::{Event, EventKind};
-use agentwerk::providers::{model_from_env, Model};
+use agentwerk::providers::{context_window_from_env, model_from_env, Model};
 use agentwerk::tools::{
     GlobTool, GrepTool, ListDirectoryTool, ManageTicketsTool, ReadFileTool, ReadTicketsTool,
     WriteFileTool,
@@ -52,9 +52,11 @@ async fn main() {
     // thresholds still derive from the model itself; this knob only
     // changes what the REPL prints.
     let test_window: Option<u64> = std::env::args().nth(1).and_then(|s| s.parse().ok());
-    let real_window = model_from_env()
-        .ok()
-        .and_then(|name| Model::from_name(&name).context_window);
+    let real_window = context_window_from_env().or_else(|| {
+        model_from_env()
+            .ok()
+            .and_then(|name| Model::from_name(&name).context_window)
+    });
     let effective_window = test_window.or(real_window);
     match (test_window, real_window) {
         (Some(w), _) => {
@@ -415,41 +417,31 @@ fn print_event(
         }
         EventKind::CompactionFailed { reason, message } => {
             break_stream();
-            let short = message.split_once(':').map(|(h, _)| h).unwrap_or(message);
             eprintln!(
-                "{}✗ compaction failed ({reason:?}){}: {short}{}",
+                "{}✗ compaction failed ({reason:?}){}{}",
                 style.red,
                 window_usage_suffix(window, last_input),
                 style.reset,
             );
+            print_indented_detail(message, style);
         }
-        EventKind::BlockingLimitExceeded {
-            estimated_tokens,
-            threshold_tokens,
-        } => {
+        EventKind::RequestFailed { kind, message } => {
             break_stream();
-            eprintln!(
-                "{}⚠ blocking limit: estimated {estimated_tokens} tokens ≥ {threshold_tokens}{}",
-                style.red, style.reset,
-            );
-        }
-        EventKind::RequestFailed { message, .. } => {
-            break_stream();
-            let short = message.split_once(':').map(|(h, _)| h).unwrap_or(message);
-            eprintln!("{}✗ request failed: {short}{}", style.red, style.reset);
+            eprintln!("{}✗ request failed ({kind:?}){}", style.red, style.reset);
+            print_indented_detail(message, style);
         }
         EventKind::RequestRetried {
             attempt,
             max_attempts,
+            kind,
             message,
-            ..
         } => {
             break_stream();
-            let short = message.split_once(':').map(|(h, _)| h).unwrap_or(message);
             eprintln!(
-                "{}↻ retry {attempt}/{max_attempts}: {short}{}",
+                "{}↻ retry {attempt}/{max_attempts} ({kind:?}){}",
                 style.dim, style.reset,
             );
+            print_indented_detail(message, style);
         }
         EventKind::SchemaRetried { .. } => {}
         EventKind::PolicyViolated { kind, limit } => {
@@ -460,6 +452,15 @@ fn print_event(
             );
         }
         _ => {}
+    }
+}
+
+fn print_indented_detail(message: &str, style: &Style) {
+    for line in message.lines() {
+        let trimmed = line.trim();
+        if !trimmed.is_empty() {
+            eprintln!("{}    {trimmed}{}", style.dim, style.reset);
+        }
     }
 }
 

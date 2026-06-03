@@ -116,9 +116,15 @@ impl Agent {
         self
     }
 
-    /// Read the model name from environment variables. Panics if no provider can be detected.
+    /// Read the model name from environment variables, then apply the
+    /// `MODEL_CONTEXT_WINDOW` override on top of the registry guess.
+    /// Panics if no provider can be detected.
     pub fn model_from_env(self) -> Self {
-        let model = crate::providers::model_from_env().expect("model name required");
+        let name = crate::providers::model_from_env().expect("model name required");
+        let mut model = Model::from_name(name);
+        if let Some(n) = crate::providers::context_window_from_env() {
+            model = model.context_window(n);
+        }
         self.model(model)
     }
 
