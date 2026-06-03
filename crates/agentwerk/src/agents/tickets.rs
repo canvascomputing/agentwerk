@@ -117,22 +117,6 @@ impl Ticket {
         self
     }
 
-    /// True when the model owes a turn: the transcript is empty, the
-    /// last reply is user-side, or the model's last reply still has
-    /// unresolved tool calls. Used by the loop's wait-for-response
-    /// branch and by `pending_count`.
-    pub(crate) fn is_waiting_for_response(&self) -> bool {
-        let Some(r) = self.replies.last() else {
-            return true;
-        };
-        if r.author != "assistant" {
-            return true;
-        }
-        r.content
-            .iter()
-            .any(|x| matches!(x, ReplyContent::ToolUse { .. }))
-    }
-
     /// Reduce the transcript to just `summary_text`: every non-system
     /// reply is dropped and a single `user` reply carrying
     /// `summary_text` is appended. System-author replies (the system
@@ -141,6 +125,15 @@ impl Ticket {
     pub(crate) fn summarize(&mut self, summary_text: String) {
         self.replies.retain(|r| r.author == "system");
         self.replies.push(Reply::user_text(summary_text));
+    }
+
+    /// False once the assistant has spoken: the loop pauses until the
+    /// next non-assistant reply lands (a tool-result append or an
+    /// external caller reply via [`TicketSystem::reply`]).
+    pub(crate) fn is_waiting_for_response(&self) -> bool {
+        self.replies
+            .last()
+            .is_none_or(|r| r.author != "assistant")
     }
 }
 
@@ -673,11 +666,12 @@ impl TicketSystem {
         self.dispatch(ticket)
     }
 
-    /// Append a user-side text reply to an existing ticket. The
-    /// agent loop's wait-for-input branch picks it up on the next
-    /// iteration; the model sees it as the next `user` message in
-    /// the conversation. Use this to drive multi-turn chats on one
-    /// ticket instead of creating a new ticket per turn.
+    /// Append a user-side text reply to an existing ticket. After the
+    /// assistant has spoken, the loop's `start_turn` gate pauses on
+    /// the ticket; this call flips the gate by appending a non-assistant
+    /// reply, and the next iteration sends the new turn to the provider.
+    /// Use this to drive multi-turn chats on one ticket instead of
+    /// creating a new ticket per turn.
     pub fn reply(&self, key: &str, content: impl Into<String>) -> &Self {
         self.add_reply(key, Reply::user_text(content));
         self
@@ -1268,7 +1262,7 @@ pub(crate) fn pending_count(ticket_system: &TicketSystem) -> usize {
         .values()
         .filter(|t| match t.status {
             Status::Todo => true,
-            Status::InProgress => t.is_waiting_for_response(),
+            Status::InProgress => true,
             _ => false,
         })
         .count()
@@ -2199,5 +2193,103 @@ mod tests {
         let restored = t.schema.expect("JSON schema must restore");
         assert!(restored.validate(&serde_json::json!({"n": 3})).is_ok());
         assert!(restored.validate(&serde_json::json!({})).is_err());
+    }
+
+    // pending_count
+
+    #[test]
+    fn pending_count_counts_todo() {
+        let (sys, _tmp) = test_system();
+        sys.task("a");
+        sys.task("b");
+        assert_eq!(pending_count(&sys), 2);
+    }
+
+    #[test]
+    fn pending_count_counts_inprogress_waiting_for_response() {
+        let (sys, _tmp) = test_system();
+        sys.task("x");
+        sys.claim(|t| t.status == Status::Todo, "agent").unwrap();
+        assert_eq!(pending_count(&sys), 1);
+    }
+
+    #[test]
+    fn pending_count_counts_inprogress_with_text_only_last_reply() {
+        let (sys, _tmp) = test_system();
+        sys.task("x");
+        let key = sys.claim(|t| t.status == Status::Todo, "agent").unwrap();
+        sys.add_reply(
+            &key,
+            Reply::assistant(&[ContentBlock::Text {
+                text: "hello".into(),
+            }]),
+        );
+        assert_eq!(pending_count(&sys), 1);
+    }
+
+    #[test]
+    fn pending_count_counts_inprogress_with_empty_content_last_reply() {
+        let (sys, _tmp) = test_system();
+        sys.task("x");
+        let key = sys.claim(|t| t.status == Status::Todo, "agent").unwrap();
+        sys.add_reply(&key, Reply::assistant(&[]));
+        assert_eq!(pending_count(&sys), 1);
+    }
+
+    #[test]
+    fn pending_count_excludes_finished_and_failed() {
+        let (sys, _tmp) = test_system();
+        sys.task("a");
+        sys.task("b");
+        let key_a = sys.claim(|t| t.key == "TICKET-1", "agent").unwrap();
+        let key_b = sys.claim(|t| t.key == "TICKET-2", "agent").unwrap();
+        sys.set_finished(&key_a).unwrap();
+        sys.set_failed(&key_b).unwrap();
+        assert_eq!(pending_count(&sys), 0);
+    }
+
+    // is_waiting_for_response
+
+    #[test]
+    fn is_waiting_for_response_true_for_empty_transcript() {
+        let ticket = Ticket::new("x");
+        assert!(ticket.is_waiting_for_response());
+    }
+
+    #[test]
+    fn is_waiting_for_response_true_when_last_reply_is_user() {
+        let mut ticket = Ticket::new("x");
+        ticket.replies.push(Reply::user_text("hello"));
+        assert!(ticket.is_waiting_for_response());
+    }
+
+    #[test]
+    fn is_waiting_for_response_false_when_last_reply_is_text_assistant() {
+        let mut ticket = Ticket::new("x");
+        ticket.replies.push(Reply::user_text("go"));
+        ticket.replies.push(Reply::assistant(&[ContentBlock::Text {
+            text: "hi".into(),
+        }]));
+        assert!(!ticket.is_waiting_for_response());
+    }
+
+    #[test]
+    fn is_waiting_for_response_false_when_assistant_reply_has_empty_content() {
+        let mut ticket = Ticket::new("x");
+        ticket.replies.push(Reply::user_text("go"));
+        ticket.replies.push(Reply::assistant(&[]));
+        assert!(!ticket.is_waiting_for_response());
+    }
+
+    #[test]
+    fn is_waiting_for_response_false_when_assistant_reply_carries_tool_use() {
+        let mut ticket = Ticket::new("x");
+        ticket.replies.push(Reply::user_text("go"));
+        ticket.replies.push(Reply::assistant(&[ContentBlock::ToolUse {
+            id: "call-1".into(),
+            name: "do_thing".into(),
+            input: serde_json::json!({}),
+        }]));
+        assert!(!ticket.is_waiting_for_response());
     }
 }

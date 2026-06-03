@@ -7,11 +7,14 @@ use std::sync::Arc;
 use crate::agents::agent::Agent;
 use crate::agents::policy::Policies;
 use crate::agents::tickets::{policy_violated_kind, to_messages, Reply, Status, TicketSystem};
-use crate::event::EventKind;
+use crate::event::{EventKind, PolicyKind};
 use crate::providers::types::TokenUsage;
 use crate::providers::{AsUserMessage, Message, Model};
 
 use super::{compaction, reply, tool_call, Action, POLL_INTERVAL};
+
+const RESUME_OR_FINISH_DETAIL: &str =
+    "Your last reply contained no tool call. Call `finish_ticket` with your result if the work is complete, or another tool to continue.";
 
 pub(super) struct LoopContext<'a> {
     pub(super) agent: &'a Agent,
@@ -87,7 +90,6 @@ pub(super) async fn start_turn<'a>(
                         .find_ticket(|t| {
                             t.status == Status::InProgress
                                 && t.labels.iter().any(|l| l == agent.get_name())
-                                && t.is_waiting_for_response()
                         })
                         .map(|t| t.key.clone())
                 })
@@ -145,7 +147,7 @@ pub(super) async fn start_turn<'a>(
     }
 
     let context_ref = context
-        .as_ref()
+        .as_mut()
         .expect("context is Some after the claim branch");
     let Some(ticket) = context_ref
         .ticket_system
@@ -171,7 +173,40 @@ pub(super) async fn start_turn<'a>(
         return Action::Replay;
     }
     if !ticket.is_waiting_for_response() {
-        tokio::time::sleep(POLL_INTERVAL).await;
+        if context_ref.agent.is_interactive() {
+            tokio::time::sleep(POLL_INTERVAL).await;
+            return Action::Replay;
+        }
+        let max = context_ref.policies.max_schema_retries.unwrap_or(u32::MAX);
+        context_ref.consecutive_schema_failures =
+            context_ref.consecutive_schema_failures.saturating_add(1);
+        if context_ref.consecutive_schema_failures >= max {
+            context_ref.ticket_system.emit(
+                &context_ref.ticket_key,
+                context_ref.agent.get_name(),
+                EventKind::PolicyViolated {
+                    kind: PolicyKind::MaxSchemaRetries,
+                    limit: u64::from(max),
+                },
+            );
+            let _ = context_ref
+                .ticket_system
+                .set_failed(&context_ref.ticket_key);
+            return Action::Replay;
+        }
+        context_ref.ticket_system.emit(
+            &context_ref.ticket_key,
+            context_ref.agent.get_name(),
+            EventKind::SchemaRetried {
+                attempt: context_ref.consecutive_schema_failures,
+                max_attempts: max,
+                message: RESUME_OR_FINISH_DETAIL.to_string(),
+            },
+        );
+        context_ref.ticket_system.add_reply(
+            &context_ref.ticket_key,
+            Reply::user_text(crate::prompts::retry_directive(RESUME_OR_FINISH_DETAIL)),
+        );
         return Action::Replay;
     }
     Action::Proceed(to_messages(&ticket.replies))
@@ -252,6 +287,184 @@ mod tests {
 
         assert_eq!(tickets.results().len(), 2);
         assert_eq!(tickets.last_result().as_deref(), Some("b-done"));
+    }
+
+    #[tokio::test]
+    async fn loop_pauses_after_text_reply_then_resumes_when_caller_replies() {
+        let results_dir = crate::test_util::TempDir::new().unwrap();
+        let provider = MockProvider::with_results(vec![
+            Ok(text_response("hi")),
+            Ok(write_result_response("done")),
+        ]);
+        let tickets = TicketSystem::new();
+        tickets
+            .dir(results_dir.path().to_path_buf())
+            .max_request_retries(0)
+            .request_retry_delay(Duration::from_millis(1));
+        tickets.agent(
+            Agent::new()
+                .name("chatbot")
+                .interactive()
+                .provider(provider.clone() as Arc<dyn Provider>)
+                .model("mock")
+                .role("test")
+                .tool(ManageTicketsTool),
+        );
+        let key = tickets.task("hello");
+
+        let tickets_for_inject = Arc::clone(&tickets);
+        let inject = async move {
+            for _ in 0..200 {
+                let last_is_assistant = tickets_for_inject
+                    .first_ticket()
+                    .and_then(|t| t.replies.last().map(|r| r.author == "assistant"))
+                    .unwrap_or(false);
+                if last_is_assistant {
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(5)).await;
+            }
+            let ticket = tickets_for_inject
+                .first_ticket()
+                .expect("ticket must exist");
+            assert_eq!(ticket.status, Status::InProgress);
+            assert_eq!(
+                ticket.replies.last().map(|r| r.author.clone()),
+                Some("assistant".into()),
+                "gate must pause on the assistant text reply",
+            );
+            tickets_for_inject.reply(&key, "what next?");
+        };
+
+        tokio::time::timeout(Duration::from_secs(5), async {
+            tokio::join!(tickets.finish(), inject);
+        })
+        .await
+        .expect("test did not finish within 5s");
+
+        let ticket = tickets.first_ticket().expect("ticket must exist");
+        assert_eq!(ticket.status, Status::Finished);
+        assert_eq!(provider.requests(), 2);
+    }
+
+    #[tokio::test]
+    async fn loop_fails_ticket_after_text_reply_when_agent_is_not_interactive() {
+        use crate::event::{Event, EventKind, PolicyKind};
+        use std::sync::Mutex;
+
+        let results_dir = crate::test_util::TempDir::new().unwrap();
+        let provider = MockProvider::with_results(vec![Ok(text_response("hi"))]);
+        let collected: Arc<Mutex<Vec<Event>>> = Arc::new(Mutex::new(Vec::new()));
+        let handler: Arc<dyn Fn(Event) + Send + Sync> = {
+            let c = Arc::clone(&collected);
+            Arc::new(move |e| c.lock().unwrap().push(e))
+        };
+        let tickets = TicketSystem::new();
+        tickets
+            .dir(results_dir.path().to_path_buf())
+            .max_request_retries(0)
+            .request_retry_delay(Duration::from_millis(1))
+            .max_schema_retries(1);
+        tickets.event_handler(move |e| handler(e));
+        tickets.agent(
+            Agent::new()
+                .name("worker")
+                .provider(provider.clone() as Arc<dyn Provider>)
+                .model("mock")
+                .role("test")
+                .tool(ManageTicketsTool),
+        );
+        tickets.task("go");
+
+        tokio::time::timeout(Duration::from_secs(5), tickets.finish())
+            .await
+            .expect("test did not finish within 5s");
+
+        let ticket = tickets.first_ticket().expect("ticket must exist");
+        assert_eq!(ticket.status, Status::Failed);
+        assert_eq!(provider.requests(), 1);
+
+        let events = collected.lock().unwrap().clone();
+        let policy_violated = events.iter().any(|e| {
+            matches!(
+                &e.kind,
+                EventKind::PolicyViolated {
+                    kind: PolicyKind::MaxSchemaRetries,
+                    limit: 1,
+                },
+            )
+        });
+        assert!(policy_violated, "expected PolicyViolated MaxSchemaRetries");
+        let ticket_failed = events
+            .iter()
+            .any(|e| matches!(&e.kind, EventKind::TicketFailed { .. }));
+        assert!(ticket_failed, "expected TicketFailed");
+    }
+
+    #[tokio::test]
+    async fn loop_recovers_from_one_silence_when_budget_allows() {
+        use crate::agents::tickets::ReplyContent;
+        use crate::event::{Event, EventKind};
+        use std::sync::Mutex;
+
+        let results_dir = crate::test_util::TempDir::new().unwrap();
+        let provider = MockProvider::with_results(vec![
+            Ok(text_response("hi")),
+            Ok(write_result_response("done")),
+        ]);
+        let collected: Arc<Mutex<Vec<Event>>> = Arc::new(Mutex::new(Vec::new()));
+        let handler: Arc<dyn Fn(Event) + Send + Sync> = {
+            let c = Arc::clone(&collected);
+            Arc::new(move |e| c.lock().unwrap().push(e))
+        };
+        let tickets = TicketSystem::new();
+        tickets
+            .dir(results_dir.path().to_path_buf())
+            .max_request_retries(0)
+            .request_retry_delay(Duration::from_millis(1))
+            .max_schema_retries(3);
+        tickets.event_handler(move |e| handler(e));
+        tickets.agent(
+            Agent::new()
+                .name("worker")
+                .provider(provider.clone() as Arc<dyn Provider>)
+                .model("mock")
+                .role("test")
+                .tool(ManageTicketsTool),
+        );
+        tickets.task("go");
+
+        tokio::time::timeout(Duration::from_secs(5), tickets.finish())
+            .await
+            .expect("test did not finish within 5s");
+
+        let ticket = tickets.first_ticket().expect("ticket must exist");
+        assert_eq!(ticket.status, Status::Finished);
+        assert_eq!(tickets.last_result().as_deref(), Some("done"));
+        assert_eq!(provider.requests(), 2);
+
+        let events = collected.lock().unwrap().clone();
+        let schema_retries: Vec<u32> = events
+            .iter()
+            .filter_map(|e| match &e.kind {
+                EventKind::SchemaRetried { attempt, .. } => Some(*attempt),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(schema_retries, vec![1]);
+        let policy_violated = events
+            .iter()
+            .any(|e| matches!(&e.kind, EventKind::PolicyViolated { .. }));
+        assert!(!policy_violated, "budget should not be exhausted");
+
+        let directive_visible = ticket.replies.iter().any(|r| {
+            r.author == "user"
+                && r.content.iter().any(|c| match c {
+                    ReplyContent::Text(t) => t.starts_with("Your previous reply was not accepted."),
+                    _ => false,
+                })
+        });
+        assert!(directive_visible, "retry directive should be in transcript");
     }
 
     #[tokio::test]
@@ -923,7 +1136,7 @@ mod tests {
     async fn reactive_overflow_compacts_then_succeeds() {
         use crate::event::CompactReason;
         let provider = MockProvider::with_results(vec![
-            Ok(text_response("turn 1")),
+            Ok(tool_call_response("primer")),
             Err(crate::providers::ProviderError::ContextWindowExceeded {
                 message: "exceeded".into(),
             }),
@@ -948,7 +1161,7 @@ mod tests {
     #[tokio::test]
     async fn reactive_overflow_twice_in_a_row_fails_the_ticket() {
         let provider = MockProvider::with_results(vec![
-            Ok(text_response("turn 1")),
+            Ok(tool_call_response("primer")),
             Err(crate::providers::ProviderError::ContextWindowExceeded {
                 message: "first overflow".into(),
             }),
@@ -974,8 +1187,8 @@ mod tests {
     async fn proactive_threshold_triggers_compaction_before_next_request() {
         use crate::event::CompactReason;
         let provider = MockProvider::with_results(vec![
-            Ok(text_response_with_usage(
-                "thinking...",
+            Ok(tool_call_response_with_usage(
+                "primer",
                 crate::providers::types::TokenUsage {
                     input_tokens: 170_000,
                     output_tokens: 0,
@@ -1027,8 +1240,8 @@ mod tests {
     #[tokio::test]
     async fn summarize_rate_limited_kills_ticket_without_retry() {
         let provider = MockProvider::with_results(vec![
-            Ok(text_response_with_usage(
-                "thinking...",
+            Ok(tool_call_response_with_usage(
+                "primer",
                 crate::providers::types::TokenUsage {
                     input_tokens: 170_000,
                     output_tokens: 0,
@@ -1058,8 +1271,8 @@ mod tests {
     #[tokio::test]
     async fn summary_empty_text_replaces_tail_with_empty_user_message() {
         let provider = MockProvider::with_results(vec![
-            Ok(text_response_with_usage(
-                "thinking...",
+            Ok(tool_call_response_with_usage(
+                "primer",
                 crate::providers::types::TokenUsage {
                     input_tokens: 170_000,
                     output_tokens: 0,
@@ -1098,10 +1311,7 @@ mod tests {
     async fn response_status_context_window_exceeded_triggers_reactive_compaction() {
         use crate::providers::types::ModelResponse;
         let provider = MockProvider::with_results(vec![
-            Ok(text_response_with_usage(
-                "thinking",
-                crate::providers::types::TokenUsage::default(),
-            )),
+            Ok(tool_call_response("primer")),
             Ok(ModelResponse {
                 content: vec![crate::providers::ContentBlock::Text {
                     text: "oops".into(),
@@ -1133,10 +1343,7 @@ mod tests {
     async fn response_status_context_window_exceeded_consumes_compaction_retry_budget() {
         use crate::providers::types::ModelResponse;
         let provider = MockProvider::with_results(vec![
-            Ok(text_response_with_usage(
-                "thinking",
-                crate::providers::types::TokenUsage::default(),
-            )),
+            Ok(tool_call_response("primer")),
             Ok(ModelResponse {
                 content: vec![crate::providers::ContentBlock::Text {
                     text: "first overflow".into(),
@@ -1168,8 +1375,8 @@ mod tests {
     async fn proactive_compact_does_not_consume_reactive_budget() {
         use crate::event::CompactReason;
         let provider = MockProvider::with_results(vec![
-            Ok(text_response_with_usage(
-                "thinking...",
+            Ok(tool_call_response_with_usage(
+                "primer",
                 crate::providers::types::TokenUsage {
                     input_tokens: 170_000,
                     output_tokens: 0,
@@ -1179,10 +1386,7 @@ mod tests {
                 "SUMMARY-A",
                 crate::providers::types::TokenUsage::default(),
             )),
-            Ok(text_response_with_usage(
-                "thinking again",
-                crate::providers::types::TokenUsage::default(),
-            )),
+            Ok(tool_call_response("primer")),
             Err(crate::providers::ProviderError::ContextWindowExceeded {
                 message: "main request overflow after proactive".into(),
             }),
@@ -1209,8 +1413,8 @@ mod tests {
     async fn blocking_limit_exceeded_emits_event_and_skips_provider_call() {
         use crate::event::CompactReason;
         let provider = MockProvider::with_results(vec![
-            Ok(text_response_with_usage(
-                "thinking",
+            Ok(tool_call_response_with_usage(
+                "primer",
                 crate::providers::types::TokenUsage {
                     input_tokens: 198_000,
                     output_tokens: 0,
@@ -1251,12 +1455,9 @@ mod tests {
     #[tokio::test]
     async fn blocking_limit_uses_compaction_retry_budget() {
         let provider = MockProvider::with_results(vec![
-            Ok(text_response_with_usage(
-                "low",
-                crate::providers::types::TokenUsage::default(),
-            )),
-            Ok(text_response_with_usage(
-                "huge",
+            Ok(tool_call_response("primer")),
+            Ok(tool_call_response_with_usage(
+                "primer",
                 crate::providers::types::TokenUsage {
                     input_tokens: 198_000,
                     output_tokens: 0,
@@ -1297,8 +1498,8 @@ mod tests {
         use crate::tools::{Tool, ToolResult};
 
         let provider = MockProvider::with_results(vec![
-            Ok(text_response_with_usage(
-                "thinking",
+            Ok(tool_call_response_with_usage(
+                "primer",
                 crate::providers::types::TokenUsage {
                     input_tokens: 195_500,
                     output_tokens: 0,

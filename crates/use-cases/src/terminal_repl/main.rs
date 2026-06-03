@@ -24,12 +24,13 @@ use std::io::{self, IsTerminal, Write};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
+use agentwerk::agents::tickets::ReplyContent;
 use agentwerk::event::{Event, EventKind};
 use agentwerk::tools::{
     GlobTool, GrepTool, ListDirectoryTool, ManageTicketsTool, ReadFileTool, ReadTicketsTool,
     WriteFileTool,
 };
-use agentwerk::{Agent, Knowledge, TicketSystem};
+use agentwerk::{Agent, Knowledge, Ticket, TicketSystem};
 
 const ROLE: &str = include_str!("prompts/repl.role.md");
 
@@ -80,6 +81,7 @@ async fn main() {
     let _agent = tickets.agent(
         Agent::new()
             .name("orchestrator")
+            .interactive()
             .from_env()
             .role(role)
             .dir(&cwd)
@@ -110,6 +112,11 @@ async fn main() {
     if let Some(k) = &chat_key {
         eprintln!("{}resumed chat ticket {k}{}", style.dim, style.reset,);
     }
+
+    // One long-running loop drives every turn; each user input flips the
+    // ticket out of the gate's pause and the next iteration redraws the
+    // prompt once the assistant has spoken.
+    tickets.start();
 
     loop {
         let line = tokio::select! {
@@ -199,22 +206,23 @@ async fn main() {
             }
             _ => tickets.task(line),
         };
-        chat_key = Some(key);
+        chat_key = Some(key.clone());
 
-        let run_fut = tickets.finish();
-        tokio::pin!(run_fut);
         let cancelled = tokio::select! {
-            _ = &mut run_fut => false,
+            _ = wait_for_assistant_pause(&tickets, &key) => false,
             _ = tokio::signal::ctrl_c() => {
                 tickets.cancel();
                 if midstream.swap(false, Ordering::Relaxed) {
                     eprintln!();
                 }
                 eprintln!("{}cancelling…{}", style.dim, style.reset);
+                let drain_fut = tickets.finish();
+                tokio::pin!(drain_fut);
                 tokio::select! {
-                    _ = &mut run_fut => {}
+                    _ = &mut drain_fut => {}
                     _ = tokio::signal::ctrl_c() => std::process::exit(130),
                 }
+                tickets.start();
                 true
             }
         };
@@ -371,6 +379,33 @@ fn print_event(event: &Event, style: &Style, test_window: Option<u64>, midstream
         }
         _ => {}
     }
+}
+
+/// Block until the chat ticket is either terminal (`finished`/`failed`)
+/// or sitting at the gate's text-only pause. A mid-turn assistant reply
+/// carrying a tool call doesn't count: tool execution is still pending
+/// and the prompt would race the user against the loop.
+async fn wait_for_assistant_pause(tickets: &TicketSystem, key: &str) {
+    loop {
+        match tickets.get_ticket(key) {
+            None => return,
+            Some(t) if is_terminal(&t) => return,
+            Some(t) if is_paused_on_text(&t) => return,
+            _ => {}
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    }
+}
+
+fn is_terminal(ticket: &Ticket) -> bool {
+    let s = ticket.status.to_string();
+    s == "finished" || s == "failed"
+}
+
+fn is_paused_on_text(ticket: &Ticket) -> bool {
+    ticket.replies.last().is_some_and(|r| {
+        r.author == "assistant" && r.content.iter().all(|c| matches!(c, ReplyContent::Text(_)))
+    })
 }
 
 async fn read_line(prompt: &str) -> Option<String> {

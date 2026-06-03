@@ -128,6 +128,23 @@ pub fn knowledge_read_response(slug: &str) -> ModelResponse {
     }
 }
 
+pub fn tool_call_response(tool_name: &str) -> ModelResponse {
+    tool_call_response_with_usage(tool_name, TokenUsage::default())
+}
+
+pub fn tool_call_response_with_usage(tool_name: &str, usage: TokenUsage) -> ModelResponse {
+    ModelResponse {
+        content: vec![ContentBlock::ToolUse {
+            id: "call-1".into(),
+            name: tool_name.into(),
+            input: serde_json::json!({}),
+        }],
+        status: ResponseStatus::ToolUse,
+        usage,
+        model: "mock".into(),
+    }
+}
+
 pub fn text_response(text: &str) -> ModelResponse {
     ModelResponse {
         content: vec![ContentBlock::Text { text: text.into() }],

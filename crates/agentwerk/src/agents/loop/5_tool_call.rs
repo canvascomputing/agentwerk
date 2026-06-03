@@ -16,57 +16,7 @@ pub(super) async fn run(context: &mut LoopContext<'_>, reply: Reply) -> Action<(
     let max_schema_retries = context.policies.max_schema_retries.unwrap_or(u32::MAX);
 
     match reply {
-        Reply::TextOnly => {
-            let has_schema = context
-                .ticket_system
-                .get_ticket(&context.ticket_key)
-                .map(|t| t.schema.is_some())
-                .unwrap_or(false);
-            if !has_schema {
-                return Action::Proceed(());
-            }
-            let registered: Vec<&str> = TICKET_FINISHER_TOOLS
-                .iter()
-                .copied()
-                .filter(|&n| context.agent.tool_registry().get(n).is_some())
-                .collect();
-            if registered.is_empty() {
-                return Action::Proceed(());
-            }
-            context.consecutive_schema_failures =
-                context.consecutive_schema_failures.saturating_add(1);
-            let detail = format!(
-                "Your reply was text-only. Call `{}` to finish the ticket \
-                 — your work is not recorded until you do.",
-                registered.join("` or `")
-            );
-            context.ticket_system.emit(
-                &context.ticket_key,
-                context.agent.get_name(),
-                EventKind::SchemaRetried {
-                    attempt: context.consecutive_schema_failures,
-                    max_attempts: max_schema_retries,
-                    message: detail.clone(),
-                },
-            );
-            context.ticket_system.add_reply(
-                &context.ticket_key,
-                crate::agents::tickets::Reply::user_text(retry_directive(&detail)),
-            );
-            if context.consecutive_schema_failures >= max_schema_retries {
-                context.ticket_system.emit(
-                    &context.ticket_key,
-                    context.agent.get_name(),
-                    EventKind::PolicyViolated {
-                        kind: PolicyKind::MaxSchemaRetries,
-                        limit: u64::from(max_schema_retries),
-                    },
-                );
-                let _ = context.ticket_system.set_failed(&context.ticket_key);
-                return Action::Replay;
-            }
-            Action::Proceed(())
-        }
+        Reply::TextOnly => Action::Proceed(()),
         Reply::Calls(calls) => {
             for call in &calls {
                 context.ticket_system.emit(
@@ -201,75 +151,8 @@ mod tests {
     use crate::event::{EventKind, PolicyKind};
     use crate::schemas::Schema;
 
-    // Text-only replies
-
     #[tokio::test]
-    async fn text_reply_no_schema_exits_cleanly() {
-        let provider = MockProvider::with_results(vec![Ok(text_response("Hello!"))]);
-        let (events, provider, ticket) = run_one(provider, 3, 10, None).await;
-
-        assert_eq!(provider.requests(), 1);
-        assert_eq!(schema_retries_in(&events).len(), 0);
-        let failed = events
-            .iter()
-            .filter(|e| matches!(e.kind, EventKind::TicketFailed { .. }))
-            .count();
-        assert_eq!(failed, 0);
-        assert_eq!(ticket.status, Status::InProgress);
-    }
-
-    #[tokio::test]
-    async fn text_reply_with_schema_exhausts_retries_and_fails() {
-        let provider = MockProvider::with_results(vec![
-            Ok(text_response("a")),
-            Ok(text_response("b")),
-            Ok(text_response("c")),
-        ]);
-        let (events, _, ticket) = run_one(provider, 3, 2, Some(schema_for_partial_sum())).await;
-
-        let retries = schema_retries_in(&events);
-        assert_eq!(retries.len(), 2);
-        let policy_violated = events.iter().any(|e| {
-            matches!(
-                &e.kind,
-                EventKind::PolicyViolated {
-                    kind: PolicyKind::MaxSchemaRetries,
-                    limit: 2,
-                },
-            )
-        });
-        assert!(policy_violated, "expected MaxSchemaRetries PolicyViolated");
-        assert_eq!(ticket.status, Status::Failed);
-    }
-
-    #[tokio::test]
-    async fn text_reply_with_schema_retries_then_recovers() {
-        let provider = MockProvider::with_results(vec![
-            Ok(text_response("Hello!")),
-            Ok(write_result_value(serde_json::json!({"partial_sum": 1}))),
-        ]);
-        let (events, provider, ticket) =
-            run_one(provider, 3, 10, Some(schema_for_partial_sum())).await;
-
-        assert_eq!(provider.requests(), 2);
-        let retries = schema_retries_in(&events);
-        assert_eq!(retries.len(), 1);
-        assert!(retries[0].2.contains("finish_ticket"));
-        let done = events
-            .iter()
-            .filter(|e| matches!(e.kind, EventKind::TicketFinished { .. }))
-            .count();
-        let failed = events
-            .iter()
-            .filter(|e| matches!(e.kind, EventKind::TicketFailed { .. }))
-            .count();
-        assert_eq!(done, 1);
-        assert_eq!(failed, 0);
-        assert_eq!(ticket.status, Status::Finished);
-    }
-
-    #[tokio::test]
-    async fn write_result_settles_ticket_done_with_valid_json() {
+    async fn write_result_finishes_ticket_with_valid_json() {
         let provider = MockProvider::with_results(vec![Ok(write_result_value(
             serde_json::json!({"partial_sum": 42}),
         ))]);
@@ -321,8 +204,9 @@ mod tests {
         let schema_retries = schema_retries_in(&events);
         assert_eq!(schema_retries.len(), 1);
         assert!(
-            !schema_retries[0].2.is_empty(),
-            "schema-retry message must carry validator detail"
+            schema_retries[0].2.contains("Schema validation failed"),
+            "retry message must carry validator detail: {:?}",
+            schema_retries[0].2,
         );
     }
 
@@ -346,6 +230,66 @@ mod tests {
         });
         assert!(policy_violated, "expected MaxSchemaRetries PolicyViolated");
         assert_eq!(ticket.status, Status::Failed);
+    }
+
+    #[tokio::test]
+    async fn finish_awaits_completion_when_tool_call_is_in_flight() {
+        use std::sync::Arc;
+        use std::time::Duration;
+        use tokio::sync::Notify;
+
+        use crate::agents::agent::Agent;
+        use crate::agents::tickets::TicketSystem;
+        use crate::providers::Provider;
+        use crate::tools::{ManageTicketsTool, Tool, ToolResult};
+
+        let tool_started = Arc::new(Notify::new());
+        let tool_unblocked = Arc::new(Notify::new());
+        let tool_started_clone = Arc::clone(&tool_started);
+        let tool_unblocked_clone = Arc::clone(&tool_unblocked);
+
+        let provider = MockProvider::with_results(vec![
+            Ok(tool_call_response("slow_tool")),
+            Ok(write_result_value(serde_json::json!("done"))),
+        ]);
+
+        let slow_tool = Tool::new("slow_tool", "Blocks until released")
+            .handler(move |_, _| {
+                let s = Arc::clone(&tool_started_clone);
+                let u = Arc::clone(&tool_unblocked_clone);
+                async move {
+                    s.notify_one();
+                    u.notified().await;
+                    Ok(ToolResult::success("ok"))
+                }
+            });
+
+        let results_dir = crate::test_util::TempDir::new().unwrap();
+        let tickets = TicketSystem::new();
+        tickets
+            .dir(results_dir.path().to_path_buf())
+            .max_request_retries(0)
+            .request_retry_delay(Duration::from_millis(1))
+            .max_schema_retries(10)
+            .max_time(Duration::from_secs(5));
+        tickets.agent(
+            Agent::new()
+                .name("tester")
+                .provider(provider as Arc<dyn Provider>)
+                .model("mock")
+                .role("test")
+                .tool(ManageTicketsTool)
+                .tool(slow_tool),
+        );
+        tickets.task("go");
+
+        let unblock = async move {
+            tool_started.notified().await;
+            tool_unblocked.notify_one();
+        };
+
+        tokio::join!(tickets.finish(), unblock);
+        assert_eq!(tickets.first_ticket().unwrap().status, Status::Finished);
     }
 
     fn schema_for_partial_sum() -> Schema {

@@ -37,6 +37,7 @@ pub struct Agent {
     role: Option<String>,
     context: Option<String>,
     pub(crate) labels: Vec<String>,
+    pub(crate) interactive: bool,
     template_variables: Vec<(String, String)>,
     tools: ToolRegistry,
     dir: Option<PathBuf>,
@@ -55,6 +56,7 @@ impl Default for Agent {
             role: None,
             context: None,
             labels: Vec::new(),
+            interactive: false,
             template_variables: Vec::new(),
             tools,
             dir: None,
@@ -83,6 +85,7 @@ impl Agent {
             role: None,
             context: None,
             labels: Vec::new(),
+            interactive: false,
             template_variables: Vec::new(),
             tools: ToolRegistry::default(),
             dir: None,
@@ -150,6 +153,13 @@ impl Agent {
         S: Into<String>,
     {
         self.labels.extend(iter.into_iter().map(Into::into));
+        self
+    }
+
+    /// Pause on assistant replies that carry no tool calls, for REPL
+    /// hosts that drive subsequent turns via `TicketSystem::reply`.
+    pub fn interactive(mut self) -> Self {
+        self.interactive = true;
         self
     }
 
@@ -251,6 +261,10 @@ impl Agent {
 
     pub(super) fn get_name(&self) -> &str {
         &self.name
+    }
+
+    pub(super) fn is_interactive(&self) -> bool {
+        self.interactive
     }
 
     /// Returns true when the agent's label scope intersects the ticket's

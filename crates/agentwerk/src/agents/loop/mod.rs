@@ -40,7 +40,6 @@ pub(crate) mod test_util;
 mod tests {
     use crate::agents::r#loop::test_util::*;
     use crate::agents::tickets::ReplyContent;
-    use crate::schemas::Schema;
 
     // Reply transcript
 
@@ -88,57 +87,9 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn text_reply_with_schema_injects_directive_into_transcript() {
-        let provider = MockProvider::with_results(vec![
-            Ok(text_response("Hello!")),
-            Ok(write_result_value(serde_json::json!({"partial_sum": 1}))),
-        ]);
-        let schema = Schema::parse(serde_json::json!({
-            "type": "object",
-            "properties": { "partial_sum": { "type": "integer" } },
-            "required": ["partial_sum"]
-        }))
-        .expect("valid schema");
-        let (_, _, ticket) = run_one(provider, 3, 10, Some(schema)).await;
-
-        let replies = &ticket.replies;
-
-        let first_assistant = replies
-            .iter()
-            .position(|r| {
-                r.author == "assistant"
-                    && matches!(&r.content[..], [ReplyContent::Text(t)] if t == "Hello!")
-            })
-            .expect("expected the text-only assistant reply in the transcript");
-
-        let directive = &replies[first_assistant + 1];
-        assert_eq!(directive.author, "user");
-        let directive_text = match &directive.content[..] {
-            [ReplyContent::Text(t)] => t,
-            other => panic!("expected a single text block for the directive, got {other:?}"),
-        };
-        assert!(
-            directive_text.contains("finish_ticket"),
-            "directive must name the missing finisher: {directive_text}",
-        );
-
-        let second_assistant = replies
-            .iter()
-            .skip(first_assistant + 2)
-            .find(|r| {
-                r.author == "assistant"
-                    && matches!(&r.content[..], [ReplyContent::ToolUse { name, .. }] if name == "finish_ticket")
-            });
-        assert!(
-            second_assistant.is_some(),
-            "expected a recovering ToolUse assistant reply after the directive",
-        );
-    }
-
-    #[tokio::test]
     async fn replies_after_compaction_keep_only_system_and_summary() {
         let provider = MockProvider::with_results(vec![
-            Ok(text_response("turn 1")),
+            Ok(tool_call_response("manage_tickets")),
             Err(crate::providers::ProviderError::ContextWindowExceeded {
                 message: "exceeded".into(),
             }),
@@ -165,7 +116,7 @@ mod tests {
 
         assert!(
             !replies.iter().any(|r| {
-                matches!(&r.content[..], [ReplyContent::Text(t)] if t == "turn 1" || t == "go")
+                matches!(&r.content[..], [ReplyContent::Text(t)] if t == "go")
             }),
             "compaction must drop pre-compaction non-system replies",
         );
