@@ -9,7 +9,9 @@
 //! The model's response streams to stdout via
 //! `EventKind::TextChunkReceived`. Slash commands:
 //! `/new` starts a fresh chat ticket, `/list` lists every ticket,
-//! `/stats` prints run counters, `/clear` resets knowledge.
+//! `/stats` prints run counters, `/clear` resets knowledge,
+//! `/bible [N]` injects N repetitions of Genesis (KJV) as a reply to
+//! drive context compaction (default N=1, ~52k tokens per repetition).
 //! Ctrl-C at the prompt exits with code 130; Ctrl-D exits with
 //! code 0; Ctrl-C during a turn cancels that turn (a second Ctrl-C
 //! while the cancel is still draining force-quits with exit code 130).
@@ -21,11 +23,12 @@
 //! a hang on outstanding blocking tasks.
 
 use std::io::{self, IsTerminal, Write};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 
 use agentwerk::agents::tickets::ReplyContent;
 use agentwerk::event::{Event, EventKind};
+use agentwerk::providers::{model_from_env, Model};
 use agentwerk::tools::{
     GlobTool, GrepTool, ListDirectoryTool, ManageTicketsTool, ReadFileTool, ReadTicketsTool,
     WriteFileTool,
@@ -33,27 +36,36 @@ use agentwerk::tools::{
 use agentwerk::{Agent, Knowledge, Ticket, TicketSystem};
 
 const ROLE: &str = include_str!("prompts/repl.role.md");
+const BIBLE_PASSAGE: &str = include_str!("prompts/bible.txt");
+const BIBLE_DEFAULT_REPETITIONS: usize = 1;
 
 #[tokio::main]
 async fn main() {
     let style = Style::detect();
     eprintln!(
-        "{}agentwerk REPL: /new /list /stats /clear, Ctrl-C to cancel.{}",
+        "{}agentwerk REPL: /new /list /stats /clear /bible, Ctrl-C to cancel.{}",
         style.dim, style.reset,
     );
 
-    // Optional first positional arg: synthetic context-window size in
-    // **tokens**, used only to drive a REPL-side usage line and warning
-    // when the reported `input_tokens` crosses 70% of it. The library's
-    // own `ContextCompacted` event is unaffected and still fires only
-    // at the real model window.
+    // Optional first positional arg overrides the model's real context
+    // window for the REPL's own usage line. The library's compaction
+    // thresholds still derive from the model itself; this knob only
+    // changes what the REPL prints.
     let test_window: Option<u64> = std::env::args().nth(1).and_then(|s| s.parse().ok());
-    if let Some(w) = test_window {
-        let threshold = w.saturating_mul(7) / 10;
-        eprintln!(
-            "{}test context window: {w} tokens (synthetic warning at {threshold} tokens used){}",
-            style.dim, style.reset,
-        );
+    let real_window = model_from_env()
+        .ok()
+        .and_then(|name| Model::from_name(&name).context_window);
+    let effective_window = test_window.or(real_window);
+    match (test_window, real_window) {
+        (Some(w), _) => {
+            let threshold = w.saturating_mul(7) / 10;
+            eprintln!(
+                "{}test context window: {w} tokens (warn at {threshold}){}",
+                style.dim, style.reset,
+            );
+        }
+        (None, Some(w)) => eprintln!("{}context window: {w} tokens{}", style.dim, style.reset),
+        (None, None) => {}
     }
 
     let role = ROLE.trim();
@@ -67,8 +79,17 @@ async fn main() {
     // `eprintln!` doubling up newlines.
     let midstream = Arc::new(AtomicBool::new(false));
     let handler_midstream = Arc::clone(&midstream);
-    let handler: Arc<dyn Fn(Event) + Send + Sync> =
-        Arc::new(move |e: Event| print_event(&e, &event_style, test_window, &handler_midstream));
+    let last_input = Arc::new(AtomicU64::new(0));
+    let handler_last_input = Arc::clone(&last_input);
+    let handler: Arc<dyn Fn(Event) + Send + Sync> = Arc::new(move |e: Event| {
+        print_event(
+            &e,
+            &event_style,
+            effective_window,
+            &handler_midstream,
+            &handler_last_input,
+        )
+    });
 
     let cwd = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
     let store_dir = cwd.join(".agentwerk");
@@ -193,6 +214,40 @@ async fn main() {
             eprintln!("{}knowledge cleared{}", style.dim, style.reset);
             continue;
         }
+        let payload = if line == "/bible" || line.starts_with("/bible ") {
+            let argument = line.strip_prefix("/bible").unwrap().trim();
+            let repetitions = if argument.is_empty() {
+                BIBLE_DEFAULT_REPETITIONS
+            } else {
+                match argument.parse::<usize>() {
+                    Ok(n) if n > 0 => n,
+                    _ => {
+                        eprintln!(
+                            "{}usage: /bible [N]   (positive integer; default {}){}",
+                            style.dim, BIBLE_DEFAULT_REPETITIONS, style.reset,
+                        );
+                        continue;
+                    }
+                }
+            };
+            let mut bible_payload = String::with_capacity(BIBLE_PASSAGE.len() * repetitions + 64);
+            bible_payload
+                .push_str("Read the following passage and reply with a single short sentence.\n\n");
+            for _ in 0..repetitions {
+                bible_payload.push_str(BIBLE_PASSAGE);
+            }
+            eprintln!(
+                "{}injecting {} repetitions · {} KiB · ~{} input tokens{}",
+                style.dim,
+                repetitions,
+                bible_payload.len() / 1024,
+                bible_payload.len() / 4,
+                style.reset,
+            );
+            bible_payload
+        } else {
+            line
+        };
 
         announce_assistant(&style);
         // "agent › " left stdout mid-line; mark so the first event
@@ -205,10 +260,10 @@ async fn main() {
                     .iter()
                     .any(|t| t.key == k && t.status.to_string() == "in_progress") =>
             {
-                tickets.reply(k, line);
+                tickets.reply(k, payload);
                 k.to_string()
             }
-            _ => tickets.task(line),
+            _ => tickets.task(payload),
         };
         chat_key = Some(key.clone());
 
@@ -280,7 +335,13 @@ fn announce_assistant(style: &Style) {
     let _ = io::stdout().flush();
 }
 
-fn print_event(event: &Event, style: &Style, test_window: Option<u64>, midstream: &AtomicBool) {
+fn print_event(
+    event: &Event,
+    style: &Style,
+    window: Option<u64>,
+    midstream: &AtomicBool,
+    last_input: &AtomicU64,
+) {
     // Emit a single leading newline only when streamed model text just
     // landed on stdout without a trailing newline; subsequent events
     // print directly on their own line.
@@ -317,7 +378,8 @@ fn print_event(event: &Event, style: &Style, test_window: Option<u64>, midstream
             eprintln!("{}✗ {tool_name}: {message}{}", style.red, style.reset);
         }
         EventKind::RequestFinished { usage, .. } => {
-            if let Some(window) = test_window {
+            last_input.store(usage.input_tokens, Ordering::Relaxed);
+            if let Some(window) = window {
                 break_stream();
                 let used = usage.input_tokens;
                 let remaining = window.saturating_sub(used);
@@ -336,22 +398,38 @@ fn print_event(event: &Event, style: &Style, test_window: Option<u64>, midstream
         EventKind::CompactionStarted { reason } => {
             break_stream();
             eprintln!(
-                "{}… compacting context ({reason:?}){}",
-                style.dim, style.reset,
+                "{}… compacting context ({reason:?}){}{}",
+                style.dim,
+                window_usage_suffix(window, last_input),
+                style.reset,
             );
         }
         EventKind::CompactionFinished { reason } => {
             break_stream();
             eprintln!(
-                "{}✓ context compacted ({reason:?}){}",
-                style.dim, style.reset,
+                "{}✓ context compacted ({reason:?}){}{}",
+                style.dim,
+                window_usage_suffix(window, last_input),
+                style.reset,
             );
         }
         EventKind::CompactionFailed { reason, message } => {
             break_stream();
             let short = message.split_once(':').map(|(h, _)| h).unwrap_or(message);
             eprintln!(
-                "{}✗ compaction failed ({reason:?}): {short}{}",
+                "{}✗ compaction failed ({reason:?}){}: {short}{}",
+                style.red,
+                window_usage_suffix(window, last_input),
+                style.reset,
+            );
+        }
+        EventKind::BlockingLimitExceeded {
+            estimated_tokens,
+            threshold_tokens,
+        } => {
+            break_stream();
+            eprintln!(
+                "{}⚠ blocking limit: estimated {estimated_tokens} tokens ≥ {threshold_tokens}{}",
                 style.red, style.reset,
             );
         }
@@ -382,6 +460,17 @@ fn print_event(event: &Event, style: &Style, test_window: Option<u64>, midstream
             );
         }
         _ => {}
+    }
+}
+
+fn window_usage_suffix(window: Option<u64>, last_input: &AtomicU64) -> String {
+    let used = last_input.load(Ordering::Relaxed);
+    match window {
+        Some(window) => {
+            let remaining = window.saturating_sub(used);
+            format!(" · {used} / {window} tokens used, {remaining} left")
+        }
+        None => String::new(),
     }
 }
 
