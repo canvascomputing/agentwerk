@@ -177,6 +177,7 @@ pub(super) async fn proactive_compact(
         match compact(context, CompactReason::Proactive).await {
             Action::Stop => return Action::Stop,
             Action::Replay => return Action::Replay,
+            Action::Pause => unreachable!("compact() never returns Pause"),
             Action::Proceed(()) => {}
         }
         messages = context
@@ -203,6 +204,7 @@ pub(super) async fn proactive_compact(
             match compact(context, CompactReason::Reactive).await {
                 Action::Stop => return Action::Stop,
                 Action::Replay => return Action::Replay,
+                Action::Pause => unreachable!("compact() never returns Pause"),
                 Action::Proceed(()) => {}
             }
         }

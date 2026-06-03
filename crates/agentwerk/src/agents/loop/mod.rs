@@ -25,6 +25,7 @@ const POLL_INTERVAL: Duration = Duration::from_millis(50);
 enum Action<T> {
     Proceed(T),
     Replay,
+    Pause,
     Stop,
 }
 

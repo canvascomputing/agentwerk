@@ -64,6 +64,7 @@ pub(super) async fn run(context: &mut LoopContext<'_>, messages: Vec<Message>) -
                 match compaction::compact(context, CompactReason::Reactive).await {
                     Action::Stop => return Action::Stop,
                     Action::Replay => return Action::Replay,
+                    Action::Pause => unreachable!("compact() never returns Pause"),
                     Action::Proceed(()) => {}
                 }
             }
@@ -168,6 +169,7 @@ pub(super) async fn run(context: &mut LoopContext<'_>, messages: Vec<Message>) -
         match compaction::compact(context, CompactReason::Reactive).await {
             Action::Stop => return Action::Stop,
             Action::Replay => return Action::Replay,
+            Action::Pause => unreachable!("compact() never returns Pause"),
             Action::Proceed(()) => {}
         }
     }

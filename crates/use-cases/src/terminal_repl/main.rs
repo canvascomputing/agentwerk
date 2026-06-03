@@ -101,17 +101,17 @@ async fn main() {
     let mut prev_input: u64 = 0;
     let mut prev_output: u64 = 0;
 
-    // Resume the newest open chat ticket from disk if one exists,
-    // so a previous session's transcript carries into this one.
-    let mut chat_key: Option<String> = tickets
-        .find_tickets(|t| {
-            t.status.to_string() == "in_progress" && t.labels.iter().any(|l| l == "orchestrator")
-        })
-        .last()
-        .map(|t| t.key.to_string());
-    if let Some(k) = &chat_key {
-        eprintln!("{}resumed chat ticket {k}{}", style.dim, style.reset,);
+    let failed = fail_stale_chats(&tickets, "orchestrator");
+    if failed > 0 {
+        eprintln!(
+            "{}failed {} stale chat ticket{}{}",
+            style.dim,
+            failed,
+            if failed == 1 { "" } else { "s" },
+            style.reset,
+        );
     }
+    let mut chat_key: Option<String> = None;
 
     // One long-running loop drives every turn; each user input flips the
     // ticket out of the gate's pause and the next iteration redraws the
@@ -133,7 +133,11 @@ async fn main() {
             continue;
         }
         if line == "/new" {
-            let k = tickets.task("<new chat>");
+            eprintln!("{}usage: /new <message>{}", style.dim, style.reset);
+            continue;
+        }
+        if let Some(first) = line.strip_prefix("/new ") {
+            let k = tickets.task(first.trim());
             eprintln!("{}new chat {k}{}", style.dim, style.reset);
             chat_key = Some(k);
             continue;
@@ -445,5 +449,55 @@ impl Style {
                 reset: "",
             }
         }
+    }
+}
+
+/// Transition every non-terminal ticket carrying `label` to Failed.
+/// Catches both the active InProgress chat from the prior session and
+/// any orphan Todo left by an interrupted `/new <message>`.
+fn fail_stale_chats(tickets: &TicketSystem, label: &str) -> usize {
+    let stale: Vec<String> = tickets
+        .find_tickets(|t| {
+            let pending = t.status.to_string() == "in_progress" || t.status.to_string() == "todo";
+            pending && t.labels.iter().any(|l| l == label)
+        })
+        .iter()
+        .map(|t| t.key.clone())
+        .collect();
+    for key in &stale {
+        let _ = tickets.set_failed(key);
+    }
+    stale.len()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use agentwerk::agents::tickets::{Status, Ticket};
+
+    #[test]
+    fn fail_stale_chats_marks_every_matching_pending_ticket_as_failed() {
+        let tickets = TicketSystem::new();
+        let mut keys = Vec::new();
+        for body in ["one", "two", "three"] {
+            let k = tickets.ticket(Ticket::new(body).label("orchestrator"));
+            keys.push(k);
+        }
+        let other = tickets.ticket(Ticket::new("scanner").label("analyst"));
+
+        let n = fail_stale_chats(&tickets, "orchestrator");
+
+        assert_eq!(n, 3);
+        for k in &keys {
+            assert_eq!(tickets.get_ticket(k).unwrap().status, Status::Failed);
+        }
+        assert_eq!(tickets.get_ticket(&other).unwrap().status, Status::Todo);
+    }
+
+    #[test]
+    fn fail_stale_chats_returns_zero_when_no_matching_tickets_exist() {
+        let tickets = TicketSystem::new();
+        let n = fail_stale_chats(&tickets, "orchestrator");
+        assert_eq!(n, 0);
     }
 }

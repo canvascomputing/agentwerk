@@ -823,7 +823,7 @@ impl TicketSystem {
     }
 
     /// Transition a ticket to `Failed`.
-    pub(crate) fn set_failed(&self, key: &str) -> Result<(), TicketError> {
+    pub fn set_failed(&self, key: &str) -> Result<(), TicketError> {
         self.set_final_status(key, Status::Failed)
     }
 

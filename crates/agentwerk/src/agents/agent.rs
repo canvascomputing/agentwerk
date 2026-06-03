@@ -461,6 +461,16 @@ mod tests {
     }
 
     #[test]
+    fn interactive_defaults_to_false() {
+        assert!(!Agent::new().is_interactive());
+    }
+
+    #[test]
+    fn interactive_builder_sets_the_flag() {
+        assert!(Agent::new().interactive().is_interactive());
+    }
+
+    #[test]
     fn default_name_is_unique_per_agent() {
         let a = Agent::new();
         let b = Agent::new();

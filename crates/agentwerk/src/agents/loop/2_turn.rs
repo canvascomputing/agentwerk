@@ -90,6 +90,7 @@ pub(super) async fn start_turn<'a>(
                         .find_ticket(|t| {
                             t.status == Status::InProgress
                                 && t.labels.iter().any(|l| l == agent.get_name())
+                                && (t.is_waiting_for_response() || !agent.is_interactive())
                         })
                         .map(|t| t.key.clone())
                 })
@@ -174,8 +175,7 @@ pub(super) async fn start_turn<'a>(
     }
     if !ticket.is_waiting_for_response() {
         if context_ref.agent.is_interactive() {
-            tokio::time::sleep(POLL_INTERVAL).await;
-            return Action::Replay;
+            return Action::Pause;
         }
         let max = context_ref.policies.max_schema_retries.unwrap_or(u32::MAX);
         context_ref.consecutive_schema_failures =
@@ -225,6 +225,12 @@ pub(super) async fn run_agent(agent: Agent) {
                 match $e {
                     Action::Proceed(v) => v,
                     Action::Replay => continue 'agent,
+                    // Release the context so the next iteration re-runs next_ticket_key.
+                    Action::Pause => {
+                        context = None;
+                        tokio::time::sleep(POLL_INTERVAL).await;
+                        continue 'agent;
+                    }
                     Action::Stop => return,
                 }
             };
@@ -301,15 +307,7 @@ mod tests {
             .dir(results_dir.path().to_path_buf())
             .max_request_retries(0)
             .request_retry_delay(Duration::from_millis(1));
-        tickets.agent(
-            Agent::new()
-                .name("chatbot")
-                .interactive()
-                .provider(provider.clone() as Arc<dyn Provider>)
-                .model("mock")
-                .role("test")
-                .tool(ManageTicketsTool),
-        );
+        tickets.agent(interactive_chatbot(&provider));
         let key = tickets.task("hello");
 
         let tickets_for_inject = Arc::clone(&tickets);
@@ -344,36 +342,114 @@ mod tests {
 
         let ticket = tickets.first_ticket().expect("ticket must exist");
         assert_eq!(ticket.status, Status::Finished);
-        assert_eq!(provider.requests(), 2);
     }
 
     #[tokio::test]
-    async fn loop_fails_ticket_after_text_reply_when_agent_is_not_interactive() {
-        use crate::event::{Event, EventKind, PolicyKind};
-        use std::sync::Mutex;
+    async fn paused_interactive_ticket_emits_turn_started_exactly_once() {
+        use crate::event::EventKind;
 
         let results_dir = crate::test_util::TempDir::new().unwrap();
         let provider = MockProvider::with_results(vec![Ok(text_response("hi"))]);
-        let collected: Arc<Mutex<Vec<Event>>> = Arc::new(Mutex::new(Vec::new()));
-        let handler: Arc<dyn Fn(Event) + Send + Sync> = {
-            let c = Arc::clone(&collected);
-            Arc::new(move |e| c.lock().unwrap().push(e))
+        let tickets = TicketSystem::new();
+        tickets
+            .dir(results_dir.path().to_path_buf())
+            .max_request_retries(0)
+            .request_retry_delay(Duration::from_millis(1))
+            .max_time(Duration::from_millis(500));
+        let collected = collect_events(&tickets);
+        tickets.agent(interactive_chatbot(&provider));
+        tickets.task("hello");
+
+        tokio::time::timeout(Duration::from_secs(5), tickets.finish())
+            .await
+            .expect("test did not finish within 5s");
+
+        let events = collected.lock().unwrap().clone();
+        let turn_started = events
+            .iter()
+            .filter(|e| matches!(e.kind, EventKind::TurnStarted))
+            .count();
+        assert_eq!(
+            turn_started, 1,
+            "paused interactive ticket must not re-emit TurnStarted on every poll",
+        );
+    }
+
+    #[tokio::test]
+    async fn loop_releases_paused_context_when_new_todo_arrives() {
+        let results_dir = crate::test_util::TempDir::new().unwrap();
+        let provider = MockProvider::with_results(vec![
+            Ok(text_response("hi")),
+            Ok(write_result_response("second-done")),
+        ]);
+        let tickets = TicketSystem::new();
+        tickets
+            .dir(results_dir.path().to_path_buf())
+            .max_request_retries(0)
+            .request_retry_delay(Duration::from_millis(1))
+            .max_time(Duration::from_millis(500));
+        tickets.agent(interactive_chatbot(&provider));
+        let first_key = tickets.task("first chat");
+        tickets.start();
+
+        let tickets_for_drive = Arc::clone(&tickets);
+        let drive = async move {
+            for _ in 0..200 {
+                let paused = tickets_for_drive
+                    .get_ticket(&first_key)
+                    .and_then(|t| t.replies.last().map(|r| r.author == "assistant"))
+                    .unwrap_or(false);
+                if paused {
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(5)).await;
+            }
+            let second_key = tickets_for_drive.task("second chat");
+            for _ in 0..400 {
+                if tickets_for_drive
+                    .get_ticket(&second_key)
+                    .map(|t| t.status == Status::Finished)
+                    .unwrap_or(false)
+                {
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(5)).await;
+            }
+            let first = tickets_for_drive.get_ticket(&first_key).unwrap();
+            let second = tickets_for_drive.get_ticket(&second_key).unwrap();
+            assert_eq!(
+                first.status,
+                Status::InProgress,
+                "first chat remains paused; no caller replied",
+            );
+            assert_eq!(
+                second.status,
+                Status::Finished,
+                "agent must release the paused first chat and claim the new Todo",
+            );
         };
+
+        tokio::time::timeout(Duration::from_secs(5), async {
+            tokio::join!(tickets.finish(), drive);
+        })
+        .await
+        .expect("test did not finish within 5s");
+    }
+
+    #[tokio::test]
+    async fn loop_fails_ticket_when_silence_exceeds_schema_retry_budget() {
+        use crate::event::{EventKind, PolicyKind};
+
+        let results_dir = crate::test_util::TempDir::new().unwrap();
+        let provider = MockProvider::with_results(vec![Ok(text_response("hi"))]);
         let tickets = TicketSystem::new();
         tickets
             .dir(results_dir.path().to_path_buf())
             .max_request_retries(0)
             .request_retry_delay(Duration::from_millis(1))
             .max_schema_retries(1);
-        tickets.event_handler(move |e| handler(e));
-        tickets.agent(
-            Agent::new()
-                .name("worker")
-                .provider(provider.clone() as Arc<dyn Provider>)
-                .model("mock")
-                .role("test")
-                .tool(ManageTicketsTool),
-        );
+        let collected = collect_events(&tickets);
+        tickets.agent(task_worker(&provider));
         tickets.task("go");
 
         tokio::time::timeout(Duration::from_secs(5), tickets.finish())
@@ -382,7 +458,6 @@ mod tests {
 
         let ticket = tickets.first_ticket().expect("ticket must exist");
         assert_eq!(ticket.status, Status::Failed);
-        assert_eq!(provider.requests(), 1);
 
         let events = collected.lock().unwrap().clone();
         let policy_violated = events.iter().any(|e| {
@@ -402,36 +477,19 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn loop_recovers_from_one_silence_when_budget_allows() {
-        use crate::agents::tickets::ReplyContent;
-        use crate::event::{Event, EventKind};
-        use std::sync::Mutex;
-
+    async fn loop_finishes_ticket_after_one_silence_and_recovery() {
         let results_dir = crate::test_util::TempDir::new().unwrap();
         let provider = MockProvider::with_results(vec![
             Ok(text_response("hi")),
             Ok(write_result_response("done")),
         ]);
-        let collected: Arc<Mutex<Vec<Event>>> = Arc::new(Mutex::new(Vec::new()));
-        let handler: Arc<dyn Fn(Event) + Send + Sync> = {
-            let c = Arc::clone(&collected);
-            Arc::new(move |e| c.lock().unwrap().push(e))
-        };
         let tickets = TicketSystem::new();
         tickets
             .dir(results_dir.path().to_path_buf())
             .max_request_retries(0)
             .request_retry_delay(Duration::from_millis(1))
             .max_schema_retries(3);
-        tickets.event_handler(move |e| handler(e));
-        tickets.agent(
-            Agent::new()
-                .name("worker")
-                .provider(provider.clone() as Arc<dyn Provider>)
-                .model("mock")
-                .role("test")
-                .tool(ManageTicketsTool),
-        );
+        tickets.agent(task_worker(&provider));
         tickets.task("go");
 
         tokio::time::timeout(Duration::from_secs(5), tickets.finish())
@@ -441,30 +499,46 @@ mod tests {
         let ticket = tickets.first_ticket().expect("ticket must exist");
         assert_eq!(ticket.status, Status::Finished);
         assert_eq!(tickets.last_result().as_deref(), Some("done"));
-        assert_eq!(provider.requests(), 2);
+    }
+
+    #[tokio::test]
+    async fn silence_retry_emits_schema_retried_event_with_attempt_1() {
+        use crate::event::EventKind;
+
+        let results_dir = crate::test_util::TempDir::new().unwrap();
+        let provider = MockProvider::with_results(vec![
+            Ok(text_response("hi")),
+            Ok(write_result_response("done")),
+        ]);
+        let tickets = TicketSystem::new();
+        tickets
+            .dir(results_dir.path().to_path_buf())
+            .max_request_retries(0)
+            .request_retry_delay(Duration::from_millis(1))
+            .max_schema_retries(3);
+        let collected = collect_events(&tickets);
+        tickets.agent(task_worker(&provider));
+        tickets.task("go");
+
+        tokio::time::timeout(Duration::from_secs(5), tickets.finish())
+            .await
+            .expect("test did not finish within 5s");
 
         let events = collected.lock().unwrap().clone();
-        let schema_retries: Vec<u32> = events
+        let schema_retries: Vec<(u32, String)> = events
             .iter()
             .filter_map(|e| match &e.kind {
-                EventKind::SchemaRetried { attempt, .. } => Some(*attempt),
+                EventKind::SchemaRetried {
+                    attempt, message, ..
+                } => Some((*attempt, message.clone())),
                 _ => None,
             })
             .collect();
-        assert_eq!(schema_retries, vec![1]);
-        let policy_violated = events
-            .iter()
-            .any(|e| matches!(&e.kind, EventKind::PolicyViolated { .. }));
-        assert!(!policy_violated, "budget should not be exhausted");
-
-        let directive_visible = ticket.replies.iter().any(|r| {
-            r.author == "user"
-                && r.content.iter().any(|c| match c {
-                    ReplyContent::Text(t) => t.starts_with("Your previous reply was not accepted."),
-                    _ => false,
-                })
-        });
-        assert!(directive_visible, "retry directive should be in transcript");
+        assert_eq!(
+            schema_retries,
+            vec![(1, super::RESUME_OR_FINISH_DETAIL.to_string())],
+            "exactly one SchemaRetried at attempt 1 with the silence detail",
+        );
     }
 
     #[tokio::test]

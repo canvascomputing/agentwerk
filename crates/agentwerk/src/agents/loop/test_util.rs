@@ -220,6 +220,35 @@ pub fn schema_retries_in(events: &[Event]) -> Vec<(u32, u32, String)> {
         .collect()
 }
 
+// ---- agent / event builders ----
+
+pub fn interactive_chatbot(provider: &Arc<MockProvider>) -> Agent {
+    Agent::new()
+        .name("chatbot")
+        .interactive()
+        .provider(provider.clone() as Arc<dyn Provider>)
+        .model("mock")
+        .role("test")
+}
+
+pub fn task_worker(provider: &Arc<MockProvider>) -> Agent {
+    Agent::new()
+        .name("worker")
+        .provider(provider.clone() as Arc<dyn Provider>)
+        .model("mock")
+        .role("test")
+}
+
+pub fn collect_events(tickets: &TicketSystem) -> Arc<Mutex<Vec<Event>>> {
+    let collected: Arc<Mutex<Vec<Event>>> = Arc::new(Mutex::new(Vec::new()));
+    let handler: Arc<dyn Fn(Event) + Send + Sync> = {
+        let c = Arc::clone(&collected);
+        Arc::new(move |e| c.lock().unwrap().push(e))
+    };
+    tickets.event_handler(move |e| handler(e));
+    collected
+}
+
 // ---- harnesses ----
 
 pub async fn run_one(
