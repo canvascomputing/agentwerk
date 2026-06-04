@@ -10,6 +10,6 @@ Summarize the conversation above so the agent can continue the same task without
 6. All non-tool-result messages from the user, verbatim where their wording matters
 7. Pending tasks
 8. Current work — what was being worked on immediately before this summary
-9. Next step — quote directly from the most recent messages so there is no drift
+9. Next step — quote directly from the most recent messages so the language stays anchored
 
 Reply with the summary only. Do not call any tools.

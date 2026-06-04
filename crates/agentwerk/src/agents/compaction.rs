@@ -3,7 +3,7 @@
 
 use std::sync::Arc;
 
-use crate::agents::tickets::{to_messages, TicketSystem};
+use crate::agents::tickets::TicketSystem;
 use crate::prompts::compaction_directive;
 use crate::providers::types::StreamEvent;
 use crate::providers::{
@@ -12,8 +12,8 @@ use crate::providers::{
 };
 
 /// Distance below the window at which compaction fires. Covers the
-/// model's response budget (~20 k) plus drift in the `bytes / 4` token
-/// estimate which under-counts code and JSON (~13 k).
+/// model's response budget (~20 k) and a safety margin (~13 k) because
+/// the `bytes / 4` token estimate under-counts code and JSON.
 const COMPACTION_HEADROOM_TOKENS: u64 = 33_000;
 
 /// Token count at which compaction fires for a model with context
@@ -86,15 +86,13 @@ pub(crate) fn should_compact_proactively(
 pub(crate) async fn run(
     provider: &Arc<dyn Provider>,
     model: &str,
+    messages: Vec<Message>,
     window: Option<u64>,
     ticket_system: &TicketSystem,
     ticket_key: &str,
+    on_progress: Arc<dyn Fn(u32, u32) + Send + Sync>,
 ) -> ProviderResult<bool> {
-    let Some(ticket) = ticket_system.get_ticket(ticket_key) else {
-        return Ok(false);
-    };
-    let messages = to_messages(&ticket.replies);
-    let Some(summary) = compact(provider, model, &messages, window).await? else {
+    let Some(summary) = compact(provider, model, &messages, window, on_progress).await? else {
         return Ok(false);
     };
     ticket_system.summarize(ticket_key, summary);
@@ -115,16 +113,19 @@ pub(crate) async fn compact(
     model: &str,
     messages: &[Message],
     window: Option<u64>,
+    on_progress: Arc<dyn Fn(u32, u32) + Send + Sync>,
 ) -> ProviderResult<Option<String>> {
     let chunks = chunks_for_window(messages, window);
     if messages.len() <= 1 && chunks.len() <= 1 {
         return Ok(None);
     }
+    let total = chunks.len() as u32;
     let mut summaries = Vec::with_capacity(chunks.len());
-    for chunk in &chunks {
+    for (i, chunk) in chunks.iter().enumerate() {
         if let Some(text) = summarize_chunk(provider, model, chunk).await? {
             summaries.push(text);
         }
+        on_progress((i as u32) + 1, total);
     }
     if summaries.is_empty() {
         return Ok(None);
@@ -177,7 +178,7 @@ async fn summarize_chunk(
     Ok(Some(summary))
 }
 
-fn chunks_for_window(messages: &[Message], window: Option<u64>) -> Vec<Vec<Message>> {
+pub(crate) fn chunks_for_window(messages: &[Message], window: Option<u64>) -> Vec<Vec<Message>> {
     let Some(window) = window else {
         return vec![messages.to_vec()];
     };
@@ -401,6 +402,10 @@ mod tests {
         }
     }
 
+    fn noop_progress() -> Arc<dyn Fn(u32, u32) + Send + Sync> {
+        Arc::new(|_, _| {})
+    }
+
     #[tokio::test]
     async fn compact_returns_the_provider_summary() {
         let provider: Arc<dyn Provider> =
@@ -411,7 +416,7 @@ mod tests {
             Message::user("turn 1 result"),
         ];
 
-        let summary = compact(&provider, "mock", &messages, None)
+        let summary = compact(&provider, "mock", &messages, None, noop_progress())
             .await
             .expect("compact should succeed");
 
@@ -425,7 +430,7 @@ mod tests {
             let provider_handle: Arc<dyn Provider> = provider.clone();
             let messages: Vec<Message> = (0..len).map(|i| Message::user(format!("m{i}"))).collect();
 
-            let summary = compact(&provider_handle, "mock", &messages, None)
+            let summary = compact(&provider_handle, "mock", &messages, None, noop_progress())
                 .await
                 .expect("no-op should succeed");
 
@@ -446,7 +451,7 @@ mod tests {
             })]);
         let messages = vec![Message::user("task"), Message::assistant("turn 0")];
 
-        let err = compact(&provider, "mock", &messages, None)
+        let err = compact(&provider, "mock", &messages, None, noop_progress())
             .await
             .expect_err("should propagate the connection failure");
 
@@ -468,7 +473,7 @@ mod tests {
         let provider: Arc<dyn Provider> = ScriptedProvider::new(vec![Ok(no_text)]);
         let messages = vec![Message::user("task"), Message::assistant("turn 0")];
 
-        let err = compact(&provider, "mock", &messages, None)
+        let err = compact(&provider, "mock", &messages, None, noop_progress())
             .await
             .expect_err("text-less reply must fail");
 
@@ -560,7 +565,7 @@ mod tests {
             Message::user("turn 1 result"),
         ];
 
-        compact(&provider_handle, "mock", &messages, None)
+        compact(&provider_handle, "mock", &messages, None, noop_progress())
             .await
             .unwrap();
 
@@ -569,5 +574,60 @@ mod tests {
         assert!(req.tool_choice.is_none(), "tool_choice must be unset");
         assert_eq!(req.messages.len(), messages.len());
         assert_eq!(req.system_prompt, compaction_directive());
+    }
+
+    #[tokio::test]
+    async fn compact_fires_one_progress_event_per_chunk() {
+        let provider: Arc<dyn Provider> = ScriptedProvider::new(vec![
+            Ok(summary_response("PART_A")),
+            Ok(summary_response("PART_B")),
+            Ok(summary_response("PART_C")),
+            Ok(summary_response("PART_D")),
+        ]);
+        let messages = vec![Message::user("x\n".repeat(2_000))];
+        let captured: Arc<StdMutex<Vec<(u32, u32)>>> = Arc::new(StdMutex::new(Vec::new()));
+        let on_progress: Arc<dyn Fn(u32, u32) + Send + Sync> = {
+            let captured = Arc::clone(&captured);
+            Arc::new(move |completed, total| {
+                captured.lock().unwrap().push((completed, total));
+            })
+        };
+
+        compact(&provider, "mock", &messages, Some(1_000), on_progress)
+            .await
+            .expect("chunked compaction should succeed");
+
+        let progress = captured.lock().unwrap().clone();
+        assert!(progress.len() >= 2, "expected ≥2 chunks, got {progress:?}");
+        let total = progress[0].1;
+        for (i, (completed, t)) in progress.iter().enumerate() {
+            assert_eq!(*t, total, "chunks_total must stay constant across events");
+            assert_eq!(
+                *completed,
+                (i as u32) + 1,
+                "completed must increment 1, 2, 3, …",
+            );
+        }
+        assert_eq!(progress.last().unwrap().0, total);
+    }
+
+    #[tokio::test]
+    async fn compact_emits_no_progress_when_short_circuiting() {
+        let provider: Arc<dyn Provider> = ScriptedProvider::new(Vec::new());
+        let messages = vec![Message::user("only one")];
+        let captured: Arc<StdMutex<Vec<(u32, u32)>>> = Arc::new(StdMutex::new(Vec::new()));
+        let on_progress: Arc<dyn Fn(u32, u32) + Send + Sync> = {
+            let captured = Arc::clone(&captured);
+            Arc::new(move |completed, total| {
+                captured.lock().unwrap().push((completed, total));
+            })
+        };
+
+        let summary = compact(&provider, "mock", &messages, None, on_progress)
+            .await
+            .expect("short-circuit must succeed");
+
+        assert!(summary.is_none());
+        assert!(captured.lock().unwrap().is_empty());
     }
 }

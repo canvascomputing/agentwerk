@@ -252,14 +252,42 @@ pub(super) async fn run_agent(agent: Agent) {
 }
 
 pub(super) async fn compact(context: &mut LoopContext<'_>, reason: CompactReason) -> Action<()> {
-    context.emit(EventKind::CompactionStarted { reason });
+    let Some(ticket) = context.ticket_system.get_ticket(&context.ticket_key) else {
+        return Action::Stop;
+    };
+    let window = context.model.context_window;
+    let messages = to_messages(&ticket.replies);
+    let chunks_total = algo::chunks_for_window(&messages, window).len() as u32;
+    context.emit(EventKind::CompactionStarted {
+        reason,
+        chunks_total,
+    });
+
+    let on_progress: Arc<dyn Fn(u32, u32) + Send + Sync> = {
+        let ticket_system = Arc::clone(context.ticket_system);
+        let agent_name = context.agent.get_name().to_string();
+        let ticket_key = context.ticket_key.clone();
+        Arc::new(move |completed, total| {
+            ticket_system.emit(
+                &ticket_key,
+                &agent_name,
+                EventKind::CompactionProgress {
+                    reason,
+                    completed,
+                    total,
+                },
+            );
+        })
+    };
 
     let applied = match algo::run(
         &context.agent.provider_handle(),
         &context.model.name,
-        context.model.context_window,
+        messages,
+        window,
         context.ticket_system,
         &context.ticket_key,
+        on_progress,
     )
     .await
     {
@@ -1216,7 +1244,7 @@ mod tests {
         events
             .iter()
             .filter(|e| match &e.kind {
-                crate::event::EventKind::CompactionStarted { reason } => *reason == expected,
+                crate::event::EventKind::CompactionStarted { reason, .. } => *reason == expected,
                 _ => false,
             })
             .count()

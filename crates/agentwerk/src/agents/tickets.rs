@@ -2328,4 +2328,96 @@ mod tests {
         }]));
         assert!(!ticket.is_waiting_for_response());
     }
+
+    #[test]
+    fn summarize_writes_compaction_pair_with_matching_timestamps() {
+        let (sys, _tmp) = test_system();
+        let key = sys.task("hello");
+        sys.add_reply(&key, Reply::user_text("turn one"));
+        sys.add_reply(&key, Reply::assistant(&[ContentBlock::Text {
+            text: "first reply".into(),
+        }]));
+
+        sys.summarize(&key, "SUMMARY-TEXT".into());
+
+        let ticket_dir = sys.dir_value().join("tickets").join(&key);
+        let mut header_ts: Option<u64> = None;
+        let mut replies_ts: Option<u64> = None;
+        for entry in std::fs::read_dir(&ticket_dir).unwrap().flatten() {
+            let name = entry.file_name().into_string().unwrap();
+            if let Some(rest) = name.strip_prefix("ticket.").and_then(|s| s.strip_suffix(".json")) {
+                if let Ok(ts) = rest.parse::<u64>() {
+                    header_ts = Some(ts);
+                }
+            }
+            if let Some(rest) = name.strip_prefix("replies.").and_then(|s| s.strip_suffix(".jsonl"))
+            {
+                if let Ok(ts) = rest.parse::<u64>() {
+                    replies_ts = Some(ts);
+                }
+            }
+        }
+        assert!(
+            header_ts.is_some() && replies_ts.is_some(),
+            "save_compaction must write both ticket.<ts>.json and replies.<ts>.jsonl",
+        );
+        assert_eq!(
+            header_ts, replies_ts,
+            "pair timestamps must match so Replies::load picks them up as a committed pair",
+        );
+    }
+
+    #[test]
+    fn summarize_pair_round_trips_through_replies_load() {
+        let (sys, _tmp) = test_system();
+        let key = sys.task("hello");
+        sys.add_reply(&key, Reply::user_text("noise that gets compacted"));
+        sys.add_reply(&key, Reply::assistant(&[ContentBlock::Text {
+            text: "more noise".into(),
+        }]));
+
+        sys.summarize(&key, "SUMMARY-TEXT".into());
+
+        let reloaded = Replies::load(&sys.dir_value(), &key).unwrap();
+        let texts: Vec<String> = reloaded
+            .iter()
+            .filter_map(|r| match &r.content[..] {
+                [ReplyContent::Text(t)] => Some(t.clone()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            texts,
+            vec!["SUMMARY-TEXT".to_string()],
+            "Replies::load must reconstruct the post-compaction transcript from the pair",
+        );
+    }
+
+    #[test]
+    fn replies_load_skips_orphan_replies_file_without_matching_header() {
+        let (sys, _tmp) = test_system();
+        let key = sys.task("hello");
+        sys.add_reply(&key, Reply::user_text("running entry"));
+
+        let ticket_dir = sys.dir_value().join("tickets").join(&key);
+        let orphan = ticket_dir.join("replies.42.jsonl");
+        std::fs::write(&orphan, b"{\"author\":\"user\",\"content\":[{\"Text\":\"GHOST\"}],\"created_at\":1}\n").unwrap();
+
+        let reloaded = Replies::load(&sys.dir_value(), &key).unwrap();
+        let texts: Vec<String> = reloaded
+            .iter()
+            .filter_map(|r| match &r.content[..] {
+                [ReplyContent::Text(t)] => Some(t.clone()),
+                _ => None,
+            })
+            .collect();
+        assert!(
+            !texts.iter().any(|t| t == "GHOST"),
+            "Replies::load must skip a replies.<ts>.jsonl with no matching ticket.<ts>.json commit marker",
+        );
+        assert!(
+            texts.iter().any(|t| t == "running entry"),
+            "the running log must still be returned even when an orphan pair half exists",
+        );
+    }
 }

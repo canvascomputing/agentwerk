@@ -127,10 +127,23 @@ pub enum EventKind {
         message: String,
     },
     /// Compaction is about to run: the loop is about to call the
-    /// summarizer to collapse the message tail. Pairs with
-    /// `CompactionFinished` (success) or `CompactionFailed` (the
+    /// summarizer to collapse the message tail. `chunks_total` is the
+    /// number of summariser calls the algorithm intends to make. Pairs
+    /// with `CompactionFinished` (success) or `CompactionFailed` (the
     /// summarizer call returned a provider error).
-    CompactionStarted { reason: CompactReason },
+    CompactionStarted {
+        reason: CompactReason,
+        chunks_total: u32,
+    },
+    /// One summariser call finished. Fires once per chunk processed by
+    /// the algorithm; `completed` is the running count (1-based) and
+    /// `total` is the same value as the matching `CompactionStarted`'s
+    /// `chunks_total`.
+    CompactionProgress {
+        reason: CompactReason,
+        completed: u32,
+        total: u32,
+    },
     /// Compaction finished successfully; the message tail has been
     /// replaced with the model's summary.
     CompactionFinished { reason: CompactReason },
@@ -193,8 +206,18 @@ pub fn default_logger() -> Arc<dyn Fn(Event) + Send + Sync> {
             EventKind::PolicyViolated { kind, limit } => {
                 eprintln!("[{agent}] policy violated: {kind:?} limit={limit}");
             }
-            EventKind::CompactionStarted { reason } => {
-                eprintln!("[{agent}] compacting context ({reason:?})");
+            EventKind::CompactionStarted {
+                reason,
+                chunks_total,
+            } => {
+                eprintln!("[{agent}] compacting context ({reason:?}): {chunks_total} chunks");
+            }
+            EventKind::CompactionProgress {
+                reason,
+                completed,
+                total,
+            } => {
+                eprintln!("[{agent}] compaction progress ({reason:?}): {completed}/{total}");
             }
             EventKind::CompactionFinished { reason } => {
                 eprintln!("[{agent}] context compacted ({reason:?})");
@@ -283,6 +306,12 @@ mod tests {
             },
             EventKind::CompactionStarted {
                 reason: CompactReason::Proactive,
+                chunks_total: 3,
+            },
+            EventKind::CompactionProgress {
+                reason: CompactReason::Proactive,
+                completed: 1,
+                total: 3,
             },
             EventKind::CompactionFinished {
                 reason: CompactReason::Proactive,

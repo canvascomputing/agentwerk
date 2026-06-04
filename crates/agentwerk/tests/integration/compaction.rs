@@ -1,8 +1,8 @@
-//! Summariser smoke-test: the initial task content (~1 969 estimated tokens)
-//! exceeds the blocking threshold of a 4 096-token window (4 096 − 3 000 =
-//! 1 096) before the first model request is sent. The loop calls compact and
-//! the summariser must return non-empty text. The ticket does not need to
-//! complete — verifying the summariser is the sole purpose of this test.
+//! Summariser smoke-test: the configured 4 096-token window makes
+//! `compaction_threshold` saturate to 0, so proactive compaction fires
+//! between turns. The loop calls compact and the summariser must return
+//! non-empty text. The ticket does not need to complete: verifying the
+//! summariser is the sole purpose of this test.
 
 use std::sync::{Arc, Mutex};
 
@@ -12,9 +12,10 @@ use agentwerk::event::EventKind;
 use agentwerk::providers::Model;
 use agentwerk::{Agent, Event, Ticket, TicketSystem};
 
-// Blocking threshold = 4 096 − 3 000 = 1 096 tokens. The task alone is
-// ~2 400 estimated tokens, so the guard fires before the first request
-// without any synthetic filler or intermediate tool steps.
+// Compaction threshold = max(0, 4 096 − 33 000) = 0, so any non-empty
+// transcript trips the proactive guard between turns. The task itself
+// is ~2 400 tokens; the first model response fills `last_usage` and the
+// next iteration's proactive check fires.
 const LOCAL_CTX: u64 = 4_096;
 
 // A realistic debugging scenario: ~1 500 tokens, with enough structure
@@ -113,11 +114,10 @@ pub async fn run_loop(mut rx: mpsc::Receiver<AuditEvent>) {
 Given the above, what is the single most important code change to make the
 audit pipeline robust under back-pressure, and how should it be tested?
 
-Call finish_ticket with your answer as the result string.";
+Answer in plain prose, no tools.";
 
 #[tokio::test]
-async fn summariser_condenses_transcript_and_ticket_completes(
-) -> std::result::Result<(), Box<dyn std::error::Error>> {
+async fn summariser_produces_text_when_compaction_fires_against_live_llm() {
     let (provider, model) = common::build_provider();
     let events: Arc<Mutex<Vec<Event>>> = Arc::new(Mutex::new(Vec::new()));
     let log = events.clone();
@@ -125,16 +125,16 @@ async fn summariser_condenses_transcript_and_ticket_completes(
     eprintln!("\n=== BEFORE COMPACTION ===\n{TASK}\n");
 
     let tickets = TicketSystem::new();
-    // Stop after one process_ticket call so the retry loop cannot re-enter
-    // and balloon the context. The first call is enough to trigger and
-    // verify compaction.
-    tickets.max_turns(1);
+    // Two iterations: turn 1 lets the model respond once (populating
+    // `last_usage`); turn 2's proactive guard then trips because
+    // `compaction_threshold(LOCAL_CTX)` saturates to 0.
+    tickets.max_turns(2);
     tickets.event_handler(move |e| log.lock().unwrap().push(e));
     tickets.agent(
         Agent::new()
             .provider(provider)
             .model(Model::from_name(&model).context_window(LOCAL_CTX))
-            .role("Answer the question in the task by calling finish_ticket with your answer."),
+            .role("Answer the question in plain text. Do not call any tools."),
     );
     tickets.ticket(Ticket::new(TASK));
     assert!(
@@ -200,6 +200,4 @@ async fn summariser_condenses_transcript_and_ticket_completes(
         summary_chars >= 200,
         "compaction summary must be at least 200 chars, got {summary_chars}"
     );
-
-    Ok(())
 }

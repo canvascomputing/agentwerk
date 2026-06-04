@@ -397,13 +397,27 @@ fn print_event(
                 );
             }
         }
-        EventKind::CompactionStarted { reason } => {
+        EventKind::CompactionStarted {
+            reason,
+            chunks_total,
+        } => {
             break_stream();
             eprintln!(
-                "{}… compacting context ({reason:?}){}{}",
+                "{}… compacting context ({reason:?}): {chunks_total} chunks{}{}",
                 style.dim,
                 window_usage_suffix(window, last_input),
                 style.reset,
+            );
+        }
+        EventKind::CompactionProgress {
+            reason: _,
+            completed,
+            total,
+        } => {
+            break_stream();
+            eprintln!(
+                "{}  ▸ {completed}/{total}{}",
+                style.dim, style.reset,
             );
         }
         EventKind::CompactionFinished { reason } => {
