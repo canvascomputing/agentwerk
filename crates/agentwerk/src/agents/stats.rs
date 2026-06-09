@@ -15,6 +15,7 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use crate::agents::tickets::Status;
+use crate::providers::types::TokenUsage;
 
 /// Recorder protocol for the agent loop. Each agent holds an
 /// `Arc<dyn LoopStats + Send + Sync>` and reports loop events through
@@ -68,6 +69,10 @@ pub struct Stats {
     /// Always empty on a slice itself; populated only on the run-wide
     /// `Stats` owned by `TicketSystem`.
     label_stats: Mutex<HashMap<String, Arc<Stats>>>,
+    /// Per-ticket append-only series of provider-reported token usages.
+    /// Feeds the proactive-compaction predictor; cleared on compaction.
+    /// Always empty on a label slice.
+    usage_history: Mutex<HashMap<String, Vec<TokenUsage>>>,
 }
 
 impl Stats {
@@ -87,6 +92,7 @@ impl Stats {
             total_ticket_duration: AtomicU64::new(0),
             total_work_duration: AtomicU64::new(0),
             label_stats: Mutex::new(HashMap::new()),
+            usage_history: Mutex::new(HashMap::new()),
         }
     }
 
@@ -99,6 +105,32 @@ impl Stats {
         map.entry(label.to_string())
             .or_insert_with(|| Arc::new(Stats::new()))
             .clone()
+    }
+
+    /// Cloned per-ticket usage series, oldest first.
+    pub fn usage_history(&self, ticket_key: &str) -> Vec<TokenUsage> {
+        self.usage_history
+            .lock()
+            .unwrap()
+            .get(ticket_key)
+            .cloned()
+            .unwrap_or_default()
+    }
+
+    /// Append `usage` to the per-ticket series.
+    pub(crate) fn record_usage(&self, ticket_key: &str, usage: TokenUsage) {
+        self.usage_history
+            .lock()
+            .unwrap()
+            .entry(ticket_key.to_string())
+            .or_default()
+            .push(usage);
+    }
+
+    /// Drop the per-ticket series. Called after a compaction commits,
+    /// since the post-summary transcript breaks the pre-summary trend.
+    pub(crate) fn reset_usage(&self, ticket_key: &str) {
+        self.usage_history.lock().unwrap().remove(ticket_key);
     }
 
     pub fn record_turn_for(&self, labels: &[String]) {
@@ -313,6 +345,14 @@ impl crate::persistence::Persist for Stats {
                 slice.load_fields(body);
             }
         }
+        if let Some(history) = value.get("usage_history").and_then(|v| v.as_object()) {
+            let mut map = stats.usage_history.lock().unwrap();
+            for (ticket_key, entries) in history {
+                if let Ok(list) = serde_json::from_value::<Vec<TokenUsage>>(entries.clone()) {
+                    map.insert(ticket_key.clone(), list);
+                }
+            }
+        }
         Ok(stats)
     }
 }
@@ -324,9 +364,23 @@ impl Stats {
             .iter()
             .map(|(name, slice)| (name.clone(), slice.fields_as_json()))
             .collect();
+        let history = self.usage_history.lock().unwrap();
+        let history_obj: serde_json::Map<String, serde_json::Value> = history
+            .iter()
+            .map(|(key, entries)| {
+                (
+                    key.clone(),
+                    serde_json::to_value(entries).unwrap_or(serde_json::Value::Null),
+                )
+            })
+            .collect();
         let mut body = self.fields_as_json();
         if let serde_json::Value::Object(map) = &mut body {
             map.insert("labels".into(), serde_json::Value::Object(label_obj));
+            map.insert(
+                "usage_history".into(),
+                serde_json::Value::Object(history_obj),
+            );
         }
         body
     }
@@ -634,5 +688,71 @@ mod tests {
         assert_eq!(restored_slice.input_tokens(), 40);
         assert_eq!(restored_slice.tickets_finished(), 1);
         assert_eq!(restored_slice.ticket_duration(), Duration::from_secs(4));
+    }
+
+    #[test]
+    fn usage_history_round_trips_through_save_load() {
+        let dir = crate::test_util::TempDir::new().unwrap();
+        let s = Stats::new();
+        s.record_usage(
+            "TICKET-1",
+            TokenUsage {
+                input_tokens: 5_000,
+                output_tokens: 200,
+            },
+        );
+        s.record_usage(
+            "TICKET-1",
+            TokenUsage {
+                input_tokens: 7_500,
+                output_tokens: 300,
+            },
+        );
+        s.record_usage(
+            "TICKET-2",
+            TokenUsage {
+                input_tokens: 1_200,
+                output_tokens: 80,
+            },
+        );
+
+        use crate::persistence::Persist;
+        s.save(dir.path()).unwrap();
+        let restored = Stats::load(dir.path()).unwrap();
+
+        let t1 = restored.usage_history("TICKET-1");
+        assert_eq!(t1.len(), 2);
+        assert_eq!(t1[0].input_tokens, 5_000);
+        assert_eq!(t1[1].input_tokens, 7_500);
+        let t2 = restored.usage_history("TICKET-2");
+        assert_eq!(t2.len(), 1);
+        assert_eq!(t2[0].input_tokens, 1_200);
+        assert!(restored.usage_history("TICKET-MISSING").is_empty());
+    }
+
+    #[test]
+    fn reset_usage_clears_one_ticket_without_touching_others() {
+        let s = Stats::new();
+        s.record_usage(
+            "TICKET-1",
+            TokenUsage {
+                input_tokens: 100,
+                output_tokens: 10,
+            },
+        );
+        s.record_usage(
+            "TICKET-2",
+            TokenUsage {
+                input_tokens: 200,
+                output_tokens: 20,
+            },
+        );
+
+        s.reset_usage("TICKET-1");
+
+        assert!(s.usage_history("TICKET-1").is_empty());
+        let t2 = s.usage_history("TICKET-2");
+        assert_eq!(t2.len(), 1);
+        assert_eq!(t2[0].input_tokens, 200);
     }
 }
