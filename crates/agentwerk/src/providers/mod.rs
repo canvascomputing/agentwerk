@@ -7,6 +7,7 @@ mod litellm;
 mod mistral;
 pub(crate) mod model;
 mod openai;
+mod patterns;
 mod provider;
 pub(crate) mod stream;
 pub mod types;
@@ -50,6 +51,15 @@ where
     let retry_delay = retry_delay_from_headers(&resp);
     let body = resp.text().await.unwrap_or_default();
     if let Some(e) = classify(status, &body) {
+        return Err(e);
+    }
+    // Per-provider classifiers only recognise their own vendor's
+    // wording. When an OpenAI-compatible proxy (LiteLLM, OpenRouter,
+    // …) wraps an upstream overflow / rate-limit signal, the vendor
+    // classifier gives up. The shared pattern bank catches those
+    // wrapped errors so the agent loop sees ContextWindowExceeded /
+    // RateLimited instead of a terminal StatusUnclassified.
+    if let Some(e) = patterns::refine(status, &body, retry_delay) {
         return Err(e);
     }
     Err(fallback_http_error(status, body, retry_delay))
