@@ -14,8 +14,8 @@ use agentwerk::{Agent, Event, Ticket, TicketSystem};
 
 // Compaction threshold = max(0, 4 096 − 33 000) = 0, so any non-empty
 // transcript trips the proactive guard between turns. The task itself
-// is ~2 400 tokens; the first model response fills `last_usage` and the
-// next iteration's proactive check fires.
+// is ~2 400 tokens; the first model response appends to `usage_history`
+// and the next iteration's proactive check fires.
 const LOCAL_CTX: u64 = 4_096;
 
 // A realistic debugging scenario: ~1 500 tokens, with enough structure
@@ -125,9 +125,9 @@ async fn summariser_produces_text_when_compaction_fires_against_live_llm() {
     eprintln!("\n=== BEFORE COMPACTION ===\n{TASK}\n");
 
     let tickets = TicketSystem::new();
-    // Two iterations: turn 1 lets the model respond once (populating
-    // `last_usage`); turn 2's proactive guard then trips because
-    // `compaction_threshold(LOCAL_CTX)` saturates to 0.
+    // Two iterations: turn 1 lets the model respond once (appending one
+    // entry to `usage_history`); turn 2's proactive guard then trips
+    // because `compaction_threshold(LOCAL_CTX)` saturates to 0.
     tickets.max_turns(2);
     tickets.event_handler(move |e| log.lock().unwrap().push(e));
     tickets.agent(
@@ -200,4 +200,18 @@ async fn summariser_produces_text_when_compaction_fires_against_live_llm() {
         summary_chars >= 200,
         "compaction summary must be at least 200 chars, got {summary_chars}"
     );
+
+    // `reset_usage` runs inside `summarize`, so the per-ticket history
+    // can hold at most the entries recorded *after* compaction committed
+    // (turn 2's reply). Without the reset, the pre-compaction entry
+    // would still be there too — length would be 2.
+    for ticket in tickets.tickets() {
+        let history = tickets.stats().usage_history(&ticket.key);
+        assert!(
+            history.len() <= 1,
+            "{}: usage_history should be cleared on compaction, found {} entries",
+            ticket.key,
+            history.len(),
+        );
+    }
 }

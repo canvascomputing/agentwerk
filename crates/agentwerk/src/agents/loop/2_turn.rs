@@ -9,7 +9,6 @@ use crate::agents::compaction as algo;
 use crate::agents::policy::Policies;
 use crate::agents::tickets::{policy_violated_kind, to_messages, Reply, Status, TicketSystem};
 use crate::event::{CompactReason, EventKind, PolicyKind};
-use crate::providers::types::TokenUsage;
 use crate::providers::{AsUserMessage, Message, Model, RequestErrorKind};
 
 use super::{reply, tool_call, Action, POLL_INTERVAL};
@@ -29,8 +28,6 @@ pub(super) struct LoopContext<'a> {
 
     // Spans turns; trips max_schema_retries.
     pub(super) consecutive_schema_failures: u32,
-    // Spans turns; feeds compaction sizing.
-    pub(super) last_usage: Option<TokenUsage>,
 }
 
 impl<'a> LoopContext<'a> {
@@ -54,7 +51,6 @@ impl<'a> LoopContext<'a> {
             policies,
 
             consecutive_schema_failures: 0,
-            last_usage: None,
         }
     }
 
@@ -323,12 +319,18 @@ pub(super) async fn proactive_compact(
 ) -> Action<Vec<Message>> {
     let tools = context.agent.tool_definitions();
     let window = context.model.context_window;
+    let history = context
+        .ticket_system
+        .stats()
+        .usage_history(&context.ticket_key);
 
-    let exceeds_proactive_threshold = context.last_usage.as_ref().is_some_and(|usage| {
-        algo::should_compact_proactively(window, usage, &messages, &context.system_prompt, &tools)
-    });
-
-    if exceeds_proactive_threshold {
+    if algo::should_compact_proactively(
+        window,
+        &history,
+        &messages,
+        &context.system_prompt,
+        &tools,
+    ) {
         match compact(context, CompactReason::Proactive).await {
             Action::Stop => return Action::Stop,
             Action::Replay => return Action::Replay,

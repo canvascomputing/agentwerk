@@ -128,7 +128,6 @@ pub(super) async fn run(context: &mut LoopContext<'_>, messages: Vec<Message>) -
         }
     };
 
-    context.last_usage = Some(response.usage.clone());
     context.ticket_system.emit(
         &context.ticket_key,
         context.agent.get_name(),

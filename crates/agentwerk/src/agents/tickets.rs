@@ -548,7 +548,8 @@ impl TicketSystem {
             }
             EventKind::RequestFinished { usage, .. } => {
                 self.stats
-                    .record_request_for(&labels, usage.input_tokens, usage.output_tokens)
+                    .record_request_for(&labels, usage.input_tokens, usage.output_tokens);
+                self.stats.record_usage(key, usage.clone());
             }
             EventKind::RequestFailed { .. } => self.stats.record_error_for(&labels),
             _ => {}
@@ -935,6 +936,7 @@ impl TicketSystem {
             ticket.clone()
         };
         self.save_compaction(key, &ticket_copy);
+        self.stats.reset_usage(key);
     }
 
     /// Replies file first, then header as commit marker. A crash in

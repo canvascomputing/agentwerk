@@ -28,17 +28,30 @@ pub(crate) fn compaction_threshold(window: Option<u64>) -> Option<u64> {
 /// vector, the system prompt, and every tool definition. Sums *all*
 /// messages on purpose: this overcounts after the first iteration but
 /// the resulting conservatism keeps the proactive seam ahead of the
-/// real overflow.
+/// real overflow. Reads the last entry of `history` for the input-token
+/// anchor; an empty history anchors at 0.
 pub(crate) fn estimate_next_request_tokens(
-    last_usage: &TokenUsage,
+    history: &[TokenUsage],
     messages: &[Message],
     system_prompt: &str,
     tools: &[ProviderToolDefinition],
 ) -> u64 {
+    let last_input = history.last().map(|u| u.input_tokens).unwrap_or(0);
     let bytes = messages.iter().map(message_bytes).sum::<usize>()
         + system_prompt.len()
         + tools.iter().map(tool_definition_bytes).sum::<usize>();
-    last_usage.input_tokens + (bytes / 4) as u64
+    last_input + (bytes / 4) as u64
+}
+
+/// Per-turn input-token growth implied by the last two recorded usages.
+/// `0` when fewer than two samples exist or the series is shrinking
+/// (`saturating_sub` handles tool-result trims that briefly lower the
+/// running input count).
+fn next_delta(history: &[TokenUsage]) -> u64 {
+    match history {
+        [.., a, b] => b.input_tokens.saturating_sub(a.input_tokens),
+        _ => 0,
+    }
 }
 
 fn message_bytes(message: &Message) -> usize {
@@ -62,12 +75,14 @@ fn tool_definition_bytes(tool: &ProviderToolDefinition) -> usize {
     tool.name.len() + tool.description.len() + tool.input_schema.to_string().len()
 }
 
-/// `true` when the estimated next-request input crosses the
-/// proactive compaction threshold. `false` when the window is unknown
-/// or the estimate is still under it.
+/// `true` when the estimated next-request input plus one more turn's
+/// growth would cross the proactive compaction threshold. `false` when
+/// the window is unknown or the history is empty. Extending the
+/// estimate by `next_delta(history)` makes the trigger fire one turn
+/// before a request that would otherwise overflow.
 pub(crate) fn should_compact_proactively(
     window: Option<u64>,
-    last_usage: &TokenUsage,
+    history: &[TokenUsage],
     messages: &[Message],
     system_prompt: &str,
     tools: &[ProviderToolDefinition],
@@ -75,7 +90,11 @@ pub(crate) fn should_compact_proactively(
     let Some(threshold) = compaction_threshold(window) else {
         return false;
     };
-    estimate_next_request_tokens(last_usage, messages, system_prompt, tools) >= threshold
+    if history.is_empty() {
+        return false;
+    }
+    let estimate = estimate_next_request_tokens(history, messages, system_prompt, tools);
+    estimate.saturating_add(next_delta(history)) >= threshold
 }
 
 /// Run one compaction round-trip for the ticket at `ticket_key`: read
@@ -267,15 +286,21 @@ mod tests {
     #[test]
     fn estimate_sums_last_input_tokens_and_byte_quarters() {
         // 400 bytes / 4 = 100; plus last response's 5_000 input tokens = 5_100.
-        let usage = TokenUsage {
+        let history = [TokenUsage {
             input_tokens: 5_000,
             output_tokens: 200,
-        };
+        }];
         let messages = [Message::user("x".repeat(400))];
         assert_eq!(
-            estimate_next_request_tokens(&usage, &messages, "", &[]),
+            estimate_next_request_tokens(&history, &messages, "", &[]),
             5_100,
         );
+    }
+
+    #[test]
+    fn estimate_with_empty_history_anchors_at_zero() {
+        let messages = [Message::user("x".repeat(400))];
+        assert_eq!(estimate_next_request_tokens(&[], &messages, "", &[]), 100);
     }
 
     #[test]
@@ -283,7 +308,7 @@ mod tests {
         // bytes = system_prompt + tool(name+description+schema) + message
         //       = 100 + (3 + 50 + "{}".len()) + 4 = 159
         // estimate = 0 + 159/4 = 39
-        let usage = TokenUsage::default();
+        let history = [TokenUsage::default()];
         let messages = [Message::user("hi!!")];
         let tools = vec![ProviderToolDefinition {
             name: "tot".into(),
@@ -291,36 +316,46 @@ mod tests {
             input_schema: serde_json::json!({}),
         }];
         let system_prompt = "x".repeat(100);
-        let got = estimate_next_request_tokens(&usage, &messages, &system_prompt, &tools);
+        let got = estimate_next_request_tokens(&history, &messages, &system_prompt, &tools);
         assert_eq!(got, 39);
     }
 
     #[test]
     fn should_compact_proactively_is_false_when_window_unknown() {
-        let usage = TokenUsage {
+        let history = [TokenUsage {
             input_tokens: 1_000_000,
             output_tokens: 0,
-        };
+        }];
         let messages = [Message::user("hi")];
         assert!(!should_compact_proactively(
-            None,
-            &usage,
+            None, &history, &messages, "", &[]
+        ));
+    }
+
+    #[test]
+    fn should_compact_proactively_is_false_when_history_empty() {
+        // No samples yet → the trigger cannot reason about growth and
+        // defers; the loop has not produced a request to anchor against.
+        let messages = [Message::user("hi")];
+        assert!(!should_compact_proactively(
+            Some(200_000),
+            &[],
             &messages,
             "",
-            &[]
+            &[],
         ));
     }
 
     #[test]
     fn should_compact_proactively_is_false_when_under_threshold() {
-        let usage = TokenUsage {
+        let history = [TokenUsage {
             input_tokens: 1_000,
             output_tokens: 0,
-        };
+        }];
         let messages = [Message::user("hi")];
         assert!(!should_compact_proactively(
             Some(200_000),
-            &usage,
+            &history,
             &messages,
             "",
             &[],
@@ -329,16 +364,67 @@ mod tests {
 
     #[test]
     fn should_compact_proactively_is_true_when_estimate_crosses_threshold() {
-        // Threshold = 200_000 - 33_000 = 167_000; estimate is last_usage's
-        // 170_000 input tokens plus a trivial message.
-        let usage = TokenUsage {
+        // Threshold = 200_000 - 33_000 = 167_000; single-entry history
+        // gives delta = 0, so estimate alone (170_000 + tiny msg) crosses.
+        let history = [TokenUsage {
             input_tokens: 170_000,
             output_tokens: 0,
-        };
+        }];
         let messages = [Message::user("hi")];
         assert!(should_compact_proactively(
             Some(200_000),
-            &usage,
+            &history,
+            &messages,
+            "",
+            &[],
+        ));
+    }
+
+    #[test]
+    fn should_compact_proactively_uses_last_delta_to_fire_one_turn_early() {
+        // Threshold = 200_000 - 33_000 = 167_000. The current estimate
+        // sits at 160_000 (under threshold), but the last per-turn delta
+        // was 10_000 — the next request after this one would land at
+        // ~170_000 and overflow. Trigger must fire now, not next turn.
+        let history = [
+            TokenUsage {
+                input_tokens: 150_000,
+                output_tokens: 0,
+            },
+            TokenUsage {
+                input_tokens: 160_000,
+                output_tokens: 0,
+            },
+        ];
+        let messages = [Message::user("hi")];
+        assert!(should_compact_proactively(
+            Some(200_000),
+            &history,
+            &messages,
+            "",
+            &[],
+        ));
+    }
+
+    #[test]
+    fn should_compact_proactively_ignores_shrinking_series() {
+        // Threshold = 167_000. Latest entry is 160_000 (under), and the
+        // delta is negative — saturating_sub clamps it to 0, so the
+        // trigger behaves like a single-sample history and stays quiet.
+        let history = [
+            TokenUsage {
+                input_tokens: 170_000,
+                output_tokens: 0,
+            },
+            TokenUsage {
+                input_tokens: 160_000,
+                output_tokens: 0,
+            },
+        ];
+        let messages = [Message::user("hi")];
+        assert!(!should_compact_proactively(
+            Some(200_000),
+            &history,
             &messages,
             "",
             &[],
