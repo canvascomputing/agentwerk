@@ -31,20 +31,19 @@ cargo add agentwerk
 ## Quick Start
 
 ```rust
-use agentwerk::{Agent, TicketSystem};
+use agentwerk::Agent;
 use agentwerk::tools::ReadFileTool;
 
 #[tokio::main]
 async fn main() {
-    let agent = TicketSystem::new().agent(
-        Agent::new()
-            .from_env()
-            .role("You are a Rust developer who reads source files to answer questions.")
-            .tool(ReadFileTool)
-            .build(),
-    );
-    agent.task("What does Cargo.toml describe?");
-    let work = agent.finish().await;
+    let work = Agent::new()
+        .from_env()
+        .role("You are a Rust developer who reads source files to answer questions.")
+        .tool(ReadFileTool)
+        .build()
+        .task("What does Cargo.toml describe?")
+        .finish()
+        .await;
 
     let answer = work.last_result().unwrap();
     println!("{answer}");

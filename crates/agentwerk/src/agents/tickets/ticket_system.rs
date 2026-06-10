@@ -18,7 +18,7 @@ use tokio::task::JoinHandle;
 use crate::event::{default_logger, Event, EventKind};
 use crate::persistence::Persist;
 
-use super::super::agent::Agent;
+use super::super::agent::{Agent, TicketSystemRef};
 use super::super::policy::Policies;
 use super::super::r#loop::run_main_loop;
 use super::super::stats::Stats;
@@ -380,8 +380,10 @@ impl TicketSystem {
     // ---- agent binding ----
 
     /// Wire `agent` to this system. Drains any tickets the agent had
-    /// queued in its private default system into this one, then stamps
-    /// the system's `Weak<Self>` onto `agent.ticket_system`.
+    /// queued in a prior private system into this one, then switches the
+    /// agent's `TicketSystemRef` to `Shared(weak_self)`. Any prior
+    /// `Private` arm is dropped at the reassignment, so the prior system
+    /// is freed once no other strong reference holds it.
     pub(crate) fn bind_agent(&self, agent: &mut Agent) {
         if let Some(prior) = agent.ticket_system.upgrade() {
             if !Arc::ptr_eq(
@@ -401,7 +403,7 @@ impl TicketSystem {
                 }
             }
         }
-        agent.ticket_system = self.weak_self.clone();
+        agent.ticket_system = TicketSystemRef::Shared(self.weak_self.clone());
         self.agents.lock().unwrap().push(agent.clone());
     }
 
@@ -573,21 +575,13 @@ mod tests {
     }
 
     #[test]
-    fn agent_must_be_bound_before_task() {
+    fn repeated_task_calls_route_to_shared_queue_after_rebind() {
         let alice = minimal_agent("alice");
         let (sys, _tmp) = test_system();
         let alice = sys.agent(alice);
-        // Bound: task() works, lands in the shared queue.
         alice.task("first");
         alice.task("second");
         assert_eq!(sys.count_tickets(|t| t.status == Status::Todo), 2);
-    }
-
-    #[test]
-    #[should_panic(expected = "Agent::task requires a bound TicketSystem")]
-    fn unbound_agent_task_panics() {
-        let alice = minimal_agent("alice");
-        alice.task("never lands");
     }
 
     #[test]

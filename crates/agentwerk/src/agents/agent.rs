@@ -41,7 +41,6 @@ pub struct AgentBuilder<P, M> {
     tools: ToolRegistry,
     dir: PathBuf,
     knowledge: Arc<Knowledge>,
-    ticket_system: Weak<TicketSystem>,
 }
 
 impl AgentBuilder<(), ()> {
@@ -62,7 +61,6 @@ impl AgentBuilder<(), ()> {
             tools,
             dir: std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")),
             knowledge,
-            ticket_system: Weak::new(),
         }
     }
 
@@ -88,7 +86,6 @@ impl AgentBuilder<(), ()> {
             tools,
             dir: std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")),
             knowledge,
-            ticket_system: Weak::new(),
         }
     }
 
@@ -114,7 +111,6 @@ impl<M> AgentBuilder<(), M> {
             tools: self.tools,
             dir: self.dir,
             knowledge: self.knowledge,
-            ticket_system: self.ticket_system,
         }
     }
 
@@ -141,7 +137,6 @@ impl<P> AgentBuilder<P, ()> {
             tools: self.tools,
             dir: self.dir,
             knowledge: self.knowledge,
-            ticket_system: self.ticket_system,
         }
     }
 
@@ -325,13 +320,17 @@ impl<P, M> AgentBuilder<P, M> {
 }
 
 impl AgentBuilder<Arc<dyn Provider>, Model> {
+    /// Produce the final `Agent`. The agent is born bound to a private
+    /// `TicketSystem` so `.task(...).finish().await` works without an
+    /// external system; `TicketSystem::agent(...)` later drains the private
+    /// queue into a shared system.
     pub fn build(self) -> Agent {
-        Agent {
+        let mut agent = Agent {
             name: self.name,
             model: self.model,
             labels: self.labels,
             interactive: self.interactive,
-            ticket_system: self.ticket_system,
+            ticket_system: TicketSystemRef::Shared(Weak::new()),
             provider: self.provider,
             role: self.role,
             context: self.context,
@@ -339,20 +338,41 @@ impl AgentBuilder<Arc<dyn Provider>, Model> {
             tools: self.tools,
             dir: self.dir,
             knowledge: self.knowledge,
-        }
+        };
+        let private = TicketSystem::new();
+        private.bind_agent(&mut agent);
+        agent.ticket_system = TicketSystemRef::Private(private);
+        agent
     }
 }
 
 // --- agent ---
 
-#[derive(Clone)]
+/// Handle from an `Agent` to its `TicketSystem`. `Private` is what a
+/// freshly-built agent carries until `bind_agent` adopts it; `Shared` is
+/// what every other agent (rebound ones, clones, agents inside
+/// `TicketSystem::agents`) carries.
+pub(crate) enum TicketSystemRef {
+    Shared(Weak<TicketSystem>),
+    Private(Arc<TicketSystem>),
+}
+
+impl TicketSystemRef {
+    pub(crate) fn upgrade(&self) -> Option<Arc<TicketSystem>> {
+        match self {
+            Self::Shared(w) => w.upgrade(),
+            Self::Private(a) => Some(Arc::clone(a)),
+        }
+    }
+}
+
 pub struct Agent {
     // pub(crate): read by loop, TicketSystem, or routing code
     pub(crate) name: String,
     pub(crate) model: Model,
     pub(crate) labels: Vec<String>,
     pub(crate) interactive: bool,
-    pub(crate) ticket_system: Weak<TicketSystem>,
+    pub(crate) ticket_system: TicketSystemRef,
     // private: accessed through methods within agents::
     provider: Arc<dyn Provider>,
     role: String,
@@ -361,6 +381,31 @@ pub struct Agent {
     tools: ToolRegistry,
     dir: PathBuf,
     knowledge: Arc<Knowledge>,
+}
+
+impl Clone for Agent {
+    /// Convert `Private` to `Shared(Weak)` on clone so rebinding the
+    /// original cannot leave a stale clone enqueuing into an orphaned queue.
+    fn clone(&self) -> Self {
+        let ticket_system = match &self.ticket_system {
+            TicketSystemRef::Shared(w) => TicketSystemRef::Shared(w.clone()),
+            TicketSystemRef::Private(a) => TicketSystemRef::Shared(Arc::downgrade(a)),
+        };
+        Self {
+            name: self.name.clone(),
+            model: self.model.clone(),
+            labels: self.labels.clone(),
+            interactive: self.interactive,
+            ticket_system,
+            provider: Arc::clone(&self.provider),
+            role: self.role.clone(),
+            context: self.context.clone(),
+            template_variables: self.template_variables.clone(),
+            tools: self.tools.clone(),
+            dir: self.dir.clone(),
+            knowledge: Arc::clone(&self.knowledge),
+        }
+    }
 }
 
 impl Agent {
@@ -466,26 +511,31 @@ impl Agent {
         self
     }
 
-    /// Enqueue a ticket carrying `task` as its body. Returns the new
-    /// ticket's key.
-    pub fn task<T: Serialize>(&self, task: T) -> String {
+    /// Enqueue a ticket carrying `task` as its body. Returns `&self` so
+    /// the call can chain into `.finish().await`. Callers who need the
+    /// ticket's key go through [`TicketSystem::task`] instead.
+    pub fn task<T: Serialize>(&self, task: T) -> &Self {
         let ticket = Ticket::new(task);
-        self.dispatch(ticket)
+        self.dispatch(ticket);
+        self
     }
 
-    /// Enqueue a ticket carrying `task` and attached to `label` for
-    /// Path B routing. Returns the new ticket's key.
-    pub fn task_labeled<T: Serialize>(&self, task: T, label: impl Into<String>) -> String {
+    /// Enqueue a ticket carrying `task` and attached to `label` for Path B
+    /// routing. Returns `&self` so the call can chain into `.finish().await`.
+    pub fn task_labeled<T: Serialize>(&self, task: T, label: impl Into<String>) -> &Self {
         let ticket = Ticket::new(task).label(label);
-        self.dispatch(ticket)
+        self.dispatch(ticket);
+        self
     }
 
-    /// Enqueue a fully-built `Ticket`. Returns the inserted ticket's key.
-    pub fn ticket(&self, ticket: Ticket) -> String {
-        self.dispatch(ticket)
+    /// Enqueue a fully-built `Ticket`. Returns `&self` so the call can chain
+    /// into `.finish().await`.
+    pub fn ticket(&self, ticket: Ticket) -> &Self {
+        self.dispatch(ticket);
+        self
     }
 
-    fn dispatch(&self, mut ticket: Ticket) -> String {
+    fn dispatch(&self, mut ticket: Ticket) {
         let sys = self
             .ticket_system
             .upgrade()
@@ -493,7 +543,7 @@ impl Agent {
         if let serde_json::Value::String(s) = &ticket.task {
             ticket.task = serde_json::Value::String(self.interpolate(s));
         }
-        sys.insert(ticket, self.name.clone())
+        sys.insert(ticket, self.name.clone());
     }
 
     /// Start the agent loop on a background tokio task. Returns the bound
