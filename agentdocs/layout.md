@@ -24,7 +24,13 @@ Where code lives and the rules that govern placement.
 **Holds the per-agent builder, the ticket system, and the multi-agent loop.**
 
 - `agent.rs` holds the `Agent` builder and ticket-dispatch helpers; an `Agent` carries a `Weak<TicketSystem>` stamped at `bind_agent` time.
-- `tickets.rs` holds `Ticket`, `Status`, `TicketError`, `Reply`, `ReplyContent`, and `TicketSystem`: the orchestrator that owns the shared queue, registered agents, policies, interrupt signal, and stats. `Reply` is the per-ticket transcript entry; `ReplyContent` mirrors `providers::ContentBlock` so the ticket surface stays free of provider types.
+- `tickets/` holds the ticket value types and the orchestrator. `Reply` is the per-ticket transcript entry; `ReplyContent` mirrors `providers::ContentBlock` so the ticket surface stays free of provider types. Split by concern:
+  - `tickets/mod.rs`: re-exports `Status`, `Ticket`, `TicketError`, `TicketSystem`; hosts free helpers `policy_violated`, `policy_violated_kind`, `now_millis`, `numeric_id`.
+  - `tickets/ticket.rs`: `Ticket`, `Status`, the `Replies` transcript-log helper, and the `tickets/<key>/...` path helpers.
+  - `tickets/reply.rs`: `Reply`, `ReplyContent`, and their conversions to and from `providers::Message` / `ContentBlock`.
+  - `tickets/error.rs`: `TicketError`.
+  - `tickets/ticket_system.rs`: the `TicketSystem` struct, constructors, configuration, policy builders, ticket-creation API, agent binding, run lifecycle, results, and queries.
+  - `tickets/store.rs`: the `impl TicketSystem` block for store mutations (`insert`, `claim`, `set_finished`, `summarize`, transition recording, etc.).
 - `loop.rs` holds the `Runnable` trait (implemented by `TicketSystem`) and the per-agent loop driver.
 - `knowledge.rs` holds `Knowledge`: the cross-ticket store backed by a `pages/` directory of markdown files and a compact `index.md`. Mutations go through `write_page` / `read_page` / `remove_page` / `clear`.
 - `policy.rs` holds `Policies` and the limit checks the loop applies on each turn.

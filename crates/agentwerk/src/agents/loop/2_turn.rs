@@ -7,7 +7,7 @@ use std::sync::Arc;
 use crate::agents::agent::Agent;
 use crate::agents::compaction as algo;
 use crate::agents::policy::Policies;
-use crate::agents::tickets::{policy_violated_kind, to_messages, Reply, Status, TicketSystem};
+use crate::agents::tickets::{policy_violated_kind, Reply, Status, TicketSystem};
 use crate::event::{CompactReason, EventKind, PolicyKind};
 use crate::providers::{AsUserMessage, Message, Model, RequestErrorKind};
 
@@ -206,7 +206,7 @@ pub(super) async fn start_turn<'a>(
         );
         return Action::Replay;
     }
-    Action::Proceed(to_messages(&ticket.replies))
+    Action::Proceed(ticket.to_messages())
 }
 
 pub(super) async fn run_agent(agent: Agent) {
@@ -249,7 +249,7 @@ pub(super) async fn compact(context: &mut LoopContext<'_>, reason: CompactReason
         return Action::Stop;
     };
     let window = context.model.context_window;
-    let messages = to_messages(&ticket.replies);
+    let messages = ticket.to_messages();
     let chunks_total = algo::chunks_for_window(&messages, window).len() as u32;
     context.emit(EventKind::CompactionStarted {
         reason,
@@ -332,7 +332,7 @@ pub(super) async fn proactive_compact(
         messages = context
             .ticket_system
             .get_ticket(&context.ticket_key)
-            .map(|t| to_messages(&t.replies))
+            .map(|t| t.to_messages())
             .unwrap_or_default();
     }
 

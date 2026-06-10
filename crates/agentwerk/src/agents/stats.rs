@@ -162,6 +162,52 @@ impl Stats {
         }
     }
 
+    /// Dispatch the run-wide recorders that match a ticket transition.
+    /// `prev → next` of `Todo → InProgress` stamps `started_at`;
+    /// terminal transitions add to the duration totals.
+    pub(crate) fn record_transition(
+        &self,
+        prev: Status,
+        next: Status,
+        now: u64,
+        (ticket_duration, work_duration): (Duration, Duration),
+    ) {
+        if prev == next {
+            return;
+        }
+        if prev == Status::Todo && next == Status::InProgress {
+            self.record_started(now);
+        }
+        match next {
+            Status::Finished => self.record_finished(ticket_duration, work_duration),
+            Status::Failed => self.record_failed(ticket_duration, work_duration),
+            _ => {}
+        }
+    }
+
+    /// Mirror a terminal transition onto every per-label slice the
+    /// ticket carries. `record_started` is intentionally not mirrored:
+    /// per-label `started_at` stays zero so `elapsed()` reads `None` on
+    /// a slice.
+    pub(crate) fn record_transition_for(
+        &self,
+        labels: &[String],
+        next: Status,
+        (ticket_duration, work_duration): (Duration, Duration),
+    ) {
+        if !matches!(next, Status::Finished | Status::Failed) {
+            return;
+        }
+        for label in labels {
+            let slice = self.stats_for_label(label);
+            match next {
+                Status::Finished => slice.record_finished(ticket_duration, work_duration),
+                Status::Failed => slice.record_failed(ticket_duration, work_duration),
+                _ => unreachable!(),
+            }
+        }
+    }
+
     pub fn turns(&self) -> u64 {
         self.turns.load(Ordering::Relaxed)
     }

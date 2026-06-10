@@ -249,7 +249,14 @@ impl<P, M> AgentBuilder<P, M> {
         self.knowledge = Arc::clone(store);
         self
     }
+}
 
+// Inline-test inspectors. Production callers go through `Agent`, which
+// carries its own copies of these methods; the builder-side ones exist
+// so inline tests can exercise prompt assembly and tool registration
+// without first calling `.build()`.
+#[cfg(test)]
+impl<P, M> AgentBuilder<P, M> {
     pub(super) fn get_name(&self) -> &str {
         &self.name
     }
@@ -258,11 +265,6 @@ impl<P, M> AgentBuilder<P, M> {
         self.interactive
     }
 
-    /// Returns true when the agent's label scope intersects the ticket's
-    /// labels, OR when one of the ticket's labels equals the agent's name
-    /// (name acts as an implicit self-label, so labelling a ticket with an
-    /// agent's name pins it to that agent). Empty agent labels mean
-    /// "default scope": tickets with no labels match.
     pub(super) fn handles_labels(&self, ticket_labels: &[String]) -> bool {
         if ticket_labels.iter().any(|l| l == &self.name) {
             return true;
@@ -278,10 +280,6 @@ impl<P, M> AgentBuilder<P, M> {
 
     pub(super) fn tool_definitions(&self) -> Vec<ProviderToolDefinition> {
         self.tools.definitions()
-    }
-
-    pub(super) fn tool_registry(&self) -> &ToolRegistry {
-        &self.tools
     }
 
     pub(super) fn system_prompt(&self, knowledge: Option<&str>) -> String {
