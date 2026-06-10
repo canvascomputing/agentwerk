@@ -154,14 +154,16 @@ use agentwerk::tools::FetchUrlTool;
 
 let tickets = TicketSystem::new();
 
-tickets.pool(4, |i| {
-    Agent::new()
-        .name(format!("researcher_{i}"))
-        .label("research")
-        .from_env()
-        .tool(FetchUrlTool)
-        .build()
-});
+for i in 0..4 {
+    tickets.agent(
+        Agent::new()
+            .name(format!("researcher_{i}"))
+            .label("research")
+            .from_env()
+            .tool(FetchUrlTool)
+            .build(),
+    );
+}
 
 tickets.agent(
     Agent::new()
@@ -188,7 +190,6 @@ tickets.ticket(
 | Method | Description |
 |--------|-------------|
 | `agent(agent)` | Add an agent to this ticket system. |
-| `pool(n, build)` | Add `n` agents built by `build(i)`, where `i` is the 0-based agent index. |
 | `dir(d)` | Set the directory where knowledge, results, and ticket logs are persisted. |
 | `task(t)` | Submit a task and return its ticket key. |
 | `task_labeled(t, l)` | Submit a task tagged with `l` for label-scoped routing. Shorthand for `ticket(Ticket::new(t).label(l))`. |
