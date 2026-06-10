@@ -324,13 +324,8 @@ pub(super) async fn proactive_compact(
         .stats()
         .usage_history(&context.ticket_key);
 
-    if algo::should_compact_proactively(
-        window,
-        &history,
-        &messages,
-        &context.system_prompt,
-        &tools,
-    ) {
+    if algo::should_compact_proactively(window, &history, &messages, &context.system_prompt, &tools)
+    {
         match compact(context, CompactReason::Proactive).await {
             Action::Stop => return Action::Stop,
             Action::Replay => return Action::Replay,

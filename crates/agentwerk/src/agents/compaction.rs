@@ -328,7 +328,11 @@ mod tests {
         }];
         let messages = [Message::user("hi")];
         assert!(!should_compact_proactively(
-            None, &history, &messages, "", &[]
+            None,
+            &history,
+            &messages,
+            "",
+            &[]
         ));
     }
 

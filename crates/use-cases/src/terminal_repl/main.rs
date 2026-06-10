@@ -415,10 +415,7 @@ fn print_event(
             total,
         } => {
             break_stream();
-            eprintln!(
-                "{}  ▸ {completed}/{total}{}",
-                style.dim, style.reset,
-            );
+            eprintln!("{}  ▸ {completed}/{total}{}", style.dim, style.reset,);
         }
         EventKind::CompactionFinished { reason } => {
             break_stream();

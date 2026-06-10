@@ -114,9 +114,9 @@ mod tests {
         assert!(summary_idx >= 1, "summary must follow the system prompt");
 
         assert!(
-            !replies.iter().any(|r| {
-                matches!(&r.content[..], [ReplyContent::Text(t)] if t == "go")
-            }),
+            !replies
+                .iter()
+                .any(|r| { matches!(&r.content[..], [ReplyContent::Text(t)] if t == "go") }),
             "compaction must drop pre-compaction non-system replies",
         );
     }

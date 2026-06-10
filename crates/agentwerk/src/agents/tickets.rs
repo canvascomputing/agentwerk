@@ -120,20 +120,23 @@ impl Ticket {
     /// Reduce the transcript to just `summary_text`: every non-system
     /// reply is dropped and a single `user` reply carrying
     /// `summary_text` is appended. System-author replies (the system
-    /// prompt) survive unchanged. Used by the loop after a successful
-    /// compaction.
+    /// prompt) survive unchanged. `task` is rewritten to the summary
+    /// too, so the persisted ticket header reflects the post-compaction
+    /// state alongside the paired `replies.<at>.jsonl`. Safe because
+    /// `task` is read for the seed user message only when `replies` is
+    /// empty, which is never true after compaction. Used by the loop
+    /// after a successful compaction.
     pub(crate) fn summarize(&mut self, summary_text: String) {
         self.replies.retain(|r| r.author == "system");
-        self.replies.push(Reply::user_text(summary_text));
+        self.replies.push(Reply::user_text(summary_text.clone()));
+        self.task = serde_json::Value::String(summary_text);
     }
 
     /// False once the assistant has spoken: the loop pauses until the
     /// next non-assistant reply lands (a tool-result append or an
     /// external caller reply via [`TicketSystem::reply`]).
     pub(crate) fn is_waiting_for_response(&self) -> bool {
-        self.replies
-            .last()
-            .is_none_or(|r| r.author != "assistant")
+        self.replies.last().is_none_or(|r| r.author != "assistant")
     }
 }
 
@@ -154,41 +157,29 @@ impl crate::persistence::Persist for Ticket {
     }
 }
 
-/// Per-ticket transcript log on disk. `tickets/<key>/replies.jsonl` is
-/// the strictly append-only running log; every reply ever appended
-/// lands there. Each compaction event creates an immutable pair
-/// `(ticket.<ts>.json, replies.<ts>.jsonl)`; on load the newest such
-/// pair becomes the base and any `replies.jsonl` entries with a
-/// strictly greater `created_at` are merged on top.
+/// Per-ticket transcript files on disk. `tickets/<key>/replies.jsonl`
+/// is the initial replies file: pre-first-compaction appends land
+/// there. Each compaction event creates an immutable pair
+/// `(ticket.<ts>.json, replies.<ts>.jsonl)`; subsequent appends grow
+/// `replies.<ts>.jsonl` rather than the initial file. On load the
+/// newest committed pair's replies file becomes the base and any
+/// initial-file entries with a strictly greater `created_at` are
+/// merged on top (legacy data recovery).
 pub(crate) struct Replies;
 
 impl Replies {
-    /// Append one reply as a single JSON line.
+    /// Append one reply as a single JSON line. Writes to the latest
+    /// committed compaction's `replies.<at>.jsonl` when one exists, so
+    /// post-compaction replies grow that file rather than the initial
+    /// `replies.jsonl`. Falls back to `replies.jsonl` before the first
+    /// compaction.
     pub(crate) fn append(dir: &Path, key: &str, reply: &Reply) -> io::Result<()> {
         let line = serde_json::to_string(reply).map_err(io::Error::other)?;
-        crate::persistence::append_line(&running_log_path(dir, key), &line)
+        crate::persistence::append_line(&current_replies_path(dir, key), &line)
     }
 
     /// Reconstruct the transcript for `key` per the rule on the type doc.
     pub(crate) fn load(dir: &Path, key: &str) -> io::Result<Vec<Reply>> {
-        // Find the most recent compaction whose paired files both exist.
-        // `ticket.<ts>.json` is the commit marker: an orphan
-        // `replies.<ts>.jsonl` from a mid-compaction crash is ignored.
-        fn last_committed_compaction_at(ticket_dir: &Path) -> Option<u64> {
-            std::fs::read_dir(ticket_dir)
-                .ok()?
-                .flatten()
-                .filter_map(|e| {
-                    let name = e.file_name().into_string().ok()?;
-                    name.strip_prefix("ticket.")?
-                        .strip_suffix(".json")?
-                        .parse::<u64>()
-                        .ok()
-                })
-                .filter(|at| ticket_dir.join(format!("replies.{at}.jsonl")).is_file())
-                .max()
-        }
-
         fn read_jsonl(path: &Path) -> io::Result<Vec<Reply>> {
             let body = std::fs::read_to_string(path)?;
             body.lines()
@@ -203,9 +194,9 @@ impl Replies {
             Some(at) => read_jsonl(&ticket_dir.join(format!("replies.{at}.jsonl")))?,
             None => Vec::new(),
         };
-        let running = running_log_path(dir, key);
-        if running.exists() {
-            let mut tail = read_jsonl(&running)?;
+        let initial = initial_replies_path(dir, key);
+        if initial.exists() {
+            let mut tail = read_jsonl(&initial)?;
             tail.retain(|c| restart_at.is_none_or(|at| c.created_at > at));
             replies.extend(tail);
         }
@@ -218,9 +209,44 @@ fn ticket_header_path(dir: &Path, key: &str) -> PathBuf {
     dir.join("tickets").join(key).join("ticket.json")
 }
 
-/// Path of the running append-only replies log for `key`.
-fn running_log_path(dir: &Path, key: &str) -> PathBuf {
+/// Path of the initial replies file for `key`: `tickets/<key>/replies.jsonl`.
+/// Receives appends before the first compaction; also holds pre-fix
+/// legacy data for old tickets.
+fn initial_replies_path(dir: &Path, key: &str) -> PathBuf {
     dir.join("tickets").join(key).join("replies.jsonl")
+}
+
+/// Path of the replies file new replies must be appended to: the
+/// `replies.<at>.jsonl` of the latest committed compaction when one
+/// exists, else the initial replies file. `Replies::append` and
+/// `Replies::load` use the same paired-check rule via
+/// [`last_committed_compaction_at`], so the writer's destination and
+/// the reader's base file always agree.
+fn current_replies_path(dir: &Path, key: &str) -> PathBuf {
+    let ticket_dir = dir.join("tickets").join(key);
+    match last_committed_compaction_at(&ticket_dir) {
+        Some(at) => ticket_dir.join(format!("replies.{at}.jsonl")),
+        None => initial_replies_path(dir, key),
+    }
+}
+
+/// Most recent compaction timestamp whose pair is committed:
+/// `replies.<at>.jsonl` exists AND its sibling `ticket.<at>.json`
+/// commit marker exists. An orphan replies file from a mid-compaction
+/// crash is ignored. `None` when no committed compaction has happened.
+fn last_committed_compaction_at(ticket_dir: &Path) -> Option<u64> {
+    std::fs::read_dir(ticket_dir)
+        .ok()?
+        .flatten()
+        .filter_map(|e| {
+            let name = e.file_name().into_string().ok()?;
+            name.strip_prefix("ticket.")?
+                .strip_suffix(".json")?
+                .parse::<u64>()
+                .ok()
+        })
+        .filter(|at| ticket_dir.join(format!("replies.{at}.jsonl")).is_file())
+        .max()
 }
 
 impl AsUserMessage for Ticket {
@@ -926,12 +952,14 @@ impl TicketSystem {
         Ok(())
     }
 
-    /// Collapse the ticket's transcript to `summary` and snapshot the
+    /// Collapse the ticket's transcript to `summary` and write the
     /// compaction pair. No-op when the ticket is missing.
     pub(crate) fn summarize(&self, key: &str, summary: String) {
         let ticket_copy = {
             let mut store = self.tickets.lock().unwrap();
-            let Some(ticket) = store.get_mut(key) else { return };
+            let Some(ticket) = store.get_mut(key) else {
+                return;
+            };
             ticket.summarize(summary);
             ticket.clone()
         };
@@ -2323,11 +2351,13 @@ mod tests {
     fn is_waiting_for_response_false_when_assistant_reply_carries_tool_use() {
         let mut ticket = Ticket::new("x");
         ticket.replies.push(Reply::user_text("go"));
-        ticket.replies.push(Reply::assistant(&[ContentBlock::ToolUse {
-            id: "call-1".into(),
-            name: "do_thing".into(),
-            input: serde_json::json!({}),
-        }]));
+        ticket
+            .replies
+            .push(Reply::assistant(&[ContentBlock::ToolUse {
+                id: "call-1".into(),
+                name: "do_thing".into(),
+                input: serde_json::json!({}),
+            }]));
         assert!(!ticket.is_waiting_for_response());
     }
 
@@ -2336,9 +2366,12 @@ mod tests {
         let (sys, _tmp) = test_system();
         let key = sys.task("hello");
         sys.add_reply(&key, Reply::user_text("turn one"));
-        sys.add_reply(&key, Reply::assistant(&[ContentBlock::Text {
-            text: "first reply".into(),
-        }]));
+        sys.add_reply(
+            &key,
+            Reply::assistant(&[ContentBlock::Text {
+                text: "first reply".into(),
+            }]),
+        );
 
         sys.summarize(&key, "SUMMARY-TEXT".into());
 
@@ -2347,12 +2380,17 @@ mod tests {
         let mut replies_ts: Option<u64> = None;
         for entry in std::fs::read_dir(&ticket_dir).unwrap().flatten() {
             let name = entry.file_name().into_string().unwrap();
-            if let Some(rest) = name.strip_prefix("ticket.").and_then(|s| s.strip_suffix(".json")) {
+            if let Some(rest) = name
+                .strip_prefix("ticket.")
+                .and_then(|s| s.strip_suffix(".json"))
+            {
                 if let Ok(ts) = rest.parse::<u64>() {
                     header_ts = Some(ts);
                 }
             }
-            if let Some(rest) = name.strip_prefix("replies.").and_then(|s| s.strip_suffix(".jsonl"))
+            if let Some(rest) = name
+                .strip_prefix("replies.")
+                .and_then(|s| s.strip_suffix(".jsonl"))
             {
                 if let Ok(ts) = rest.parse::<u64>() {
                     replies_ts = Some(ts);
@@ -2374,9 +2412,12 @@ mod tests {
         let (sys, _tmp) = test_system();
         let key = sys.task("hello");
         sys.add_reply(&key, Reply::user_text("noise that gets compacted"));
-        sys.add_reply(&key, Reply::assistant(&[ContentBlock::Text {
-            text: "more noise".into(),
-        }]));
+        sys.add_reply(
+            &key,
+            Reply::assistant(&[ContentBlock::Text {
+                text: "more noise".into(),
+            }]),
+        );
 
         sys.summarize(&key, "SUMMARY-TEXT".into());
 
@@ -2403,7 +2444,11 @@ mod tests {
 
         let ticket_dir = sys.dir_value().join("tickets").join(&key);
         let orphan = ticket_dir.join("replies.42.jsonl");
-        std::fs::write(&orphan, b"{\"author\":\"user\",\"content\":[{\"Text\":\"GHOST\"}],\"created_at\":1}\n").unwrap();
+        std::fs::write(
+            &orphan,
+            b"{\"author\":\"user\",\"content\":[{\"Text\":\"GHOST\"}],\"created_at\":1}\n",
+        )
+        .unwrap();
 
         let reloaded = Replies::load(&sys.dir_value(), &key).unwrap();
         let texts: Vec<String> = reloaded
@@ -2420,6 +2465,180 @@ mod tests {
         assert!(
             texts.iter().any(|t| t == "running entry"),
             "the running log must still be returned even when an orphan pair half exists",
+        );
+    }
+
+    fn jsonl_line_count(path: &Path) -> usize {
+        std::fs::read_to_string(path)
+            .unwrap_or_default()
+            .lines()
+            .filter(|l| !l.is_empty())
+            .count()
+    }
+
+    fn latest_compaction_at(ticket_dir: &Path) -> u64 {
+        std::fs::read_dir(ticket_dir)
+            .unwrap()
+            .flatten()
+            .filter_map(|e| {
+                e.file_name()
+                    .into_string()
+                    .ok()?
+                    .strip_prefix("replies.")?
+                    .strip_suffix(".jsonl")?
+                    .parse::<u64>()
+                    .ok()
+            })
+            .max()
+            .expect("expected a replies.<ts>.jsonl file in the ticket dir")
+    }
+
+    #[test]
+    fn add_reply_after_compaction_appends_to_current_replies_file_not_initial() {
+        let (sys, _tmp) = test_system();
+        let key = sys.task("hello");
+        sys.add_reply(&key, Reply::user_text("pre-1"));
+        sys.add_reply(&key, Reply::user_text("pre-2"));
+
+        let ticket_dir = sys.dir_value().join("tickets").join(&key);
+        let initial = ticket_dir.join("replies.jsonl");
+        let initial_before = jsonl_line_count(&initial);
+
+        sys.summarize(&key, "SUMMARY".into());
+        let at = latest_compaction_at(&ticket_dir);
+        let compaction_replies = ticket_dir.join(format!("replies.{at}.jsonl"));
+        let compaction_before = jsonl_line_count(&compaction_replies);
+
+        sys.add_reply(&key, Reply::user_text("post-1"));
+
+        assert_eq!(
+            jsonl_line_count(&initial),
+            initial_before,
+            "post-compaction append must not grow the initial replies.jsonl",
+        );
+        assert_eq!(
+            jsonl_line_count(&compaction_replies),
+            compaction_before + 1,
+            "post-compaction append must grow the current compaction's replies file by one line",
+        );
+        let body = std::fs::read_to_string(&compaction_replies).unwrap();
+        assert!(
+            body.contains("post-1"),
+            "the appended payload must land in the current compaction's replies file, got: {body}",
+        );
+    }
+
+    #[test]
+    fn second_compaction_redirects_appends_to_newest_compaction_replies_file() {
+        let (sys, _tmp) = test_system();
+        let key = sys.task("hello");
+        sys.add_reply(&key, Reply::user_text("turn one"));
+
+        sys.summarize(&key, "SUMMARY-1".into());
+        let ticket_dir = sys.dir_value().join("tickets").join(&key);
+        let at1 = latest_compaction_at(&ticket_dir);
+
+        sys.add_reply(&key, Reply::user_text("between"));
+
+        // Force the second compaction onto a different millisecond so
+        // the pair gets a distinct timestamp.
+        std::thread::sleep(std::time::Duration::from_millis(2));
+        sys.summarize(&key, "SUMMARY-2".into());
+
+        let at2 = latest_compaction_at(&ticket_dir);
+        assert!(
+            at2 > at1,
+            "second compaction must produce a strictly later timestamp (got at1={at1}, at2={at2})",
+        );
+
+        sys.add_reply(&key, Reply::user_text("after-2"));
+
+        let first_compaction =
+            std::fs::read_to_string(ticket_dir.join(format!("replies.{at1}.jsonl"))).unwrap();
+        let second_compaction =
+            std::fs::read_to_string(ticket_dir.join(format!("replies.{at2}.jsonl"))).unwrap();
+        let initial = std::fs::read_to_string(ticket_dir.join("replies.jsonl")).unwrap();
+
+        assert!(
+            second_compaction.contains("after-2"),
+            "post-second-compaction append must land in replies.<at2>.jsonl",
+        );
+        assert!(
+            !first_compaction.contains("after-2"),
+            "post-second-compaction append must NOT land in the older compaction's replies file",
+        );
+        assert!(
+            !initial.contains("after-2"),
+            "post-second-compaction append must NOT land in the initial replies file",
+        );
+    }
+
+    #[test]
+    fn summarize_rewrites_task_to_summary_and_shrinks_persisted_header() {
+        let (sys, _tmp) = test_system();
+        let huge = "x".repeat(500_000);
+        let key = sys.task(&huge);
+        sys.add_reply(&key, Reply::user_text("turn one"));
+
+        let ticket_dir = sys.dir_value().join("tickets").join(&key);
+        let header_before = std::fs::metadata(ticket_dir.join("ticket.json"))
+            .unwrap()
+            .len();
+        assert!(
+            header_before > 500_000,
+            "pre-compaction header should carry the huge task ({header_before} bytes)",
+        );
+
+        sys.summarize(&key, "SUMMARY".into());
+
+        let ticket = sys.get_ticket(&key).unwrap();
+        assert_eq!(
+            ticket.task,
+            serde_json::Value::String("SUMMARY".into()),
+            "summarize must rewrite task to the summary text",
+        );
+
+        let at = latest_compaction_at(&ticket_dir);
+        let compaction_header = ticket_dir.join(format!("ticket.{at}.json"));
+        let compaction_size = std::fs::metadata(&compaction_header).unwrap().len();
+        assert!(
+            compaction_size < 2_000,
+            "compaction header must be small (got {compaction_size} bytes) — it should reflect post-compaction state, not duplicate the original task",
+        );
+        let body = std::fs::read_to_string(&compaction_header).unwrap();
+        assert!(
+            body.contains("SUMMARY"),
+            "compaction header must carry the summary as task, got: {body}",
+        );
+        assert!(
+            !body.contains(&huge),
+            "compaction header must NOT contain the original task body",
+        );
+    }
+
+    #[test]
+    fn orphan_compaction_replies_without_header_does_not_divert_appends() {
+        let (sys, _tmp) = test_system();
+        let key = sys.task("hello");
+
+        // Drop a stray replies.<ts>.jsonl with no matching ticket.<ts>.json
+        // commit marker. The writer must apply the same paired-check rule
+        // Replies::load uses on the read side and ignore the orphan.
+        let ticket_dir = sys.dir_value().join("tickets").join(&key);
+        let orphan = ticket_dir.join("replies.42.jsonl");
+        std::fs::write(&orphan, b"").unwrap();
+
+        sys.add_reply(&key, Reply::user_text("first"));
+
+        let initial = std::fs::read_to_string(ticket_dir.join("replies.jsonl")).unwrap();
+        let orphan_body = std::fs::read_to_string(&orphan).unwrap();
+        assert!(
+            initial.contains("first"),
+            "append must go to the initial replies file when no committed compaction exists",
+        );
+        assert!(
+            !orphan_body.contains("first"),
+            "append must NOT land in an orphan replies file without a paired header",
         );
     }
 }
