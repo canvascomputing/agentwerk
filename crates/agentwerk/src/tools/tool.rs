@@ -257,6 +257,10 @@ impl ToolRegistry {
         self.tools.push(Arc::new(tool));
     }
 
+    pub(crate) fn deregister(&mut self, name: &str) {
+        self.tools.retain(|t| t.name() != name);
+    }
+
     pub(crate) fn get(&self, name: &str) -> Option<Arc<dyn ToolLike>> {
         let name = name.trim();
         self.tools.iter().find(|t| t.name() == name).cloned()

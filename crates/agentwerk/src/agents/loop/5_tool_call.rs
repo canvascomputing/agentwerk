@@ -29,13 +29,13 @@ pub(super) async fn run(context: &mut LoopContext<'_>, reply: Reply) -> Action<(
                     },
                 );
             }
-            let tool_context = ToolContext::new(context.agent.dir_or_default())
+            let tool_context = ToolContext::new(context.agent.dir())
                 .interrupt_signal(std::sync::Arc::clone(&context.interrupt_signal))
                 .registry(std::sync::Arc::new(context.agent.tool_registry().clone()))
                 .ticket_system(std::sync::Arc::clone(context.ticket_system))
                 .agent_name(context.agent.get_name().to_string())
                 .ticket_key(context.ticket_key.clone())
-                .knowledge(context.agent.knowledge_or_default());
+                .knowledge(context.agent.knowledge());
             let outcomes = context
                 .agent
                 .tool_registry()
@@ -278,7 +278,8 @@ mod tests {
                 .model("mock")
                 .role("test")
                 .tool(ManageTicketsTool)
-                .tool(slow_tool),
+                .tool(slow_tool)
+                .build(),
         );
         tickets.task("go");
 

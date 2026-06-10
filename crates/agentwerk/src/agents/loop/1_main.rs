@@ -69,7 +69,8 @@ mod tests {
                 .provider(provider.clone() as Arc<dyn Provider>)
                 .model("mock")
                 .role("test")
-                .tool(ManageTicketsTool),
+                .tool(ManageTicketsTool)
+                .build(),
         );
         tickets.ticket(Ticket::new("hello").label("late"));
 
@@ -114,7 +115,8 @@ mod tests {
                 .provider(provider as Arc<dyn Provider>)
                 .model("mock")
                 .role("test")
-                .tool(ManageTicketsTool),
+                .tool(ManageTicketsTool)
+                .build(),
         );
         tickets.ticket(Ticket::new("x").label("late"));
 

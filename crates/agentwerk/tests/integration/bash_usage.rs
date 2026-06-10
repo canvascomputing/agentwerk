@@ -49,7 +49,8 @@ async fn test() -> std::result::Result<(), Box<dyn std::error::Error>> {
         )
         .tool(ls)
         .tool(cat)
-        .tool(wc);
+        .tool(wc)
+        .build();
     tickets.agent(agent);
     tickets.ticket(
         Ticket::new(

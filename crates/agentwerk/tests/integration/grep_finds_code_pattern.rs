@@ -108,7 +108,8 @@ async fn finds_code_pattern_with_special_chars(
             .tool(GrepTool)
             .tool(GlobTool)
             .tool(ListDirectoryTool)
-            .tool(ReadFileTool),
+            .tool(ReadFileTool)
+            .build(),
     );
     tickets.task(format!(
         "Which source file in this project contains the exact code \

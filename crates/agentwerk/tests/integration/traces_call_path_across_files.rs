@@ -95,7 +95,8 @@ async fn traces_three_hop_call_path() -> std::result::Result<(), Box<dyn std::er
         .tool(GrepTool)
         .tool(GlobTool)
         .tool(ListDirectoryTool)
-        .tool(ReadFileTool);
+        .tool(ReadFileTool)
+        .build();
     tickets.agent(agent);
     tickets.ticket(
         Ticket::new(

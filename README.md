@@ -31,18 +31,20 @@ cargo add agentwerk
 ## Quick Start
 
 ```rust
+use agentwerk::{Agent, TicketSystem};
 use agentwerk::tools::ReadFileTool;
-use agentwerk::Agent;
 
 #[tokio::main]
 async fn main() {
-    let work = Agent::new()
-        .from_env()
-        .role("You are a Rust developer who reads source files to answer questions.")
-        .tool(ReadFileTool)
-        .task("What does Cargo.toml describe?")
-        .finish()
-        .await;
+    let agent = TicketSystem::new().agent(
+        Agent::new()
+            .from_env()
+            .role("You are a Rust developer who reads source files to answer questions.")
+            .tool(ReadFileTool)
+            .build(),
+    );
+    agent.task("What does Cargo.toml describe?");
+    let work = agent.finish().await;
 
     let answer = work.last_result().unwrap();
     println!("{answer}");
@@ -159,6 +161,7 @@ tickets.pool(4, |i| {
         .label("research")
         .from_env()
         .tool(FetchUrlTool)
+        .build()
 });
 
 tickets.agent(
@@ -166,6 +169,7 @@ tickets.agent(
         .name("analyst")
         .label("analysis")
         .from_env()
+        .build()
 );
 
 for url in pricing_pages {
@@ -294,14 +298,18 @@ tickets
 
 ## Prompting
 
-Every prompt has three parts: `role` (who the agent is), `context` (the situation it operates in), and `task` (work it should perform). The structure follows the [prompting guide](https://github.com/canvascomputing/prompting).
+Every prompt has three parts: `role` (who the agent is), `context` (the situation it operates in), and `task` (work it should perform). `role` and `context` are set on the agent; the task body arrives per ticket via `tickets.task()`. The structure follows the [prompting guide](https://github.com/canvascomputing/prompting).
 
 ```rust
 let agent = Agent::new()
     .role("You are an arithmetic worker. Compute step by step and show your work.")
     .context("- Stage 2 of a math-tutor pipeline.\n- Attempts remaining: 2.")
-    .task("Compute (47 * 92) / {divisor}, then round to the nearest integer.")
-    .template_variable("divisor", "8");
+    .template_variable("divisor", "8")
+    .from_env()
+    .build();
+
+tickets.agent(agent);
+tickets.task("Compute (47 * 92) / {divisor}, then round to the nearest integer.");
 ```
 
 When `context(...)` is not set, agentwerk supplies a default block. When the agent processes a ticket through the loop, the ticket key is prepended automatically:
@@ -448,15 +456,13 @@ tickets.start();
 Events report everything that happens while your agents work and give you deep insights into behavior or failures.
 
 ```rust
-use std::sync::Arc;
 use agentwerk::event::{Event, EventKind};
 
-let agent = Agent::new()
-    .event_handler(Arc::new(|event: Event| {
-        if let EventKind::TicketFinished { key } = &event.kind {
-            eprintln!("[{}] done {key}", event.agent_name);
-        }
-    }));
+tickets.event_handler(|event: Event| {
+    if let EventKind::TicketFinished { key } = &event.kind {
+        eprintln!("[{}] done {key}", event.agent_name);
+    }
+});
 ```
 
 | | Kind | Description |

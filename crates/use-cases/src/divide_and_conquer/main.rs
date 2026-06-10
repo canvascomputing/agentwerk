@@ -64,6 +64,7 @@ async fn main() {
             .label("worker")
             .tool(python_tool())
             .tool(ManageTicketsTool)
+            .build()
     });
 
     let started = Instant::now();

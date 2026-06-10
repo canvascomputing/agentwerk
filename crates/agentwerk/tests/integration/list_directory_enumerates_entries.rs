@@ -58,7 +58,8 @@ async fn separates_files_and_directories() -> std::result::Result<(), Box<dyn st
              Never prose, never a bullet list, never a sentence. Do not output \
              any text outside of tool calls.",
         )
-        .tool(ListDirectoryTool);
+        .tool(ListDirectoryTool)
+        .build();
     tickets.agent(agent);
     tickets.ticket(
         Ticket::new(

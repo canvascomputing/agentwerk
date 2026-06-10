@@ -38,7 +38,7 @@ pub(super) async fn run(context: &mut LoopContext<'_>, messages: Vec<Message>) -
     );
     let response = loop {
         let outcome = {
-            let provider = context.agent.provider_handle();
+            let provider = context.agent.provider();
             let agent_name = context.agent.get_name().to_string();
             let ticket_key = context.ticket_key.clone();
             let ts = Arc::clone(context.ticket_system);
@@ -381,7 +381,8 @@ mod tests {
                 .name("tester")
                 .provider(provider as Arc<dyn Provider>)
                 .model("mock")
-                .role("test"),
+                .role("test")
+                .build(),
         );
         tickets.task("go");
 
@@ -446,7 +447,8 @@ mod tests {
                 .name("tester")
                 .provider(provider as Arc<dyn Provider>)
                 .model("mock")
-                .role("test"),
+                .role("test")
+                .build(),
         );
         tickets.task("go");
 

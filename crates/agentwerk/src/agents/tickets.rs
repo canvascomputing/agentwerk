@@ -1120,7 +1120,6 @@ impl TicketSystem {
             }
         }
         agent.ticket_system = self.weak_self.clone();
-        agent.ensure_knowledge_bound();
         self.agents.lock().unwrap().push(agent.clone());
     }
 }
@@ -1434,6 +1433,15 @@ mod tests {
         Ticket::new(format!("body-{label}")).label(label)
     }
 
+    fn minimal_agent(name: &str) -> Agent {
+        use crate::agents::r#loop::test_util::MockProvider;
+        Agent::new()
+            .name(name)
+            .provider(MockProvider::with_results(vec![]) as Arc<dyn crate::providers::Provider>)
+            .model("mock")
+            .build()
+    }
+
     /// Build a `TicketSystem` rooted at a fresh `TempDir` so the default
     /// `.agentwerk` directory never lands in the source tree during tests.
     /// Hold the returned `TempDir` for the test's lifetime.
@@ -1491,7 +1499,7 @@ mod tests {
     #[test]
     fn ticket_system_handle_is_shared_between_caller_and_added_agent() {
         let (sys, _tmp) = test_system();
-        let alice = sys.agent(Agent::new().name("alice"));
+        let alice = sys.agent(minimal_agent("alice"));
         // Alice's task lands in the same queue.
         alice.task("from alice");
         sys.task("from system");
@@ -1505,7 +1513,7 @@ mod tests {
 
     #[test]
     fn agent_must_be_bound_before_task() {
-        let alice = Agent::new().name("alice");
+        let alice = minimal_agent("alice");
         let (sys, _tmp) = test_system();
         let alice = sys.agent(alice);
         // Bound: task() works, lands in the shared queue.
@@ -1517,7 +1525,7 @@ mod tests {
     #[test]
     #[should_panic(expected = "Agent::task requires a bound TicketSystem")]
     fn unbound_agent_task_panics() {
-        let alice = Agent::new().name("alice");
+        let alice = minimal_agent("alice");
         alice.task("never lands");
     }
 

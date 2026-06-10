@@ -112,7 +112,7 @@ pub(super) async fn start_turn<'a>(
         let Some(ticket) = ticket_system.get_ticket(&ticket_key) else {
             return Action::Replay;
         };
-        let knowledge_index = agent.knowledge_or_default().index();
+        let knowledge_index = agent.knowledge().index();
         // Lets the model see what knowledge pages it can read.
         let system_prompt = agent.system_prompt(Some(&knowledge_index));
         let agent_name = agent.get_name();
@@ -142,10 +142,7 @@ pub(super) async fn start_turn<'a>(
             );
         }
 
-        let model = agent
-            .model
-            .as_ref()
-            .expect("Agent::run requires .model(...) to be set");
+        let model = &agent.model;
         *context = Some(LoopContext::new(
             agent,
             model,
@@ -277,7 +274,7 @@ pub(super) async fn compact(context: &mut LoopContext<'_>, reason: CompactReason
     };
 
     let applied = match algo::run(
-        &context.agent.provider_handle(),
+        &context.agent.provider(),
         &context.model.name,
         messages,
         window,
@@ -374,7 +371,8 @@ mod tests {
                 .provider(provider as Arc<dyn Provider>)
                 .model("mock")
                 .role("test")
-                .tool(ManageTicketsTool),
+                .tool(ManageTicketsTool)
+                .build(),
         );
 
         tickets.start();
@@ -671,7 +669,8 @@ mod tests {
                 .provider(provider as Arc<dyn Provider>)
                 .model("mock")
                 .role("test")
-                .tool(ManageTicketsTool),
+                .tool(ManageTicketsTool)
+                .build(),
         );
 
         tickets.task("first");
@@ -700,7 +699,8 @@ mod tests {
                 .provider(provider as Arc<dyn Provider>)
                 .model("mock")
                 .role("test")
-                .tool(ManageTicketsTool),
+                .tool(ManageTicketsTool)
+                .build(),
         );
 
         agent.task("hello");
@@ -758,7 +758,8 @@ mod tests {
                 .model("claude-sonnet-4-20250514")
                 .role("test")
                 .context("static")
-                .tool(dump),
+                .tool(dump)
+                .build(),
         );
         tickets.task("go");
 
@@ -866,7 +867,8 @@ mod tests {
                 .provider(provider.clone() as Arc<dyn Provider>)
                 .model("mock")
                 .role("test")
-                .tool(size_tool),
+                .tool(size_tool)
+                .build(),
         );
         tickets.task("go");
 
@@ -948,7 +950,8 @@ mod tests {
                 .provider(provider.clone() as Arc<dyn Provider>)
                 .model("mock")
                 .role("test")
-                .tool(crate::tools::ManageTicketsTool),
+                .tool(crate::tools::ManageTicketsTool)
+                .build(),
         );
         tickets.task("first");
         tickets.task("second");
@@ -987,7 +990,8 @@ mod tests {
                 .provider(provider.clone() as Arc<dyn Provider>)
                 .model("mock")
                 .role("test")
-                .knowledge(&store),
+                .knowledge(&store)
+                .build(),
         );
         tickets.task("first");
         tickets.task("second");
@@ -1038,7 +1042,8 @@ mod tests {
                 .provider(provider.clone() as Arc<dyn Provider>)
                 .model("mock")
                 .role("test")
-                .knowledge(&store),
+                .knowledge(&store)
+                .build(),
         );
         tickets.task("hi");
         let _ = tickets.finish().await;
@@ -1082,7 +1087,8 @@ mod tests {
                 .provider(p_a.clone() as Arc<dyn Provider>)
                 .model("mock")
                 .role("test")
-                .knowledge(&store),
+                .knowledge(&store)
+                .build(),
         );
         tickets.agent(
             Agent::new()
@@ -1091,7 +1097,8 @@ mod tests {
                 .provider(p_b.clone() as Arc<dyn Provider>)
                 .model("mock")
                 .role("test")
-                .knowledge(&store),
+                .knowledge(&store)
+                .build(),
         );
 
         tickets.task_labeled("alice work", "a");
@@ -1139,7 +1146,8 @@ mod tests {
                 .provider(provider.clone() as Arc<dyn Provider>)
                 .model("mock")
                 .role("test")
-                .knowledge(&store),
+                .knowledge(&store)
+                .build(),
         );
         tickets.task("first");
         tickets.task("second");

@@ -1,10 +1,8 @@
-//! Agent: identity + prompt parts + provider/model + a bound ticket
-//! system. Holds a `Weak<TicketSystem>`; `Default` produces a dangling
-//! `Weak`, and `tickets.agent(agent)` (or `agent.ticket_system(&shared)`)
-//! stamps the system's `Weak<Self>` onto the agent. The loop upgrades it
-//! once at the start of `run_agent` and accesses `tickets`,
-//! `policies`, `stats`, and `interrupt_signal` through the resulting
-//! `Arc<TicketSystem>`.
+//! Agent: identity + prompt parts + provider/model + a bound ticket system.
+//! `AgentBuilder::build()` produces the final agent, and `tickets.agent(agent)`
+//! stamps the system's `Weak<Self>` onto it. The loop upgrades it once at the
+//! start of `run_agent` and accesses `tickets`, `policies`, `stats`, and
+//! `interrupt_signal` through the resulting `Arc<TicketSystem>`.
 
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -17,7 +15,6 @@ use crate::providers::{Model, Provider, ProviderToolDefinition};
 use crate::tools::{FinishTicketTool, ManageKnowledgeTool, ToolLike, ToolRegistry};
 
 use super::knowledge::Knowledge;
-
 use super::policy::Policies;
 use super::stats::Stats;
 use super::tickets::{Ticket, TicketSystem};
@@ -29,46 +26,44 @@ fn default_agent_name() -> String {
     format!("agent-{n}")
 }
 
+// --- builder ---
+
 #[derive(Clone)]
-pub struct Agent {
-    pub(crate) name: String,
-    provider: Option<Arc<dyn Provider>>,
-    pub(crate) model: Option<Model>,
-    role: Option<String>,
-    context: Option<String>,
-    pub(crate) labels: Vec<String>,
-    pub(crate) interactive: bool,
+pub struct AgentBuilder<P, M> {
+    name: String,
+    provider: P,
+    model: M,
+    role: String,
+    context: String,
+    labels: Vec<String>,
+    interactive: bool,
     template_variables: Vec<(String, String)>,
     tools: ToolRegistry,
-    dir: Option<PathBuf>,
-    knowledge: Option<Arc<Knowledge>>,
-    pub(crate) ticket_system: Weak<TicketSystem>,
+    dir: PathBuf,
+    knowledge: Arc<Knowledge>,
+    ticket_system: Weak<TicketSystem>,
 }
 
-impl Default for Agent {
-    fn default() -> Self {
+impl AgentBuilder<(), ()> {
+    pub fn new() -> Self {
+        let knowledge = Knowledge::load(".agentwerk").expect("open knowledge store");
         let mut tools = ToolRegistry::default();
         tools.register(FinishTicketTool);
+        tools.register(ManageKnowledgeTool::new(Arc::clone(&knowledge)));
         Self {
             name: default_agent_name(),
-            provider: None,
-            model: None,
-            role: None,
-            context: None,
+            provider: (),
+            model: (),
+            role: String::new(),
+            context: String::new(),
             labels: Vec::new(),
             interactive: false,
             template_variables: Vec::new(),
             tools,
-            dir: None,
-            knowledge: None,
+            dir: std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")),
+            knowledge,
             ticket_system: Weak::new(),
         }
-    }
-}
-
-impl Agent {
-    pub fn new() -> Self {
-        Self::default()
     }
 
     /// Construct an `Agent` with no tools pre-registered. Use this
@@ -78,70 +73,98 @@ impl Agent {
     /// at least one finisher tool (`FinishTicketTool` or
     /// `HandoverTicketTool`) via [`Self::tool`].
     pub fn empty() -> Self {
+        let knowledge = Knowledge::load(".agentwerk").expect("open knowledge store");
+        let mut tools = ToolRegistry::default();
+        tools.register(ManageKnowledgeTool::new(Arc::clone(&knowledge)));
         Self {
             name: default_agent_name(),
-            provider: None,
-            model: None,
-            role: None,
-            context: None,
+            provider: (),
+            model: (),
+            role: String::new(),
+            context: String::new(),
             labels: Vec::new(),
             interactive: false,
             template_variables: Vec::new(),
-            tools: ToolRegistry::default(),
-            dir: None,
-            knowledge: None,
+            tools,
+            dir: std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")),
+            knowledge,
             ticket_system: Weak::new(),
         }
-    }
-
-    pub fn name(mut self, n: impl Into<String>) -> Self {
-        self.name = n.into();
-        self
-    }
-
-    pub fn provider(mut self, p: Arc<dyn Provider>) -> Self {
-        self.provider = Some(p);
-        self
-    }
-
-    /// Detect the provider from environment variables. Panics if no provider env var is set.
-    pub fn provider_from_env(self) -> Self {
-        let provider = crate::providers::provider_from_env()
-            .expect("LLM provider required: set ANTHROPIC_API_KEY, OPENAI_API_KEY, MISTRAL_API_KEY, or LITELLM_API_KEY");
-        self.provider(provider)
-    }
-
-    pub fn model(mut self, m: impl Into<Model>) -> Self {
-        self.model = Some(m.into());
-        self
-    }
-
-    /// Read the model name from environment variables, then apply the
-    /// `MODEL_CONTEXT_WINDOW` override on top of the registry guess.
-    /// Panics if no provider can be detected.
-    pub fn model_from_env(self) -> Self {
-        let name = crate::providers::model_from_env().expect("model name required");
-        let mut model = Model::from_name(name);
-        if let Some(n) = crate::providers::context_window_from_env() {
-            model = model.context_window(n);
-        }
-        self.model(model)
     }
 
     /// Detect both the provider and the model from environment variables.
     /// Equivalent to `provider_from_env().model_from_env()`. Panics if no
     /// provider env var is set.
-    pub fn from_env(self) -> Self {
+    pub fn from_env(self) -> AgentBuilder<Arc<dyn Provider>, Model> {
         self.provider_from_env().model_from_env()
+    }
+}
+
+impl<M> AgentBuilder<(), M> {
+    pub fn provider(self, p: Arc<dyn Provider>) -> AgentBuilder<Arc<dyn Provider>, M> {
+        AgentBuilder {
+            name: self.name,
+            provider: p,
+            model: self.model,
+            role: self.role,
+            context: self.context,
+            labels: self.labels,
+            interactive: self.interactive,
+            template_variables: self.template_variables,
+            tools: self.tools,
+            dir: self.dir,
+            knowledge: self.knowledge,
+            ticket_system: self.ticket_system,
+        }
+    }
+
+    /// Detect the provider from environment variables. Panics if no provider env var is set.
+    pub fn provider_from_env(self) -> AgentBuilder<Arc<dyn Provider>, M> {
+        let p = crate::providers::provider_from_env().expect(
+            "LLM provider required: set ANTHROPIC_API_KEY, OPENAI_API_KEY, MISTRAL_API_KEY, or LITELLM_API_KEY",
+        );
+        self.provider(p)
+    }
+}
+
+impl<P> AgentBuilder<P, ()> {
+    pub fn model(self, m: impl Into<Model>) -> AgentBuilder<P, Model> {
+        AgentBuilder {
+            name: self.name,
+            provider: self.provider,
+            model: m.into(),
+            role: self.role,
+            context: self.context,
+            labels: self.labels,
+            interactive: self.interactive,
+            template_variables: self.template_variables,
+            tools: self.tools,
+            dir: self.dir,
+            knowledge: self.knowledge,
+            ticket_system: self.ticket_system,
+        }
+    }
+
+    /// Read the model name from environment variables. Panics if no model can be detected.
+    pub fn model_from_env(self) -> AgentBuilder<P, Model> {
+        let model = crate::providers::model_from_env().expect("model name required");
+        self.model(model)
+    }
+}
+
+impl<P, M> AgentBuilder<P, M> {
+    pub fn name(mut self, n: impl Into<String>) -> Self {
+        self.name = n.into();
+        self
     }
 
     pub fn role(mut self, r: impl Into<String>) -> Self {
-        self.role = Some(r.into());
+        self.role = r.into();
         self
     }
 
     pub fn context(mut self, c: impl Into<String>) -> Self {
-        self.context = Some(c.into());
+        self.context = c.into();
         self
     }
 
@@ -208,60 +231,22 @@ impl Agent {
         self
     }
 
-    /// Directory tools resolve filesystem paths against. Defaults
-    /// to the process's current directory when unset.
+    /// Directory tools resolve filesystem paths against. Defaults to the
+    /// process's current directory at construction time.
     pub fn dir(mut self, p: impl Into<PathBuf>) -> Self {
-        self.dir = Some(p.into());
+        self.dir = p.into();
         self
     }
 
-    /// Knowledge store the agent uses for its long-term memory. Share
-    /// one store across multiple agents the same way
-    /// `ticket_system(&shared)` shares a queue. Defaults to a fresh
-    /// store rooted at `./.agentwerk` when unset, mirroring how
-    /// [`Self::dir`] defaults to the current working directory; the
-    /// default store is opened lazily when the agent is bound to a
-    /// `TicketSystem`. Registers `ManageKnowledgeTool` on the agent's tool
-    /// registry and arranges for the store's index to be injected into
-    /// the system prompt under `## Knowledge` at the top of every
-    /// ticket.
+    /// Knowledge store the agent uses for its long-term memory. Replaces
+    /// the default store opened at construction and re-registers
+    /// `ManageKnowledgeTool` backed by `store`. Share one store across
+    /// multiple agents the same way `ticket_system(&shared)` shares a queue.
     pub fn knowledge(mut self, store: &Arc<Knowledge>) -> Self {
+        self.tools.deregister("manage_knowledge");
         self.tools
             .register(ManageKnowledgeTool::new(Arc::clone(store)));
-        self.knowledge = Some(Arc::clone(store));
-        self
-    }
-
-    /// Configured knowledge store, or a freshly-opened store rooted at
-    /// `./.agentwerk` when unset. Parallel to [`Self::dir_or_default`].
-    /// Panics on IO failure when opening the default.
-    pub(super) fn knowledge_or_default(&self) -> Arc<Knowledge> {
-        self.knowledge
-            .clone()
-            .unwrap_or_else(|| Knowledge::load(".agentwerk").expect("open knowledge store"))
-    }
-
-    /// Materialize the default knowledge store and register
-    /// `ManageKnowledgeTool` if `.knowledge(...)` was not invoked. Called by
-    /// `TicketSystem::bind_agent` so every running agent has a store
-    /// without the caller having to wire one up.
-    pub(super) fn ensure_knowledge_bound(&mut self) {
-        if self.knowledge.is_some() {
-            return;
-        }
-        let store = Knowledge::load(".agentwerk").expect("open knowledge store");
-        self.tools
-            .register(ManageKnowledgeTool::new(Arc::clone(&store)));
-        self.knowledge = Some(store);
-    }
-
-    /// Bind this agent to a shared `TicketSystem`. Drains any tickets
-    /// the agent had already enqueued in its prior store into `sys`,
-    /// stamps `sys`'s `Weak<Self>` onto `self.ticket_system`, and
-    /// registers a clone of `self` into `sys`'s agents list so the
-    /// loop will dispatch this agent at `run` / `finish` time.
-    pub fn ticket_system(mut self, sys: &Arc<TicketSystem>) -> Self {
-        sys.bind_agent(&mut self);
+        self.knowledge = Arc::clone(store);
         self
     }
 
@@ -299,27 +284,10 @@ impl Agent {
         &self.tools
     }
 
-    pub(super) fn dir_or_default(&self) -> PathBuf {
-        self.dir
-            .clone()
-            .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")))
-    }
-
-    pub(super) fn provider_handle(&self) -> Arc<dyn Provider> {
-        Arc::clone(
-            self.provider
-                .as_ref()
-                .expect("Agent::run requires .provider(...) to be set"),
-        )
-    }
-
-    /// Build the system prompt. `knowledge` is the index body the loop
-    /// captured at the top of the current ticket, or `None` if
-    /// [`Self::knowledge`] was not set. Tests may pass `None`.
     pub(super) fn system_prompt(&self, knowledge: Option<&str>) -> String {
         let mut b = PromptBuilder::default();
-        if let Some(role) = &self.role {
-            b = b.role(self.interpolate(role));
+        if !self.role.is_empty() {
+            b = b.role(self.interpolate(&self.role));
         }
         if let Some(snap) = knowledge.filter(|s| !s.is_empty()) {
             b = b.knowledge(snap.to_string());
@@ -327,22 +295,149 @@ impl Agent {
         b.build().system
     }
 
-    /// Render the context block pushed as the first user message in the
-    /// Render the context block pushed as the first user message in the
-    /// loop. Falls back to [`default_context`] (date, directory, platform,
-    /// plus a `… remaining` line for each configured policy budget) when
-    /// [`Self::context`] was not set. A custom context is left byte-exact:
-    /// `policies` and `stats` are ignored on that branch. When `ticket_key`
-    /// is `Some`, `- Ticket: {key}` is prepended as the first bullet.
     pub(super) fn context_message(
         &self,
         policies: &Policies,
         stats: &Stats,
         ticket_key: Option<&str>,
     ) -> Option<String> {
-        let base = match &self.context {
-            Some(body) => Section::context(self.interpolate(body)).render(),
-            None => default_context(&self.dir_or_default(), policies, stats),
+        let base = if !self.context.is_empty() {
+            Section::context(self.interpolate(&self.context)).render()
+        } else {
+            default_context(&self.dir, policies, stats)
+        };
+        let Some(key) = ticket_key else {
+            return Some(base);
+        };
+        const PREFIX: &str = "## Context\n\n";
+        let body = base.strip_prefix(PREFIX).unwrap_or(&base);
+        Some(format!("{PREFIX}- Ticket: {key}\n{body}"))
+    }
+
+    fn interpolate(&self, s: &str) -> String {
+        if self.template_variables.is_empty() {
+            return s.to_string();
+        }
+        let mut out = s.to_string();
+        for (key, value) in &self.template_variables {
+            out = out.replace(&format!("{{{key}}}"), value);
+        }
+        out
+    }
+}
+
+impl AgentBuilder<Arc<dyn Provider>, Model> {
+    pub fn build(self) -> Agent {
+        Agent {
+            name: self.name,
+            model: self.model,
+            labels: self.labels,
+            interactive: self.interactive,
+            ticket_system: self.ticket_system,
+            provider: self.provider,
+            role: self.role,
+            context: self.context,
+            template_variables: self.template_variables,
+            tools: self.tools,
+            dir: self.dir,
+            knowledge: self.knowledge,
+        }
+    }
+}
+
+// --- agent ---
+
+#[derive(Clone)]
+pub struct Agent {
+    // pub(crate): read by loop, TicketSystem, or routing code
+    pub(crate) name: String,
+    pub(crate) model: Model,
+    pub(crate) labels: Vec<String>,
+    pub(crate) interactive: bool,
+    pub(crate) ticket_system: Weak<TicketSystem>,
+    // private: accessed through methods within agents::
+    provider: Arc<dyn Provider>,
+    role: String,
+    context: String,
+    template_variables: Vec<(String, String)>,
+    tools: ToolRegistry,
+    dir: PathBuf,
+    knowledge: Arc<Knowledge>,
+}
+
+impl Agent {
+    /// Entry point for the fluent builder.
+    pub fn new() -> AgentBuilder<(), ()> {
+        AgentBuilder::new()
+    }
+
+    /// Entry point for a builder with no tools pre-registered.
+    pub fn empty() -> AgentBuilder<(), ()> {
+        AgentBuilder::empty()
+    }
+
+    pub(super) fn get_name(&self) -> &str {
+        &self.name
+    }
+
+    pub(super) fn is_interactive(&self) -> bool {
+        self.interactive
+    }
+
+    pub(super) fn handles_labels(&self, ticket_labels: &[String]) -> bool {
+        if ticket_labels.iter().any(|l| l == &self.name) {
+            return true;
+        }
+        if self.labels.is_empty() {
+            ticket_labels.is_empty()
+        } else {
+            self.labels
+                .iter()
+                .any(|l| ticket_labels.iter().any(|t| t == l))
+        }
+    }
+
+    pub(super) fn tool_definitions(&self) -> Vec<ProviderToolDefinition> {
+        self.tools.definitions()
+    }
+
+    pub(super) fn tool_registry(&self) -> &ToolRegistry {
+        &self.tools
+    }
+
+    pub(super) fn provider(&self) -> Arc<dyn Provider> {
+        Arc::clone(&self.provider)
+    }
+
+    pub(super) fn knowledge(&self) -> Arc<Knowledge> {
+        Arc::clone(&self.knowledge)
+    }
+
+    pub(super) fn dir(&self) -> PathBuf {
+        self.dir.clone()
+    }
+
+    pub(super) fn system_prompt(&self, knowledge: Option<&str>) -> String {
+        let mut b = PromptBuilder::default();
+        if !self.role.is_empty() {
+            b = b.role(self.interpolate(&self.role));
+        }
+        if let Some(snap) = knowledge.filter(|s| !s.is_empty()) {
+            b = b.knowledge(snap.to_string());
+        }
+        b.build().system
+    }
+
+    pub(super) fn context_message(
+        &self,
+        policies: &Policies,
+        stats: &Stats,
+        ticket_key: Option<&str>,
+    ) -> Option<String> {
+        let base = if !self.context.is_empty() {
+            Section::context(self.interpolate(&self.context)).render()
+        } else {
+            default_context(&self.dir, policies, stats)
         };
         let Some(key) = ticket_key else {
             return Some(base);
@@ -363,28 +458,31 @@ impl Agent {
         out
     }
 
-    /// Enqueue a ticket carrying `task` as its body. Always available
-    /// (the agent has a bound ticket system from construction onward).
-    /// Returns the new ticket's key.
+    /// Bind this agent to a shared `TicketSystem`. Drains any tickets
+    /// the agent had already enqueued in its prior store into `sys`,
+    /// stamps `sys`'s `Weak<Self>` onto `self.ticket_system`, and
+    /// registers a clone of `self` into `sys`'s agents list so the
+    /// loop will dispatch this agent at `run` / `finish` time.
+    pub fn ticket_system(mut self, sys: &Arc<TicketSystem>) -> Self {
+        sys.bind_agent(&mut self);
+        self
+    }
+
+    /// Enqueue a ticket carrying `task` as its body. Returns the new
+    /// ticket's key.
     pub fn task<T: Serialize>(&self, task: T) -> String {
         let ticket = Ticket::new(task);
         self.dispatch(ticket)
     }
 
     /// Enqueue a ticket carrying `task` and attached to `label` for
-    /// Path B routing. To pin a ticket directly to an agent, label it
-    /// with the agent's name: `agent.ticket(Ticket::new(...).label("alice"))`.
-    /// Returns the new ticket's key.
+    /// Path B routing. Returns the new ticket's key.
     pub fn task_labeled<T: Serialize>(&self, task: T, label: impl Into<String>) -> String {
         let ticket = Ticket::new(task).label(label);
         self.dispatch(ticket)
     }
 
-    /// Enqueue a fully-built `Ticket`. System-managed fields (key,
-    /// reporter, created_at, status, result) are overwritten. To pin the
-    /// ticket to a specific agent, label it with the agent's name.
-    /// Compose schema and label via `Ticket::new(...).schema(...).label(...)`.
-    /// Returns the inserted ticket's key.
+    /// Enqueue a fully-built `Ticket`. Returns the inserted ticket's key.
     pub fn ticket(&self, ticket: Ticket) -> String {
         self.dispatch(ticket)
     }
@@ -400,9 +498,8 @@ impl Agent {
         sys.insert(ticket, self.name.clone())
     }
 
-    /// Start the agent loop on a background tokio task. Forwards to
-    /// the bound `TicketSystem`. Returns the bound system so callers
-    /// can `cancel()` or read results on the same value.
+    /// Start the agent loop on a background tokio task. Returns the bound
+    /// system so callers can `cancel()` or read results on the same value.
     pub fn start(&self) -> Arc<TicketSystem> {
         let sys = self
             .ticket_system
@@ -412,9 +509,9 @@ impl Agent {
         sys
     }
 
-    /// Start a background run and wait for every queued ticket to
-    /// finish. Returns the bound system so the caller can read results
-    /// via [`TicketSystem::last_result`] etc.
+    /// Start a background run and wait for every queued ticket to finish.
+    /// Returns the bound system so the caller can read results via
+    /// [`TicketSystem::last_result`] etc.
     pub async fn finish(&self) -> Arc<TicketSystem> {
         let sys = self
             .ticket_system
@@ -427,8 +524,19 @@ impl Agent {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
+
     use super::*;
     use crate::agents::stats::LoopStats;
+    use crate::providers::Provider;
+
+    fn built(builder: AgentBuilder<(), ()>) -> Agent {
+        use crate::agents::r#loop::test_util::MockProvider;
+        builder
+            .provider(MockProvider::with_results(vec![]) as Arc<dyn Provider>)
+            .model("test")
+            .build()
+    }
 
     #[test]
     fn handles_labels_default_scope_only_picks_unlabeled_tickets() {
@@ -448,12 +556,9 @@ mod tests {
 
     #[test]
     fn handles_labels_matches_when_ticket_label_equals_agent_name() {
-        // Default-scope agent: a ticket labelled with the agent's name
-        // routes here even though the agent has no other labels.
         let agent = Agent::new().name("alice");
         assert!(agent.handles_labels(&["alice".into()]));
         assert!(agent.handles_labels(&["alice".into(), "other".into()]));
-        // Same holds when the agent does carry topical labels.
         let agent = Agent::new().name("alice").label("math");
         assert!(agent.handles_labels(&["alice".into()]));
         assert!(agent.handles_labels(&["math".into()]));
@@ -541,8 +646,6 @@ mod tests {
 
     #[test]
     fn context_message_ignores_runtime_args_for_custom_context() {
-        // Custom contexts stay byte-exact regardless of policy/stats —
-        // the caller opted out of the default scaffolding entirely.
         let agent = Agent::new().context("- Note: custom");
         let policies = Policies {
             max_turns: Some(3),
@@ -579,7 +682,7 @@ mod tests {
     }
 
     #[test]
-    fn new_agent_has_write_result_registered() {
+    fn new_agent_has_finish_ticket_registered() {
         let agent = Agent::new();
         let names: Vec<String> = agent
             .tool_definitions()
@@ -643,9 +746,7 @@ mod tests {
         let dir = crate::test_util::TempDir::new().unwrap();
         let sys = crate::agents::TicketSystem::new();
         sys.dir(dir.path().to_path_buf());
-        let agent = Agent::new()
-            .template_variable("topic", "rust")
-            .ticket_system(&sys);
+        let agent = built(Agent::new().template_variable("topic", "rust")).ticket_system(&sys);
         agent.task("Search {topic} forums.");
         let stored = sys
             .first_ticket()
@@ -661,9 +762,7 @@ mod tests {
         let dir = crate::test_util::TempDir::new().unwrap();
         let sys = crate::agents::TicketSystem::new();
         sys.dir(dir.path().to_path_buf());
-        let agent = Agent::new()
-            .template_variable("topic", "rust")
-            .ticket_system(&sys);
+        let agent = built(Agent::new().template_variable("topic", "rust")).ticket_system(&sys);
         let value = serde_json::json!({"q": "Find {topic}"});
         agent.ticket(Ticket::new(value.clone()));
         let stored = sys
@@ -693,14 +792,8 @@ mod tests {
         let dir = crate::test_util::TempDir::new().unwrap();
         let store = Knowledge::load(dir.path()).unwrap();
         let agent = Agent::new().knowledge(&store);
-        let names: Vec<String> = agent
-            .tool_definitions()
-            .into_iter()
-            .map(|d| d.name)
-            .collect();
-        assert!(names.iter().any(|n| n == "manage_knowledge"));
         agent
-            .knowledge_or_default()
+            .knowledge
             .pages()
             .save(crate::agents::knowledge::Page {
                 slug: "from-store".into(),
@@ -719,7 +812,7 @@ mod tests {
         let agent = Agent::new().knowledge(&store);
         let cloned = agent.clone();
         agent
-            .knowledge_or_default()
+            .knowledge
             .pages()
             .save(crate::agents::knowledge::Page {
                 slug: "shared".into(),
@@ -728,7 +821,7 @@ mod tests {
                 tags: vec![],
             })
             .unwrap();
-        assert!(cloned.knowledge_or_default().index().contains("shared"));
+        assert!(cloned.knowledge.index().contains("shared"));
     }
 
     #[test]
@@ -738,7 +831,7 @@ mod tests {
         let alice = Agent::new().knowledge(&store);
         let bob = Agent::new().knowledge(&store);
         alice
-            .knowledge_or_default()
+            .knowledge
             .pages()
             .save(crate::agents::knowledge::Page {
                 slug: "from-alice".into(),
@@ -747,7 +840,7 @@ mod tests {
                 tags: vec![],
             })
             .unwrap();
-        assert!(bob.knowledge_or_default().index().contains("from-alice"));
+        assert!(bob.knowledge.index().contains("from-alice"));
     }
 
     #[test]
@@ -765,7 +858,7 @@ mod tests {
     }
 
     #[test]
-    fn unbound_default_agent_does_not_register_manage_knowledge() {
+    fn new_agent_has_manage_knowledge_registered() {
         let agent = Agent::new();
         let names: Vec<String> = agent
             .tool_definitions()
@@ -773,32 +866,17 @@ mod tests {
             .map(|d| d.name)
             .collect();
         assert!(
-            !names.iter().any(|n| n == "manage_knowledge"),
-            "manage_knowledge must not appear before binding: {names:?}"
-        );
-    }
-
-    #[test]
-    fn binding_default_agent_materializes_knowledge_store() {
-        let sys = crate::agents::TicketSystem::new();
-        let agent = Agent::new().ticket_system(&sys);
-        let names: Vec<String> = agent
-            .tool_definitions()
-            .into_iter()
-            .map(|d| d.name)
-            .collect();
-        assert!(
             names.iter().any(|n| n == "manage_knowledge"),
-            "manage_knowledge should be registered after binding: {names:?}"
+            "manage_knowledge must be registered on every new agent: {names:?}",
         );
     }
 
-    #[test]
-    fn binding_agent_with_explicit_knowledge_keeps_explicit_store() {
+    #[tokio::test]
+    async fn binding_agent_with_explicit_knowledge_keeps_explicit_store() {
         let dir = crate::test_util::TempDir::new().unwrap();
         let store = Knowledge::load(dir.path()).unwrap();
         let sys = crate::agents::TicketSystem::new();
-        let agent = Agent::new().knowledge(&store).ticket_system(&sys);
-        assert!(Arc::ptr_eq(&store, &agent.knowledge_or_default()));
+        let agent = built(Agent::new().knowledge(&store)).ticket_system(&sys);
+        assert!(Arc::ptr_eq(&store, &agent.knowledge));
     }
 }

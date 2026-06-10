@@ -97,7 +97,8 @@ async fn finds_string_buried_deep_in_line() -> std::result::Result<(), Box<dyn s
             .tool(GrepTool)
             .tool(GlobTool)
             .tool(ListDirectoryTool)
-            .tool(ReadFileTool),
+            .tool(ReadFileTool)
+            .build(),
     );
     tickets.task(format!(
         "Which source file contains the string `{NEEDLE}`? \
@@ -235,7 +236,8 @@ async fn reads_column_slice_after_grep_locates_needle(
                  `finish_ticket`.",
             )
             .tool(GrepTool)
-            .tool(ReadFileTool),
+            .tool(ReadFileTool)
+            .build(),
     );
     tickets.task(format!(
         "Find the string `{NEEDLE}` in the working directory. \

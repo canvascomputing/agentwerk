@@ -32,7 +32,8 @@ async fn creates_file_with_token() -> std::result::Result<(), Box<dyn std::error
              ticket. Do not write any prose — your only output must be tool \
              calls.",
         )
-        .tool(WriteFileTool);
+        .tool(WriteFileTool)
+        .build();
     tickets.agent(agent);
     tickets.task(format!(
         "Create a file named `report.md` in the working directory containing \
