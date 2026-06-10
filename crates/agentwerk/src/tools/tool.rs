@@ -424,6 +424,18 @@ type ToolHandler = Box<
         + Sync,
 >;
 
+/// Type-state builder for [`Tool`]. The `<H>` parameter tracks whether a
+/// handler has been installed: `.build()` is only available on
+/// `ToolBuilder<ToolHandler>`, so a handlerless tool cannot reach an agent.
+pub struct ToolBuilder<H> {
+    name: String,
+    description: String,
+    schema: Value,
+    read_only: bool,
+    defer: bool,
+    handler: H,
+}
+
 /// Ad-hoc tool defined inline with a closure handler.
 ///
 /// Chain builder methods to configure, then hand the tool to an agent:
@@ -432,48 +444,49 @@ type ToolHandler = Box<
 ///     .schema(serde_json::json!({"type": "object", "properties": {}}))
 ///     .handler(|_input, _ctx| async {
 ///         Ok(ToolResult::success("hi"))
-///     });
+///     })
+///     .build();
 /// ```
 ///
-/// A handler is required — omitting [`Tool::handler`] causes the first
-/// invocation to panic. For tools with complex state, implement
-/// [`ToolLike`] directly on your own type instead.
+/// For tools with complex state, implement [`ToolLike`] directly on your own type instead.
 pub struct Tool {
     name: String,
     description: String,
     schema: Value,
     read_only: bool,
     defer: bool,
-    handler: Option<ToolHandler>,
+    handler: ToolHandler,
 }
 
 impl Tool {
-    /// A new tool with an empty-object input schema and no handler. Set the
-    /// handler with [`Tool::handler`] before handing the tool to an agent.
-    pub fn new(name: impl Into<String>, description: impl Into<String>) -> Self {
-        Self {
+    /// Entry point for the fluent builder. The returned `ToolBuilder<()>` has
+    /// an empty-object input schema and no handler; install one with
+    /// `.handler(...)` and finalize with `.build()`.
+    pub fn new(name: impl Into<String>, description: impl Into<String>) -> ToolBuilder<()> {
+        ToolBuilder {
             name: name.into(),
             description: description.into(),
             schema: serde_json::json!({"type": "object", "properties": {}}),
             read_only: false,
             defer: false,
-            handler: None,
+            handler: (),
         }
     }
 
-    /// Construct a `Tool` from a `.tool.json` definition. The returned tool
-    /// has its name, rendered description, input schema, and read-only flag
-    /// populated from the JSON; attach a handler via [`Tool::handler`]
-    /// before registering it with an agent. Panics on malformed JSON.
-    pub fn from_tool_file(json: &str) -> Self {
+    /// Entry point for a builder seeded from a `.tool.json` definition. The
+    /// returned builder has its name, rendered description, input schema,
+    /// and read-only flag populated from the JSON; install a handler with
+    /// `.handler(...)` and finalize with `.build()`. Panics on malformed JSON.
+    pub fn from_tool_file(json: &str) -> ToolBuilder<()> {
         let tf = super::tool_file::ToolFile::parse(json);
         Tool::new(tf.name.clone(), tf.render_markdown())
             .schema(tf.input_schema.clone())
             .read_only(tf.read_only)
     }
+}
 
-    /// Replace the input schema (JSON Schema). Defaults to an empty-object
-    /// schema.
+impl<H> ToolBuilder<H> {
+    /// Replace the input schema (JSON Schema). Defaults to an empty-object schema.
     pub fn schema(mut self, schema: Value) -> Self {
         self.schema = schema;
         self
@@ -486,24 +499,44 @@ impl Tool {
         self
     }
 
-    /// Hide the tool's full definition until it is discovered via
-    /// `FindToolsTool`.
+    /// Hide the tool's full definition until it is discovered via `FindToolsTool`.
     pub fn defer(mut self, defer: bool) -> Self {
         self.defer = defer;
         self
     }
+}
 
-    /// Install the closure that runs when the model calls this tool.
-    /// The closure may be a bare `async` block — the builder boxes the
-    /// returned future internally. Required: omitting this causes the
-    /// first invocation to panic.
-    pub fn handler<F, Fut>(mut self, f: F) -> Self
+impl ToolBuilder<()> {
+    /// Install the closure that runs when the model calls this tool. The
+    /// closure may be a bare `async` block: the builder boxes the returned
+    /// future internally.
+    pub fn handler<F, Fut>(self, f: F) -> ToolBuilder<ToolHandler>
     where
         F: Fn(Value, ToolContext) -> Fut + Send + Sync + 'static,
         Fut: Future<Output = ProviderResult<ToolResult>> + Send + 'static,
     {
-        self.handler = Some(Box::new(move |v, c| Box::pin(f(v, c.clone()))));
-        self
+        ToolBuilder {
+            name: self.name,
+            description: self.description,
+            schema: self.schema,
+            read_only: self.read_only,
+            defer: self.defer,
+            handler: Box::new(move |v, c| Box::pin(f(v, c.clone()))),
+        }
+    }
+}
+
+impl ToolBuilder<ToolHandler> {
+    /// Produce the final `Tool` ready for `Agent::tool(...)`.
+    pub fn build(self) -> Tool {
+        Tool {
+            name: self.name,
+            description: self.description,
+            schema: self.schema,
+            read_only: self.read_only,
+            defer: self.defer,
+            handler: self.handler,
+        }
     }
 }
 
@@ -533,11 +566,7 @@ impl ToolLike for Tool {
         input: Value,
         ctx: &'a ToolContext,
     ) -> Pin<Box<dyn Future<Output = ProviderResult<ToolResult>> + Send + 'a>> {
-        let handler = self
-            .handler
-            .as_ref()
-            .expect("Tool requires a handler — set one via `.handler(...)` before use");
-        (handler)(input, ctx)
+        (self.handler)(input, ctx)
     }
 }
 
@@ -895,7 +924,9 @@ mod tests {
                 "required": ["x"]
             }
         }"#;
-        let tool = Tool::from_tool_file(json);
+        let tool = Tool::from_tool_file(json)
+            .handler(|_, _| async { Ok(ToolResult::success("")) })
+            .build();
         assert_eq!(tool.name(), "demo_tool");
         assert!(tool.description().contains("Do the demo thing."));
         assert!(tool.description().contains("- Returns nothing useful."));
@@ -1036,7 +1067,8 @@ mod tests {
             .handler(|input, _ctx| async move {
                 let text = input["text"].as_str().unwrap_or("").to_string();
                 Ok(ToolResult::success(text))
-            });
+            })
+            .build();
 
         assert_eq!(tool.name(), "echo");
         assert!(tool.is_read_only());
@@ -1046,17 +1078,10 @@ mod tests {
     fn tool_defer_builder() {
         let tool = Tool::new("advanced", "Advanced tool")
             .defer(true)
-            .handler(|_input, _ctx| async { Ok(ToolResult::success("ok")) });
+            .handler(|_input, _ctx| async { Ok(ToolResult::success("ok")) })
+            .build();
 
         assert!(tool.should_defer());
-    }
-
-    #[tokio::test]
-    #[should_panic(expected = "requires a handler")]
-    async fn tool_panics_without_handler() {
-        let tool = Tool::new("no_handler", "missing");
-        let ctx = test_ctx();
-        let _ = tool.call(serde_json::json!({}), &ctx).await;
     }
 
     // ---- Layer 1: result-cap helpers ----

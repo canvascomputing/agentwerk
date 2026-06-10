@@ -10,10 +10,9 @@ use super::tool::{ToolContext, ToolLike, ToolResult};
 use super::tool_file::ToolFile;
 use crate::providers::ProviderResult as Result;
 
-/// Search the tool registry by query string. Pair with tools that set
-/// [`Tool::defer`](crate::tools::Tool::defer) to `true`: the
-/// model sees only their names until it discovers them through this tool,
-/// keeping the initial system prompt small.
+/// Search the tool registry by query string. Pair with tools built via
+/// `Tool::new(...).defer(true)`: the model sees only their names until it
+/// discovers them through this tool, keeping the initial system prompt small.
 pub struct FindToolsTool;
 
 fn tool_file() -> &'static ToolFile {

@@ -253,15 +253,17 @@ mod tests {
             Ok(write_result_value(serde_json::json!("done"))),
         ]);
 
-        let slow_tool = Tool::new("slow_tool", "Blocks until released").handler(move |_, _| {
-            let s = Arc::clone(&tool_started_clone);
-            let u = Arc::clone(&tool_unblocked_clone);
-            async move {
-                s.notify_one();
-                u.notified().await;
-                Ok(ToolResult::success("ok"))
-            }
-        });
+        let slow_tool = Tool::new("slow_tool", "Blocks until released")
+            .handler(move |_, _| {
+                let s = Arc::clone(&tool_started_clone);
+                let u = Arc::clone(&tool_unblocked_clone);
+                async move {
+                    s.notify_one();
+                    u.notified().await;
+                    Ok(ToolResult::success("ok"))
+                }
+            })
+            .build();
 
         let results_dir = crate::test_util::TempDir::new().unwrap();
         let tickets = TicketSystem::new();

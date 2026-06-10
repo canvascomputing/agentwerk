@@ -748,7 +748,8 @@ mod tests {
             .max_time(Duration::from_millis(500));
 
         let dump = Tool::new("dump", "Returns ~800 KB of text")
-            .handler(|_input, _ctx| async move { Ok(ToolResult::success("x".repeat(800_000))) });
+            .handler(|_input, _ctx| async move { Ok(ToolResult::success("x".repeat(800_000))) })
+            .build();
 
         tickets.event_handler(move |e| handler(e));
         tickets.agent(
@@ -859,7 +860,8 @@ mod tests {
             .handler(|input, _ctx| async move {
                 let bytes = input["bytes"].as_u64().unwrap_or(0) as usize;
                 Ok(ToolResult::success("x".repeat(bytes)))
-            });
+            })
+            .build();
 
         tickets.agent(
             Agent::new()

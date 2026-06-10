@@ -380,7 +380,8 @@ let greet = Tool::new("greet", "Say hello")
     .handler(|input, _ctx| async move {
         let name = input["name"].as_str().unwrap_or("world");
         Ok(ToolResult::success(format!("Hello, {name}!")))
-    });
+    })
+    .build();
 ```
 
 `.read_only(true)` allows the agent to run a tool concurrently with other read-only calls in the same turn.
