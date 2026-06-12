@@ -52,7 +52,7 @@ Two layers of state exist. The per-ticket transcript lives on `Ticket::replies`:
 - The loop reads `Knowledge::index()` once at the top of `process_ticket` and feeds the result to `Agent::system_prompt(knowledge: Option<&str>)`. The system prompt stays byte-stable across every turn of the ticket so the provider's prefix cache survives mid-ticket knowledge writes; cross-ticket and cross-agent writes become visible at the top of the next ticket.
 - Knowledge is purely model-driven. The model calls `manage_knowledge` with `write` / `read` / `remove` / `list`; the tool description carries the policy (durable facts only, do NOT save task progress / TODOs). A hard char limit on the rendered index rejects writes that would push the prompt section past the cap and tells the model to consolidate first. The limit defaults to 4000 and is configurable via `Knowledge::open(dir)?.index_char_limit(n)`.
 
-## One observer, one error path
+## Observer chain, one error path
 
 **`Event` reports state. `ProviderError` and `ToolError` report failed contracts. The two channels carry independent information.**
 
@@ -60,6 +60,7 @@ Two layers of state exist. The per-ticket transcript lives on `Ticket::replies`:
 - An observable failure fires both the typed error (`ProviderError`, `ToolError`) and a matching `Event` (`RequestFailed`, `ToolCallFailed`, `PolicyViolated`).
 - A model-fixable failure (wrong arguments, schema mismatch, missing file) goes back to the model as a `ToolResult::Error` content block; it still fires `ToolCallFailed` but does not stop the run.
 - Handlers MUST be cheap, non-blocking closures; the loop does not await them.
+- `TicketSystem::on_event(h)` pushes a handler onto an ordered chain — every installed handler fires on every event, in installation order. When no handler is installed, `default_logger` runs in its place. This composition is what `cancel_on_event(predicate)` is built on: it pushes a handler that calls `cancel()` when the predicate matches, so the user's logger and the cancel trigger coexist.
 
 ## New observables pick a channel
 

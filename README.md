@@ -217,8 +217,9 @@ let answer = tickets.last_result();
 |--------|-------------|
 | `start()` | Begin processing tickets in the background. |
 | `finish().await` | Process every queued ticket and return. |
-| `cancel()` | Cancel the run from anywhere: async code, ctrl-c handlers, drop guards. |
-| `cancel_on_ctrl_c()` | Cancel the run on the first ctrl-c. |
+| `cancel()` | Cancel the run. |
+| `cancel_on(trigger)` | Cancel the run when `trigger` resolves. |
+| `cancel_on_event(p)` | Cancel the run when `p(&event)` first returns true. |
 
 ### Reading results
 
@@ -258,7 +259,7 @@ Each `Ticket` carries the recorded result, its transcript, and lifecycle timesta
 #[derive(serde::Deserialize)]
 struct Report { title: String }
 
-let ticket = tickets.find_ticket(|t| t.labels.iter().any(|l| l == "analysis")).unwrap();
+let ticket = tickets.find_ticket(|t| t.has_label("analysis")).unwrap();
 let report: Report = serde_json::from_value(ticket.result.clone().unwrap()).unwrap();
 ```
 
@@ -466,7 +467,7 @@ Events report everything that happens while your agents work and give you deep i
 ```rust
 use agentwerk::event::{Event, EventKind};
 
-tickets.event_handler(|event: Event| {
+tickets.on_event(|event: Event| {
     if let EventKind::TicketFinished { key } = &event.kind {
         eprintln!("[{}] done {key}", event.agent_name);
     }

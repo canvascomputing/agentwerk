@@ -100,7 +100,7 @@ async fn main() {
 
     let knowledge = Knowledge::load(&store_dir).expect("open knowledge store");
 
-    tickets.event_handler(move |e| handler(e));
+    tickets.on_event(move |e| handler(e));
     let _agent = tickets.agent(
         Agent::new()
             .name("orchestrator")

@@ -6,6 +6,7 @@
 //! in `store.rs`.
 
 use std::collections::HashMap;
+use std::future::Future;
 use std::io;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -40,7 +41,7 @@ pub struct TicketSystem {
     pub(super) policies: Mutex<Policies>,
     pub(crate) interrupt_signal: Mutex<Arc<AtomicBool>>,
     pub(crate) stats: Stats,
-    pub(super) event_handler: Mutex<Option<Arc<EventHandler>>>,
+    pub(super) event_handlers: Mutex<Vec<Arc<EventHandler>>>,
     pub(super) dir: Mutex<PathBuf>,
     pub(super) tickets_log_lock: Mutex<()>,
     pub(super) join_handle: Mutex<Option<JoinHandle<()>>>,
@@ -59,7 +60,7 @@ impl TicketSystem {
             policies: Mutex::new(Policies::default()),
             interrupt_signal: Mutex::new(Arc::new(AtomicBool::new(false))),
             stats: Stats::new(),
-            event_handler: Mutex::new(None),
+            event_handlers: Mutex::new(Vec::new()),
             dir: Mutex::new(PathBuf::from(".agentwerk")),
             tickets_log_lock: Mutex::new(()),
             join_handle: Mutex::new(None),
@@ -119,7 +120,7 @@ impl TicketSystem {
             policies: Mutex::new(Policies::default()),
             interrupt_signal: Mutex::new(Arc::new(AtomicBool::new(false))),
             stats,
-            event_handler: Mutex::new(None),
+            event_handlers: Mutex::new(Vec::new()),
             dir: Mutex::new(tickets_dir),
             tickets_log_lock: Mutex::new(()),
             join_handle: Mutex::new(None),
@@ -131,10 +132,12 @@ impl TicketSystem {
         &self.stats
     }
 
-    /// Install an event observer. The handler must be cheap and non-blocking.
-    /// When not set, [`default_logger`] is used.
-    pub fn event_handler(&self, h: impl Fn(Event) + Send + Sync + 'static) -> &Self {
-        *self.event_handler.lock().unwrap() = Some(Arc::new(h));
+    /// Push an event observer onto the handler chain. Every installed
+    /// handler fires on every event, in installation order. Handlers
+    /// must be cheap and non-blocking. When no handler has been
+    /// installed, [`default_logger`] runs in its place.
+    pub fn on_event(&self, h: impl Fn(Event) + Send + Sync + 'static) -> &Self {
+        self.event_handlers.lock().unwrap().push(Arc::new(h));
         self
     }
 
@@ -153,9 +156,15 @@ impl TicketSystem {
             EventKind::RequestFailed { .. } => self.stats.record_error_for(&labels),
             _ => {}
         }
-        let handler = self.event_handler.lock().unwrap().clone();
-        let h = handler.unwrap_or_else(default_logger);
-        h(Event::new(agent, kind));
+        let handlers: Vec<Arc<EventHandler>> = self.event_handlers.lock().unwrap().clone();
+        let event = Event::new(agent, kind);
+        if handlers.is_empty() {
+            default_logger()(event);
+            return;
+        }
+        for h in &handlers {
+            h(event.clone());
+        }
     }
 
     fn labels_for(&self, key: &str) -> Vec<String> {
@@ -216,17 +225,35 @@ impl TicketSystem {
         self
     }
 
-    /// Flip the cancel signal on the first SIGINT. Spawns a background
-    /// tokio task that listens for ctrl-c once and exits. Callers that
-    /// need escalation (e.g. force-exit on a second press) install
-    /// their own listener and call [`Self::cancel`] from it.
-    pub fn cancel_on_ctrl_c(&self) -> &Self {
+    /// Cancel the run when `trigger` resolves. The future's output is
+    /// discarded; only completion matters. Composes with any cancellation
+    /// source: ctrl-c, a deadline, a channel receive, an external signal.
+    pub fn cancel_on<F>(&self, trigger: F) -> &Self
+    where
+        F: Future + Send + 'static,
+        F::Output: Send,
+    {
         let signal = Arc::clone(&self.interrupt_signal.lock().unwrap());
         tokio::spawn(async move {
-            tokio::signal::ctrl_c().await.ok();
+            let _ = trigger.await;
             signal.store(true, Ordering::Relaxed);
         });
         self
+    }
+
+    /// Cancel the run when `predicate(&event)` first returns true.
+    /// Implemented as one more entry on the [`Self::on_event`] chain;
+    /// composes with any logger the caller installed.
+    pub fn cancel_on_event<F>(&self, predicate: F) -> &Self
+    where
+        F: Fn(&Event) -> bool + Send + Sync + 'static,
+    {
+        let signal = Arc::clone(&self.interrupt_signal.lock().unwrap());
+        self.on_event(move |event| {
+            if predicate(&event) {
+                signal.store(true, Ordering::Relaxed);
+            }
+        })
     }
 
     /// Override the directory under which the system writes
@@ -538,6 +565,20 @@ impl TicketSystem {
             })
             .collect()
     }
+
+    /// Finished tickets carrying `label`, with each result deserialized
+    /// into `T`. Tickets whose result fails to deserialize are silently
+    /// skipped — matches the precedent of [`Self::results`], which drops
+    /// rows without an attached result.
+    pub fn collect_results_by_label<T>(&self, label: &str) -> Vec<T>
+    where
+        T: serde::de::DeserializeOwned,
+    {
+        self.find_tickets(|t| t.is_finished() && t.has_label(label))
+            .into_iter()
+            .filter_map(|t| t.result.and_then(|v| serde_json::from_value(v).ok()))
+            .collect()
+    }
 }
 
 #[cfg(test)]
@@ -712,5 +753,130 @@ mod tests {
         sys.set_finished(&key_a).unwrap();
         sys.set_failed(&key_b).unwrap();
         assert_eq!(sys.pending_count(), 0);
+    }
+
+    #[test]
+    fn on_event_appends_handlers_in_installation_order() {
+        use std::sync::Mutex;
+        let (sys, _tmp) = test_system();
+        let log: Arc<Mutex<Vec<u8>>> = Arc::new(Mutex::new(Vec::new()));
+        let l1 = Arc::clone(&log);
+        let l2 = Arc::clone(&log);
+        sys.on_event(move |_| l1.lock().unwrap().push(1));
+        sys.on_event(move |_| l2.lock().unwrap().push(2));
+        sys.emit("KEY", "agent", EventKind::TurnStarted);
+        assert_eq!(*log.lock().unwrap(), vec![1, 2]);
+    }
+
+    #[test]
+    fn on_event_falls_back_to_default_logger_when_empty() {
+        // No assertion target beyond "does not panic": with no installed
+        // handlers, emit() must run default_logger without crashing.
+        let (sys, _tmp) = test_system();
+        sys.emit("KEY", "agent", EventKind::TurnStarted);
+    }
+
+    #[test]
+    fn collect_results_by_label_returns_only_matching_label() {
+        let (sys, _tmp) = test_system();
+        sys.ticket(Ticket::new("a").label("analysis"));
+        sys.ticket(Ticket::new("b").label("other"));
+        let key_a = sys.claim(|t| t.task == serde_json::json!("a"), "agent").unwrap();
+        let key_b = sys.claim(|t| t.task == serde_json::json!("b"), "agent").unwrap();
+        sys.set_result(&key_a, serde_json::json!({"score": 7}));
+        sys.set_finished(&key_a).unwrap();
+        sys.set_result(&key_b, serde_json::json!({"score": 99}));
+        sys.set_finished(&key_b).unwrap();
+        #[derive(serde::Deserialize, Debug, PartialEq)]
+        struct Finding {
+            score: i32,
+        }
+        let hits: Vec<Finding> = sys.collect_results_by_label("analysis");
+        assert_eq!(hits, vec![Finding { score: 7 }]);
+    }
+
+    #[test]
+    fn collect_results_by_label_skips_unparseable_payloads() {
+        let (sys, _tmp) = test_system();
+        sys.ticket(Ticket::new("good").label("L"));
+        sys.ticket(Ticket::new("bad").label("L"));
+        let key_good = sys
+            .claim(|t| t.task == serde_json::json!("good"), "agent")
+            .unwrap();
+        let key_bad = sys
+            .claim(|t| t.task == serde_json::json!("bad"), "agent")
+            .unwrap();
+        sys.set_result(&key_good, serde_json::json!({"n": 1}));
+        sys.set_finished(&key_good).unwrap();
+        sys.set_result(&key_bad, serde_json::json!("not an object"));
+        sys.set_finished(&key_bad).unwrap();
+        #[derive(serde::Deserialize)]
+        struct N {
+            n: i32,
+        }
+        let hits: Vec<N> = sys.collect_results_by_label("L");
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].n, 1);
+    }
+
+    #[test]
+    fn collect_results_by_label_empty_when_no_label_match() {
+        let (sys, _tmp) = test_system();
+        sys.ticket(Ticket::new("x").label("other"));
+        let key = sys.claim(|t| t.has_label("other"), "agent").unwrap();
+        sys.set_result(&key, serde_json::json!({"n": 1}));
+        sys.set_finished(&key).unwrap();
+        let hits: Vec<serde_json::Value> = sys.collect_results_by_label("missing");
+        assert!(hits.is_empty());
+    }
+
+    #[test]
+    fn cancel_on_event_trips_signal_when_predicate_matches() {
+        let (sys, _tmp) = test_system();
+        assert!(!sys.is_cancelled());
+        sys.cancel_on_event(|e| matches!(e.kind, EventKind::TicketFailed { .. }));
+        sys.emit("KEY", "agent", EventKind::TurnStarted);
+        assert!(!sys.is_cancelled());
+        sys.emit(
+            "KEY",
+            "agent",
+            EventKind::TicketFailed {
+                key: "KEY".into(),
+            },
+        );
+        assert!(sys.is_cancelled());
+    }
+
+    #[test]
+    fn cancel_on_event_coexists_with_user_handler() {
+        use std::sync::atomic::AtomicU32;
+        let (sys, _tmp) = test_system();
+        let count = Arc::new(AtomicU32::new(0));
+        let c = Arc::clone(&count);
+        sys.on_event(move |_| {
+            c.fetch_add(1, Ordering::Relaxed);
+        });
+        sys.cancel_on_event(|e| matches!(e.kind, EventKind::TurnStarted));
+        sys.emit("KEY", "agent", EventKind::TurnStarted);
+        assert_eq!(count.load(Ordering::Relaxed), 1, "user handler should fire");
+        assert!(sys.is_cancelled(), "predicate should trip cancel");
+    }
+
+    #[test]
+    fn on_event_fires_every_handler_per_event() {
+        use std::sync::atomic::AtomicU32;
+        let (sys, _tmp) = test_system();
+        let count = Arc::new(AtomicU32::new(0));
+        let c1 = Arc::clone(&count);
+        let c2 = Arc::clone(&count);
+        sys.on_event(move |_| {
+            c1.fetch_add(1, Ordering::Relaxed);
+        });
+        sys.on_event(move |_| {
+            c2.fetch_add(10, Ordering::Relaxed);
+        });
+        sys.emit("KEY", "agent", EventKind::TurnStarted);
+        sys.emit("KEY", "agent", EventKind::TurnStarted);
+        assert_eq!(count.load(Ordering::Relaxed), 22);
     }
 }

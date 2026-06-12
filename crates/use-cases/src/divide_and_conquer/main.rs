@@ -40,7 +40,7 @@ async fn main() {
 
     let schema = partial_sum_schema();
     let tickets = TicketSystem::new();
-    tickets.cancel_on_ctrl_c();
+    tickets.cancel_on(tokio::signal::ctrl_c());
     if let Some(n) = args.max_turns {
         tickets.max_turns(n);
     }
@@ -54,7 +54,7 @@ async fn main() {
     }
 
     let event_handler = build_event_handler(args.verbose, style.clone(), partitions.len());
-    tickets.event_handler(move |e| event_handler(e));
+    tickets.on_event(move |e| event_handler(e));
     for w in 0..workers {
         tickets.agent(
             Agent::new()

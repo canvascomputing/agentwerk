@@ -84,7 +84,7 @@ async fn finds_every_lib_rs_in_nested_tree() -> std::result::Result<(), Box<dyn 
     let tickets = TicketSystem::new();
 
     tickets.max_turns(10);
-    tickets.event_handler(move |e| event_handler(e));
+    tickets.on_event(move |e| event_handler(e));
     tickets.agent(
         Agent::new()
             .provider(provider)

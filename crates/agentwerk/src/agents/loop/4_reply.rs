@@ -375,7 +375,7 @@ mod tests {
             .dir(results_dir.path().to_path_buf())
             .max_request_retries(3)
             .request_retry_delay(Duration::from_millis(1));
-        tickets.event_handler(move |e| handler(e));
+        tickets.on_event(move |e| handler(e));
         tickets.agent(
             Agent::new()
                 .name("tester")
@@ -441,7 +441,7 @@ mod tests {
             .dir(results_dir.path().to_path_buf())
             .max_request_retries(3)
             .request_retry_delay(Duration::from_secs(60));
-        tickets.event_handler(move |e| handler(e));
+        tickets.on_event(move |e| handler(e));
         tickets.agent(
             Agent::new()
                 .name("tester")

@@ -9,10 +9,13 @@
 //! Lock-free for counter increments; readers do one atomic load per
 //! call.
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
+
+use serde::ser::{SerializeStruct, Serializer};
+use serde::Serialize;
 
 use crate::agents::tickets::Status;
 use crate::providers::types::TokenUsage;
@@ -375,7 +378,8 @@ impl crate::persistence::Persist for Stats {
     type Key = ();
 
     fn save(&self, dir: &std::path::Path) -> std::io::Result<()> {
-        let body = serde_json::to_vec_pretty(&self.as_json()).map_err(std::io::Error::other)?;
+        let value = serde_json::to_value(self).map_err(std::io::Error::other)?;
+        let body = serde_json::to_vec_pretty(&value).map_err(std::io::Error::other)?;
         crate::persistence::write_atomic(&dir.join(Self::FILE), &body)
     }
 
@@ -391,62 +395,57 @@ impl crate::persistence::Persist for Stats {
                 slice.load_fields(body);
             }
         }
-        if let Some(history) = value.get("usage_history").and_then(|v| v.as_object()) {
-            let mut map = stats.usage_history.lock().unwrap();
-            for (ticket_key, entries) in history {
-                if let Ok(list) = serde_json::from_value::<Vec<TokenUsage>>(entries.clone()) {
-                    map.insert(ticket_key.clone(), list);
-                }
-            }
-        }
         Ok(stats)
     }
 }
 
-impl Stats {
-    fn as_json(&self) -> serde_json::Value {
+impl Serialize for Stats {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
         let labels = self.label_stats.lock().unwrap();
-        let label_obj: serde_json::Map<String, serde_json::Value> = labels
-            .iter()
-            .map(|(name, slice)| (name.clone(), slice.fields_as_json()))
-            .collect();
-        let history = self.usage_history.lock().unwrap();
-        let history_obj: serde_json::Map<String, serde_json::Value> = history
-            .iter()
-            .map(|(key, entries)| {
-                (
-                    key.clone(),
-                    serde_json::to_value(entries).unwrap_or(serde_json::Value::Null),
-                )
-            })
-            .collect();
-        let mut body = self.fields_as_json();
-        if let serde_json::Value::Object(map) = &mut body {
-            map.insert("labels".into(), serde_json::Value::Object(label_obj));
-            map.insert(
-                "usage_history".into(),
-                serde_json::Value::Object(history_obj),
-            );
+        let len = 17 + if labels.is_empty() { 0 } else { 1 };
+        let mut st = serializer.serialize_struct("Stats", len)?;
+        st.serialize_field("turns", &self.turns())?;
+        st.serialize_field("requests", &self.requests())?;
+        st.serialize_field("tool_calls", &self.tool_calls())?;
+        st.serialize_field("errors", &self.errors())?;
+        st.serialize_field("input_tokens", &self.input_tokens())?;
+        st.serialize_field("output_tokens", &self.output_tokens())?;
+        st.serialize_field("tickets_created", &self.tickets_created())?;
+        st.serialize_field("tickets_finished", &self.tickets_finished())?;
+        st.serialize_field("tickets_failed", &self.tickets_failed())?;
+        st.serialize_field(
+            "total_ticket_duration_secs",
+            &self.total_ticket_duration.load(Ordering::Relaxed),
+        )?;
+        st.serialize_field(
+            "total_work_duration_secs",
+            &self.total_work_duration.load(Ordering::Relaxed),
+        )?;
+        st.serialize_field("success_rate", &self.tickets_success_rate())?;
+        st.serialize_field(
+            "run_duration_secs",
+            &self.run_duration().map(|d| d.as_secs_f64()),
+        )?;
+        st.serialize_field(
+            "avg_ticket_duration_secs",
+            &self.avg_ticket_duration().map(|d| d.as_secs_f64()),
+        )?;
+        st.serialize_field(
+            "avg_work_duration_secs",
+            &self.avg_work_duration().map(|d| d.as_secs_f64()),
+        )?;
+        st.serialize_field("ticket_duration_secs", &self.ticket_duration().as_secs())?;
+        st.serialize_field("work_duration_secs", &self.work_duration().as_secs())?;
+        if !labels.is_empty() {
+            let nested: BTreeMap<&String, &Stats> =
+                labels.iter().map(|(k, v)| (k, v.as_ref())).collect();
+            st.serialize_field("labels", &nested)?;
         }
-        body
+        st.end()
     }
+}
 
-    fn fields_as_json(&self) -> serde_json::Value {
-        serde_json::json!({
-            "turns": self.turns.load(Ordering::Relaxed),
-            "requests": self.requests.load(Ordering::Relaxed),
-            "tool_calls": self.tool_calls.load(Ordering::Relaxed),
-            "errors": self.errors.load(Ordering::Relaxed),
-            "input_tokens": self.input_tokens.load(Ordering::Relaxed),
-            "output_tokens": self.output_tokens.load(Ordering::Relaxed),
-            "tickets_created": self.tickets_created.load(Ordering::Relaxed),
-            "tickets_finished": self.tickets_finished.load(Ordering::Relaxed),
-            "tickets_failed": self.tickets_failed.load(Ordering::Relaxed),
-            "total_ticket_duration_secs": self.total_ticket_duration.load(Ordering::Relaxed),
-            "total_work_duration_secs": self.total_work_duration.load(Ordering::Relaxed),
-        })
-    }
-
+impl Stats {
     fn load_fields(&self, value: &serde_json::Value) {
         let get = |key: &str| value.get(key).and_then(|v| v.as_u64()).unwrap_or(0);
         self.turns.store(get("turns"), Ordering::Relaxed);
@@ -737,43 +736,73 @@ mod tests {
     }
 
     #[test]
-    fn usage_history_round_trips_through_save_load() {
-        let dir = crate::test_util::TempDir::new().unwrap();
+    fn stats_serializes_raw_counter_fields() {
         let s = Stats::new();
-        s.record_usage(
-            "TICKET-1",
-            TokenUsage {
-                input_tokens: 5_000,
-                output_tokens: 200,
-            },
-        );
-        s.record_usage(
-            "TICKET-1",
-            TokenUsage {
-                input_tokens: 7_500,
-                output_tokens: 300,
-            },
-        );
-        s.record_usage(
-            "TICKET-2",
-            TokenUsage {
-                input_tokens: 1_200,
-                output_tokens: 80,
-            },
-        );
+        s.record_turn();
+        s.record_request(100, 50);
+        s.record_tool_call();
+        s.record_error();
+        s.record_created();
+        s.record_finished(Duration::from_secs(7), Duration::from_secs(5));
 
-        use crate::persistence::Persist;
-        s.save(dir.path()).unwrap();
-        let restored = Stats::load(dir.path()).unwrap();
+        let value = serde_json::to_value(&s).unwrap();
+        assert_eq!(value["turns"], 1);
+        assert_eq!(value["requests"], 1);
+        assert_eq!(value["tool_calls"], 1);
+        assert_eq!(value["errors"], 1);
+        assert_eq!(value["input_tokens"], 100);
+        assert_eq!(value["output_tokens"], 50);
+        assert_eq!(value["tickets_created"], 1);
+        assert_eq!(value["tickets_finished"], 1);
+        assert_eq!(value["total_ticket_duration_secs"], 7);
+        assert_eq!(value["total_work_duration_secs"], 5);
+    }
 
-        let t1 = restored.usage_history("TICKET-1");
-        assert_eq!(t1.len(), 2);
-        assert_eq!(t1[0].input_tokens, 5_000);
-        assert_eq!(t1[1].input_tokens, 7_500);
-        let t2 = restored.usage_history("TICKET-2");
-        assert_eq!(t2.len(), 1);
-        assert_eq!(t2[0].input_tokens, 1_200);
-        assert!(restored.usage_history("TICKET-MISSING").is_empty());
+    #[test]
+    fn stats_serializes_derived_run_duration_seconds() {
+        let s = Stats::new();
+        s.record_started(1_000);
+        s.mark_finished(3_500);
+        let value = serde_json::to_value(&s).unwrap();
+        assert_eq!(value["run_duration_secs"].as_f64().unwrap(), 2.5);
+    }
+
+    #[test]
+    fn stats_serializes_run_duration_secs_as_null_when_unstarted() {
+        let s = Stats::new();
+        let value = serde_json::to_value(&s).unwrap();
+        assert!(value["run_duration_secs"].is_null());
+    }
+
+    #[test]
+    fn stats_serializes_success_rate_when_tickets_present() {
+        let s = Stats::new();
+        s.record_finished(Duration::from_secs(1), Duration::from_secs(1));
+        s.record_finished(Duration::from_secs(1), Duration::from_secs(1));
+        s.record_finished(Duration::from_secs(1), Duration::from_secs(1));
+        s.record_failed(Duration::from_secs(1), Duration::from_secs(1));
+        let value = serde_json::to_value(&s).unwrap();
+        let rate = value["success_rate"].as_f64().unwrap();
+        assert!((rate - 0.75).abs() < 1e-9, "got {rate}");
+    }
+
+    #[test]
+    fn stats_serializes_labels_as_nested_object() {
+        let s = Stats::new();
+        let slice = s.stats_for_label("scan");
+        slice.record_turn();
+        slice.record_request(40, 20);
+        let value = serde_json::to_value(&s).unwrap();
+        let labels = value["labels"].as_object().unwrap();
+        assert_eq!(labels["scan"]["turns"], 1);
+        assert_eq!(labels["scan"]["input_tokens"], 40);
+    }
+
+    #[test]
+    fn stats_omits_labels_when_empty() {
+        let s = Stats::new();
+        let value = serde_json::to_value(&s).unwrap();
+        assert!(value.get("labels").is_none());
     }
 
     #[test]

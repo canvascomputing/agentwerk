@@ -104,6 +104,16 @@ impl Ticket {
         self
     }
 
+    /// True when `label` is present on this ticket.
+    pub fn has_label(&self, label: &str) -> bool {
+        self.labels.iter().any(|l| l == label)
+    }
+
+    /// True when this ticket has reached `Status::Finished`.
+    pub fn is_finished(&self) -> bool {
+        self.status == Status::Finished
+    }
+
     /// Reduce the transcript to just `summary_text`: every non-system
     /// reply is dropped and a single `user` reply carrying
     /// `summary_text` is appended. System-author replies (the system
@@ -366,5 +376,40 @@ mod tests {
                 input: serde_json::json!({}),
             }]));
         assert!(!ticket.is_waiting_for_response());
+    }
+
+    #[test]
+    fn has_label_true_when_label_present() {
+        let t = Ticket::new("x").label("research").label("urgent");
+        assert!(t.has_label("research"));
+        assert!(t.has_label("urgent"));
+    }
+
+    #[test]
+    fn has_label_false_when_label_missing() {
+        let t = Ticket::new("x").label("research");
+        assert!(!t.has_label("urgent"));
+    }
+
+    #[test]
+    fn has_label_false_on_empty_labels() {
+        let t = Ticket::new("x");
+        assert!(!t.has_label("anything"));
+    }
+
+    #[test]
+    fn is_finished_true_for_finished_status() {
+        let mut t = Ticket::new("x");
+        t.status = Status::Finished;
+        assert!(t.is_finished());
+    }
+
+    #[test]
+    fn is_finished_false_for_todo_in_progress_failed() {
+        let mut t = Ticket::new("x");
+        for status in [Status::Todo, Status::InProgress, Status::Failed] {
+            t.status = status;
+            assert!(!t.is_finished(), "expected !is_finished for {status:?}");
+        }
     }
 }

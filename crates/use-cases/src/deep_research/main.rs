@@ -43,8 +43,8 @@ async fn main() {
     let workdir = prepare_workdir();
 
     let tickets = TicketSystem::new();
-    tickets.cancel_on_ctrl_c().dir(workdir.clone());
-    tickets.event_handler(move |e| event_handler(e));
+    tickets.cancel_on(tokio::signal::ctrl_c()).dir(workdir.clone());
+    tickets.on_event(move |e| event_handler(e));
 
     let researcher_1 = Agent::empty()
         .name("researcher_1")

@@ -751,7 +751,7 @@ mod tests {
             .handler(|_input, _ctx| async move { Ok(ToolResult::success("x".repeat(800_000))) })
             .build();
 
-        tickets.event_handler(move |e| handler(e));
+        tickets.on_event(move |e| handler(e));
         tickets.agent(
             Agent::new()
                 .name("tester")
