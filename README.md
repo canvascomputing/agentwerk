@@ -11,6 +11,7 @@
 <p align="center">
   <a href="#installation">Installation</a> •
   <a href="#quick-start">Quick Start</a> •
+  <a href="#demo">Demo</a> •
   <a href="#use-cases">Use Cases</a> •
   <a href="#api">API</a> •
   <a href="#development">Development</a>
@@ -49,6 +50,12 @@ async fn main() {
     println!("{answer}");
 }
 ```
+
+## Demo (Malware Scan)
+
+<p align="left">
+  <img src="https://raw.githubusercontent.com/canvascomputing/agentwerk/main/demo.gif" width="600" />
+</p>
 
 ## Use Cases
 
