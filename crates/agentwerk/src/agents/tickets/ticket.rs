@@ -12,40 +12,56 @@ use crate::providers::{AsUserMessage, Message};
 
 use super::reply::Reply;
 
-/// A ticket. Caller-settable fields: `task`, `labels`, `schema`,
-/// `parent`. System-managed fields (`key`, `status`, `reporter`,
-/// `created_at`, `started_at`, `finished_at`, `failed_at`, `result`,
-/// `replies`) are stamped by the ticket system and the agent loop.
+/// A task plus the metadata that assigns it. Caller-settable fields:
+/// `task`, `labels`, `schema`, `parent`. System-managed fields (`key`,
+/// `status`, `reporter`, the lifecycle timestamps, `result`, `replies`)
+/// are set by the ticket system and the agent loop.
+///
+/// ```no_run
+/// use agentwerk::Ticket;
+/// use agentwerk::schemas::Schema;
+/// use serde_json::json;
+///
+/// # fn run() -> Result<(), Box<dyn std::error::Error>> {
+/// let schema = Schema::parse(json!({"type": "object"}))?;
+/// let ticket = Ticket::new("Summarize this URL.")
+///     .label("research")
+///     .schema(schema);
+/// # let _ = ticket;
+/// # Ok(())
+/// # }
+/// ```
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct Ticket {
+    /// Task body the agent is asked to perform, as arbitrary JSON.
     pub task: serde_json::Value,
+    /// Labels carried by the ticket.
     pub labels: Vec<String>,
+    /// Schema the result must conform to, when set.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub schema: Option<crate::schemas::Schema>,
+    /// Stable identifier (`TICKET-N`).
     pub key: String,
+    /// Lifecycle status (`Todo`, `InProgress`, `Finished`, `Failed`).
     pub status: Status,
+    /// Name of the agent that opened the ticket.
     pub reporter: String,
+    /// Millisecond timestamp at which the ticket was created.
     pub created_at: u64,
-    /// Set when the ticket transitions `Todo → InProgress`. Millis
-    /// since epoch.
+    /// Millisecond timestamp at which an agent claimed the ticket.
     pub started_at: Option<u64>,
-    /// Set when the ticket reaches `Status::Finished`. Millis since epoch.
+    /// Millisecond timestamp at which the ticket was marked finished.
     /// Mutually exclusive with `failed_at`.
     pub finished_at: Option<u64>,
-    /// Set when the ticket reaches `Status::Failed`. Millis since
-    /// epoch. Mutually exclusive with `finished_at`.
+    /// Millisecond timestamp at which the ticket failed. Mutually
+    /// exclusive with `finished_at`.
     pub failed_at: Option<u64>,
+    /// Raw JSON result payload.
     pub result: Option<serde_json::Value>,
     /// Back-reference to another ticket, or `None` when the ticket
     /// has no parent. Caller-settable via [`Ticket::parent`].
     pub parent: Option<String>,
-    /// Append-only transcript of the messages the agent loop sent to
-    /// the provider for this ticket, plus a leading `system` entry for
-    /// the system prompt and synthetic `system` entries marking
-    /// compaction boundaries. System-managed: callers cannot push
-    /// directly. Persisted to `tickets/<key>/replies.jsonl` (and the
-    /// per-compaction `replies.<ts>.jsonl` files), never as part of
-    /// `ticket.json`.
+    /// Transcript of messages exchanged with the model.
     #[serde(skip)]
     pub replies: Vec<Reply>,
 }
@@ -53,8 +69,8 @@ pub struct Ticket {
 impl Ticket {
     /// New ticket carrying `task` as its body. Use the chainable helpers
     /// (`label`, `labels`, `schema`) to populate caller-settable fields.
-    /// System-managed fields are stamped by the ticket system at
-    /// insertion time; the placeholders set here are overwritten.
+    /// System-managed fields are set by the ticket system at insertion
+    /// time; the placeholders set here are overwritten.
     pub fn new<T: Serialize>(task: T) -> Self {
         let value = serde_json::to_value(task).expect("Ticket::new: value must serialize to JSON");
         Self {
@@ -299,11 +315,17 @@ impl AsUserMessage for Ticket {
     }
 }
 
+/// Lifecycle status of a ticket.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum Status {
+    /// Created but not yet claimed by an agent.
     Todo,
+    /// Claimed by an agent and running.
     InProgress,
+    /// Finished with a result.
     Finished,
+    /// Failed after a schema-retry trip, missing-finisher exhaustion,
+    /// or policy violation.
     Failed,
 }
 

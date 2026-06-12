@@ -7,7 +7,7 @@ mod section;
 use std::path::Path;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-pub use builder::{Prompt, PromptBuilder};
+pub(crate) use builder::PromptBuilder;
 pub(crate) use section::Section;
 
 use crate::agents::policy::Policies;
@@ -52,7 +52,7 @@ pub(crate) fn schema_retry_detail(validator_message: &str) -> String {
 /// bullet for each `Policies` budget that is `Some(_)`. Budgets left as
 /// `None` (unlimited) stay invisible. Pass empty `Policies::default()` and
 /// `Stats::new()` when you only want the static facts.
-pub fn default_context(dir: &Path, policies: &Policies, stats: &Stats) -> String {
+pub(crate) fn default_context(dir: &Path, policies: &Policies, stats: &Stats) -> String {
     let dir_str = dir.display().to_string();
     let platform = std::env::consts::OS;
     let os_version = std::process::Command::new("uname")

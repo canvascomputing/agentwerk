@@ -1,7 +1,7 @@
 //! Divide-and-conquer sum of squares.
 //!
 //! Partitions `[1, N]` into K subranges and creates one ticket per
-//! subrange. Workers share the labelled queue, call the `python` tool
+//! subrange. Agents share the labelled queue, call the `python` tool
 //! for an exact integer, and finish via `finish_ticket` with a
 //! schema-validated `{"idx", "partial_sum"}`. The driver aggregates
 //! after `finish` returns and verifies the total against the
@@ -10,7 +10,7 @@
 //! Usage: divide-and-conquer [OPTIONS] [N]
 //!
 //! Example:
-//!   divide-and-conquer 10000                # default: 16 partitions, 8 workers
+//!   divide-and-conquer 10000                # default: 16 partitions, 8 agents
 //!   divide-and-conquer -p 32 -c 16 100000
 
 use std::io::IsTerminal;
@@ -25,7 +25,7 @@ use agentwerk::tools::{ManageTicketsTool, Tool, ToolResult};
 use agentwerk::{Agent, Ticket, TicketSystem};
 use serde_json::{json, Value};
 
-const ROLE: &str = include_str!("prompts/worker.role.md");
+const ROLE: &str = include_str!("prompts/agent.role.md");
 
 #[tokio::main]
 async fn main() {
@@ -35,8 +35,8 @@ async fn main() {
     let style = Style::detect();
 
     let partitions = partition(args.n, args.partitions);
-    let workers = args.concurrency.min(partitions.len());
-    print_intro(args.n, partitions.len(), workers, &style);
+    let agents = args.concurrency.min(partitions.len());
+    print_intro(args.n, partitions.len(), agents, &style);
 
     let schema = partial_sum_schema();
     let tickets = TicketSystem::new();
@@ -50,19 +50,19 @@ async fn main() {
             "Compute the partial sum S = sum_{{k={lo}}}^{{{hi}}} k^2.\n\
              lo={lo}\nhi={hi}\nidx={idx}",
         );
-        tickets.ticket(Ticket::new(body).schema(schema.clone()).label("worker"));
+        tickets.ticket(Ticket::new(body).schema(schema.clone()).label("compute"));
     }
 
     let event_handler = build_event_handler(args.verbose, style.clone(), partitions.len());
     tickets.on_event(move |e| event_handler(e));
-    for w in 0..workers {
+    for a in 0..agents {
         tickets.agent(
             Agent::new()
-                .name(format!("worker_{w}"))
+                .name(format!("agent_{a}"))
                 .provider(Arc::clone(&provider))
                 .model(&model)
                 .role(ROLE.trim())
-                .label("worker")
+                .label("compute")
                 .tool(python_tool())
                 .tool(ManageTicketsTool)
                 .build(),
@@ -322,17 +322,15 @@ fn build_event_handler(
     })
 }
 
-fn print_intro(n: u64, partitions: usize, workers: usize, style: &Style) {
+fn print_intro(n: u64, partitions: usize, agents: usize, style: &Style) {
     eprintln!("divide-and-conquer   sum_{{k=1}}^{{{n}}} k^2   (verified via N(N+1)(2N+1)/6)\n");
     eprintln!("  Split [1, {n}] into {partitions} contiguous subranges and enqueue one ticket per");
-    eprintln!(
-        "  subrange. {workers} worker agent(s) share the queue, each calling a `python` tool"
-    );
-    eprintln!("  to compute its partial sum exactly. Workers finish their tickets via");
+    eprintln!("  subrange. {agents} agent(s) share the queue, each calling a `python` tool");
+    eprintln!("  to compute its partial sum exactly. Agents finish their tickets via");
     eprintln!("  `finish_ticket` with `{{\"idx\", \"partial_sum\"}}`; the driver aggregates");
     eprintln!("  once every ticket is finished and verifies against the closed-form total.\n");
     eprintln!(
-        "{dim}┌ {partitions} partitions · {workers} worker(s) sharing the queue{reset}",
+        "{dim}┌ {partitions} partitions · {agents} agent(s) sharing the queue{reset}",
         dim = style.dim,
         reset = style.reset,
     );
@@ -468,11 +466,9 @@ impl CliArgs {
         eprintln!("Usage: divide-and-conquer [OPTIONS] [N]\n");
         eprintln!("Options:");
         eprintln!("  -p, --partitions <K>   Number of ticket partitions (default: 16)");
-        eprintln!(
-            "  -c, --concurrency <N>  Number of worker agents sharing the queue (default: 8)"
-        );
-        eprintln!("      --max-turns <N>    Per-system turn cap (default: unlimited)");
-        eprintln!("  -v, --verbose          Stream per-worker tool calls");
+        eprintln!("  -c, --concurrency <N>  Number of agents sharing the queue (default: 8)");
+        eprintln!("      --max-turns <N>    Per-system turn limit (default: unlimited)");
+        eprintln!("  -v, --verbose          Print per-agent tool calls as they happen");
         eprintln!("  -h, --help             Show this help\n");
         eprintln!("Examples:");
         eprintln!("  divide-and-conquer 10000");

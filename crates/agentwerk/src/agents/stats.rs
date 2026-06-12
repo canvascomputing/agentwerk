@@ -1,10 +1,6 @@
 //! Run-time stats. One [`Stats`] struct of atomic counters records every
-//! observable event and exposes inherent read accessors. Each domain
-//! interacts with its own write-only protocol — [`LoopStats`] for the
-//! agent loop, `TicketStats` for the ticket system — so a domain
-//! cannot reach another domain's events. The wiring is internal: the
-//! caller never sees `Stats` at construction time, only afterwards
-//! through `TicketSystem::stats()`.
+//! observable event and exposes inherent read accessors. Callers reach
+//! it through `TicketSystem::stats()`.
 //!
 //! Lock-free for counter increments; readers do one atomic load per
 //! call.
@@ -23,7 +19,7 @@ use crate::providers::types::TokenUsage;
 /// Recorder protocol for the agent loop. Each agent holds an
 /// `Arc<dyn LoopStats + Send + Sync>` and reports loop events through
 /// it. Write-only; reads happen on `Stats` directly.
-pub trait LoopStats: Send + Sync {
+pub(crate) trait LoopStats: Send + Sync {
     fn record_turn(&self);
     fn record_request(&self, input_tokens: u64, output_tokens: u64);
     fn record_tool_call(&self);
@@ -43,8 +39,25 @@ pub(crate) trait TicketStats: Send + Sync {
     fn record_failed(&self, ticket_duration: Duration, work_duration: Duration);
 }
 
-/// Run-wide counters. Implements every recorder protocol; exposes
-/// inherent read methods for the caller to consume after a run.
+/// Run-time statistics for tickets, tokens, and activity. Reached
+/// through [`TicketSystem::stats()`](crate::TicketSystem::stats);
+/// available during the run and after it finishes.
+///
+/// ```no_run
+/// use agentwerk::TicketSystem;
+///
+/// # async fn run() {
+/// let tickets = TicketSystem::new();
+/// tickets.finish().await;
+///
+/// let stats = tickets.stats();
+/// println!(
+///     "{} tickets, {} input tokens",
+///     stats.tickets_finished(),
+///     stats.input_tokens(),
+/// );
+/// # }
+/// ```
 pub struct Stats {
     turns: AtomicU64,
     requests: AtomicU64,
@@ -79,7 +92,7 @@ pub struct Stats {
 }
 
 impl Stats {
-    pub fn new() -> Self {
+    pub(crate) fn new() -> Self {
         Self {
             turns: AtomicU64::new(0),
             requests: AtomicU64::new(0),
@@ -99,10 +112,9 @@ impl Stats {
         }
     }
 
-    /// Live counters scoped to one ticket label. Lazy-init on first
-    /// access; subsequent calls return the same `Arc`. Reads use the
-    /// same accessors as the run-wide `Stats`; `run_duration()` is
-    /// always `None` on a slice (run timing stays global).
+    /// Statistics scoped to one ticket label. Reads use the same
+    /// accessors as the run-wide `Stats`; `run_duration()` is always
+    /// `None` on a slice (run timing stays global).
     pub fn stats_for_label(&self, label: &str) -> Arc<Stats> {
         let mut map = self.label_stats.lock().unwrap();
         map.entry(label.to_string())
@@ -136,14 +148,19 @@ impl Stats {
         self.usage_history.lock().unwrap().remove(ticket_key);
     }
 
-    pub fn record_turn_for(&self, labels: &[String]) {
+    pub(crate) fn record_turn_for(&self, labels: &[String]) {
         self.record_turn();
         for label in labels {
             self.stats_for_label(label).record_turn();
         }
     }
 
-    pub fn record_request_for(&self, labels: &[String], input_tokens: u64, output_tokens: u64) {
+    pub(crate) fn record_request_for(
+        &self,
+        labels: &[String],
+        input_tokens: u64,
+        output_tokens: u64,
+    ) {
         self.record_request(input_tokens, output_tokens);
         for label in labels {
             self.stats_for_label(label)
@@ -151,14 +168,14 @@ impl Stats {
         }
     }
 
-    pub fn record_tool_call_for(&self, labels: &[String]) {
+    pub(crate) fn record_tool_call_for(&self, labels: &[String]) {
         self.record_tool_call();
         for label in labels {
             self.stats_for_label(label).record_tool_call();
         }
     }
 
-    pub fn record_error_for(&self, labels: &[String]) {
+    pub(crate) fn record_error_for(&self, labels: &[String]) {
         self.record_error();
         for label in labels {
             self.stats_for_label(label).record_error();
@@ -211,46 +228,53 @@ impl Stats {
         }
     }
 
+    /// Count of times an agent picked up a ticket to process.
     pub fn turns(&self) -> u64 {
         self.turns.load(Ordering::Relaxed)
     }
 
+    /// Total provider responses received.
     pub fn requests(&self) -> u64 {
         self.requests.load(Ordering::Relaxed)
     }
 
+    /// Total tool calls.
     pub fn tool_calls(&self) -> u64 {
         self.tool_calls.load(Ordering::Relaxed)
     }
 
+    /// Total provider errors.
     pub fn errors(&self) -> u64 {
         self.errors.load(Ordering::Relaxed)
     }
 
+    /// Total input tokens across all provider responses.
     pub fn input_tokens(&self) -> u64 {
         self.input_tokens.load(Ordering::Relaxed)
     }
 
+    /// Total output tokens across all provider responses.
     pub fn output_tokens(&self) -> u64 {
         self.output_tokens.load(Ordering::Relaxed)
     }
 
+    /// Count of tickets created.
     pub fn tickets_created(&self) -> u64 {
         self.tickets_created.load(Ordering::Relaxed)
     }
 
+    /// Count of tickets that finished successfully.
     pub fn tickets_finished(&self) -> u64 {
         self.tickets_finished.load(Ordering::Relaxed)
     }
 
+    /// Count of tickets that failed.
     pub fn tickets_failed(&self) -> u64 {
         self.tickets_failed.load(Ordering::Relaxed)
     }
 
-    /// Wall time of the run, measured from the first `record_started`
-    /// call. Live while the run is in progress; freezes at
-    /// `finished_at - started_at` once `mark_finished` has fired.
-    /// `None` until the run has started.
+    /// Elapsed duration of the run, live while agents work and frozen
+    /// once the run finishes. `None` until the first ticket starts.
     pub fn run_duration(&self) -> Option<Duration> {
         let s = self.started_at.load(Ordering::Relaxed);
         if s == 0 {

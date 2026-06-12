@@ -18,6 +18,8 @@ use super::super::tool::{ToolContext, ToolLike, ToolResult};
 use super::super::tool_file::ToolFile;
 use super::{resolve_current_key, write_result};
 
+/// Write a ticket's result, mark it finished, and hand follow-up work
+/// to another agent.
 pub struct HandoverTicketTool;
 
 /// Reserved placeholders substituted into the child ticket's `task`

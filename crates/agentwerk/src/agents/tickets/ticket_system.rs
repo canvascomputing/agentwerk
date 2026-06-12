@@ -26,14 +26,69 @@ use super::super::stats::Stats;
 use super::ticket::{Status, Ticket};
 use super::{now_millis, numeric_id, policy_violated, Reply};
 
-/// Public ticket system. Owns the shared ticket store, the registered
-/// agents, the policies, the interrupt signal, the run stats, and the
-/// background task driving the agent loop. Always lives behind
-/// `Arc<TicketSystem>`: `new()` returns `Arc<Self>` so each bound
-/// `Agent` can hold a `Weak<TicketSystem>` without creating an Arc
-/// cycle through the system's `Vec<Agent>`.
 type EventHandler = dyn Fn(Event) + Send + Sync;
 
+/// The shared work queue. Owns the ticket store, the registered
+/// agents, the policies, and the run statistics. Many agents share one
+/// `TicketSystem` and pick up tickets concurrently; labels and names
+/// assign work to the right agent.
+///
+/// ```no_run
+/// use agentwerk::{Agent, TicketSystem};
+/// use agentwerk::tools::FetchUrlTool;
+///
+/// # async fn run() {
+/// let tickets = TicketSystem::new();
+/// for i in 0..4 {
+///     tickets.agent(
+///         Agent::new()
+///             .name(format!("researcher_{i}"))
+///             .label("research")
+///             .from_env()
+///             .tool(FetchUrlTool)
+///             .build(),
+///     );
+/// }
+/// tickets.task_labeled("Summarize https://canvascomputing.org", "research");
+/// tickets.finish().await;
+/// # }
+/// ```
+///
+/// # Sessions
+///
+/// A `TicketSystem` writes every ticket, transcript, statistic, and
+/// lifecycle event to its working directory (default `./.agentwerk`).
+/// That directory is the session: stop the process, and `TicketSystem::load(dir)`
+/// reopens it from disk and continues from where it stopped.
+///
+/// ```no_run
+/// use agentwerk::TicketSystem;
+///
+/// # fn run() -> Result<(), Box<dyn std::error::Error>> {
+/// let tickets = TicketSystem::load(".agentwerk")?;
+/// // Re-register the agents, then call .start() or .finish().await.
+/// # let _ = tickets;
+/// # Ok(())
+/// # }
+/// ```
+///
+/// On-disk layout:
+///
+/// ```text
+/// .agentwerk/
+/// ├── stats.json                            run statistics
+/// ├── tickets.jsonl                         lifecycle events (one per line)
+/// ├── results.jsonl                         finished results (one per line)
+/// ├── tickets/
+/// │   └── TICKET-1/
+/// │       ├── ticket.json                   the ticket without its transcript
+/// │       ├── ticket.<ts>.json              the ticket saved at each compaction; the timestamp matches replies.<ts>.jsonl
+/// │       ├── replies.jsonl                 pre-compaction transcript
+/// │       ├── replies.<ts>.jsonl            post-compaction transcript
+/// │       └── outputs/<tool_use_id>.txt     full tool outputs spilled out of the transcript
+/// ├── pages/<slug>.md                       knowledge pages
+/// └── index.md                              knowledge index
+/// ```
 pub struct TicketSystem {
     pub(super) weak_self: Weak<TicketSystem>,
     pub(crate) tickets: Mutex<HashMap<String, Ticket>>,
@@ -84,7 +139,7 @@ impl TicketSystem {
     /// Caller contracts:
     /// - Tickets dirs deleted by hand break the `TICKET-N` counter:
     ///   the next inserted ticket may collide with an existing key.
-    /// - Agent names must stay stable across restarts; the loop
+    /// - Agent names must stay stable across restarts; agentwerk
     ///   matches `InProgress` tickets by name via the ticket's labels.
     pub fn load(tickets_dir: impl Into<PathBuf>) -> io::Result<Arc<Self>> {
         let tickets_dir = tickets_dir.into();
@@ -279,7 +334,7 @@ impl TicketSystem {
     }
 
     /// Enqueue a ticket carrying `task`, attached to `label` for Path B
-    /// routing. Returns the new ticket's key.
+    /// assignment. Returns the new ticket's key.
     pub fn task_labeled<T: Serialize>(&self, task: T, label: impl Into<String>) -> String {
         self.dispatch(Ticket::new(task).label(label))
     }
@@ -294,11 +349,10 @@ impl TicketSystem {
     }
 
     /// Append a user-side text reply to an existing ticket. After the
-    /// assistant has spoken, the loop's `start_turn` gate pauses on
-    /// the ticket; this call flips the gate by appending a non-assistant
-    /// reply, and the next iteration sends the new turn to the provider.
-    /// Use this to drive multi-turn chats on one ticket instead of
-    /// creating a new ticket per turn.
+    /// assistant has spoken, the agent pauses on the ticket; this call
+    /// flips the gate by appending a non-assistant reply, and the next
+    /// turn is sent to the provider. Use this to continue multi-turn
+    /// chats on one ticket instead of creating a new ticket per turn.
     pub fn reply(&self, key: &str, content: impl Into<String>) -> &Self {
         self.add_reply(key, Reply::user_text(content));
         self
@@ -315,7 +369,7 @@ impl TicketSystem {
         self.tickets.lock().unwrap().get(key).cloned()
     }
 
-    /// Snapshot of every ticket, sorted by creation time then numeric key.
+    /// Every ticket, sorted by creation time then numeric key.
     pub fn tickets(&self) -> Vec<Ticket> {
         let tickets = self.tickets.lock().unwrap();
         let mut out: Vec<Ticket> = tickets.values().cloned().collect();
@@ -781,11 +835,17 @@ mod tests {
         let (sys, _tmp) = test_system();
         sys.ticket(Ticket::new("a").label("analysis"));
         sys.ticket(Ticket::new("b").label("other"));
-        let key_a = sys.claim(|t| t.task == serde_json::json!("a"), "agent").unwrap();
-        let key_b = sys.claim(|t| t.task == serde_json::json!("b"), "agent").unwrap();
-        sys.set_result(&key_a, serde_json::json!({"score": 7}));
+        let key_a = sys
+            .claim(|t| t.task == serde_json::json!("a"), "agent")
+            .unwrap();
+        let key_b = sys
+            .claim(|t| t.task == serde_json::json!("b"), "agent")
+            .unwrap();
+        sys.set_result(&key_a, serde_json::json!({"score": 7}))
+            .unwrap();
         sys.set_finished(&key_a).unwrap();
-        sys.set_result(&key_b, serde_json::json!({"score": 99}));
+        sys.set_result(&key_b, serde_json::json!({"score": 99}))
+            .unwrap();
         sys.set_finished(&key_b).unwrap();
         #[derive(serde::Deserialize, Debug, PartialEq)]
         struct Finding {
@@ -806,9 +866,11 @@ mod tests {
         let key_bad = sys
             .claim(|t| t.task == serde_json::json!("bad"), "agent")
             .unwrap();
-        sys.set_result(&key_good, serde_json::json!({"n": 1}));
+        sys.set_result(&key_good, serde_json::json!({"n": 1}))
+            .unwrap();
         sys.set_finished(&key_good).unwrap();
-        sys.set_result(&key_bad, serde_json::json!("not an object"));
+        sys.set_result(&key_bad, serde_json::json!("not an object"))
+            .unwrap();
         sys.set_finished(&key_bad).unwrap();
         #[derive(serde::Deserialize)]
         struct N {
@@ -824,7 +886,7 @@ mod tests {
         let (sys, _tmp) = test_system();
         sys.ticket(Ticket::new("x").label("other"));
         let key = sys.claim(|t| t.has_label("other"), "agent").unwrap();
-        sys.set_result(&key, serde_json::json!({"n": 1}));
+        sys.set_result(&key, serde_json::json!({"n": 1})).unwrap();
         sys.set_finished(&key).unwrap();
         let hits: Vec<serde_json::Value> = sys.collect_results_by_label("missing");
         assert!(hits.is_empty());
@@ -840,9 +902,7 @@ mod tests {
         sys.emit(
             "KEY",
             "agent",
-            EventKind::TicketFailed {
-                key: "KEY".into(),
-            },
+            EventKind::TicketFailed { key: "KEY".into() },
         );
         assert!(sys.is_cancelled());
     }

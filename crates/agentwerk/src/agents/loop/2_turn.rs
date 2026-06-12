@@ -367,7 +367,7 @@ mod tests {
             .request_retry_delay(Duration::from_millis(1));
         tickets.agent(
             Agent::new()
-                .name("worker")
+                .name("agent")
                 .provider(provider as Arc<dyn Provider>)
                 .model("mock")
                 .role("test")
@@ -542,7 +542,7 @@ mod tests {
             .request_retry_delay(Duration::from_millis(1))
             .max_schema_retries(1);
         let collected = collect_events(&tickets);
-        tickets.agent(task_worker(&provider));
+        tickets.agent(task_agent(&provider));
         tickets.task("go");
 
         tokio::time::timeout(Duration::from_secs(5), tickets.finish())
@@ -582,7 +582,7 @@ mod tests {
             .max_request_retries(0)
             .request_retry_delay(Duration::from_millis(1))
             .max_schema_retries(3);
-        tickets.agent(task_worker(&provider));
+        tickets.agent(task_agent(&provider));
         tickets.task("go");
 
         tokio::time::timeout(Duration::from_secs(5), tickets.finish())
@@ -610,7 +610,7 @@ mod tests {
             .request_retry_delay(Duration::from_millis(1))
             .max_schema_retries(3);
         let collected = collect_events(&tickets);
-        tickets.agent(task_worker(&provider));
+        tickets.agent(task_agent(&provider));
         tickets.task("go");
 
         tokio::time::timeout(Duration::from_secs(5), tickets.finish())
@@ -665,7 +665,7 @@ mod tests {
             .request_retry_delay(Duration::from_millis(1));
         tickets.agent(
             Agent::new()
-                .name("worker")
+                .name("agent")
                 .provider(provider as Arc<dyn Provider>)
                 .model("mock")
                 .role("test")
@@ -695,7 +695,7 @@ mod tests {
             .request_retry_delay(Duration::from_millis(1));
         let agent = tickets.agent(
             Agent::new()
-                .name("worker")
+                .name("agent")
                 .provider(provider as Arc<dyn Provider>)
                 .model("mock")
                 .role("test")

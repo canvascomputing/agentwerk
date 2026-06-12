@@ -20,13 +20,14 @@ agentwerk is a Rust crate for building LLM agents. An agent reads input, calls a
 - Providers own a `reqwest::Client` directly.
 - Indirection without a concrete benefit is not added.
 
-## Composable
+## Parallel by default
 
-**Agents are cloned and modified, then bound to a `TicketSystem`.**
+**Many agents share one `TicketSystem` and pick up tickets concurrently.**
 
-- No global registration step, no implicit state.
-- Multiple agents share one `TicketSystem` and pick up tickets via label scope (Path B) or direct assignment (Path A).
-- A ticket carries a `Schema`; the framework validates the agent's `done` result against it.
+- Each agent runs on its own tokio task; the shared queue claims a ticket exactly once.
+- Labels assign work to matching agents (Path B); names pin a ticket to one agent (Path A).
+- Agents are cloned and modified, then bound to a `TicketSystem`. No global registration, no implicit state.
+- A ticket carries a `Schema`; the loop validates the agent's result against it.
 
 ## Provider-agnostic
 
@@ -44,7 +45,7 @@ agentwerk is a Rust crate for building LLM agents. An agent reads input, calls a
 - No built-in UI.
 - No required logging.
 - The event handler receives `Event { kind, ... }` at every lifecycle boundary.
-- The handler may log, stream, store, or discard each event.
+- The handler may log, forward, store, or discard each event.
 
 ## Correctness over convenience
 

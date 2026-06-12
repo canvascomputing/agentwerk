@@ -36,10 +36,23 @@ pub struct KnowledgeOutcome {
     pub pages: usize,
 }
 
-/// File-backed knowledge store shared by every `Agent` bound to it.
-/// Pages are individual markdown files under `<dir>/pages/<slug>.md`;
-/// the index at `<dir>/index.md` carries one-line summaries injected
-/// into the system prompt.
+/// Durable memory the agent curates and shares across tickets and
+/// other agents. Written to disk and curated by the agent through
+/// `ManageKnowledgeTool`. Pages are individual markdown files under
+/// `<dir>/pages/<slug>.md`; the index at `<dir>/index.md` carries
+/// one-line summaries injected into the system prompt.
+///
+/// ```no_run
+/// use agentwerk::{Agent, Knowledge};
+///
+/// # fn run() -> Result<(), Box<dyn std::error::Error>> {
+/// let store = Knowledge::load("./.agentwerk")?;
+/// let alice = Agent::new().knowledge(&store);
+/// let bob = Agent::new().knowledge(&store);
+/// # let _ = (alice, bob);
+/// # Ok(())
+/// # }
+/// ```
 pub struct Knowledge {
     knowledge_dir: PathBuf,
     index: Mutex<Vec<IndexEntry>>,

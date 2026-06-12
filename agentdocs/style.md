@@ -209,7 +209,7 @@ Doc comment `///`:
 
 ```rust
 // GOOD: purpose and invariant
-/// A ticket. Caller-settable fields: `task`, `labels`, `schema`, `assignee`. System-managed fields are stamped at insertion time.
+/// A ticket. Caller-settable fields: `task`, `labels`, `schema`, `assignee`. System-managed fields are set at insertion time.
 pub struct Ticket { ... }
 
 // BAD: restates the name
@@ -264,13 +264,27 @@ counter += 1;
 - Example models are `claude-haiku-4-5-20251001` or `claude-sonnet-4-20250514`.
 - Update triggers: a new builder method, a new tool, a new event kind, a new environment variable, or a changed default.
 
-## README framing
+## Terminology
 
-**The factory-worker analogy is allowed in the README only.**
+**Word-level rules for caller-facing prose: rustdoc, README, and agentdocs (except where called out).**
 
-- Section openers and orchestration descriptions may use the analogy.
-- Method tables, policy descriptions, and built-in I/O tools stay direct.
-- Code, doc comments, and agentdocs do not use the analogy.
+- "worker" is not used as a role noun. The type is `Agent`; the noun is "agent".
+- "routed" / "routing" is replaced with "assigned" / "assignment".
+- Bare "provider" in caller-facing prose is spelled "LLM provider". Identifier names (`Provider`, `AnthropicProvider`, the `providers::` module) stay unqualified.
+- The phrase "finisher tool" appears only alongside the actual tool names (`FinishTicketTool`, `HandoverTicketTool`). A bare "writes results back through a finisher tool" is slang and rejected.
+- Internal mechanics do not appear in caller-facing rustdoc: no `Weak<Self>` / `Arc<Self>` references, no "stamps", no "recorder protocol", no `record_*` / `mark_finished`. They live in `agentdocs/architecture.md`.
+- "caps" is replaced with "limits" everywhere it is used as a noun. Imperative cells say "Limit X" not "Cap X".
+- "snapshot" does not appear in caller-facing prose. Say what the value is, not that it is a snapshot.
+- "counters" is replaced with "statistics" in caller-facing prose. `Stats` is statistics, not counters, on docs.rs.
+- "live" as an adjective for stats is rejected ("live counters", "readable live"). Say *when* the value is available in plain English.
+- The Knowledge store is described as durable memory the agent shares across tickets and other agents; the sharing is the headline, not a footnote.
+- "drives the provider/tool loop" is slang. An agent calls the LLM provider and runs the tools it requests.
+- "stream" / "streaming" is too technical for caller-facing prose. Say "print as it arrives", "forward", "show live", or name the SSE layer when describing the implementation.
+- "the loop" / "the agent loop" is project-internal jargon. In caller-facing prose say "agentwerk", "the agent", or name the subject directly. The phrase is fine in `agentdocs/architecture.md` and `agentdocs/layout.md`, where the audience already knows what "the loop" refers to.
+- "ships" / "ships with" is empty filler; so are "sensible defaults", "tuning", "various options". State one concrete fact, list the identifiers and point at docs.rs, or do both. Do not dump every default value into prose either; those numbers belong on docs.rs.
+- Rust async primitive nouns ("future", "closure", "predicate", "callback") are jargon in caller-facing prose. Say "another task that finishes", "a condition you supply", "your function". The Rust identifiers stay as identifiers (parameter names, type names); only the prose changes.
+- Abstract pronouns and fractions ("one half", "the other", "either side") leave the reader guessing. Name the subject directly: not "detect one half from the environment and override the other", but "read only the provider from the environment, or only the model".
+- "header" / "ticket header" is project-internal jargon for the on-disk file holding a `Ticket` without its `replies`. In caller-facing prose say "the ticket" or "the ticket without its transcript"; the internal helpers `ticket_header_path` and architecture.md may keep the term since the codebase audience knows what it means.
 
 ## README table shape
 

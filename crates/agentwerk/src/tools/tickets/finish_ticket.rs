@@ -21,6 +21,7 @@ use super::super::tool::{ToolContext, ToolLike, ToolResult};
 use super::super::tool_file::ToolFile;
 use super::{resolve_current_key, write_result};
 
+/// Write a ticket's result and mark it finished.
 pub struct FinishTicketTool;
 
 fn tool_file() -> &'static ToolFile {

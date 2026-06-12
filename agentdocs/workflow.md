@@ -39,6 +39,6 @@ Commands used to build, test, release, and run example agents.
 
 - Source is in `crates/use-cases/src/`.
 - Run an example with `make use_case name=<name>`.
-- `terminal-repl` is a per-turn interactive chat with streaming output.
-- `divide-and-conquer` partitions an arithmetic problem across worker agents sharing one ticket queue.
+- `terminal-repl` is a per-turn interactive chat that prints output as it arrives.
+- `divide-and-conquer` partitions an arithmetic problem across agents sharing one ticket queue.
 - `deep-research` is a two-phase research pipeline with web search (requires `BRAVE_API_KEY`).

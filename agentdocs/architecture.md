@@ -7,7 +7,7 @@ The invariants that shape how code fits together. Layout says where code lives; 
 **A run has three stages: build the `Agent`, bind it to a `TicketSystem`, drive the system with `start` (long-lived) or `finish` (process a fixed batch and return).**
 
 - The `Agent` builder carries identity, prompt parts, provider/model, tools, working dir, event handler, and a `Weak<TicketSystem>` (dangling by default).
-- `TicketSystem::add(agent)` (or `agent.ticket_system(&shared)`) stamps the system's `Weak<Self>` onto the agent, drains any tickets the agent had queued in its private default system into the shared one, and pushes a clone of the agent onto the system's agents list.
+- `TicketSystem::add(agent)` (or `agent.ticket_system(&shared)`) sets the system's `Weak<Self>` on the agent, drains any tickets the agent had queued in its private default system into the shared one, and pushes a clone of the agent onto the system's agents list.
 - `TicketSystem::start` / `finish` spawn one tokio task per registered agent; each task upgrades its `Weak` once at the start and reads the shared store, policies, stats, and interrupt signal from the resulting `Arc<TicketSystem>`.
 - `tickets.task(value)` and `tickets.task_labeled(value, label)` create a new ticket and return its key as `String`. `tickets.reply(&key, content)` appends a user-side text reply to an existing ticket: the agent loop's wait-for-input branch picks the reply up and drives the next turn on the same transcript. Use `task` to start a conversation, `reply` to continue it; this is how multi-turn chat is built on top of one ticket.
 
@@ -20,14 +20,14 @@ The invariants that shape how code fits together. Layout says where code lives; 
 - Multiple agents share one queue; a ticket is claimed exactly once.
 - Sub-systems are not nested: a single `TicketSystem` is the unit of orchestration.
 
-## Path A and Path B routing
+## Path A and Path B assignment
 
 **Tickets reach agents either by direct assignment (Path A) or by label scope (Path B).**
 
 - A ticket built with `Ticket::new(...).assign_to(name)` is born `Status::InProgress` and pinned to the named agent; only that agent can pick it up.
 - A ticket built with `.label(...)` (or via `task_labeled(value, label)`) is `Status::Todo` and picked up by any agent whose `label` scope intersects.
 - An agent with empty labels handles only tickets with no labels; that is the "default scope".
-- The system never auto-resolves a name against the registered-agent set: callers know which routing path they want.
+- The system never auto-resolves a name against the registered-agent set: callers know which assignment path they want.
 
 ## Finishing is a tool call
 

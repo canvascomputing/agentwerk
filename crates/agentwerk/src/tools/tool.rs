@@ -1,4 +1,4 @@
-//! Core tool infrastructure: the `ToolLike` trait, the ad-hoc `Tool` struct, and the registry the loop consults before each provider call.
+//! Core tool infrastructure: the `ToolLike` trait, the ad-hoc `Tool` struct, and the registry agentwerk consults before each provider call.
 
 use std::collections::HashSet;
 use std::future::Future;
@@ -54,8 +54,8 @@ pub struct ToolContext {
 impl ToolContext {
     /// A fresh context rooted at `dir`, with no registry handle and
     /// a fresh never-firing cancel signal. Tools that search the registry
-    /// need a context installed by the loop; bare contexts are for
-    /// standalone use and tests.
+    /// need a context agentwerk installs at call time; bare contexts are
+    /// for standalone use and tests.
     pub fn new(dir: PathBuf) -> Self {
         Self {
             dir,
@@ -68,7 +68,7 @@ impl ToolContext {
         }
     }
 
-    /// Override the cancel signal — typically the one shared by the loop's
+    /// Override the cancel signal — typically the one shared by the
     /// `TicketSystem` so tools cooperate with run-level cancellation.
     pub fn interrupt_signal(mut self, signal: Arc<AtomicBool>) -> Self {
         self.interrupt_signal = signal;
@@ -154,7 +154,7 @@ pub struct ToolCall {
 /// Outcome of a tool execution: a success payload, a generic error
 /// message, or a schema-validation failure. All three flow back to
 /// the model as ordinary content blocks; the [`SchemaError`] variant
-/// is distinguished so the loop can apply
+/// is distinguished so agentwerk can apply
 /// `policies.max_schema_retries` to it specifically.
 ///
 /// [`SchemaError`]: ToolResult::SchemaError
@@ -492,8 +492,8 @@ impl<H> ToolBuilder<H> {
         self
     }
 
-    /// Mark the tool read-only so the loop runs it concurrently with other
-    /// read-only calls in the same turn.
+    /// Mark the tool read-only so agentwerk runs it concurrently with
+    /// other read-only calls in the same turn.
     pub fn read_only(mut self, read_only: bool) -> Self {
         self.read_only = read_only;
         self

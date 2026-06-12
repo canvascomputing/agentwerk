@@ -1,4 +1,4 @@
-//! Per-model knowledge of context window size and compaction thresholds. The loop consults this to decide when a conversation must be shrunk.
+//! Per-model knowledge of context window size and compaction thresholds. agentwerk consults this to decide when a conversation must be shrunk.
 
 use super::{AnthropicProvider, MistralProvider, OpenAiProvider};
 

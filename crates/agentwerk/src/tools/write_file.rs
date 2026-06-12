@@ -11,7 +11,7 @@ use super::tool_file::ToolFile;
 use crate::providers::ProviderResult as Result;
 
 /// Create or overwrite a file. Destructive: existing content is replaced.
-/// Not read-only, so the loop runs it serially.
+/// Not read-only, so agentwerk runs it serially.
 pub struct WriteFileTool;
 
 fn tool_file() -> &'static ToolFile {

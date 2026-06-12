@@ -1,5 +1,5 @@
-//! Structured events the loop emits so callers can observe a run
-//! without wrapping the loop itself.
+//! Structured events agentwerk emits so callers can observe a run
+//! without wrapping the agent.
 
 use std::sync::Arc;
 
@@ -40,11 +40,27 @@ pub enum ToolFailureKind {
     /// The tool was invoked but its execution raised an error.
     ExecutionFailed,
     /// A schema-checked tool rejected its input. Counted against
-    /// `policies.max_schema_retries` by the loop.
+    /// `policies.max_schema_retries`.
     SchemaValidationFailed,
 }
 
-/// Observation emitted during an agent run.
+/// Observation emitted as agents work. Carries the name of the agent
+/// that produced it plus a typed [`EventKind`].
+///
+/// ```no_run
+/// use agentwerk::TicketSystem;
+/// use agentwerk::event::EventKind;
+///
+/// # async fn run() {
+/// let tickets = TicketSystem::new();
+/// tickets.on_event(|event| {
+///     if let EventKind::TicketFinished { key } = &event.kind {
+///         eprintln!("[{}] done {key}", event.agent_name);
+///     }
+/// });
+/// tickets.finish().await;
+/// # }
+/// ```
 #[derive(Debug, Clone)]
 pub struct Event {
     /// Name of the agent that produced this event.
@@ -85,9 +101,8 @@ pub enum EventKind {
         kind: RequestErrorKind,
         message: String,
     },
-    /// Provider request failed transiently; the loop is about to sleep
-    /// and retry. `attempt` is 1-based; on the first retry the user
-    /// sees `attempt = 1, max_attempts = N`.
+    /// Provider request failed transiently; agentwerk is about to sleep
+    /// and retry. `attempt` is 1-based.
     RequestRetried {
         attempt: u32,
         max_attempts: u32,
@@ -118,7 +133,7 @@ pub enum EventKind {
     },
     /// A configured policy was exceeded; the run is about to stop.
     PolicyViolated { kind: PolicyKind, limit: u64 },
-    /// A `done`-side schema validation failed; the loop is about to
+    /// A `done`-side schema validation failed; agentwerk is about to
     /// re-prompt the model with a corrective directive. `attempt` is
     /// 1-based.
     SchemaRetried {
@@ -126,11 +141,9 @@ pub enum EventKind {
         max_attempts: u32,
         message: String,
     },
-    /// Compaction is about to run: the loop is about to call the
+    /// Compaction is about to run: agentwerk is about to call the
     /// summarizer to collapse the message tail. `chunks_total` is the
-    /// number of summariser calls the algorithm intends to make. Pairs
-    /// with `CompactionFinished` (success) or `CompactionFailed` (the
-    /// summarizer call returned a provider error).
+    /// number of summariser calls the algorithm intends to make.
     CompactionStarted {
         reason: CompactReason,
         chunks_total: u32,

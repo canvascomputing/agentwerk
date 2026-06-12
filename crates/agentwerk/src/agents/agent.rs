@@ -1,8 +1,9 @@
 //! Agent: identity + prompt parts + provider/model + a bound ticket system.
-//! `AgentBuilder::build()` produces the final agent, and `tickets.agent(agent)`
-//! stamps the system's `Weak<Self>` onto it. The loop upgrades it once at the
-//! start of `run_agent` and accesses `tickets`, `policies`, `stats`, and
-//! `interrupt_signal` through the resulting `Arc<TicketSystem>`.
+//! `AgentBuilder::build()` produces the final agent, which
+//! `tickets.agent(agent)` binds to the system. agentwerk upgrades the
+//! bound reference once at the start of `run_agent` and accesses
+//! `tickets`, `policies`, `stats`, and `interrupt_signal` through the
+//! resulting `Arc<TicketSystem>`.
 
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -28,6 +29,8 @@ fn default_agent_name() -> String {
 
 // --- builder ---
 
+/// Builder for [`Agent`]. Configures the LLM provider, model, role,
+/// tools, labels, and the working directory.
 #[derive(Clone)]
 pub struct AgentBuilder<P, M> {
     name: String,
@@ -366,6 +369,25 @@ impl TicketSystemRef {
     }
 }
 
+/// Bound to a [`TicketSystem`]. Claims tickets assigned by name or
+/// label, calls the LLM provider and runs the tools it requests, then
+/// writes the result back through `FinishTicketTool` or
+/// `HandoverTicketTool`.
+///
+/// ```no_run
+/// use agentwerk::Agent;
+/// use agentwerk::tools::ReadFileTool;
+///
+/// # async fn run() {
+/// let agent = Agent::new()
+///     .name("reader")
+///     .from_env()
+///     .role("Rust developer reading source files to answer questions.")
+///     .tool(ReadFileTool)
+///     .build();
+/// # let _ = agent;
+/// # }
+/// ```
 pub struct Agent {
     // pub(crate): read by loop, TicketSystem, or routing code
     pub(crate) name: String,
@@ -503,7 +525,7 @@ impl Agent {
 
     /// Bind this agent to a shared `TicketSystem`. Drains any tickets
     /// the agent had already enqueued in its prior store into `sys`,
-    /// stamps `sys`'s `Weak<Self>` onto `self.ticket_system`, and
+    /// binds `sys` to the agent so it reads the shared queue, and
     /// registers a clone of `self` into `sys`'s agents list so the
     /// loop will dispatch this agent at `run` / `finish` time.
     pub fn ticket_system(mut self, sys: &Arc<TicketSystem>) -> Self {
@@ -521,7 +543,7 @@ impl Agent {
     }
 
     /// Enqueue a ticket carrying `task` and attached to `label` for Path B
-    /// routing. Returns `&self` so the call can chain into `.finish().await`.
+    /// assignment. Returns `&self` so the call can chain into `.finish().await`.
     pub fn task_labeled<T: Serialize>(&self, task: T, label: impl Into<String>) -> &Self {
         let ticket = Ticket::new(task).label(label);
         self.dispatch(ticket);

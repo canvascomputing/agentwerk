@@ -8,7 +8,7 @@ use std::fmt;
 /// instead; those reach the model as tool-result messages.
 #[derive(Debug)]
 pub enum ToolError {
-    /// Registry has no tool with this name. The loop forwards the failure to
+    /// Registry has no tool with this name. agentwerk forwards the failure to
     /// the model as a tool-result error so it can pick a different tool.
     ToolNotFound { tool_name: String },
     /// The tool was invoked but its execution raised an error. Covers harness
@@ -16,7 +16,7 @@ pub enum ToolError {
     /// via `Err(...)`.
     ExecutionFailed { tool_name: String, message: String },
     /// A schema-checked tool rejected the model's payload. Distinct from
-    /// `ExecutionFailed` so the loop can apply the dedicated retry budget
+    /// `ExecutionFailed` so agentwerk can apply the dedicated retry budget
     /// (`policies.max_schema_retries`) and emit
     /// `ToolFailureKind::SchemaValidationFailed`.
     SchemaValidationFailed { tool_name: String, message: String },

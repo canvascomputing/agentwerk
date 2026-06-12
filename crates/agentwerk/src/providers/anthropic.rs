@@ -14,6 +14,7 @@ use super::provider::{
 };
 use super::types::{ContentBlock, Message, ModelResponse, ResponseStatus, StreamEvent, TokenUsage};
 
+/// [`Provider`] for the Anthropic Messages API.
 pub struct AnthropicProvider {
     api_key: String,
     base_url: String,

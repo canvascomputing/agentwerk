@@ -1,17 +1,29 @@
-//! Policy bundle: caps and retry tuning the loop reads through the
+//! Policy bundle: limits and retry tuning the loop reads through the
 //! ticket system state.
 
 use std::time::Duration;
 
+/// Execution limits and retry tuning the loop reads from the ticket
+/// system. Set on a `TicketSystem` via `.max_turns(...)`,
+/// `.max_time(...)`, `.max_input_tokens(...)`, etc. A breach emits
+/// `EventKind::PolicyViolated` and halts execution.
 #[derive(Clone, Debug)]
-pub struct Policies {
+pub(crate) struct Policies {
+    /// Limit on the total number of turns. `None` for no limit.
     pub max_turns: Option<u32>,
+    /// Limit on the total input tokens. `None` for no limit.
     pub max_input_tokens: Option<u64>,
+    /// Limit on the total output tokens. `None` for no limit.
     pub max_output_tokens: Option<u64>,
+    /// Limit on the input tokens per request. `None` for no limit.
     pub max_request_tokens: Option<u32>,
+    /// Limit on the schema-validation retry attempts. `None` for no limit.
     pub max_schema_retries: Option<u32>,
+    /// Limit on the retry attempts on recoverable provider errors.
     pub max_request_retries: u32,
+    /// Base delay between request retries.
     pub request_retry_delay: Duration,
+    /// Limit on the total elapsed duration. `None` for no limit.
     pub max_time: Option<Duration>,
 }
 

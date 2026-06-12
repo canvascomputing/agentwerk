@@ -232,9 +232,9 @@ pub fn interactive_chatbot(provider: &Arc<MockProvider>) -> Agent {
         .build()
 }
 
-pub fn task_worker(provider: &Arc<MockProvider>) -> Agent {
+pub fn task_agent(provider: &Arc<MockProvider>) -> Agent {
     Agent::new()
-        .name("worker")
+        .name("agent")
         .provider(provider.clone() as Arc<dyn Provider>)
         .model("mock")
         .role("test")

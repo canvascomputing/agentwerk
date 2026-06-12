@@ -4,9 +4,12 @@ use std::fmt;
 
 use super::ticket::Status;
 
+/// Errors raised by ticket-store mutations.
 #[derive(Debug)]
 pub enum TicketError {
+    /// No ticket exists at `key`.
     TicketMissing { key: String },
+    /// Status transition `from → to` is not allowed.
     TransitionRejected { from: Status, to: Status },
 }
 

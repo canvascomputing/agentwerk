@@ -23,7 +23,7 @@ Where code lives and the rules that govern placement.
 
 **Holds the per-agent builder, the ticket system, and the multi-agent loop.**
 
-- `agent.rs` holds the `Agent` builder and ticket-dispatch helpers; an `Agent` carries a `Weak<TicketSystem>` stamped at `bind_agent` time.
+- `agent.rs` holds the `Agent` builder and ticket-dispatch helpers; an `Agent` carries a `Weak<TicketSystem>` bound at `bind_agent` time.
 - `tickets/` holds the ticket value types and the orchestrator. `Reply` is the per-ticket transcript entry; `ReplyContent` mirrors `providers::ContentBlock` so the ticket surface stays free of provider types. Split by concern:
   - `tickets/mod.rs`: re-exports `Status`, `Ticket`, `TicketError`, `TicketSystem`; hosts free helpers `policy_violated`, `policy_violated_kind`, `now_millis`, `numeric_id`.
   - `tickets/ticket.rs`: `Ticket`, `Status`, the `Replies` transcript-log helper, and the `tickets/<key>/...` path helpers.
