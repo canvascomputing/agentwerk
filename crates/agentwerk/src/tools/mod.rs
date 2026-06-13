@@ -7,6 +7,7 @@ mod tool_file;
 pub(crate) mod util;
 
 mod bash;
+mod codegrep;
 mod edit_file;
 mod fetch_url;
 mod find_tools;
@@ -24,6 +25,7 @@ pub(crate) use tool::{ToolCall, ToolRegistry};
 pub use tool_file::ToolFile;
 
 pub use bash::BashTool;
+pub use codegrep::CodegrepTool;
 pub use edit_file::EditFileTool;
 pub use fetch_url::FetchUrlTool;
 pub use find_tools::FindToolsTool;
