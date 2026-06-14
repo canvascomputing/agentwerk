@@ -14,6 +14,15 @@ use crate::providers::ProviderResult as Result;
 
 /// Find files matching a glob pattern under the working directory. Read-only.
 /// Sorted by modification time (newest first); capped at 200 results.
+///
+/// # Examples
+///
+/// ```
+/// use agentwerk::Agent;
+/// use agentwerk::tools::GlobTool;
+///
+/// Agent::new().tool(GlobTool);
+/// ```
 pub struct GlobTool;
 
 const MAX_RESULTS: usize = 200;

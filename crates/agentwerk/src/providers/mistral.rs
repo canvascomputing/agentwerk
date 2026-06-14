@@ -10,8 +10,34 @@ use super::openai::OpenAiProvider;
 use super::provider::{ModelRequest, Provider};
 use super::types::{ModelResponse, StreamEvent};
 
-/// Mistral LLM provider. Speaks OpenAI's chat-completions API, so it
-/// delegates to an inner [`OpenAiProvider`] pointed at `api.mistral.ai`.
+/// LLM provider for the Mistral API. Speaks OpenAI's chat-completions
+/// wire format against `api.mistral.ai`.
+///
+/// Reads `MISTRAL_API_KEY` (and optional `MISTRAL_BASE_URL`) when built
+/// via [`provider_from_env`]. Override the endpoint with [`base_url`] and
+/// the per-request timeout with [`timeout`].
+///
+/// # Examples
+///
+/// Direct construction with an API key:
+///
+/// ```no_run
+/// use agentwerk::providers::MistralProvider;
+///
+/// let _provider = MistralProvider::new("...");
+/// ```
+///
+/// Read the API key from the environment:
+///
+/// ```no_run
+/// use agentwerk::providers::provider_from_env;
+///
+/// let _provider = provider_from_env().expect("LLM provider required");
+/// ```
+///
+/// [`provider_from_env`]: crate::providers::provider_from_env
+/// [`base_url`]: MistralProvider::base_url
+/// [`timeout`]: MistralProvider::timeout
 pub struct MistralProvider(OpenAiProvider);
 
 const DEFAULT_BASE_URL: &str = "https://api.mistral.ai";

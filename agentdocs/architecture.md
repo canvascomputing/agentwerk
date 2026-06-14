@@ -76,7 +76,8 @@ Two layers of state exist. The per-ticket transcript lives on `Ticket::replies`:
 **Each concrete provider owns a `reqwest::Client` directly. There is no transport abstraction.**
 
 - The `Provider` trait fulfils one contract: `respond` (drive one turn) plus per-vendor metadata.
-- `ModelRequest`, `Message`, `ContentBlock`, and `TokenUsage` are the wire-shaped types every provider converts to and from.
+- `ModelRequest`, `Message`, `ContentBlock`, and `TokenUsage` are the request and response types every provider converts to and from.
+- Those types (plus `ModelResponse`, `StreamEvent`, `ResponseStatus`, `ToolChoice`, `ProviderToolDefinition`) are `pub` but `#[doc(hidden)]`: forced public by the `Provider` trait, hidden from rustdoc because only implementors name them.
 - HTTP error mapping is shared through `providers::map_http_errors` plus a provider-specific `classify` closure; SSE parsing lives in `providers::stream`.
 - Retry happens at the request level using `Policies::max_request_retries` and `request_retry_delay`; vendor code does not retry.
 

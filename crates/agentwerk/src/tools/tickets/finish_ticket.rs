@@ -22,6 +22,15 @@ use super::super::tool_file::ToolFile;
 use super::{resolve_current_key, write_result};
 
 /// Write a ticket's result and mark it finished.
+///
+/// # Examples
+///
+/// ```
+/// use agentwerk::Agent;
+/// use agentwerk::tools::FinishTicketTool;
+///
+/// Agent::new().tool(FinishTicketTool);
+/// ```
 pub struct FinishTicketTool;
 
 fn tool_file() -> &'static ToolFile {

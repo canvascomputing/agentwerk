@@ -29,6 +29,15 @@ fn description() -> &'static str {
 /// Fetch a URL and return its content as text. Read-only. HTML is converted
 /// to plain text; HTTP is upgraded to HTTPS; cross-host redirects are
 /// surfaced rather than followed.
+///
+/// # Examples
+///
+/// ```
+/// use agentwerk::Agent;
+/// use agentwerk::tools::FetchUrlTool;
+///
+/// Agent::new().tool(FetchUrlTool);
+/// ```
 pub struct FetchUrlTool;
 
 impl ToolLike for FetchUrlTool {

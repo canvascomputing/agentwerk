@@ -14,6 +14,15 @@ use super::super::tool_file::ToolFile;
 use super::{dispatch, READ_ACTIONS, WRITE_ACTIONS};
 
 /// `get`, `list`, `search`, `create`, `edit` in one tool.
+///
+/// # Examples
+///
+/// ```
+/// use agentwerk::Agent;
+/// use agentwerk::tools::ManageTicketsTool;
+///
+/// Agent::new().tool(ManageTicketsTool);
+/// ```
 pub struct ManageTicketsTool;
 
 fn tool_file() -> &'static ToolFile {

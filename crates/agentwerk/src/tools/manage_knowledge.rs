@@ -16,6 +16,18 @@ use super::tool_file::ToolFile;
 
 /// The model's four-action handle on a `Knowledge` store:
 /// `write`, `read`, `remove`, `list`.
+///
+/// # Examples
+///
+/// ```no_run
+/// use agentwerk::{Agent, Knowledge};
+/// use agentwerk::tools::ManageKnowledgeTool;
+///
+/// let store = Knowledge::load(".agentwerk").expect("knowledge dir");
+/// Agent::new()
+///     .knowledge(&store)
+///     .tool(ManageKnowledgeTool::new(store));
+/// ```
 pub struct ManageKnowledgeTool {
     store: Arc<Knowledge>,
 }

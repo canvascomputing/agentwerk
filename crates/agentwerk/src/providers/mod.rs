@@ -1,4 +1,6 @@
 //! The `Provider` trait and the vendor-specific implementations that speak to Anthropic, OpenAI-compatible APIs, Mistral, and LiteLLM.
+//!
+//! The request and response types passed across the `Provider` trait (`Message`, `ContentBlock`, `ModelRequest`, `ModelResponse`, `StreamEvent`, ...) are reachable by name but hidden from the rustdoc index: they only matter when implementing a custom [`Provider`].
 
 mod anthropic;
 pub mod environment;
@@ -20,7 +22,9 @@ pub use mistral::MistralProvider;
 pub use model::Model;
 pub use openai::OpenAiProvider;
 pub use provider::{ModelRequest, Provider, ProviderToolDefinition, ToolChoice};
-pub use types::{AsUserMessage, ContentBlock, Message, TokenUsage};
+pub use types::{
+    AsUserMessage, ContentBlock, Message, ModelResponse, ResponseStatus, StreamEvent, TokenUsage,
+};
 
 pub(crate) fn retry_delay_from_headers(resp: &reqwest::Response) -> Option<std::time::Duration> {
     let value = resp.headers().get("retry-after")?.to_str().ok()?;

@@ -14,6 +14,15 @@ use super::tool_file::ToolFile;
 /// Read a file with optional line offset and limit. Returns line-numbered
 /// text so the model can reference specific lines in subsequent edits.
 /// Read-only.
+///
+/// # Examples
+///
+/// ```
+/// use agentwerk::Agent;
+/// use agentwerk::tools::ReadFileTool;
+///
+/// Agent::new().tool(ReadFileTool);
+/// ```
 pub struct ReadFileTool;
 
 fn tool_file() -> &'static ToolFile {

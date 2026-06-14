@@ -2,7 +2,8 @@
 
 use serde::{Deserialize, Serialize};
 
-/// Wire-protocol message exchanged with a provider, tagged by role.
+/// One message in the conversation passed to a provider, tagged by role.
+#[doc(hidden)]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "role")]
 pub enum Message {
@@ -46,6 +47,7 @@ pub trait AsUserMessage {
 }
 
 /// Content block carried inside a [`Message`].
+#[doc(hidden)]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type")]
 pub enum ContentBlock {
@@ -80,6 +82,7 @@ fn default_true() -> bool {
 /// References:
 /// - <https://platform.claude.com/docs/en/build-with-claude/handling-stop-reasons>
 /// - <https://github.com/BerriAI/litellm/issues/21348>
+#[doc(hidden)]
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ResponseStatus {
@@ -131,6 +134,7 @@ impl std::ops::AddAssign<&TokenUsage> for TokenUsage {
 
 /// One assembled response from a provider: content blocks the model
 /// produced, why generation stopped, token counts, and the model name.
+#[doc(hidden)]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ModelResponse {
     /// Content blocks the model produced this turn.
@@ -147,6 +151,7 @@ pub struct ModelResponse {
 ///
 /// Events within a single response arrive in order and reference the content block they
 /// belong to via `index`. A stream ends with `MessageDone`.
+#[doc(hidden)]
 #[derive(Debug, Clone)]
 pub enum StreamEvent {
     /// Appended text for the text block at `index`.

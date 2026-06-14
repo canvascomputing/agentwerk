@@ -16,6 +16,15 @@ use crate::providers::ProviderResult as Result;
 /// Search file contents by structural code pattern with metavariables, balanced brackets, and ellipses.
 /// Returns one match per line with file path, line, column, captured substring, and metavariable values.
 /// Read-only.
+///
+/// # Examples
+///
+/// ```
+/// use agentwerk::Agent;
+/// use agentwerk::tools::CodegrepTool;
+///
+/// Agent::new().tool(CodegrepTool);
+/// ```
 pub struct CodegrepTool;
 
 const DEFAULT_MAX_RESULTS: u64 = 100;

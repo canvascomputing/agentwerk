@@ -4,37 +4,37 @@ use serde::Deserialize;
 use serde_json::Value;
 
 /// Typed view of a tool's `.tool.json` file. Every prose field is a list of
-/// strings — the renderer joins them with whatever separator the target
+/// strings: the renderer joins them with whatever separator the target
 /// format requires (newlines for cautions, blank lines for paragraphs,
 /// bullets for lists). Authors edit content; the framework owns formatting.
 #[derive(Debug, Deserialize)]
-pub struct ToolFile {
-    pub name: String,
+pub(crate) struct ToolFile {
+    pub(crate) name: String,
     #[serde(default)]
-    pub summary: Vec<String>,
+    pub(crate) summary: Vec<String>,
     #[serde(default)]
-    pub constraints: Vec<String>,
+    pub(crate) constraints: Vec<String>,
     #[serde(default)]
-    pub anti_patterns: Vec<String>,
+    pub(crate) anti_patterns: Vec<String>,
     #[serde(default)]
-    pub cautions: Vec<String>,
+    pub(crate) cautions: Vec<String>,
     #[serde(default)]
-    pub output: Vec<String>,
-    pub read_only: bool,
-    pub input_schema: Value,
+    pub(crate) output: Vec<String>,
+    pub(crate) read_only: bool,
+    pub(crate) input_schema: Value,
 }
 
 impl ToolFile {
-    /// Parse the embedded JSON. Panics on malformed input — same fail-fast
+    /// Parse the embedded JSON. Panics on malformed input: same fail-fast
     /// posture as `include_str!()` of a JSON Schema elsewhere in the crate.
-    pub fn parse(json: &str) -> Self {
+    pub(crate) fn parse(json: &str) -> Self {
         serde_json::from_str(json).expect("invalid tool definition JSON")
     }
 
     /// Render the prose sections as markdown. Sections are emitted only when
     /// non-empty; empty sections do not produce stray headings or trailing
     /// blank lines.
-    pub fn render_markdown(&self) -> String {
+    pub(crate) fn render_markdown(&self) -> String {
         let mut sections: Vec<String> = Vec::new();
 
         if !self.summary.is_empty() {

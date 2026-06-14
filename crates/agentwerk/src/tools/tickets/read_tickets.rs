@@ -12,7 +12,16 @@ use super::super::tool::{ToolContext, ToolLike, ToolResult};
 use super::super::tool_file::ToolFile;
 use super::{dispatch, READ_ACTIONS};
 
-/// `get`, `list`, `search` — read tickets without mutating the queue.
+/// `get`, `list`, `search`: read tickets without mutating the queue.
+///
+/// # Examples
+///
+/// ```
+/// use agentwerk::Agent;
+/// use agentwerk::tools::ReadTicketsTool;
+///
+/// Agent::new().tool(ReadTicketsTool);
+/// ```
 pub struct ReadTicketsTool;
 
 fn tool_file() -> &'static ToolFile {

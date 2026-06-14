@@ -22,7 +22,6 @@ mod write_file;
 pub use error::ToolError;
 pub use tool::{Tool, ToolContext, ToolLike, ToolResult};
 pub(crate) use tool::{ToolCall, ToolRegistry};
-pub use tool_file::ToolFile;
 
 pub use bash::BashTool;
 pub use codegrep::CodegrepTool;

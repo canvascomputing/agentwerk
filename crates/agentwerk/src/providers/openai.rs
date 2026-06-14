@@ -16,7 +16,34 @@ use super::provider::{
 use super::stream::{SseEvent, StreamParser};
 use super::types::{ContentBlock, Message, ModelResponse, ResponseStatus, StreamEvent, TokenUsage};
 
-/// OpenAI-compatible LLM provider.
+/// LLM provider for the OpenAI Chat Completions API and any compatible
+/// endpoint that speaks the same wire format.
+///
+/// Reads `OPENAI_API_KEY` (and optional `OPENAI_BASE_URL`) when built via
+/// [`provider_from_env`]. Override the endpoint with [`base_url`] and the
+/// per-request timeout with [`timeout`].
+///
+/// # Examples
+///
+/// Direct construction with an API key:
+///
+/// ```no_run
+/// use agentwerk::providers::OpenAiProvider;
+///
+/// let _provider = OpenAiProvider::new("sk-...");
+/// ```
+///
+/// Read the API key from the environment:
+///
+/// ```no_run
+/// use agentwerk::providers::provider_from_env;
+///
+/// let _provider = provider_from_env().expect("LLM provider required");
+/// ```
+///
+/// [`provider_from_env`]: crate::providers::provider_from_env
+/// [`base_url`]: OpenAiProvider::base_url
+/// [`timeout`]: OpenAiProvider::timeout
 pub struct OpenAiProvider {
     api_key: String,
     base_url: String,

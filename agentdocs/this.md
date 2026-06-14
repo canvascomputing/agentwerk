@@ -59,7 +59,7 @@ How every file under `agentdocs/` is written. This file is itself an example of 
 
 **Use MUST for non-negotiable rules. Use IMPORTANT for easy-to-miss gotchas.**
 
-- MUST: correctness-critical rules where a violation breaks compilation, the wire protocol, or an architectural invariant.
+- MUST: correctness-critical rules where a violation breaks compilation, the request and response shape exchanged with providers, or an architectural invariant.
 - IMPORTANT: prefixes a bullet that a reader skimming would miss and regret later.
 - Most rules need neither: the bold one-liner is already the rule.
 - SHOULD, MAY, and CAN are not used: RFC-2119 without the full spec is noise.

@@ -42,7 +42,7 @@ pub enum PolicyKind {
 pub enum FinishReason {
     /// No tickets remained pending; nothing more to do.
     Drained,
-    /// A [`crate::Policies`] limit was exceeded.
+    /// A `Policies` limit was exceeded.
     PolicyViolated(PolicyKind),
     /// An external party requested cancellation through `cancel()`,
     /// `cancel_on`, or `cancel_on_event`.

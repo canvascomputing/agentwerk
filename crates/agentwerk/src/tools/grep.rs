@@ -15,6 +15,15 @@ use crate::providers::ProviderResult as Result;
 /// Search file contents by substring under the working directory. Read-only.
 /// Returns matching line snippets with file paths and line numbers; capped
 /// at 100 hits by default.
+///
+/// # Examples
+///
+/// ```
+/// use agentwerk::Agent;
+/// use agentwerk::tools::GrepTool;
+///
+/// Agent::new().tool(GrepTool);
+/// ```
 pub struct GrepTool;
 
 const DEFAULT_MAX_RESULTS: u64 = 100;

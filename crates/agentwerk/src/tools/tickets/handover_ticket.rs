@@ -20,6 +20,15 @@ use super::{resolve_current_key, write_result};
 
 /// Write a ticket's result, mark it finished, and hand follow-up work
 /// to another agent.
+///
+/// # Examples
+///
+/// ```
+/// use agentwerk::Agent;
+/// use agentwerk::tools::HandoverTicketTool;
+///
+/// Agent::new().tool(HandoverTicketTool);
+/// ```
 pub struct HandoverTicketTool;
 
 /// Reserved placeholders substituted into the child ticket's `task`

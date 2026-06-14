@@ -13,6 +13,24 @@ use crate::providers::ProviderResult as Result;
 /// Search the tool registry by query string. Pair with tools built via
 /// `Tool::new(...).defer(true)`: the model sees only their names until it
 /// discovers them through this tool, keeping the initial system prompt small.
+///
+/// # Examples
+///
+/// ```
+/// use agentwerk::Agent;
+/// use agentwerk::tools::{FindToolsTool, Tool, ToolResult};
+/// use serde_json::json;
+///
+/// let deep_search = Tool::new("deep_search", "Run a slow corpus search.")
+///     .schema(json!({"type": "object", "properties": {}}))
+///     .defer(true)
+///     .handler(|_input, _ctx| async { Ok(ToolResult::success("hits")) })
+///     .build();
+///
+/// Agent::new()
+///     .tool(FindToolsTool)
+///     .tool(deep_search);
+/// ```
 pub struct FindToolsTool;
 
 fn tool_file() -> &'static ToolFile {

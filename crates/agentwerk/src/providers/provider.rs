@@ -12,6 +12,7 @@ use super::error::ProviderResult;
 use super::types::{Message, ModelResponse, StreamEvent};
 
 /// Tool description sent to the provider as the `tools` parameter.
+#[doc(hidden)]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProviderToolDefinition {
     /// Unique name the model uses when calling the tool.
@@ -25,6 +26,7 @@ pub struct ProviderToolDefinition {
 /// One request to a provider. Built by the agent loop from the agent's
 /// configuration and the running conversation; passed to [`Provider::respond`]
 /// together with a streaming event callback.
+#[doc(hidden)]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ModelRequest {
     /// Model name (e.g. `claude-sonnet-4-20250514`).
@@ -43,6 +45,7 @@ pub struct ModelRequest {
 }
 
 /// Constraint on which tool the model may pick on a given turn.
+#[doc(hidden)]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum ToolChoice {
     /// The model picks freely (or replies without a tool call).

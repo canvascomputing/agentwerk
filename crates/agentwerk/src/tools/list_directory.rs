@@ -13,6 +13,15 @@ use crate::providers::ProviderResult as Result;
 
 /// List the entries of a directory with type and size. Read-only. Pair with
 /// [`GlobTool`](crate::tools::GlobTool) when you need pattern-based file discovery.
+///
+/// # Examples
+///
+/// ```
+/// use agentwerk::Agent;
+/// use agentwerk::tools::ListDirectoryTool;
+///
+/// Agent::new().tool(ListDirectoryTool);
+/// ```
 pub struct ListDirectoryTool;
 
 fn tool_file() -> &'static ToolFile {

@@ -10,8 +10,36 @@ use super::openai::OpenAiProvider;
 use super::provider::{ModelRequest, Provider};
 use super::types::{ModelResponse, StreamEvent};
 
-/// LiteLLM proxy provider. Points the OpenAI-compatible wire format at a
-/// LiteLLM instance.
+/// LLM provider for a LiteLLM proxy. Speaks the OpenAI-compatible wire
+/// format against a local or remote LiteLLM instance so the model name on
+/// the request decides which upstream backend handles it.
+///
+/// Reads `LITELLM_API_KEY` (optional) and `LITELLM_BASE_URL` (defaults to
+/// `http://localhost:4000`) when built via [`provider_from_env`]. Override
+/// the endpoint with [`base_url`] and the per-request timeout with
+/// [`timeout`].
+///
+/// # Examples
+///
+/// Direct construction pointed at a local proxy:
+///
+/// ```no_run
+/// use agentwerk::providers::LiteLlmProvider;
+///
+/// let _provider = LiteLlmProvider::new("").base_url("http://localhost:4000");
+/// ```
+///
+/// Read configuration from the environment:
+///
+/// ```no_run
+/// use agentwerk::providers::provider_from_env;
+///
+/// let _provider = provider_from_env().expect("LLM provider required");
+/// ```
+///
+/// [`provider_from_env`]: crate::providers::provider_from_env
+/// [`base_url`]: LiteLlmProvider::base_url
+/// [`timeout`]: LiteLlmProvider::timeout
 pub struct LiteLlmProvider(OpenAiProvider);
 
 const DEFAULT_BASE_URL: &str = "http://localhost:4000";

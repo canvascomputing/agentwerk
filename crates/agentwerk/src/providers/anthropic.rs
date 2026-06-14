@@ -14,7 +14,33 @@ use super::provider::{
 };
 use super::types::{ContentBlock, Message, ModelResponse, ResponseStatus, StreamEvent, TokenUsage};
 
-/// [`Provider`] for the Anthropic Messages API.
+/// LLM provider for the Anthropic Messages API.
+///
+/// Reads `ANTHROPIC_API_KEY` (and optional `ANTHROPIC_BASE_URL`) when built
+/// via [`provider_from_env`]. Override the endpoint with [`base_url`] and
+/// the per-request timeout with [`timeout`].
+///
+/// # Examples
+///
+/// Direct construction with an API key:
+///
+/// ```no_run
+/// use agentwerk::providers::AnthropicProvider;
+///
+/// let _provider = AnthropicProvider::new("sk-ant-...");
+/// ```
+///
+/// Read the API key from the environment:
+///
+/// ```no_run
+/// use agentwerk::providers::provider_from_env;
+///
+/// let _provider = provider_from_env().expect("LLM provider required");
+/// ```
+///
+/// [`provider_from_env`]: crate::providers::provider_from_env
+/// [`base_url`]: AnthropicProvider::base_url
+/// [`timeout`]: AnthropicProvider::timeout
 pub struct AnthropicProvider {
     api_key: String,
     base_url: String,

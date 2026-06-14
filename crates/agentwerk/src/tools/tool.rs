@@ -33,11 +33,16 @@ const PER_TURN_CAP: usize = 200_000;
 /// split.
 const PREVIEW_CHARS: usize = 2_000;
 
-/// Context passed to tool execution. `tool_registry` and the ticket-side
-/// fields are ambient internals — only the built-in `FindToolsTool` and
-/// the ticket tools (`Read`/`Write`/`Manage`) read them. External tool
-/// authors use `dir`, `interrupt_signal`, and
-/// `wait_for_cancel`.
+/// Runtime context passed to a tool handler.
+///
+/// External tool authors use exactly three things:
+/// - `dir`: the agent's working directory.
+/// - `interrupt_signal`: set to true when agentwerk is shutting down.
+/// - `wait_for_cancel()`: resolves when the current call is cancelled.
+///
+/// The remaining fields (`tool_registry`, ticket-side state, knowledge handle)
+/// are wired by agentwerk and consumed only by the built-in `FindToolsTool`
+/// and the ticket tools.
 #[derive(Clone)]
 pub struct ToolContext {
     /// Directory the tool runs in. Tools that touch the filesystem
@@ -436,19 +441,31 @@ pub struct ToolBuilder<H> {
     handler: H,
 }
 
-/// Ad-hoc tool defined inline with a closure handler.
+/// Ad-hoc tool defined inline with a closure handler. For tools with
+/// complex state, implement [`ToolLike`] directly on your own type instead.
 ///
-/// Chain builder methods to configure, then hand the tool to an agent:
-/// ```ignore
-/// let greet = Tool::new("greet", "Say hello")
-///     .schema(serde_json::json!({"type": "object", "properties": {}}))
-///     .handler(|_input, _ctx| async {
-///         Ok(ToolResult::success("hi"))
+/// # Examples
+///
+/// ```
+/// use agentwerk::Agent;
+/// use agentwerk::tools::{Tool, ToolResult};
+/// use serde_json::json;
+///
+/// let greet = Tool::new("greet", "Say hello to a name.")
+///     .schema(json!({
+///         "type": "object",
+///         "properties": { "name": { "type": "string" } },
+///         "required": ["name"]
+///     }))
+///     .read_only(true)
+///     .handler(|input, _ctx| async move {
+///         let name = input["name"].as_str().unwrap_or("world");
+///         Ok(ToolResult::success(format!("Hello, {name}!")))
 ///     })
 ///     .build();
-/// ```
 ///
-/// For tools with complex state, implement [`ToolLike`] directly on your own type instead.
+/// Agent::new().tool(greet);
+/// ```
 pub struct Tool {
     name: String,
     description: String,

@@ -34,8 +34,8 @@ fn description_base() -> &'static str {
 /// Pattern-restricted (only `git ...` commands):
 ///
 /// ```
+/// use agentwerk::Agent;
 /// use agentwerk::tools::BashTool;
-/// use agentwerk::agents::agent::Agent;
 ///
 /// Agent::new().tool(BashTool::new("git", "git *"));
 /// ```
@@ -43,8 +43,8 @@ fn description_base() -> &'static str {
 /// Unrestricted:
 ///
 /// ```
+/// use agentwerk::Agent;
 /// use agentwerk::tools::BashTool;
-/// use agentwerk::agents::agent::Agent;
 ///
 /// Agent::new().tool(BashTool::unrestricted());
 /// ```

@@ -13,6 +13,15 @@ use crate::providers::ProviderResult as Result;
 /// In-place string replacement in an existing file. The model supplies the
 /// old and new strings; the tool fails if the old string is absent or
 /// matches more than once. Not read-only.
+///
+/// # Examples
+///
+/// ```
+/// use agentwerk::Agent;
+/// use agentwerk::tools::EditFileTool;
+///
+/// Agent::new().tool(EditFileTool);
+/// ```
 pub struct EditFileTool;
 
 fn tool_file() -> &'static ToolFile {

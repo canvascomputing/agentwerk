@@ -12,6 +12,15 @@ use crate::providers::ProviderResult as Result;
 
 /// Create or overwrite a file. Destructive: existing content is replaced.
 /// Not read-only, so agentwerk runs it serially.
+///
+/// # Examples
+///
+/// ```
+/// use agentwerk::Agent;
+/// use agentwerk::tools::WriteFileTool;
+///
+/// Agent::new().tool(WriteFileTool);
+/// ```
 pub struct WriteFileTool;
 
 fn tool_file() -> &'static ToolFile {

@@ -19,7 +19,7 @@ Naming and comment rules, plus README structure. Skim the section matching what 
 - Concrete implementations live with their abstraction: `AnthropicProvider` under `providers::`, `BashTool` under `tools::`.
 - Companion types and handles live with their owner: `Ticket`, `Status`, `TicketError`, `Reply`, and `ReplyContent` under `agents::tickets`; `Stats` and `LoopStats` under `agents::stats`.
 - Domain errors live with their domain: `ProviderError`, `ToolError`.
-- Wire-protocol types live with the protocol: `ModelRequest`, `Message`, `TokenUsage` under `providers::`.
+- Provider request and response types live with the protocol: `ModelRequest`, `Message`, `TokenUsage` under `providers::`.
 - Free functions live in their module, never at the crate root: `from_env()` in `providers::environment`, helpers in `tools::util`.
 
 ## Name disambiguation
@@ -72,7 +72,7 @@ Naming and comment rules, plus README structure. Skim the section matching what 
 
 - No `_ms`, `_MS`, or `_seconds` suffix on public API names.
 - Internal helpers and on-the-wire JSON may use raw integers where the protocol requires it.
-- Example: `timeout_ms` is acceptable inside a tool input schema because the schema is a wire protocol.
+- Example: `timeout_ms` is acceptable inside a tool input schema because the schema is the on-the-wire JSON shape.
 
 ## Path identifiers
 
@@ -161,6 +161,15 @@ Naming: `snake_case`. Tool structs keep the `{Name}Tool` suffix: `ReadFileTool`,
 - State the problem the file solves, not the types it defines.
 - Do not list the contents of the file.
 - The `//!` stays even when the filename is already descriptive.
+
+## Hiding implementor-only types
+
+**Types that are `pub` only because they appear in a public trait signature get `#[doc(hidden)]`.**
+
+- Examples: the request and response types under `providers::` (`Message`, `ContentBlock`, `ModelRequest`, `ProviderToolDefinition`, `ToolChoice`, `StreamEvent`, `ModelResponse`, `ResponseStatus`). Forced public by `Provider::respond`; irrelevant to anyone who is not implementing a `Provider`.
+- `#[doc(hidden)]` keeps them reachable for implementors (`use agentwerk::providers::Message;` still works) while removing them from the rustdoc index.
+- The standard Rust idiom: `tokio`, `serde`, and `tracing` do the same for items that exist only to satisfy a trait or a macro.
+- A type that is genuinely internal (no public trait forces it `pub`) becomes `pub(crate)` instead. `tools::ToolFile` is the example: callers go through `Tool::from_tool_file(json: &str)` and never name the struct.
 
 ## Line comments (`//`)
 
