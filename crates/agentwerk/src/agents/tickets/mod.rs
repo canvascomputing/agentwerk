@@ -1,7 +1,7 @@
 //! Ticket queue and run orchestration. Exposes the value types
 //! ([`Ticket`], [`Status`], [`Reply`], [`ReplyContent`], [`TicketError`])
 //! and the [`TicketSystem`] orchestrator that owns the shared queue,
-//! registered agents, policies, interrupt signal, and run stats.
+//! registered agents, policies, cancellation signals, and run stats.
 
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -27,14 +27,10 @@ pub use ticket_system::TicketSystem;
 pub(crate) use ticket::Replies;
 
 /// Whether the run-wide policies have been exceeded by the current
-/// stats reading. Used by the `finish` watcher and by the per-agent
-/// loop's pre-claim check.
-pub(crate) fn policy_violated(policies: &Policies, stats: &Stats) -> bool {
-    policy_violated_kind(policies, stats).is_some()
-}
-
-/// Same as [`policy_violated`] but returns which policy tripped and its
-/// configured limit, for the `PolicyViolated` event.
+/// stats reading. Returns the tripping `PolicyKind` and the
+/// configured limit so callers can emit `PolicyViolated` and assemble
+/// `FinishReason::PolicyViolated`. Used by the `finish` watcher and
+/// the per-agent loop's pre-claim check.
 pub(crate) fn policy_violated_kind(
     policies: &Policies,
     stats: &Stats,
@@ -54,6 +50,11 @@ pub(crate) fn policy_violated_kind(
             return Some((PolicyKind::OutputTokens, limit));
         }
     }
+    if let Some(limit) = policies.max_time {
+        if stats.run_duration().is_some_and(|d| d >= limit) {
+            return Some((PolicyKind::Time, limit.as_millis() as u64));
+        }
+    }
     None
 }
 
@@ -71,4 +72,38 @@ pub(crate) fn numeric_id(key: &str) -> u32 {
         .next()
         .and_then(|s| s.parse::<u32>().ok())
         .unwrap_or(u32::MAX)
+}
+
+#[cfg(test)]
+mod tests {
+    use std::time::Duration;
+
+    use super::super::stats::TicketStats;
+    use super::*;
+
+    #[test]
+    fn policy_violated_kind_returns_time_when_max_time_elapsed() {
+        let policies = Policies {
+            max_time: Some(Duration::from_millis(1)),
+            ..Policies::default()
+        };
+        let stats = Stats::new();
+        // Stamp started_at far in the past so run_duration trivially
+        // exceeds the 1ms limit. `record_started` first-call-wins.
+        stats.record_started(1);
+        let trip = policy_violated_kind(&policies, &stats);
+        assert!(matches!(trip, Some((PolicyKind::Time, _))));
+    }
+
+    #[test]
+    fn policy_violated_kind_returns_none_when_max_time_not_started() {
+        let policies = Policies {
+            max_time: Some(Duration::from_millis(1)),
+            ..Policies::default()
+        };
+        let stats = Stats::new();
+        // started_at == 0 so run_duration is None; the time limit must
+        // not trip until a ticket has actually started.
+        assert!(policy_violated_kind(&policies, &stats).is_none());
+    }
 }

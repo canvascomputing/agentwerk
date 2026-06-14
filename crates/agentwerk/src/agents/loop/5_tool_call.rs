@@ -30,7 +30,7 @@ pub(super) async fn run(context: &mut LoopContext<'_>, reply: Reply) -> Action<(
                 );
             }
             let tool_context = ToolContext::new(context.agent.dir())
-                .interrupt_signal(std::sync::Arc::clone(&context.interrupt_signal))
+                .interrupt_signal(std::sync::Arc::clone(&context.stop_signal))
                 .registry(std::sync::Arc::new(context.agent.tool_registry().clone()))
                 .ticket_system(std::sync::Arc::clone(context.ticket_system))
                 .agent_name(context.agent.get_name().to_string())

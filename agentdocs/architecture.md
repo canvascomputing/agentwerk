@@ -8,14 +8,14 @@ The invariants that shape how code fits together. Layout says where code lives; 
 
 - The `Agent` builder carries identity, prompt parts, provider/model, tools, working dir, event handler, and a `Weak<TicketSystem>` (dangling by default).
 - `TicketSystem::add(agent)` (or `agent.ticket_system(&shared)`) sets the system's `Weak<Self>` on the agent, drains any tickets the agent had queued in its private default system into the shared one, and pushes a clone of the agent onto the system's agents list.
-- `TicketSystem::start` / `finish` spawn one tokio task per registered agent; each task upgrades its `Weak` once at the start and reads the shared store, policies, stats, and interrupt signal from the resulting `Arc<TicketSystem>`.
+- `TicketSystem::start` / `finish` spawn one tokio task per registered agent; each task upgrades its `Weak` once at the start and reads the shared store, policies, stats, and stop signal from the resulting `Arc<TicketSystem>`.
 - `tickets.task(value)` and `tickets.task_labeled(value, label)` create a new ticket and return its key as `String`. `tickets.reply(&key, content)` appends a user-side text reply to an existing ticket: the agent loop's wait-for-input branch picks the reply up and drives the next turn on the same transcript. Use `task` to start a conversation, `reply` to continue it; this is how multi-turn chat is built on top of one ticket.
 
 ## Shared system, per-agent task
 
 **Agents read shared state through one `Arc<TicketSystem>`. Locks are held only around queue and metric operations, never across `provider.respond().await`.**
 
-- The ticket store, policies, stats, interrupt signal, and registered-agent list live on `TicketSystem`.
+- The ticket store, policies, stats, stop and cancel signals, and registered-agent list live on `TicketSystem`.
 - The per-agent loop in `agents/loop.rs` claims one ticket, drives it through one or more provider/tool turns, and releases locks before each await.
 - Multiple agents share one queue; a ticket is claimed exactly once.
 - Sub-systems are not nested: a single `TicketSystem` is the unit of orchestration.
@@ -60,7 +60,7 @@ Two layers of state exist. The per-ticket transcript lives on `Ticket::replies`:
 - An observable failure fires both the typed error (`ProviderError`, `ToolError`) and a matching `Event` (`RequestFailed`, `ToolCallFailed`, `PolicyViolated`).
 - A model-fixable failure (wrong arguments, schema mismatch, missing file) goes back to the model as a `ToolResult::Error` content block; it still fires `ToolCallFailed` but does not stop the run.
 - Handlers MUST be cheap, non-blocking closures; the loop does not await them.
-- `TicketSystem::on_event(h)` pushes a handler onto an ordered chain — every installed handler fires on every event, in installation order. When no handler is installed, `default_logger` runs in its place. This composition is what `cancel_on_event(predicate)` is built on: it pushes a handler that calls `cancel()` when the predicate matches, so the user's logger and the cancel trigger coexist.
+- `TicketSystem::on_event(h)` pushes a handler onto an ordered chain — every installed handler fires on every event, in installation order. When no handler is installed, `default_logger` runs in its place. This composition is what `cancel_on_event(predicate)` is built on: it pushes a handler that calls `cancel()` when the predicate matches, so the user's logger and the cancel trigger coexist. `EventKind::RunStarted` and `EventKind::RunFinished { reason }` ride the same chain; they are emitted by the `TicketSystem` itself and arrive with an empty `agent_name`.
 
 ## New observables pick a channel
 
@@ -80,13 +80,16 @@ Two layers of state exist. The per-ticket transcript lives on `Ticket::replies`:
 - HTTP error mapping is shared through `providers::map_http_errors` plus a provider-specific `classify` closure; SSE parsing lives in `providers::stream`.
 - Retry happens at the request level using `Policies::max_request_retries` and `request_retry_delay`; vendor code does not retry.
 
-## Cancellation is cooperative
+## Cancellation is cooperative, split into two signals
 
-**A run is cancelled by setting one shared `Arc<AtomicBool>`. Every waiter polls it.**
+**Two `Arc<AtomicBool>` signals separate "stop the workers" from "external cancel was requested." Both flip on cancel; only the stop signal flips on policy or drain.**
 
-- The signal lives behind `TicketSystem::interrupt_signal`; each agent's loop reads it via the upgraded `Arc<TicketSystem>`.
-- Tools observe it through `ToolContext::interrupt_signal` and `wait_for_cancel`; pair with `tokio::select!` so cancel drops the losing branch promptly.
+- `TicketSystem::stop_signal` is what workers and tools poll. `finish()` flips it on cancel, on policy violation, and on clean drain so the worker loop, in-flight tools, and the join handle all wind down.
+- `TicketSystem::cancel_signal` is flipped only by `cancel()`, `cancel_on(trigger)`, and `cancel_on_event(predicate)`. `is_cancelled()` reads it; a clean drain leaves it untouched so observers can tell the three exit paths apart.
+- `cancel()` flips both atomics in sync. `cancel_on*` route through `cancel()` so cancellation triggers compose with the rest of the run's lifecycle.
+- Tools observe the stop signal through `ToolContext::interrupt_signal` and `wait_for_cancel`; pair with `tokio::select!` so cancel drops the losing branch promptly.
 - Dropping the `TicketSystem` while agents still reference it via `Weak` is the public way to abort: the upgrade fails and each task panics out cleanly.
+- `finish()` announces its exit reason as `FinishReason::Drained`, `FinishReason::PolicyViolated(kind)`, or `FinishReason::Cancelled`, in that precedence. The reason is stashed for `TicketSystem::finish_reason()` and emitted as `EventKind::RunFinished { reason }`.
 
 ## Stats are per-system, write-only-by-domain
 
@@ -114,5 +117,5 @@ Two layers of state exist. The per-ticket transcript lives on `Ticket::replies`:
 **A run stops cleanly when any limit on `Policies` trips. The check fires `EventKind::PolicyViolated` and exits the per-agent task.**
 
 - The loop calls `policy_violated_kind` at each iteration; a non-`None` return walks the agent off the queue.
-- Token budgets read from `Stats`; `max_time` reads from `Policies` and is checked separately by the `finish` watcher (graceful stop, not a `PolicyViolated` event).
+- Token budgets read from `Stats`; `max_time` reads from `Policies` and from `Stats::run_duration()`. All limits, including `max_time`, route through `policy_violated_kind` and emit `PolicyViolated`; `finish()` carries the matching `FinishReason::PolicyViolated(kind)` back to the caller.
 - Schema-retry budget is applied per-ticket inside the result-writing path, not at the top of the loop.

@@ -9,7 +9,7 @@ use super::turn::run_agent;
 use super::POLL_INTERVAL;
 
 pub(in crate::agents) async fn run_main_loop(ticket_system: &TicketSystem) {
-    let shutdown_requested = Arc::clone(&ticket_system.interrupt_signal.lock().unwrap());
+    let shutdown_requested = Arc::clone(&ticket_system.stop_signal.lock().unwrap());
     let mut running_agents: Vec<tokio::task::JoinHandle<()>> = Vec::new();
     let mut agents_already_started: usize = 0;
 

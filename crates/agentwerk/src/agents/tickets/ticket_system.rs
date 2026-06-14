@@ -1,9 +1,9 @@
 //! The [`TicketSystem`] orchestrator: owns the shared ticket store,
-//! registered agents, policies, interrupt signal, and run stats. This
-//! file holds construction, configuration, the ticket-creation API,
-//! agent binding, the background-run lifecycle, and queries. Mutation
-//! impls (`claim`, `set_finished`, `summarize`, etc.) live next door
-//! in `store.rs`.
+//! registered agents, policies, cancellation signals, and run stats.
+//! This file holds construction, configuration, the ticket-creation
+//! API, agent binding, the background-run lifecycle, and queries.
+//! Mutation impls (`claim`, `set_finished`, `summarize`, etc.) live
+//! next door in `store.rs`.
 
 use std::collections::HashMap;
 use std::future::Future;
@@ -11,12 +11,12 @@ use std::io;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, Weak};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use serde::Serialize;
 use tokio::task::JoinHandle;
 
-use crate::event::{default_logger, Event, EventKind};
+use crate::event::{default_logger, Event, EventKind, FinishReason};
 use crate::persistence::Persist;
 
 use super::super::agent::{Agent, TicketSystemRef};
@@ -24,7 +24,7 @@ use super::super::policy::Policies;
 use super::super::r#loop::run_main_loop;
 use super::super::stats::Stats;
 use super::ticket::{Status, Ticket};
-use super::{now_millis, numeric_id, policy_violated, Reply};
+use super::{now_millis, numeric_id, policy_violated_kind, Reply};
 
 type EventHandler = dyn Fn(Event) + Send + Sync;
 
@@ -94,7 +94,17 @@ pub struct TicketSystem {
     pub(crate) tickets: Mutex<HashMap<String, Ticket>>,
     pub(super) agents: Mutex<Vec<Agent>>,
     pub(super) policies: Mutex<Policies>,
-    pub(crate) interrupt_signal: Mutex<Arc<AtomicBool>>,
+    /// Set when `finish()` should stop polling: external cancel, policy
+    /// trip, or clean drain. Workers and tools also poll this; flipping
+    /// it walks them off the queue.
+    pub(crate) stop_signal: Mutex<Arc<AtomicBool>>,
+    /// Set only by `cancel()`, `cancel_on`, and `cancel_on_event`. Read
+    /// by `is_cancelled()` so observers can tell external cancel apart
+    /// from policy stops and clean drains.
+    pub(crate) cancel_signal: Mutex<Arc<AtomicBool>>,
+    /// Reason the most recent `finish()` returned. `None` before the
+    /// first `finish()` and between `start()` and the next `finish()`.
+    pub(crate) finish_reason: Mutex<Option<FinishReason>>,
     pub(crate) stats: Stats,
     pub(super) event_handlers: Mutex<Vec<Arc<EventHandler>>>,
     pub(super) dir: Mutex<PathBuf>,
@@ -113,7 +123,9 @@ impl TicketSystem {
             tickets: Mutex::new(HashMap::new()),
             agents: Mutex::new(Vec::new()),
             policies: Mutex::new(Policies::default()),
-            interrupt_signal: Mutex::new(Arc::new(AtomicBool::new(false))),
+            stop_signal: Mutex::new(Arc::new(AtomicBool::new(false))),
+            cancel_signal: Mutex::new(Arc::new(AtomicBool::new(false))),
+            finish_reason: Mutex::new(None),
             stats: Stats::new(),
             event_handlers: Mutex::new(Vec::new()),
             dir: Mutex::new(PathBuf::from(".agentwerk")),
@@ -173,7 +185,9 @@ impl TicketSystem {
             tickets: Mutex::new(tickets),
             agents: Mutex::new(Vec::new()),
             policies: Mutex::new(Policies::default()),
-            interrupt_signal: Mutex::new(Arc::new(AtomicBool::new(false))),
+            stop_signal: Mutex::new(Arc::new(AtomicBool::new(false))),
+            cancel_signal: Mutex::new(Arc::new(AtomicBool::new(false))),
+            finish_reason: Mutex::new(None),
             stats,
             event_handlers: Mutex::new(Vec::new()),
             dir: Mutex::new(tickets_dir),
@@ -272,9 +286,10 @@ impl TicketSystem {
         self
     }
 
-    /// Maximum elapsed duration `finish` will wait before tripping
-    /// the interrupt signal and returning. Hitting the cap is a
-    /// graceful stop, not a `PolicyViolated` event.
+    /// Maximum elapsed duration the run is allowed to span. When the
+    /// elapsed duration reaches the limit, `finish` stops with
+    /// `FinishReason::PolicyViolated(PolicyKind::Time)` and emits the
+    /// matching `PolicyViolated` event.
     pub fn max_time(&self, d: Duration) -> &Self {
         self.policies.lock().unwrap().max_time = Some(d);
         self
@@ -288,10 +303,13 @@ impl TicketSystem {
         F: Future + Send + 'static,
         F::Output: Send,
     {
-        let signal = Arc::clone(&self.interrupt_signal.lock().unwrap());
+        let supervisor = self
+            .weak_self
+            .upgrade()
+            .expect("TicketSystem dropped during cancel_on");
         tokio::spawn(async move {
             let _ = trigger.await;
-            signal.store(true, Ordering::Relaxed);
+            supervisor.cancel();
         });
         self
     }
@@ -303,10 +321,13 @@ impl TicketSystem {
     where
         F: Fn(&Event) -> bool + Send + Sync + 'static,
     {
-        let signal = Arc::clone(&self.interrupt_signal.lock().unwrap());
+        let supervisor = self.weak_self.clone();
         self.on_event(move |event| {
-            if predicate(&event) {
-                signal.store(true, Ordering::Relaxed);
+            if !predicate(&event) {
+                return;
+            }
+            if let Some(s) = supervisor.upgrade() {
+                s.cancel();
             }
         })
     }
@@ -518,14 +539,23 @@ impl TicketSystem {
     /// [`Self::finish`] to wait for the queue to empty, or with
     /// [`Self::cancel`] to signal an early exit.
     pub fn start(&self) -> &Self {
-        let signal = Arc::clone(&self.interrupt_signal.lock().unwrap());
-        // Reset so a system can be re-started after a previous finish
-        // left the flag set.
-        signal.store(false, Ordering::Relaxed);
+        // Reset both signals so a system can be re-started after a
+        // previous finish left flags set, and clear the prior reason so
+        // `finish_reason()` returns None during the live run.
+        self.stop_signal
+            .lock()
+            .unwrap()
+            .store(false, Ordering::Relaxed);
+        self.cancel_signal
+            .lock()
+            .unwrap()
+            .store(false, Ordering::Relaxed);
+        self.finish_reason.lock().unwrap().take();
         let supervisor = self
             .weak_self
             .upgrade()
             .expect("TicketSystem dropped during start");
+        self.emit("", "", EventKind::RunStarted);
         let join = tokio::spawn(async move {
             run_main_loop(&supervisor).await;
             supervisor.stats.mark_finished(now_millis());
@@ -536,50 +566,52 @@ impl TicketSystem {
 
     /// Process every queued ticket, then return. Starts a run if none
     /// is in flight; otherwise watches the in-flight one. Polls every
-    /// 20 ms; exits when `pending_count == 0`, a policy trips, or
-    /// `max_time` elapses. Returns `&self` so callers can chain
+    /// 20 ms; the loop exits on cancel, policy violation, or clean
+    /// drain, in that precedence. The chosen reason is stashed for
+    /// [`Self::finish_reason`] and announced via
+    /// [`EventKind::RunFinished`]. Returns `&self` so callers can chain
     /// [`Self::last_result`], [`Self::results`], or
     /// [`Self::tickets`] without rebinding.
     pub async fn finish(&self) -> &Self {
         if self.join_handle.lock().unwrap().is_none() {
             self.start();
         }
-        let started = Instant::now();
         let policies = self.policies();
-        let signal = Arc::clone(&self.interrupt_signal.lock().unwrap());
-        loop {
+        let stop = Arc::clone(&self.stop_signal.lock().unwrap());
+        let cancel = Arc::clone(&self.cancel_signal.lock().unwrap());
+        let reason: FinishReason = loop {
             tokio::time::sleep(Duration::from_millis(20)).await;
-            if signal.load(Ordering::Relaxed) {
-                break;
+            if cancel.load(Ordering::Relaxed) {
+                stop.store(true, Ordering::Relaxed);
+                break FinishReason::Cancelled;
             }
-            if policy_violated(&policies, &self.stats) {
-                signal.store(true, Ordering::Relaxed);
-                break;
-            }
-            if let Some(limit) = policies.max_time {
-                if started.elapsed() >= limit {
-                    signal.store(true, Ordering::Relaxed);
-                    break;
-                }
+            if let Some((kind, _)) = policy_violated_kind(&policies, &self.stats) {
+                stop.store(true, Ordering::Relaxed);
+                break FinishReason::PolicyViolated(kind);
             }
             if self.pending_count() == 0 {
-                signal.store(true, Ordering::Relaxed);
-                break;
+                stop.store(true, Ordering::Relaxed);
+                break FinishReason::Drained;
             }
-        }
+        };
         self.take_join_handle().await;
         self.stats.mark_finished(now_millis());
+        *self.finish_reason.lock().unwrap() = Some(reason);
+        self.emit("", "", EventKind::RunFinished { reason });
         self
     }
 
-    /// Flip the cancel signal. Sync, so it composes with ctrl-c
-    /// handlers, drop guards, and other sync callers. The background
-    /// task notices on its next poll and exits gracefully. Pair with
-    /// [`Self::finish`] from async code if you also want to wait for
-    /// the task to exit; `finish` returns as soon as it sees the
-    /// signal set.
+    /// Request cancellation. Sync, so it composes with ctrl-c handlers,
+    /// drop guards, and other sync callers. Flips both the cancel
+    /// signal (read by [`Self::is_cancelled`]) and the stop signal
+    /// (read by every worker and tool). [`Self::finish`] returns
+    /// shortly after with `FinishReason::Cancelled`.
     pub fn cancel(&self) {
-        self.interrupt_signal
+        self.cancel_signal
+            .lock()
+            .unwrap()
+            .store(true, Ordering::Relaxed);
+        self.stop_signal
             .lock()
             .unwrap()
             .store(true, Ordering::Relaxed);
@@ -592,13 +624,19 @@ impl TicketSystem {
         }
     }
 
-    /// True once cancellation has been requested. The background task
-    /// finishes its in-flight ticket and exits shortly after.
+    /// True once external cancellation has been requested through
+    /// [`Self::cancel`], [`Self::cancel_on`], or
+    /// [`Self::cancel_on_event`]. Clean drains and policy stops do not
+    /// flip this signal.
     pub fn is_cancelled(&self) -> bool {
-        self.interrupt_signal
-            .lock()
-            .unwrap()
-            .load(Ordering::Relaxed)
+        self.cancel_signal.lock().unwrap().load(Ordering::Relaxed)
+    }
+
+    /// Reason the most recent `finish()` returned. `None` before the
+    /// first `finish()` call and between `start()` and the next
+    /// `finish()`.
+    pub fn finish_reason(&self) -> Option<FinishReason> {
+        *self.finish_reason.lock().unwrap()
     }
 
     /// Most recent finished ticket's result rendered as a String.
@@ -938,5 +976,82 @@ mod tests {
         sys.emit("KEY", "agent", EventKind::TurnStarted);
         sys.emit("KEY", "agent", EventKind::TurnStarted);
         assert_eq!(count.load(Ordering::Relaxed), 22);
+    }
+
+    #[test]
+    fn finish_reason_is_none_before_first_finish() {
+        let (sys, _tmp) = test_system();
+        assert_eq!(sys.finish_reason(), None);
+    }
+
+    #[tokio::test]
+    async fn finish_reason_drained_on_empty_queue() {
+        let (sys, _tmp) = test_system();
+        sys.finish().await;
+        assert_eq!(sys.finish_reason(), Some(FinishReason::Drained));
+    }
+
+    #[tokio::test]
+    async fn is_cancelled_stays_false_after_clean_drain() {
+        let (sys, _tmp) = test_system();
+        sys.finish().await;
+        assert!(
+            !sys.is_cancelled(),
+            "clean drain must not flip the cancel signal",
+        );
+    }
+
+    #[tokio::test]
+    async fn finish_reason_cancelled_when_cancel_fires_during_run() {
+        let (sys, _tmp) = test_system();
+        sys.start();
+        sys.cancel();
+        sys.finish().await;
+        assert_eq!(sys.finish_reason(), Some(FinishReason::Cancelled));
+        assert!(sys.is_cancelled());
+    }
+
+    #[tokio::test]
+    async fn finish_reason_policy_violated_when_max_turns_zero() {
+        let (sys, _tmp) = test_system();
+        sys.max_turns(0);
+        sys.finish().await;
+        assert_eq!(
+            sys.finish_reason(),
+            Some(FinishReason::PolicyViolated(
+                crate::event::PolicyKind::Turns
+            )),
+        );
+    }
+
+    #[tokio::test]
+    async fn finish_reason_resets_after_restart() {
+        let (sys, _tmp) = test_system();
+        sys.finish().await;
+        assert_eq!(sys.finish_reason(), Some(FinishReason::Drained));
+        sys.start();
+        assert_eq!(sys.finish_reason(), None);
+        sys.finish().await;
+        assert_eq!(sys.finish_reason(), Some(FinishReason::Drained));
+    }
+
+    #[tokio::test]
+    async fn run_started_emitted_before_run_finished() {
+        let (sys, _tmp) = test_system();
+        let log = Arc::new(Mutex::new(Vec::new()));
+        let sink = Arc::clone(&log);
+        sys.on_event(move |e| {
+            if matches!(
+                e.kind,
+                EventKind::RunStarted | EventKind::RunFinished { .. }
+            ) {
+                sink.lock().unwrap().push(format!("{:?}", e.kind));
+            }
+        });
+        sys.finish().await;
+        let entries = log.lock().unwrap();
+        assert_eq!(entries.len(), 2, "expected RunStarted then RunFinished");
+        assert!(entries[0].starts_with("RunStarted"));
+        assert!(entries[1].starts_with("RunFinished"));
     }
 }

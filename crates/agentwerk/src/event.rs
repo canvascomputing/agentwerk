@@ -30,6 +30,23 @@ pub enum PolicyKind {
     /// while processing one ticket. Resets after every successful
     /// schema-checked tool call.
     MaxSchemaRetries,
+    /// `max_time`: total elapsed-duration limit. The `limit` field on
+    /// the matching [`EventKind::PolicyViolated`] is reported in
+    /// milliseconds.
+    Time,
+}
+
+/// Why a run ended. Carried by [`EventKind::RunFinished`] and readable
+/// after `finish().await` via `TicketSystem::finish_reason()`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FinishReason {
+    /// No tickets remained pending; nothing more to do.
+    Drained,
+    /// A [`crate::Policies`] limit was exceeded.
+    PolicyViolated(PolicyKind),
+    /// An external party requested cancellation through `cancel()`,
+    /// `cancel_on`, or `cancel_on_event`.
+    Cancelled,
 }
 
 /// Categorical discriminant for [`EventKind::ToolCallFailed`].
@@ -79,8 +96,20 @@ impl Event {
 }
 
 /// Categorical discriminant of [`Event`].
+///
+/// Most variants are emitted by a per-agent loop and carry that agent's
+/// name on the wrapping [`Event`]. Two run-lifecycle variants
+/// (`RunStarted`, `RunFinished`) are emitted by the `TicketSystem`
+/// itself and arrive with an empty `agent_name`.
 #[derive(Debug, Clone)]
 pub enum EventKind {
+    /// The `TicketSystem`'s background work loop has been spawned and
+    /// the run is live. Emitted by `TicketSystem::start`.
+    RunStarted,
+    /// The `TicketSystem`'s run has stopped. Carries the reason
+    /// `finish()` returned. Emitted by `TicketSystem::finish` after the
+    /// worker tasks have joined.
+    RunFinished { reason: FinishReason },
     /// Agent claimed a ticket and began working on it.
     TicketStarted { key: String },
     /// Ticket settled with `Status::Finished`.
@@ -176,6 +205,12 @@ pub fn default_logger() -> Arc<dyn Fn(Event) + Send + Sync> {
     Arc::new(|event: Event| {
         let agent = &event.agent_name;
         match &event.kind {
+            EventKind::RunStarted => {
+                eprintln!("run started");
+            }
+            EventKind::RunFinished { reason } => {
+                eprintln!("run finished: {reason:?}");
+            }
             EventKind::TicketStarted { key } => {
                 eprintln!("[{agent}] started {key}");
             }
@@ -261,6 +296,16 @@ mod tests {
 
     fn all_variants() -> Vec<EventKind> {
         vec![
+            EventKind::RunStarted,
+            EventKind::RunFinished {
+                reason: FinishReason::Drained,
+            },
+            EventKind::RunFinished {
+                reason: FinishReason::PolicyViolated(PolicyKind::Time),
+            },
+            EventKind::RunFinished {
+                reason: FinishReason::Cancelled,
+            },
             EventKind::TicketStarted { key: "T-1".into() },
             EventKind::TicketFinished { key: "T-1".into() },
             EventKind::TicketFailed { key: "T-1".into() },
@@ -316,6 +361,10 @@ mod tests {
             EventKind::PolicyViolated {
                 kind: PolicyKind::MaxSchemaRetries,
                 limit: 10,
+            },
+            EventKind::PolicyViolated {
+                kind: PolicyKind::Time,
+                limit: 60_000,
             },
             EventKind::CompactionStarted {
                 reason: CompactReason::Proactive,

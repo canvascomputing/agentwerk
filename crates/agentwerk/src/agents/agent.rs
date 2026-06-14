@@ -2,7 +2,7 @@
 //! `AgentBuilder::build()` produces the final agent, which
 //! `tickets.agent(agent)` binds to the system. agentwerk upgrades the
 //! bound reference once at the start of `run_agent` and accesses
-//! `tickets`, `policies`, `stats`, and `interrupt_signal` through the
+//! `tickets`, `policies`, `stats`, and `stop_signal` through the
 //! resulting `Arc<TicketSystem>`.
 
 use std::path::PathBuf;

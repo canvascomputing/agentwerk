@@ -51,7 +51,7 @@ pub(super) async fn run(context: &mut LoopContext<'_>, messages: Vec<Message>) -
                     );
                 }
             });
-            let interrupt = &context.interrupt_signal;
+            let interrupt = &context.stop_signal;
             tokio::select! {
                 biased;
                 _ = wait_for_signal(interrupt) => return Action::Stop,
@@ -81,7 +81,7 @@ pub(super) async fn run(context: &mut LoopContext<'_>, messages: Vec<Message>) -
                             message: e.to_string(),
                         },
                     );
-                    let interrupt = &context.interrupt_signal;
+                    let interrupt = &context.stop_signal;
                     tokio::select! {
                         biased;
                         _ = wait_for_signal(interrupt) => return Action::Stop,

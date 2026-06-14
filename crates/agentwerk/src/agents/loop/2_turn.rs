@@ -20,7 +20,7 @@ pub(super) struct LoopContext<'a> {
     pub(super) agent: &'a Agent,
     pub(super) model: &'a Model,
     pub(super) ticket_system: &'a Arc<TicketSystem>,
-    pub(super) interrupt_signal: Arc<AtomicBool>,
+    pub(super) stop_signal: Arc<AtomicBool>,
 
     pub(super) ticket_key: String,
     pub(super) system_prompt: String,
@@ -35,7 +35,7 @@ impl<'a> LoopContext<'a> {
         agent: &'a Agent,
         model: &'a Model,
         ticket_system: &'a Arc<TicketSystem>,
-        interrupt_signal: Arc<AtomicBool>,
+        stop_signal: Arc<AtomicBool>,
         policies: Policies,
         ticket_key: String,
         system_prompt: String,
@@ -44,7 +44,7 @@ impl<'a> LoopContext<'a> {
             agent,
             model,
             ticket_system,
-            interrupt_signal,
+            stop_signal,
 
             ticket_key,
             system_prompt,
@@ -73,9 +73,9 @@ pub(super) async fn start_turn<'a>(
     agent: &'a Agent,
     ticket_system: &'a Arc<TicketSystem>,
 ) -> Action<Vec<Message>> {
-    let interrupt_signal = Arc::clone(&ticket_system.interrupt_signal.lock().unwrap());
+    let stop_signal = Arc::clone(&ticket_system.stop_signal.lock().unwrap());
 
-    if interrupt_signal.load(Ordering::Relaxed) {
+    if stop_signal.load(Ordering::Relaxed) {
         return Action::Stop;
     }
     let policies = ticket_system.policies();
@@ -147,7 +147,7 @@ pub(super) async fn start_turn<'a>(
             agent,
             model,
             ticket_system,
-            interrupt_signal,
+            stop_signal,
             policies,
             ticket_key,
             system_prompt,
