@@ -18,6 +18,19 @@ Commands used to build, test, release, and run example agents.
 - `make test` runs `cargo test --workspace --lib` (every crate's inline `#[cfg(test)] mod tests`).
 - `make test_integration` runs the live-provider tests bundled by `tests/integration.rs`.
 
+## Integration env
+
+**Integration tests read provider config from a `.env` file at the repo root.**
+
+- `make test_integration` sources `.env` automatically when present.
+- The file holds shell `export` statements, one per variable:
+  ```
+  export OPENAI_API_KEY=sk-local
+  export OPENAI_BASE_URL=http://localhost:8095
+  ```
+- `OPENAI_BASE_URL` points at a local OpenAI-compatible proxy on port 8095.
+- `.env` is gitignored: each contributor maintains their own.
+
 ## Release
 
 **`make bump` runs the full release step in one command.**

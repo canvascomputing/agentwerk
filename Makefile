@@ -13,8 +13,10 @@ test:
 #        make test_integration name=bash_usage  (run one file)
 test_integration:
 ifdef name
+	@if [ -f .env ]; then set -a; . ./.env; set +a; fi; \
 	RUSTFLAGS="-D warnings" cargo test --test integration $(name) -- --nocapture
 else
+	@if [ -f .env ]; then set -a; . ./.env; set +a; fi; \
 	RUSTFLAGS="-D warnings" cargo test --test integration -- --nocapture --test-threads=1
 endif
 

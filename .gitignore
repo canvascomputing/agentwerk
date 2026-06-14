@@ -2,3 +2,6 @@
 
 # Default knowledge store directory created by every bound agent.
 **/.agentwerk
+
+# Per-contributor integration-test env (see agentdocs/workflow.md).
+.env
