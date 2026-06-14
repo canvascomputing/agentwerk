@@ -1226,6 +1226,7 @@ version = "0.1.0"
 dependencies = [
  "agentwerk",
  "reqwest",
+ "serde",
  "serde_json",
  "tokio",
 ]
