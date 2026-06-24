@@ -651,4 +651,3 @@ fn ellipsis_reports_empty_line_as_a_zero_width_match() {
     assert_eq!(empty.loc.length, 0);
     assert_eq!(empty.loc.substring, "");
 }
-
