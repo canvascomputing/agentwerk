@@ -85,7 +85,7 @@ impl ToolLike for ReadFileTool {
             let col_offset = input["col_offset"].as_u64().map(|c| c.max(1) as usize);
             let col_limit = input["col_limit"].as_u64().map(|c| c as usize);
 
-            let start = offset - 1;
+            let start = (offset - 1).min(lines.len());
             let end = (start + limit).min(lines.len());
 
             let mut result = String::new();
@@ -186,6 +186,12 @@ mod tests {
                 expect_error: false,
                 expect_contains: "1:6\t",
             },
+            Case {
+                name: "col_limit past end of line clamps to EOL",
+                input: serde_json::json!({ "path": "test.txt", "offset": 2, "limit": 1, "col_offset": 2, "col_limit": 100 }),
+                expect_error: false,
+                expect_contains: "2:2\teta",
+            },
         ];
 
         let tool = ReadFileTool;
@@ -210,5 +216,45 @@ mod tests {
                 content
             );
         }
+    }
+
+    #[tokio::test]
+    async fn read_past_eof_returns_empty() {
+        let dir = crate::test_util::TempDir::new().unwrap();
+        std::fs::write(dir.path().join("test.txt"), "alpha\nbeta\n").unwrap();
+
+        let result = ReadFileTool
+            .call(
+                serde_json::json!({ "path": "test.txt", "offset": 100 }),
+                &test_ctx(dir.path()),
+            )
+            .await
+            .unwrap();
+
+        let ToolResult::Success(content) = &result else {
+            panic!("offset past EOF should succeed with an empty slice, got {result:?}");
+        };
+        assert_eq!(content, "");
+    }
+
+    #[tokio::test]
+    async fn col_offset_snaps_to_char_boundary() {
+        let dir = crate::test_util::TempDir::new().unwrap();
+        // 'é' is two bytes; col_offset 5 lands on its second byte.
+        std::fs::write(dir.path().join("test.txt"), "caféx\n").unwrap();
+
+        let result = ReadFileTool
+            .call(
+                serde_json::json!({ "path": "test.txt", "col_offset": 5 }),
+                &test_ctx(dir.path()),
+            )
+            .await
+            .unwrap();
+
+        let ToolResult::Success(content) = &result else {
+            panic!("slicing mid-codepoint should succeed, got {result:?}");
+        };
+        // The slice starts at the next char boundary instead of splitting 'é'.
+        assert_eq!(content, "1:6\tx");
     }
 }
