@@ -14,6 +14,7 @@ use serde::ser::{SerializeStruct, Serializer};
 use serde::Serialize;
 
 use crate::agents::tickets::Status;
+use crate::event::ToolFailureKind;
 use crate::providers::types::TokenUsage;
 
 /// Recorder protocol for the agent loop. Each agent holds an
@@ -89,6 +90,64 @@ pub struct Stats {
     /// Feeds the proactive-compaction predictor; cleared on compaction.
     /// Always empty on a label slice.
     usage_history: Mutex<HashMap<String, Vec<TokenUsage>>>,
+    /// Per-tool call and failure tallies keyed by tool name. Populated
+    /// only on the run-wide `Stats`; always empty on a label slice.
+    tool_stats: Mutex<HashMap<String, ToolCounters>>,
+}
+
+/// Raw per-tool tallies behind the `tool_stats` map. `errors` is derived
+/// from the three kinds, never stored.
+#[derive(Default, Clone)]
+struct ToolCounters {
+    calls: u64,
+    not_found: u64,
+    execution_failed: u64,
+    schema_failed: u64,
+}
+
+/// Call and failure tallies for one tool, broken down by failure kind.
+/// Returned by [`Stats::tool_stats`] to measure how often the model
+/// misuses a given tool: a high error rate or `schema_failed`/`not_found`
+/// count points at the tool's description or input schema.
+#[derive(Debug, Clone, Serialize)]
+pub struct ToolStat {
+    /// Every invocation attempt, including calls that named an unknown tool.
+    pub calls: u64,
+    /// Model named a tool the registry does not have.
+    pub not_found: u64,
+    /// The tool ran but returned an error (bad arguments, non-zero exit, IO).
+    pub execution_failed: u64,
+    /// The tool rejected the input on schema validation. Overlaps the
+    /// `SchemaRetried` event and the `max_schema_retries` policy: this is
+    /// the same population the retry budget governs, surfaced per tool.
+    pub schema_failed: u64,
+}
+
+impl ToolStat {
+    /// Total failures across the three kinds.
+    pub fn errors(&self) -> u64 {
+        self.not_found + self.execution_failed + self.schema_failed
+    }
+
+    /// `errors / calls`. `None` when the tool was never called.
+    pub fn error_rate(&self) -> Option<f64> {
+        if self.calls == 0 {
+            None
+        } else {
+            Some(self.errors() as f64 / self.calls as f64)
+        }
+    }
+}
+
+impl From<&ToolCounters> for ToolStat {
+    fn from(c: &ToolCounters) -> Self {
+        Self {
+            calls: c.calls,
+            not_found: c.not_found,
+            execution_failed: c.execution_failed,
+            schema_failed: c.schema_failed,
+        }
+    }
 }
 
 impl Stats {
@@ -109,6 +168,7 @@ impl Stats {
             total_work_duration: AtomicU64::new(0),
             label_stats: Mutex::new(HashMap::new()),
             usage_history: Mutex::new(HashMap::new()),
+            tool_stats: Mutex::new(HashMap::new()),
         }
     }
 
@@ -146,6 +206,40 @@ impl Stats {
     /// since the post-summary transcript breaks the pre-summary trend.
     pub(crate) fn reset_usage(&self, ticket_key: &str) {
         self.usage_history.lock().unwrap().remove(ticket_key);
+    }
+
+    /// Per-tool call and failure tallies, sorted by tool name. Empty on a
+    /// label slice. The `schema_failed` field overlaps the `SchemaRetried`
+    /// event and `max_schema_retries` policy: it counts the same population
+    /// the retry budget governs, surfaced per tool.
+    pub fn tool_stats(&self) -> BTreeMap<String, ToolStat> {
+        self.tool_stats
+            .lock()
+            .unwrap()
+            .iter()
+            .map(|(name, counters)| (name.clone(), counters.into()))
+            .collect()
+    }
+
+    /// Count one invocation attempt against `name`.
+    pub(crate) fn record_tool_call_named(&self, name: &str) {
+        self.tool_stats
+            .lock()
+            .unwrap()
+            .entry(name.to_string())
+            .or_default()
+            .calls += 1;
+    }
+
+    /// Count one failure of `kind` against `name`.
+    pub(crate) fn record_tool_error_named(&self, name: &str, kind: ToolFailureKind) {
+        let mut map = self.tool_stats.lock().unwrap();
+        let counters = map.entry(name.to_string()).or_default();
+        match kind {
+            ToolFailureKind::ToolNotFound => counters.not_found += 1,
+            ToolFailureKind::ExecutionFailed => counters.execution_failed += 1,
+            ToolFailureKind::SchemaValidationFailed => counters.schema_failed += 1,
+        }
     }
 
     pub(crate) fn record_turn_for(&self, labels: &[String]) {
@@ -419,6 +513,21 @@ impl crate::persistence::Persist for Stats {
                 slice.load_fields(body);
             }
         }
+        if let Some(tools) = value.get("tools").and_then(|v| v.as_object()) {
+            let mut map = stats.tool_stats.lock().unwrap();
+            for (name, body) in tools {
+                let get = |key: &str| body.get(key).and_then(|v| v.as_u64()).unwrap_or(0);
+                map.insert(
+                    name.clone(),
+                    ToolCounters {
+                        calls: get("calls"),
+                        not_found: get("not_found"),
+                        execution_failed: get("execution_failed"),
+                        schema_failed: get("schema_failed"),
+                    },
+                );
+            }
+        }
         Ok(stats)
     }
 }
@@ -426,7 +535,8 @@ impl crate::persistence::Persist for Stats {
 impl Serialize for Stats {
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
         let labels = self.label_stats.lock().unwrap();
-        let len = 17 + if labels.is_empty() { 0 } else { 1 };
+        let tools = self.tool_stats();
+        let len = 17 + usize::from(!labels.is_empty()) + usize::from(!tools.is_empty());
         let mut st = serializer.serialize_struct("Stats", len)?;
         st.serialize_field("turns", &self.turns())?;
         st.serialize_field("requests", &self.requests())?;
@@ -464,6 +574,27 @@ impl Serialize for Stats {
             let nested: BTreeMap<&String, &Stats> =
                 labels.iter().map(|(k, v)| (k, v.as_ref())).collect();
             st.serialize_field("labels", &nested)?;
+        }
+        if !tools.is_empty() {
+            // Raw counters round-trip through load; errors/error_rate are
+            // derived, emitted for readers, and ignored on load.
+            let nested: BTreeMap<&String, serde_json::Value> = tools
+                .iter()
+                .map(|(name, stat)| {
+                    (
+                        name,
+                        serde_json::json!({
+                            "calls": stat.calls,
+                            "not_found": stat.not_found,
+                            "execution_failed": stat.execution_failed,
+                            "schema_failed": stat.schema_failed,
+                            "errors": stat.errors(),
+                            "error_rate": stat.error_rate(),
+                        }),
+                    )
+                })
+                .collect();
+            st.serialize_field("tools", &nested)?;
         }
         st.end()
     }
@@ -853,5 +984,97 @@ mod tests {
         let t2 = s.usage_history("TICKET-2");
         assert_eq!(t2.len(), 1);
         assert_eq!(t2[0].input_tokens, 200);
+    }
+
+    #[test]
+    fn tool_stats_records_calls_and_errors_per_tool() {
+        let s = Stats::new();
+        s.record_tool_call_named("edit_file");
+        s.record_tool_call_named("edit_file");
+        s.record_tool_call_named("bash");
+        s.record_tool_error_named("edit_file", ToolFailureKind::SchemaValidationFailed);
+        s.record_tool_error_named("bash", ToolFailureKind::ExecutionFailed);
+        s.record_tool_error_named("ghost", ToolFailureKind::ToolNotFound);
+
+        let tools = s.tool_stats();
+        let edit = &tools["edit_file"];
+        assert_eq!(edit.calls, 2);
+        assert_eq!(edit.schema_failed, 1);
+        assert_eq!(edit.errors(), 1);
+        assert_eq!(tools["bash"].execution_failed, 1);
+        assert_eq!(tools["ghost"].not_found, 1);
+    }
+
+    #[test]
+    fn tool_stat_error_rate_is_errors_over_calls() {
+        let s = Stats::new();
+        s.record_tool_call_named("edit_file");
+        s.record_tool_call_named("edit_file");
+        s.record_tool_call_named("edit_file");
+        s.record_tool_call_named("edit_file");
+        s.record_tool_error_named("edit_file", ToolFailureKind::SchemaValidationFailed);
+
+        let tools = s.tool_stats();
+        assert_eq!(tools["edit_file"].error_rate(), Some(0.25));
+    }
+
+    #[test]
+    fn tool_stat_error_rate_is_none_without_calls() {
+        // A failure can be recorded for a name that never logged a call only
+        // in malformed cases; the rate is then undefined rather than infinite.
+        let s = Stats::new();
+        s.record_tool_error_named("ghost", ToolFailureKind::ToolNotFound);
+        assert!(s.tool_stats()["ghost"].error_rate().is_none());
+    }
+
+    #[test]
+    fn tool_stats_round_trips_through_save_load() {
+        let dir = crate::test_util::TempDir::new().unwrap();
+
+        let s = Stats::new();
+        s.record_tool_call_named("edit_file");
+        s.record_tool_call_named("edit_file");
+        s.record_tool_error_named("edit_file", ToolFailureKind::SchemaValidationFailed);
+        s.record_tool_call_named("bash");
+        s.record_tool_error_named("bash", ToolFailureKind::ExecutionFailed);
+
+        use crate::persistence::Persist;
+        s.save(dir.path()).unwrap();
+        let restored = Stats::load(dir.path()).unwrap();
+
+        let tools = restored.tool_stats();
+        assert_eq!(tools["edit_file"].calls, 2);
+        assert_eq!(tools["edit_file"].schema_failed, 1);
+        assert_eq!(tools["bash"].execution_failed, 1);
+    }
+
+    #[test]
+    fn stats_serializes_tools_as_nested_object() {
+        let s = Stats::new();
+        s.record_tool_call_named("edit_file");
+        s.record_tool_call_named("edit_file");
+        s.record_tool_error_named("edit_file", ToolFailureKind::SchemaValidationFailed);
+
+        let value = serde_json::to_value(&s).unwrap();
+        let tools = value["tools"].as_object().unwrap();
+        assert_eq!(tools["edit_file"]["calls"], 2);
+        assert_eq!(tools["edit_file"]["schema_failed"], 1);
+        assert_eq!(tools["edit_file"]["errors"], 1);
+        assert_eq!(tools["edit_file"]["error_rate"].as_f64().unwrap(), 0.5);
+    }
+
+    #[test]
+    fn stats_omits_tools_when_empty() {
+        let s = Stats::new();
+        let value = serde_json::to_value(&s).unwrap();
+        assert!(value.get("tools").is_none());
+    }
+
+    #[test]
+    fn tool_stats_empty_on_label_slice() {
+        let s = Stats::new();
+        s.record_tool_call_named("edit_file");
+        let slice = s.stats_for_label("scan");
+        assert!(slice.tool_stats().is_empty());
     }
 }

@@ -223,6 +223,12 @@ impl TicketSystem {
                 self.stats.record_usage(key, usage.clone());
             }
             EventKind::RequestFailed { .. } => self.stats.record_error_for(&labels),
+            EventKind::ToolCallStarted { tool_name, .. } => {
+                self.stats.record_tool_call_named(tool_name)
+            }
+            EventKind::ToolCallFailed {
+                tool_name, kind, ..
+            } => self.stats.record_tool_error_named(tool_name, *kind),
             _ => {}
         }
         let handlers: Vec<Arc<EventHandler>> = self.event_handlers.lock().unwrap().clone();

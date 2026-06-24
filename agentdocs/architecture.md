@@ -101,6 +101,7 @@ Two layers of state exist. The per-ticket transcript lives on `Ticket::replies`:
 - Reads happen on `Stats` directly through inherent accessors (`turns()`, `tickets_finished()`, `run_duration()`, `success_rate()`, ...), never through the recorder traits.
 - Lock-free for increments; readers do one atomic load per call.
 - `Stats::stats_for_label(label)` returns a nested `Stats` slice scoped to one label. The loop and ticket lifecycle bump each slice alongside the global counters; `run_duration()` is `None` on a slice (elapsed run duration stays global).
+- `Stats::tool_stats()` returns per-tool call and failure counts keyed by tool name, broken down by failure kind. It is recorded global-only (no per-label slices, like `usage_history`): `emit()` consumes `ToolCallStarted` for the call count and `ToolCallFailed` for the kind-split failures. The aggregate `tool_calls`/`errors` counters are unaffected; `errors()` stays provider-only.
 
 ## Persistence routes through two traits
 
