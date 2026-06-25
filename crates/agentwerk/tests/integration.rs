@@ -36,3 +36,12 @@ mod traces_call_path_across_files;
 
 #[path = "integration/write_file_creates_file.rs"]
 mod write_file_creates_file;
+
+#[path = "integration/find_tools_discovers_deferred.rs"]
+mod find_tools_discovers_deferred;
+
+#[path = "integration/manage_tickets_creates_ticket.rs"]
+mod manage_tickets_creates_ticket;
+
+#[path = "integration/read_tickets_finds_seeded.rs"]
+mod read_tickets_finds_seeded;
