@@ -31,6 +31,13 @@ const DEFAULT_MAX_RESULTS: u64 = 100;
 const MAX_LINE_DISPLAY: usize = 200;
 const SKIP_DIRS: &[&str] = &[".git", "target", "node_modules", "vendor"];
 
+/// Returned when a syntactically valid pattern matches nothing. Doubles as a
+/// nudge: a model that reached for regex (the common miss) sees how to write a
+/// structural query and can correct on its next turn instead of repeating it.
+const NO_MATCH_HINT: &str = "No matches. This is structural search, not regex: write the literal code \
+and use `$NAME` to capture an identifier, e.g. `fn $NAME(...)`. Regex syntax (`[a-z]`, `*`, `\\`) is \
+matched literally, so it will not match code.";
+
 fn tool_file() -> &'static ToolFile {
     static FILE: OnceLock<ToolFile> = OnceLock::new();
     FILE.get_or_init(|| ToolFile::parse(include_str!("codegrep.tool.md")))
@@ -118,6 +125,9 @@ impl ToolLike for CodegrepTool {
                 }
             }
 
+            if output.is_empty() {
+                return Ok(ToolResult::success(NO_MATCH_HINT));
+            }
             Ok(ToolResult::success(output.join("\n")))
         })
     }
@@ -277,11 +287,14 @@ mod tests {
             serde_json::json!({"pattern": "hello"}),
         )
         .await;
-        assert!(output.is_empty(), "expected empty, got: {output}");
+        assert!(
+            output.starts_with("No matches"),
+            "expected no match, got: {output}"
+        );
     }
 
     #[tokio::test]
-    async fn returns_empty_output_when_no_match_is_found() {
+    async fn reports_no_match_with_a_structural_syntax_hint() {
         let tmp = crate::test_util::TempDir::new().unwrap();
         fs::write(tmp.path().join("file.txt"), "nothing here\n").unwrap();
         let output = run(
@@ -290,7 +303,9 @@ mod tests {
             serde_json::json!({"pattern": "absent"}),
         )
         .await;
-        assert!(output.is_empty());
+        assert!(output.starts_with("No matches"), "output: {output}");
+        // The miss should teach the metavariable form, not leave the model guessing.
+        assert!(output.contains("$NAME"), "output: {output}");
     }
 
     #[tokio::test]
