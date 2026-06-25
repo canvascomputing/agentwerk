@@ -41,9 +41,9 @@ pub(crate) fn compaction_directive() -> &'static str {
 /// the ticket's schema.
 pub(crate) fn schema_retry_detail(validator_message: &str) -> String {
     format!(
-        "Your output did not match the required schema. Reply with a \
-         single JSON value conforming to the schema, with no surrounding \
-         text and no code fences. Validator said: {validator_message}"
+        "The `result` you passed did not match the ticket's schema. Call the \
+         finisher again with `result` set to a JSON value that matches it. \
+         Validator said: {validator_message}"
     )
 }
 
