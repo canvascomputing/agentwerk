@@ -235,6 +235,46 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn stores_a_string_encoded_result_as_the_decoded_object() {
+        let dir = crate::test_util::TempDir::new().unwrap();
+        let sys = TicketSystem::new();
+        sys.dir(shared_test_dir().to_path_buf());
+        sys.dir(dir.path().to_path_buf());
+        let schema = Schema::parse(serde_json::json!({
+            "type": "object",
+            "properties": {"x": {"type": "string"}},
+            "required": ["x"]
+        }))
+        .unwrap();
+        sys.insert(
+            Ticket::new("hi").schema(schema).label("alice"),
+            "tester".into(),
+        );
+        let key = sys
+            .claim(|t| t.status == Status::Todo, "alice")
+            .expect("claim must succeed");
+        let ctx = ctx_with(Arc::clone(&sys), "alice", dir.path().to_path_buf());
+
+        // The agent double-encoded the conforming object as a JSON string.
+        let outcome = FinishTicketTool
+            .call(serde_json::json!({"result": "{\"x\": \"ok\"}"}), &ctx)
+            .await
+            .unwrap();
+        assert!(matches!(outcome, ToolResult::Success(_)));
+
+        let t = sys.get_ticket(&key).unwrap();
+        assert_eq!(t.status, Status::Finished);
+        // Stored as the decoded object, not the raw string.
+        assert!(t.result.as_ref().unwrap().is_object());
+        assert_eq!(t.result.as_ref().unwrap()["x"], "ok");
+        // The persisted log line carries the object too.
+        let log = std::fs::read_to_string(dir.path().join("results.jsonl")).unwrap();
+        let parsed: serde_json::Value =
+            serde_json::from_str(log.lines().next_back().unwrap()).unwrap();
+        assert!(parsed["result"].is_object());
+    }
+
+    #[tokio::test]
     async fn errors_when_no_current_ticket() {
         let dir = crate::test_util::TempDir::new().unwrap();
         let sys = TicketSystem::new();

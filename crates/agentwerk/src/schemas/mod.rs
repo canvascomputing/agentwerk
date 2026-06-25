@@ -49,11 +49,27 @@ impl Schema {
         })
     }
 
-    /// Validate `instance` against this schema. On success returns
-    /// `Ok(())`. On failure returns every violation the validator
-    /// reported, each tagged with the instance path so the model can
-    /// find the field it got wrong.
-    pub fn validate(&self, instance: &Value) -> Result<(), Vec<SchemaViolation>> {
+    /// Validate `value` and return the value to keep. A conforming value is
+    /// returned unchanged; a JSON string an agent double-encoded (`"{...}"`
+    /// instead of `{...}`) is decoded once and returned if the decoded value
+    /// conforms. Otherwise the original violations are returned, so a retry
+    /// points at the real problem, not the decoding.
+    pub fn validate(&self, value: Value) -> Result<Value, Vec<SchemaViolation>> {
+        match self.check(&value) {
+            Ok(()) => Ok(value),
+            Err(violations) => match &value {
+                Value::String(s) => match serde_json::from_str::<Value>(s) {
+                    Ok(decoded) if self.check(&decoded).is_ok() => Ok(decoded),
+                    _ => Err(violations),
+                },
+                _ => Err(violations),
+            },
+        }
+    }
+
+    /// Pure structural check against the compiled schema: `Ok(())`, or every
+    /// violation found, each tagged with its instance path.
+    fn check(&self, instance: &Value) -> Result<(), Vec<SchemaViolation>> {
         let mut violations = Vec::new();
         self.inner.compiled.check(instance, "", &mut violations);
         if violations.is_empty() {
@@ -778,7 +794,7 @@ mod tests {
             "required": ["name"],
         }))
         .unwrap();
-        assert!(schema.validate(&json!({"name": "alice"})).is_ok());
+        assert!(schema.validate(json!({"name": "alice"})).is_ok());
     }
 
     #[test]
@@ -792,7 +808,7 @@ mod tests {
             "required": ["name", "age"],
         }))
         .unwrap();
-        let violations = schema.validate(&json!({"name": 7, "age": -1})).unwrap_err();
+        let violations = schema.validate(json!({"name": 7, "age": -1})).unwrap_err();
         assert!(violations.len() >= 2);
         let paths: Vec<&str> = violations
             .iter()
@@ -810,7 +826,7 @@ mod tests {
             "required": ["x", "y"],
         }))
         .unwrap();
-        let violations = schema.validate(&json!({"x": "hi"})).unwrap_err();
+        let violations = schema.validate(json!({"x": "hi"})).unwrap_err();
         assert!(violations.iter().any(|v| v.message.contains("`y`")));
     }
 
@@ -822,33 +838,33 @@ mod tests {
             "minItems": 1,
         }))
         .unwrap();
-        assert!(schema.validate(&json!([1, 2, 3])).is_ok());
-        let violations = schema.validate(&json!([])).unwrap_err();
+        assert!(schema.validate(json!([1, 2, 3])).is_ok());
+        let violations = schema.validate(json!([])).unwrap_err();
         assert!(violations
             .iter()
             .any(|v| v.schema_path.ends_with("/minItems")));
-        let violations = schema.validate(&json!([0, -1])).unwrap_err();
+        let violations = schema.validate(json!([0, -1])).unwrap_err();
         assert!(violations.iter().any(|v| v.instance_path == "/1"));
     }
 
     #[test]
     fn validate_enum_and_const() {
         let enum_schema = Schema::parse(json!({"enum": ["a", "b", "c"]})).unwrap();
-        assert!(enum_schema.validate(&json!("b")).is_ok());
-        assert!(enum_schema.validate(&json!("z")).is_err());
+        assert!(enum_schema.validate(json!("b")).is_ok());
+        assert!(enum_schema.validate(json!("z")).is_err());
 
         let const_schema = Schema::parse(json!({"const": 42})).unwrap();
-        assert!(const_schema.validate(&json!(42)).is_ok());
-        assert!(const_schema.validate(&json!(43)).is_err());
+        assert!(const_schema.validate(json!(42)).is_ok());
+        assert!(const_schema.validate(json!(43)).is_err());
     }
 
     #[test]
     fn validate_string_length_bounds() {
         let schema =
             Schema::parse(json!({"type": "string", "minLength": 2, "maxLength": 4})).unwrap();
-        assert!(schema.validate(&json!("ok")).is_ok());
-        assert!(schema.validate(&json!("a")).is_err());
-        assert!(schema.validate(&json!("toolong")).is_err());
+        assert!(schema.validate(json!("ok")).is_ok());
+        assert!(schema.validate(json!("a")).is_err());
+        assert!(schema.validate(json!("toolong")).is_err());
     }
 
     #[test]
@@ -859,8 +875,8 @@ mod tests {
             "additionalProperties": false,
         }))
         .unwrap();
-        assert!(schema.validate(&json!({"x": "hi"})).is_ok());
-        let violations = schema.validate(&json!({"x": "hi", "y": 1})).unwrap_err();
+        assert!(schema.validate(json!({"x": "hi"})).is_ok());
+        let violations = schema.validate(json!({"x": "hi", "y": 1})).unwrap_err();
         assert!(violations.iter().any(|v| v.message.contains("`y`")));
     }
 
@@ -868,16 +884,16 @@ mod tests {
     fn validate_integer_accepts_whole_floats() {
         // JSON Schema treats `1.0` as integer-valid.
         let schema = Schema::parse(json!({"type": "integer"})).unwrap();
-        assert!(schema.validate(&json!(1.0)).is_ok());
-        assert!(schema.validate(&json!(1.5)).is_err());
+        assert!(schema.validate(json!(1.0)).is_ok());
+        assert!(schema.validate(json!(1.5)).is_err());
     }
 
     #[test]
     fn validate_type_array_accepts_any_listed() {
         let schema = Schema::parse(json!({"type": ["string", "null"]})).unwrap();
-        assert!(schema.validate(&json!("hi")).is_ok());
-        assert!(schema.validate(&json!(null)).is_ok());
-        assert!(schema.validate(&json!(1)).is_err());
+        assert!(schema.validate(json!("hi")).is_ok());
+        assert!(schema.validate(json!(null)).is_ok());
+        assert!(schema.validate(json!(1)).is_err());
     }
 
     #[test]
@@ -888,11 +904,57 @@ mod tests {
             "required": ["x", "y"],
         }))
         .unwrap();
-        let violations = schema.validate(&json!({"x": 1})).unwrap_err();
+        let violations = schema.validate(json!({"x": 1})).unwrap_err();
         let formatted = format_violations(&violations);
         assert!(formatted.starts_with("Schema validation failed:\n"));
         let body = formatted.trim_start_matches("Schema validation failed:\n");
         assert!(body.lines().all(|line| line.starts_with("- ")));
+    }
+
+    #[test]
+    fn validate_returns_a_conforming_value_unchanged() {
+        let schema = Schema::parse(json!({
+            "type": "object",
+            "properties": { "status": { "type": "string" } },
+            "required": ["status"],
+        }))
+        .unwrap();
+        let value = json!({"status": "ok"});
+        assert_eq!(schema.validate(value.clone()).unwrap(), value);
+    }
+
+    #[test]
+    fn validate_decodes_a_string_encoded_object() {
+        let schema = Schema::parse(json!({
+            "type": "object",
+            "properties": { "status": { "type": "string" } },
+            "required": ["status"],
+        }))
+        .unwrap();
+        // The agent double-encoded the object as a JSON string.
+        let encoded = json!("{\"status\": \"ok\"}");
+        assert_eq!(schema.validate(encoded).unwrap(), json!({"status": "ok"}),);
+    }
+
+    #[test]
+    fn validate_returns_the_pre_decoding_violations_when_decoded_value_still_fails() {
+        let schema = Schema::parse(json!({"type": "object", "required": ["status"]})).unwrap();
+        // The string decodes to valid JSON, but the decoded object still
+        // violates the schema (no `status`). The caller must see the original
+        // violation about the string (`/type`), not one about the decoded
+        // object (`/required`), so the retry points at the real problem.
+        let violations = schema.validate(json!("{\"other\": 1}")).unwrap_err();
+        assert!(violations.iter().any(|v| v.schema_path.ends_with("/type")));
+        assert!(!violations
+            .iter()
+            .any(|v| v.schema_path.ends_with("/required")));
+    }
+
+    #[test]
+    fn validate_does_not_decode_a_non_string_value() {
+        let schema = Schema::parse(json!({"type": "object", "required": ["status"]})).unwrap();
+        // A number is not a string-encoding candidate; it fails as-is.
+        assert!(schema.validate(json!(42)).is_err());
     }
 
     #[test]
@@ -905,15 +967,15 @@ mod tests {
     #[test]
     fn boolean_true_schema_accepts_anything() {
         let schema = Schema::parse(json!(true)).unwrap();
-        assert!(schema.validate(&json!(null)).is_ok());
-        assert!(schema.validate(&json!({"a": [1, 2]})).is_ok());
+        assert!(schema.validate(json!(null)).is_ok());
+        assert!(schema.validate(json!({"a": [1, 2]})).is_ok());
     }
 
     #[test]
     fn boolean_false_schema_rejects_everything() {
         let schema = Schema::parse(json!(false)).unwrap();
-        assert!(schema.validate(&json!(null)).is_err());
-        assert!(schema.validate(&json!("anything")).is_err());
+        assert!(schema.validate(json!(null)).is_err());
+        assert!(schema.validate(json!("anything")).is_err());
     }
 
     #[test]
@@ -927,8 +989,8 @@ mod tests {
         let serialised = serde_json::to_value(&schema).unwrap();
         assert_eq!(serialised, document);
         let restored: Schema = serde_json::from_value(serialised).unwrap();
-        assert!(restored.validate(&json!({"name": "alice"})).is_ok());
-        assert!(restored.validate(&json!({"age": 7})).is_err());
+        assert!(restored.validate(json!({"name": "alice"})).is_ok());
+        assert!(restored.validate(json!({"age": 7})).is_err());
     }
 
     #[test]

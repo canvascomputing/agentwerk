@@ -358,12 +358,16 @@ pub(super) fn write_result(
         }
     };
 
+    // Validate against the ticket's schema, decoding a result an agent
+    // double-encoded as a JSON string so the stored value is the object.
     let schema = ticket_system.get_ticket(key).and_then(|t| t.schema.clone());
-    if let Some(schema) = schema.as_ref() {
-        if let Err(violations) = schema.validate(&result) {
-            return ToolResult::schema_error(format_violations(&violations));
-        }
-    }
+    let result = match schema.as_ref() {
+        Some(schema) => match schema.validate(result) {
+            Ok(normalized) => normalized,
+            Err(violations) => return ToolResult::schema_error(format_violations(&violations)),
+        },
+        None => result,
+    };
 
     let log_line = serde_json::json!({
         "agent": agent,

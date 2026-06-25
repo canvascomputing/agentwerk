@@ -993,8 +993,8 @@ mod tests {
         let resumed = TicketSystem::load(dir.path()).unwrap();
         let t = resumed.get_ticket("TICKET-1").unwrap();
         let restored = t.schema.expect("JSON schema must restore");
-        assert!(restored.validate(&serde_json::json!({"n": 3})).is_ok());
-        assert!(restored.validate(&serde_json::json!({})).is_err());
+        assert!(restored.validate(serde_json::json!({"n": 3})).is_ok());
+        assert!(restored.validate(serde_json::json!({})).is_err());
     }
 
     #[test]
