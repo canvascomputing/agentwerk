@@ -169,7 +169,7 @@ Naming: `snake_case`. Tool structs keep the `{Name}Tool` suffix: `ReadFileTool`,
 - Examples: the request and response types under `providers::` (`Message`, `ContentBlock`, `ModelRequest`, `ProviderToolDefinition`, `ToolChoice`, `StreamEvent`, `ModelResponse`, `ResponseStatus`). Forced public by `Provider::respond`; irrelevant to anyone who is not implementing a `Provider`.
 - `#[doc(hidden)]` keeps them reachable for implementors (`use agentwerk::providers::Message;` still works) while removing them from the rustdoc index.
 - The standard Rust idiom: `tokio`, `serde`, and `tracing` do the same for items that exist only to satisfy a trait or a macro.
-- A type that is genuinely internal (no public trait forces it `pub`) becomes `pub(crate)` instead. `tools::ToolFile` is the example: callers go through `Tool::from_tool_file(json: &str)` and never name the struct.
+- A type that is genuinely internal (no public trait forces it `pub`) becomes `pub(crate)` instead. `tools::ToolFile` is the example: callers go through `Tool::from_tool_file(definition: &str)` and never name the struct.
 
 ## Line comments (`//`)
 

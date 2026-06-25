@@ -14,7 +14,7 @@ use crate::providers::ProviderResult as Result;
 
 fn tool_file() -> &'static ToolFile {
     static FILE: OnceLock<ToolFile> = OnceLock::new();
-    FILE.get_or_init(|| ToolFile::parse(include_str!("bash.tool.json")))
+    FILE.get_or_init(|| ToolFile::parse(include_str!("bash.tool.md")))
 }
 
 /// Markdown description shared by every pattern-restricted `BashTool`. The
@@ -64,9 +64,9 @@ impl BashTool {
 
     /// Create a new `BashTool` with the given `name` that only permits
     /// commands matching `pattern`. The static description rendered from
-    /// `bash.tool.json` is loaded once and a one-line pattern suffix is
+    /// `bash.tool.md` is loaded once and a one-line pattern suffix is
     /// appended per instance. `read_only` defaults to the value declared in
-    /// `bash.tool.json` and may be overridden via [`BashTool::read_only`].
+    /// `bash.tool.md` and may be overridden via [`BashTool::read_only`].
     pub fn new(name: &str, pattern: &str) -> Self {
         let pattern = pattern.trim().to_string();
         assert!(!pattern.is_empty(), "Pattern must not be empty");

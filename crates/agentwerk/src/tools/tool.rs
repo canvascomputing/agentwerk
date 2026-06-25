@@ -490,12 +490,12 @@ impl Tool {
         }
     }
 
-    /// Entry point for a builder seeded from a `.tool.json` definition. The
-    /// returned builder has its name, rendered description, input schema,
-    /// and read-only flag populated from the JSON; install a handler with
-    /// `.handler(...)` and finalize with `.build()`. Panics on malformed JSON.
-    pub fn from_tool_file(json: &str) -> ToolBuilder<()> {
-        let tf = super::tool_file::ToolFile::parse(json);
+    /// Entry point for a builder seeded from a `.tool.md` definition. The
+    /// returned builder has its name, prose description, input schema, and
+    /// read-only flag populated from the markdown; install a handler with
+    /// `.handler(...)` and finalize with `.build()`. Panics on a malformed file.
+    pub fn from_tool_file(definition: &str) -> ToolBuilder<()> {
+        let tf = super::tool_file::ToolFile::parse(definition);
         Tool::new(tf.name.clone(), tf.render_markdown())
             .schema(tf.input_schema.clone())
             .read_only(tf.read_only)
@@ -844,6 +844,45 @@ fn utf8_boundary_floor(s: &str, mut i: usize) -> usize {
 mod tests {
     use super::*;
 
+    /// Every built-in `.tool.md` must parse. Instantiating each tool and
+    /// reading its name, description, and schema forces `ToolFile::parse`, so
+    /// a malformed definition fails here rather than at the first model call.
+    #[test]
+    fn every_builtin_tool_definition_parses() {
+        let dir = crate::test_util::TempDir::new().unwrap();
+        let store = crate::agents::knowledge::Knowledge::load(dir.path()).unwrap();
+        let tools: Vec<Box<dyn ToolLike>> = vec![
+            Box::new(crate::tools::ReadFileTool),
+            Box::new(crate::tools::WriteFileTool),
+            Box::new(crate::tools::EditFileTool),
+            Box::new(crate::tools::GlobTool),
+            Box::new(crate::tools::GrepTool),
+            Box::new(crate::tools::CodegrepTool),
+            Box::new(crate::tools::ListDirectoryTool),
+            Box::new(crate::tools::FetchUrlTool),
+            Box::new(crate::tools::FindToolsTool),
+            Box::new(crate::tools::ManageKnowledgeTool::new(store)),
+            Box::new(crate::tools::BashTool::new("git", "git *")),
+            Box::new(crate::tools::FinishTicketTool),
+            Box::new(crate::tools::HandoverTicketTool),
+            Box::new(crate::tools::ManageTicketsTool),
+            Box::new(crate::tools::ReadTicketsTool),
+        ];
+        for tool in &tools {
+            assert!(!tool.name().is_empty(), "tool name is empty");
+            assert!(
+                !tool.description().is_empty(),
+                "empty description for {}",
+                tool.name(),
+            );
+            assert!(
+                tool.input_schema().get("type").is_some(),
+                "schema missing `type` for {}",
+                tool.name(),
+            );
+        }
+    }
+
     /// Tiny mock used across registry tests.
     struct MockTool {
         name: String,
@@ -930,18 +969,26 @@ mod tests {
 
     #[test]
     fn from_tool_file_populates_name_description_schema_read_only() {
-        let json = r#"{
-            "name": "demo_tool",
-            "summary": ["Do the demo thing."],
-            "constraints": ["Returns nothing useful."],
-            "read_only": true,
-            "input_schema": {
-                "type": "object",
-                "properties": {"x": {"type": "string"}},
-                "required": ["x"]
-            }
-        }"#;
-        let tool = Tool::from_tool_file(json)
+        let definition = r#"---
+name: demo_tool
+read_only: true
+---
+
+Do the demo thing.
+
+- Returns nothing useful.
+
+## Schema
+
+```json
+{
+  "type": "object",
+  "properties": {"x": {"type": "string"}},
+  "required": ["x"]
+}
+```
+"#;
+        let tool = Tool::from_tool_file(definition)
             .handler(|_, _| async { Ok(ToolResult::success("")) })
             .build();
         assert_eq!(tool.name(), "demo_tool");

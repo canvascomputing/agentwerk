@@ -48,7 +48,7 @@ fn apply_handover_templates(task: Value, parent_key: &str, parent_result: &str) 
 
 fn tool_file() -> &'static ToolFile {
     static FILE: OnceLock<ToolFile> = OnceLock::new();
-    FILE.get_or_init(|| ToolFile::parse(include_str!("handover_ticket.tool.json")))
+    FILE.get_or_init(|| ToolFile::parse(include_str!("handover_ticket.tool.md")))
 }
 
 fn description() -> &'static str {

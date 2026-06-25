@@ -27,7 +27,7 @@ pub struct ReadFileTool;
 
 fn tool_file() -> &'static ToolFile {
     static FILE: OnceLock<ToolFile> = OnceLock::new();
-    FILE.get_or_init(|| ToolFile::parse(include_str!("read_file.tool.json")))
+    FILE.get_or_init(|| ToolFile::parse(include_str!("read_file.tool.md")))
 }
 
 fn description() -> &'static str {

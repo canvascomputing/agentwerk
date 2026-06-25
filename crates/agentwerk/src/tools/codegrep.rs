@@ -33,7 +33,7 @@ const SKIP_DIRS: &[&str] = &[".git", "target", "node_modules", "vendor"];
 
 fn tool_file() -> &'static ToolFile {
     static FILE: OnceLock<ToolFile> = OnceLock::new();
-    FILE.get_or_init(|| ToolFile::parse(include_str!("codegrep.tool.json")))
+    FILE.get_or_init(|| ToolFile::parse(include_str!("codegrep.tool.md")))
 }
 
 fn description() -> &'static str {

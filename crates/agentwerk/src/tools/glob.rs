@@ -29,7 +29,7 @@ const MAX_RESULTS: usize = 200;
 
 fn tool_file() -> &'static ToolFile {
     static FILE: OnceLock<ToolFile> = OnceLock::new();
-    FILE.get_or_init(|| ToolFile::parse(include_str!("glob.tool.json")))
+    FILE.get_or_init(|| ToolFile::parse(include_str!("glob.tool.md")))
 }
 
 fn description() -> &'static str {

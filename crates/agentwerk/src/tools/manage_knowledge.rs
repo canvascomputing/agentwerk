@@ -1,6 +1,6 @@
 //! `ManageKnowledgeTool`: the model's interface to a `Knowledge` store.
 //! The store lives in `agents::knowledge`; this file only wraps it
-//! with a `ToolLike` impl driven by the declarative `manage_knowledge.tool.json`.
+//! with a `ToolLike` impl driven by the declarative `manage_knowledge.tool.md`.
 
 use std::future::Future;
 use std::pin::Pin;
@@ -40,7 +40,7 @@ impl ManageKnowledgeTool {
 
 fn tool_file() -> &'static ToolFile {
     static FILE: OnceLock<ToolFile> = OnceLock::new();
-    FILE.get_or_init(|| ToolFile::parse(include_str!("manage_knowledge.tool.json")))
+    FILE.get_or_init(|| ToolFile::parse(include_str!("manage_knowledge.tool.md")))
 }
 
 fn description() -> &'static str {

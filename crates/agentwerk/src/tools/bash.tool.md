@@ -1,0 +1,36 @@
+---
+name: bash_tool
+read_only: false
+---
+
+Execute a shell command via `sh -c` in the working directory and return its trimmed stdout and stderr. The tool is registered with a glob pattern; a non-matching command is rejected and nothing runs.
+
+- One command family per registration (e.g. `git *`); the pattern and read-only status are operator choices, not the model's.
+- Default timeout is 120 000 ms; request up to 600 000 ms via `timeout_ms`.
+- Treat as destructive by default: side effects depend on the registered pattern (`git status` is read-only, `git push` is not).
+
+## When NOT to use
+
+- Read a file: `read_file_tool`. List a directory: `list_directory_tool`. Find files by name: `glob_tool`. Search contents: `grep_tool`. Edit a file: `edit_file_tool` / `write_file_tool`.
+- Never run `grep`, `rg`, `find`, `ls`, `cat`, or `sed` here: the dedicated tools are faster, structured, and cite line numbers.
+
+## Schema
+
+```json
+{
+  "type": "object",
+  "properties": {
+    "command": {
+      "type": "string",
+      "description": "The bash command to execute. Must match the registered glob pattern; otherwise the call fails before execution."
+    },
+    "timeout_ms": {
+      "type": "integer",
+      "description": "Per-command timeout in milliseconds (default: 120000, max: 600000). The process is killed on timeout."
+    }
+  },
+  "required": [
+    "command"
+  ]
+}
+```

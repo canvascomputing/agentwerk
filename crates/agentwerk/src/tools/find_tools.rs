@@ -35,7 +35,7 @@ pub struct FindToolsTool;
 
 fn tool_file() -> &'static ToolFile {
     static FILE: OnceLock<ToolFile> = OnceLock::new();
-    FILE.get_or_init(|| ToolFile::parse(include_str!("find_tools.tool.json")))
+    FILE.get_or_init(|| ToolFile::parse(include_str!("find_tools.tool.md")))
 }
 
 fn description() -> &'static str {

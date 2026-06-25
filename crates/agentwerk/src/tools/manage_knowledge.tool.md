@@ -1,0 +1,58 @@
+---
+name: manage_knowledge
+read_only: false
+---
+
+Read or write pages in the shared knowledge base: durable facts injected into every ticket's system prompt. Existing pages' one-line summaries appear under `## Knowledge`; no such section means the store is empty. `write` upserts a whole page, `read` loads one body, `list` shows the index.
+
+- Save a durable fact future tickets need; one topic per page, with a descriptive slug (`deployment-config`, `pkg-utils-py`).
+- `summary` is a one-sentence index line under 80 chars. Cross-link pages with `[[slug]]`.
+- `write` overwrites the page and requires `slug`, `summary`, and `content`: omitting any is the most common error. Read first if you mean to append.
+- Only `read` a slug already shown in `## Knowledge` or `list`; an unseen slug does not exist.
+
+## When NOT to use
+
+- Task progress or TODOs: those belong on tickets.
+- A new page per tiny fact: consolidate related facts.
+
+## Schema
+
+```json
+{
+  "type": "object",
+  "properties": {
+    "action": {
+      "type": "string",
+      "enum": [
+        "write",
+        "read",
+        "remove",
+        "list"
+      ],
+      "description": "The operation to perform. 'write' upserts a page (requires slug + summary + content). 'read' returns the full page body (requires slug; only valid for slugs in the index). 'remove' deletes a page (requires slug). 'list' returns the current index."
+    },
+    "slug": {
+      "type": "string",
+      "description": "Page identifier (lowercase, hyphens, max 60 chars). Required for write, read, and remove \u2014 omitting it returns an error. For file paths, replace dots and slashes with hyphens (e.g. pkg/utils.py \u2192 pkg-utils-py)."
+    },
+    "summary": {
+      "type": "string",
+      "description": "One-line index entry shown in the knowledge index. Required for write. Keep under 80 chars."
+    },
+    "content": {
+      "type": "string",
+      "description": "Full page body in markdown. Required for write. May include [[wikilinks]]."
+    },
+    "tags": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "description": "Optional tags for the page."
+    }
+  },
+  "required": [
+    "action"
+  ]
+}
+```

@@ -35,7 +35,7 @@ pub struct FinishTicketTool;
 
 fn tool_file() -> &'static ToolFile {
     static FILE: OnceLock<ToolFile> = OnceLock::new();
-    FILE.get_or_init(|| ToolFile::parse(include_str!("finish_ticket.tool.json")))
+    FILE.get_or_init(|| ToolFile::parse(include_str!("finish_ticket.tool.md")))
 }
 
 fn description() -> &'static str {

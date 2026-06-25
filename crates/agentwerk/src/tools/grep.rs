@@ -38,7 +38,7 @@ const MAX_LINE_DISPLAY: usize = 200;
 
 fn tool_file() -> &'static ToolFile {
     static FILE: OnceLock<ToolFile> = OnceLock::new();
-    FILE.get_or_init(|| ToolFile::parse(include_str!("grep.tool.json")))
+    FILE.get_or_init(|| ToolFile::parse(include_str!("grep.tool.md")))
 }
 
 fn description() -> &'static str {

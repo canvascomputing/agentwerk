@@ -57,7 +57,7 @@ Where code lives and the rules that govern placement.
 - `knowledge.rs` is the model-facing wrapper around `Knowledge` (the store lives in `agents::knowledge`).
 - `tool_search.rs` is the discovery surface for deferred tools.
 - `web_fetch.rs` is the web fetch tool.
-- `tool_file.rs` and `util.rs` are shared helpers; `error.rs` holds `ToolError`.
+- Each built-in tool pairs with a `<tool>.tool.md` definition: `---` frontmatter (`name`, `read_only`), a prose body shown to the model, and a `## Schema` section whose ` ```json ` fence holds the input schema. `tool_file.rs` parses it; `util.rs` is a shared helper; `error.rs` holds `ToolError`.
 
 ## The `prompts/` and `schemas/` modules
 

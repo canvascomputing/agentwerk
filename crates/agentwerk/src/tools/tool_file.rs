@@ -1,99 +1,124 @@
-//! Single-file tool definition: typed sections (summary, constraints, anti-patterns, cautions, output) plus `read_only` and the JSON Schema, deserialized once and rendered to markdown for the LLM.
+//! Single-file tool definition in markdown: `---` frontmatter (`name`,
+//! `read_only`), a free-form prose body shown to the model, and a `## Schema`
+//! section whose ` ```json ` fence holds the JSON Schema. Parsed once and
+//! handed to the `ToolLike` impl that includes it.
 
-use serde::Deserialize;
 use serde_json::Value;
 
-/// Typed view of a tool's `.tool.json` file. Every prose field is a list of
-/// strings: the renderer joins them with whatever separator the target
-/// format requires (newlines for cautions, blank lines for paragraphs,
-/// bullets for lists). Authors edit content; the framework owns formatting.
-#[derive(Debug, Deserialize)]
+/// Parsed view of a tool's `.tool.md` file. `description` is the prose body
+/// verbatim (already the markdown the model sees); `input_schema` is the JSON
+/// Schema from the `## Schema` fence. Authors write markdown; the framework
+/// only splits it into these fields.
+#[derive(Debug)]
 pub(crate) struct ToolFile {
     pub(crate) name: String,
-    #[serde(default)]
-    pub(crate) summary: Vec<String>,
-    #[serde(default)]
-    pub(crate) constraints: Vec<String>,
-    #[serde(default)]
-    pub(crate) anti_patterns: Vec<String>,
-    #[serde(default)]
-    pub(crate) cautions: Vec<String>,
-    #[serde(default)]
-    pub(crate) output: Vec<String>,
     pub(crate) read_only: bool,
     pub(crate) input_schema: Value,
+    description: String,
 }
 
 impl ToolFile {
-    /// Parse the embedded JSON. Panics on malformed input: same fail-fast
-    /// posture as `include_str!()` of a JSON Schema elsewhere in the crate.
-    pub(crate) fn parse(json: &str) -> Self {
-        serde_json::from_str(json).expect("invalid tool definition JSON")
+    /// Parse a `.tool.md` document. Panics on a malformed file: the
+    /// definitions are compile-time assets included via `include_str!`, not
+    /// runtime input, so a broken one should fail the build, not a request.
+    pub(crate) fn parse(markdown: &str) -> Self {
+        let (front, body) = split_frontmatter(markdown);
+
+        let mut name: Option<String> = None;
+        let mut read_only: Option<bool> = None;
+        for line in front.lines() {
+            let Some((key, value)) = line.split_once(':') else {
+                continue;
+            };
+            match key.trim() {
+                "name" => name = Some(value.trim().to_string()),
+                "read_only" => read_only = Some(value.trim() == "true"),
+                _ => {}
+            }
+        }
+
+        let (description, schema_section) = body
+            .split_once("\n## Schema")
+            .expect("tool definition missing `## Schema` section");
+
+        ToolFile {
+            name: name.expect("tool definition missing `name` in frontmatter"),
+            read_only: read_only.expect("tool definition missing `read_only` in frontmatter"),
+            input_schema: parse_json_fence(schema_section),
+            description: description.trim().to_string(),
+        }
     }
 
-    /// Render the prose sections as markdown. Sections are emitted only when
-    /// non-empty; empty sections do not produce stray headings or trailing
-    /// blank lines.
+    /// The prose body shown to the model. Named for the format it returns so
+    /// the `ToolLike` impls that cache it read the same as before the markdown
+    /// migration.
     pub(crate) fn render_markdown(&self) -> String {
-        let mut sections: Vec<String> = Vec::new();
-
-        if !self.summary.is_empty() {
-            sections.push(self.summary.join(" "));
-        }
-
-        if !self.constraints.is_empty() {
-            sections.push(bullet_list(&self.constraints));
-        }
-
-        if !self.anti_patterns.is_empty() {
-            let mut s = String::from("## When NOT to use\n\n");
-            s.push_str(&bullet_list(&self.anti_patterns));
-            sections.push(s);
-        }
-
-        if !self.cautions.is_empty() {
-            sections.push(self.cautions.join("\n"));
-        }
-
-        if !self.output.is_empty() {
-            let mut s = String::from("## Output\n\n");
-            s.push_str(&self.output.join("\n\n"));
-            sections.push(s);
-        }
-
-        sections.join("\n\n")
+        self.description.clone()
     }
 }
 
-fn bullet_list(items: &[String]) -> String {
-    items
-        .iter()
-        .map(|line| format!("- {line}"))
-        .collect::<Vec<_>>()
-        .join("\n")
+/// Split a leading `---` frontmatter block from the body. Panics when the
+/// block is missing or unterminated.
+fn split_frontmatter(markdown: &str) -> (&str, &str) {
+    let rest = markdown
+        .strip_prefix("---\n")
+        .expect("tool definition must open with `---` frontmatter");
+    rest.split_once("\n---\n")
+        .expect("tool definition has an unterminated `---` frontmatter block")
+}
+
+/// Extract and parse the first ` ```json ` fence in `section`.
+fn parse_json_fence(section: &str) -> Value {
+    let start = section
+        .find("```json")
+        .expect("`## Schema` section missing a ```json fence");
+    let after = section[start + "```json".len()..].trim_start_matches(['\r', '\n']);
+    let end = after
+        .find("```")
+        .expect("`## Schema` section has an unterminated ```json fence");
+    serde_json::from_str(after[..end].trim()).expect("invalid tool input_schema JSON")
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    fn fixture() -> ToolFile {
-        serde_json::from_value(serde_json::json!({
-            "name": "fixture_tool",
-            "summary": ["First sentence.", "Second sentence."],
-            "constraints": ["A constraint.", "Another constraint."],
-            "anti_patterns": ["Use X instead.", "Use Y instead."],
-            "cautions": ["ALWAYS read first.", "IMPORTANT: do not break."],
-            "output": ["Output paragraph one.", "Output paragraph two."],
-            "read_only": true,
-            "input_schema": { "type": "object" }
-        }))
-        .unwrap()
+    const FIXTURE: &str = "\
+---
+name: fixture_tool
+read_only: true
+---
+
+First sentence. Second sentence.
+
+- A constraint.
+- Another constraint.
+
+## When NOT to use
+
+- Use X instead.
+
+## Schema
+
+```json
+{
+  \"type\": \"object\",
+  \"properties\": { \"x\": { \"type\": \"string\" } },
+  \"required\": [\"x\"]
+}
+```
+";
+
+    #[test]
+    fn parses_frontmatter_name_and_read_only() {
+        let tf = ToolFile::parse(FIXTURE);
+        assert_eq!(tf.name, "fixture_tool");
+        assert!(tf.read_only);
     }
 
     #[test]
-    fn renders_full_definition() {
-        let rendered = fixture().render_markdown();
+    fn description_is_the_prose_body_without_the_schema_section() {
+        let tf = ToolFile::parse(FIXTURE);
         let expected = "First sentence. Second sentence.\n\
                         \n\
                         - A constraint.\n\
@@ -101,44 +126,36 @@ mod tests {
                         \n\
                         ## When NOT to use\n\
                         \n\
-                        - Use X instead.\n\
-                        - Use Y instead.\n\
-                        \n\
-                        ALWAYS read first.\n\
-                        IMPORTANT: do not break.\n\
-                        \n\
-                        ## Output\n\
-                        \n\
-                        Output paragraph one.\n\
-                        \n\
-                        Output paragraph two.";
-        assert_eq!(rendered, expected);
+                        - Use X instead.";
+        assert_eq!(tf.render_markdown(), expected);
     }
 
     #[test]
-    fn skips_empty_sections() {
-        let mut tf = fixture();
-        tf.anti_patterns.clear();
-        tf.cautions.clear();
-        tf.output.clear();
-        let rendered = tf.render_markdown();
-        let expected = "First sentence. Second sentence.\n\
-                        \n\
-                        - A constraint.\n\
-                        - Another constraint.";
-        assert_eq!(rendered, expected);
+    fn parses_the_input_schema_from_the_json_fence() {
+        let tf = ToolFile::parse(FIXTURE);
+        assert_eq!(tf.input_schema["properties"]["x"]["type"], "string");
+        assert_eq!(tf.input_schema["required"][0], "x");
     }
 
     #[test]
-    fn read_only_flag_round_trips() {
-        let tf: ToolFile = serde_json::from_value(serde_json::json!({
-            "name": "minimal",
-            "read_only": false,
-            "input_schema": { "type": "object" }
-        }))
-        .unwrap();
+    fn read_only_false_round_trips() {
+        let md = "\
+---
+name: minimal
+read_only: false
+---
+
+Body.
+
+## Schema
+
+```json
+{ \"type\": \"object\" }
+```
+";
+        let tf = ToolFile::parse(md);
         assert_eq!(tf.name, "minimal");
         assert!(!tf.read_only);
-        assert!(tf.summary.is_empty());
+        assert_eq!(tf.render_markdown(), "Body.");
     }
 }

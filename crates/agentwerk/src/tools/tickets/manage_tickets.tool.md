@@ -1,0 +1,62 @@
+---
+name: manage_tickets_tool
+read_only: false
+---
+
+Read and mutate the ticket queue from one tool: `get` / `list` / `search` to read, `create` / `edit` to write. One `action` per call; a `key` defaults to your current ticket when omitted, and `create` stamps `reporter` from the calling agent. `list` and `search` cap at 50 tickets.
+
+- This tool cannot transition status: finish with `finish_ticket` (`Failed` is reserved for system outcomes like a schema-retry trip or policy violation).
+- ALWAYS finish your current ticket with `finish_ticket` before the response ends, or it stays `InProgress` and the loop re-picks it.
+
+## When NOT to use
+
+- Reads only: register `read_tickets_tool` (smaller surface, fewer mistakes); write-only: register `write_tickets_tool` to block listing.
+- Finish your current ticket: call `finish_ticket`.
+- Find code or files: use `grep_tool` / `glob_tool`.
+
+## Schema
+
+```json
+{
+  "type": "object",
+  "properties": {
+    "action": {
+      "type": "string",
+      "description": "Read: `get`, `list`, `search`. Write: `create`, `edit`."
+    },
+    "key": {
+      "type": "string",
+      "description": "Ticket key (e.g. `TICKET-3`). Used by `get`, `edit`. Defaults to the agent's current ticket. Ignored by `create`, `list`, `search`."
+    },
+    "status": {
+      "type": "string",
+      "description": "For `list`: filter by status. One of `Todo`, `InProgress`, `Finished`, `Failed`."
+    },
+    "label": {
+      "type": "string",
+      "description": "For `list`: filter to tickets carrying this label (case-sensitive)."
+    },
+    "query": {
+      "type": "string",
+      "description": "For `search`: case-insensitive substring matched against the task body."
+    },
+    "task": {
+      "description": "For `create` (required) or `edit` (optional): the task body \u2014 any JSON value (string, object, array, scalar)."
+    },
+    "labels": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "description": "For `create` or `edit` (optional): label scope. Determines which agents pick up the ticket. Including an agent's name as a label pins the ticket to that agent."
+    },
+    "schema": {
+      "type": "object",
+      "description": "For `create` or `edit` (optional): a JSON Schema document. When set, the agent's final result (written via `finish_ticket`) must validate against it; failures count toward `max_schema_retries`."
+    }
+  },
+  "required": [
+    "action"
+  ]
+}
+```
