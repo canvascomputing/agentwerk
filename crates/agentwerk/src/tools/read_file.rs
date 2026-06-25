@@ -67,8 +67,39 @@ impl ToolLike for ReadFileTool {
 
             let resolved = ctx.dir.join(path);
 
-            let content = match std::fs::read_to_string(&resolved) {
-                Ok(c) => c,
+            if resolved.is_dir() {
+                let message = match super::util::directory_entries(&resolved) {
+                    Some(entries) => format!(
+                        "'{path}' is a directory, not a file. Read one of its entries by \
+                         appending the name to the path:\n  {entries}"
+                    ),
+                    None => format!("'{path}' is a directory, not a file."),
+                };
+                return Ok(ToolResult::error(message));
+            }
+
+            let content = match std::fs::read(&resolved) {
+                Ok(bytes) => {
+                    // A NUL byte marks a true binary (image, archive, compiled
+                    // object); text — even minified or lightly obfuscated — never
+                    // contains one. Report it concisely instead of dumping decoded
+                    // garbage that floods the transcript and breaks strict chat
+                    // templates. Otherwise decode lossily so odd-encoded source
+                    // stays inspectable, the point of a scan.
+                    if bytes.contains(&0) {
+                        return Ok(ToolResult::success(format!(
+                            "{path} is a binary file ({} bytes), not text; it cannot be read as source. Judge from the information you already have.",
+                            bytes.len()
+                        )));
+                    }
+                    String::from_utf8_lossy(&bytes).into_owned()
+                }
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                    return Ok(ToolResult::error(format!(
+                        "File does not exist: {path}. {}",
+                        super::util::not_found_hint(&ctx.dir, &resolved)
+                    )));
+                }
                 Err(e) => {
                     return Ok(ToolResult::error(format!("Failed to read file: {e}")));
                 }
@@ -166,7 +197,7 @@ mod tests {
                 name: "nonexistent file",
                 input: serde_json::json!({ "path": "no_such_file.txt" }),
                 expect_error: true,
-                expect_contains: "Failed to read file",
+                expect_contains: "File does not exist",
             },
             Case {
                 name: "col_offset slices from byte position",
@@ -216,6 +247,137 @@ mod tests {
                 content
             );
         }
+    }
+
+    #[tokio::test]
+    async fn read_file_on_directory_lists_entries() {
+        let dir = crate::test_util::TempDir::new().unwrap();
+        std::fs::write(dir.path().join("__init__.py"), "x = 1\n").unwrap();
+        std::fs::write(dir.path().join("sessions.py"), "y = 2\n").unwrap();
+        std::fs::create_dir(dir.path().join("subpkg")).unwrap();
+
+        let result = ReadFileTool
+            .call(serde_json::json!({ "path": "." }), &test_ctx(dir.path()))
+            .await
+            .unwrap();
+
+        let ToolResult::Error(content) = &result else {
+            panic!("reading a directory should return an error result, got {result:?}");
+        };
+        assert!(content.contains("is a directory"), "got {content:?}");
+        assert!(content.contains("__init__.py"), "got {content:?}");
+        assert!(content.contains("sessions.py"), "got {content:?}");
+        assert!(
+            content.contains("subpkg/"),
+            "sub-directories carry a trailing slash, got {content:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn read_file_decodes_non_utf8_lossily_without_erroring() {
+        let dir = crate::test_util::TempDir::new().unwrap();
+        // Valid text with a stray non-UTF-8 byte, as in minified/obfuscated source.
+        std::fs::write(dir.path().join("odd.py"), b"import os\xff\nx = 1\n").unwrap();
+
+        let result = ReadFileTool
+            .call(
+                serde_json::json!({ "path": "odd.py" }),
+                &test_ctx(dir.path()),
+            )
+            .await
+            .unwrap();
+
+        let ToolResult::Success(content) = &result else {
+            panic!("a non-UTF-8 file should read lossily, not error, got {result:?}");
+        };
+        // The readable text survives; the bad byte becomes the replacement char.
+        assert!(content.contains("import os"), "got {content:?}");
+        assert!(content.contains("x = 1"), "got {content:?}");
+        assert!(
+            content.contains('\u{FFFD}'),
+            "bad byte should be replaced, got {content:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn read_file_reports_binary_files_concisely_without_dumping_bytes() {
+        let dir = crate::test_util::TempDir::new().unwrap();
+        // A NUL byte marks a true binary; do not decode it to garbage.
+        std::fs::write(dir.path().join("blob.bin"), [0x7f, 0x45, 0x00, 0x01, 0x02]).unwrap();
+
+        let result = ReadFileTool
+            .call(
+                serde_json::json!({ "path": "blob.bin" }),
+                &test_ctx(dir.path()),
+            )
+            .await
+            .unwrap();
+
+        let ToolResult::Success(content) = &result else {
+            panic!("a binary file should report concisely as success, got {result:?}");
+        };
+        assert!(content.contains("binary file"), "got {content:?}");
+        // No decoded garbage: the message is short, not the raw bytes.
+        assert!(
+            content.len() < 200,
+            "should be a concise note, got {content:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn read_file_not_found_lists_the_directory_in_tree() {
+        let dir = crate::test_util::TempDir::new().unwrap();
+        std::fs::write(dir.path().join("helpers.py"), "x\n").unwrap();
+
+        // Guess a file that does not exist; cwd is the dir holding helpers.py.
+        let result = ReadFileTool
+            .call(
+                serde_json::json!({ "path": "missing.py" }),
+                &test_ctx(dir.path()),
+            )
+            .await
+            .unwrap();
+
+        let ToolResult::Error(content) = &result else {
+            panic!("a missing file should return an error result, got {result:?}");
+        };
+        assert!(content.contains("File does not exist"), "got {content:?}");
+        assert!(
+            content.contains("contains:") && content.contains("helpers.py"),
+            "miss should list the directory's real entries, got {content:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn read_file_not_found_echoes_working_directory_and_suggests_dropped_folder() {
+        // Working dir is a sub-folder holding the file; the model drops the
+        // folder and reads <parent>/flask.py, which does not exist.
+        let root = crate::test_util::TempDir::new().unwrap();
+        let cwd = root.path().join("data83");
+        std::fs::create_dir(&cwd).unwrap();
+        std::fs::write(cwd.join("flask.py"), "x = 1\n").unwrap();
+        let dropped = root.path().join("flask.py");
+
+        let result = ReadFileTool
+            .call(
+                serde_json::json!({ "path": dropped.to_str().unwrap() }),
+                &test_ctx(&cwd),
+            )
+            .await
+            .unwrap();
+
+        let ToolResult::Error(content) = &result else {
+            panic!("a missing file should return an error result, got {result:?}");
+        };
+        assert!(content.contains("File does not exist"), "got {content:?}");
+        assert!(
+            content.contains(&cwd.display().to_string()),
+            "error echoes the working directory, got {content:?}"
+        );
+        assert!(
+            content.contains("Did you mean") && content.contains("data83/flask.py"),
+            "error suggests the dropped-folder candidate, got {content:?}"
+        );
     }
 
     #[tokio::test]

@@ -152,7 +152,7 @@ mod tests {
         assert!(lines[2].starts_with("You work within a ticket system."));
         assert_eq!(lines[3], "");
         assert!(lines[4].starts_with("- Date: "));
-        assert_eq!(lines[5], "- Directory: /tmp/check");
+        assert_eq!(lines[5], "- Working directory: /tmp/check");
         assert!(lines[6].starts_with("- Platform: "));
         assert!(!rendered.contains('{'), "no unsubstituted placeholders");
     }

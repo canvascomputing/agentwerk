@@ -669,7 +669,7 @@ mod tests {
             .context_message(&policies, &stats, None)
             .expect("default context");
         assert!(rendered.starts_with("## Context\n\n"));
-        assert!(rendered.contains("- Directory: "));
+        assert!(rendered.contains("- Working directory: "));
         assert!(rendered.contains("- Platform: "));
         assert!(rendered.contains("- Date: "));
     }

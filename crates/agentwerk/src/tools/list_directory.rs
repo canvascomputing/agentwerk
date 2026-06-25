@@ -61,6 +61,12 @@ impl ToolLike for ListDirectoryTool {
             let recursive = input["recursive"].as_bool().unwrap_or(false);
             let base = ctx.dir.join(path_str);
 
+            if base.exists() && !base.is_dir() {
+                return Ok(ToolResult::error(format!(
+                    "Path is not a directory: {path_str}"
+                )));
+            }
+
             match list_entries(&base, &base, recursive) {
                 Ok(mut entries) => {
                     entries.sort_by(|a, b| a.display_name.cmp(&b.display_name));
@@ -75,6 +81,12 @@ impl ToolLike for ListDirectoryTool {
                         })
                         .collect();
                     Ok(ToolResult::success(lines.join("\n")))
+                }
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                    Ok(ToolResult::error(format!(
+                        "Directory does not exist: {path_str}. {}",
+                        super::util::not_found_hint(&ctx.dir, &base)
+                    )))
                 }
                 Err(e) => Ok(ToolResult::error(format!("Error listing directory: {e}"))),
             }
@@ -186,5 +198,84 @@ mod tests {
         assert!(content.contains("root.txt"));
         // Should have at least 3 entries: root.txt, child, child/nested.txt
         assert!(content.lines().count() >= 3);
+    }
+
+    #[tokio::test]
+    async fn list_directory_on_a_file_reports_not_a_directory() {
+        let tmp = crate::test_util::TempDir::new().unwrap();
+        fs::write(tmp.path().join("app.py"), "x = 1\n").unwrap();
+
+        let result = ListDirectoryTool
+            .call(
+                serde_json::json!({ "path": "app.py" }),
+                &test_ctx(tmp.path()),
+            )
+            .await
+            .unwrap();
+
+        let ToolResult::Error(content) = &result else {
+            panic!("listing a file should return an error result, got {result:?}");
+        };
+        assert!(
+            content.contains("Path is not a directory"),
+            "got {content:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn list_directory_not_found_lists_the_nearest_directory_in_tree() {
+        let tmp = crate::test_util::TempDir::new().unwrap();
+        fs::create_dir(tmp.path().join("pkg")).unwrap();
+
+        // Guess a non-existent directory directly under cwd.
+        let result = ListDirectoryTool
+            .call(serde_json::json!({ "path": "nope" }), &test_ctx(tmp.path()))
+            .await
+            .unwrap();
+
+        let ToolResult::Error(content) = &result else {
+            panic!("a missing directory should return an error result, got {result:?}");
+        };
+        assert!(
+            content.contains("Directory does not exist"),
+            "got {content:?}"
+        );
+        assert!(
+            content.contains("contains:") && content.contains("pkg/"),
+            "miss should list the nearest directory's entries, got {content:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn list_directory_not_found_echoes_working_directory_and_suggests_dropped_folder() {
+        let root = crate::test_util::TempDir::new().unwrap();
+        let cwd = root.path().join("data83");
+        fs::create_dir(&cwd).unwrap();
+        fs::create_dir(cwd.join("pkg")).unwrap();
+        let dropped = root.path().join("pkg");
+
+        let result = ListDirectoryTool
+            .call(
+                serde_json::json!({ "path": dropped.to_str().unwrap() }),
+                &test_ctx(&cwd),
+            )
+            .await
+            .unwrap();
+
+        let ToolResult::Error(content) = &result else {
+            panic!("a missing directory should return an error result, got {result:?}");
+        };
+        assert!(
+            content.contains("Directory does not exist"),
+            "got {content:?}"
+        );
+        assert!(
+            content.contains(&cwd.display().to_string()),
+            "error echoes the working directory, got {content:?}"
+        );
+        assert!(
+            content.contains("Did you mean") && content.contains("data83/pkg"),
+            "error suggests the dropped-folder candidate, got {content:?}"
+        );
     }
 }
