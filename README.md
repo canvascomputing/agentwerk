@@ -68,7 +68,7 @@ Example projects built with agentwerk:
 - [Deep Research](crates/use-cases/src/deep_research/): deep research pipeline (requires `BRAVE_API_KEY`)
 - [Malware Scanner](crates/use-cases/src/malware_scanner/): identify indicators of compromise in a software package
 
-> Configure an LLM provider first (see [Environment](#environment)).
+> Configure an LLM provider first (see [Environment](DEVELOPMENT.md#environment)).
 
 ```bash
 make use_case                # list available names
@@ -116,7 +116,7 @@ let agent = Agent::new()
     .provider(AnthropicProvider::new(key))
     .model("claude-sonnet-4-20250514");
 
-// Or pick from environment variables (see Environment).
+// Or pick from environment variables (see DEVELOPMENT.md).
 let agent = Agent::new().from_env();
 ```
 
@@ -128,7 +128,7 @@ Each provider exposes `.base_url(url)` and `.timeout(duration)` to override the 
 | `model(m)` | Set the model the provider runs. |
 | `from_env()` | Detect provider and model in one call. |
 
-To read only the provider from the environment (and set the model explicitly), or only the model (and set the provider explicitly), use `provider_from_env()` or `model_from_env()` ([docs.rs](https://docs.rs/agentwerk/latest/agentwerk/struct.AgentBuilder.html)).
+To read only the provider from the environment (and set the model explicitly), or only the model (and set the provider explicitly), use `provider_from_env()` or `model_from_env()` (see [`AgentBuilder`](https://docs.rs/agentwerk/latest/agentwerk/agents/agent/struct.AgentBuilder.html)).
 
 ### Models
 
@@ -195,7 +195,7 @@ tickets.ticket(
 | `task_labeled(t, l)` | Submit a task tagged with `l` for label-scoped assignment. Shorthand for `ticket(Ticket::new(t).label(l))`. |
 | `ticket(t)` | Submit a `Ticket` with custom labels, a schema, or a parent link. |
 
-Also on [`TicketSystem`](https://docs.rs/agentwerk/latest/agentwerk/struct.TicketSystem.html): `dir(d)` to relocate persisted state, `reply(key, c)` to continue a multi-turn conversation on one ticket.
+Also on [`TicketSystem`](https://docs.rs/agentwerk/latest/agentwerk/agents/tickets/struct.TicketSystem.html): `dir(d)` to relocate persisted state, `reply(key, c)` to continue a multi-turn conversation on one ticket.
 
 ### Execution
 
@@ -214,7 +214,7 @@ let answer = tickets.last_result();
 | `cancel()` | Cancel the run. |
 | `finish_reason()` | Return why the most recent `finish()` returned: `Drained`, `PolicyViolated(kind)`, or `Cancelled`. |
 
-To cancel when another task finishes, use `cancel_on(trigger)`. To cancel when an event matches a condition you supply, use `cancel_on_event(p)`. `is_cancelled()` reports external cancel only; a clean drain or a policy stop leaves it false. The same outcome is announced as `EventKind::RunFinished { reason }` for subscribers attached via `on_event`. See [docs.rs](https://docs.rs/agentwerk/latest/agentwerk/struct.TicketSystem.html).
+To cancel when another task finishes, use `cancel_on(trigger)`. To cancel when an event matches a condition you supply, use `cancel_on_event(p)`. `is_cancelled()` reports external cancel only; a clean drain or a policy stop leaves it false. The same outcome is announced as `EventKind::RunFinished { reason }` for subscribers attached via `on_event`. See [`TicketSystem`](https://docs.rs/agentwerk/latest/agentwerk/agents/tickets/struct.TicketSystem.html).
 
 ### Reading results
 
@@ -239,7 +239,7 @@ for ticket in tickets.tickets() {
 | `tickets()` | Return every ticket in creation order, with status, payload, and metadata. |
 | `find_ticket(predicate)` | Return the earliest ticket matching the predicate. |
 
-More query methods on [`TicketSystem`](https://docs.rs/agentwerk/latest/agentwerk/struct.TicketSystem.html): `get_ticket`, `first_ticket`, `last_ticket`, `search_tickets`, `find_tickets`, `count_tickets`, `is_cancelled`.
+More query methods on [`TicketSystem`](https://docs.rs/agentwerk/latest/agentwerk/agents/tickets/struct.TicketSystem.html): `get_ticket`, `first_ticket`, `last_ticket`, `search_tickets`, `find_tickets`, `count_tickets`, `is_cancelled`.
 
 ### Inspecting tickets
 
@@ -253,7 +253,7 @@ let ticket = tickets.find_ticket(|t| t.has_label("analysis")).unwrap();
 let report: Report = serde_json::from_value(ticket.result.clone().unwrap()).unwrap();
 ```
 
-See [`Ticket`](https://docs.rs/agentwerk/latest/agentwerk/struct.Ticket.html) for the full field list (`key`, `status`, `result`, `replies`, `labels`, `parent`, and the four lifecycle timestamps).
+See [`Ticket`](https://docs.rs/agentwerk/latest/agentwerk/agents/tickets/struct.Ticket.html) for the full field list (`key`, `status`, `result`, `replies`, `labels`, `parent`, and the four lifecycle timestamps).
 
 ### Policies
 
@@ -275,7 +275,7 @@ tickets
 | `max_input_tokens(n)` | Limit the total input tokens. |
 | `max_output_tokens(n)` | Limit the total output tokens. |
 
-See [`TicketSystem`](https://docs.rs/agentwerk/latest/agentwerk/struct.TicketSystem.html) for the retry and per-request limits: `max_schema_retries`, `max_request_retries`, `request_retry_delay`, `max_request_tokens`.
+See [`TicketSystem`](https://docs.rs/agentwerk/latest/agentwerk/agents/tickets/struct.TicketSystem.html) for the retry and per-request limits: `max_schema_retries`, `max_request_retries`, `request_retry_delay`, `max_request_tokens`.
 
 ### Schemas
 
@@ -480,7 +480,7 @@ let scan = s.stats_for_label("scan");
 | `tool_stats()` | Return per-tool call and failure counts, broken down by failure kind. |
 | `stats_for_label(label)` | Return a stats slice scoped to one label. |
 
-More statistics on [`Stats`](https://docs.rs/agentwerk/latest/agentwerk/struct.Stats.html): work and ticket durations, per-ticket counts, turns, requests, tool calls, provider errors, and per-tool errors.
+More statistics on [`Stats`](https://docs.rs/agentwerk/latest/agentwerk/agents/stats/struct.Stats.html): work and ticket durations, per-ticket counts, turns, requests, tool calls, provider errors, and per-tool errors.
 
 # Development
 
