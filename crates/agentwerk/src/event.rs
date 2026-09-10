@@ -1153,8 +1153,14 @@ pub(crate) mod tests {
                 }),
             ),
             (
-                Event::prompt_render_failed("result: missing", "no matching result"),
-                serde_json::json!({ "expression": "result: missing", "message": "no matching result" }),
+                Event::prompt_render_failed(
+                    "result: task.label =",
+                    "The query ends in the middle of a term.",
+                ),
+                serde_json::json!({
+                    "expression": "result: task.label =",
+                    "message": "The query ends in the middle of a term.",
+                }),
             ),
             (
                 Event::request_retried("model", 2, 4, RequestErrorKind::RateLimited, "later"),
