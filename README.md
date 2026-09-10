@@ -78,7 +78,7 @@ async fn main() {
 
 ## API
 
-agentwerk has five core concepts. An `Agent` uses tools to complete a `Task`, a unit of work whose result is a JSON value. A `Werk` coordinates agents and tasks, and an `Event` records activity.
+agentwerk has six core concepts. An `Agent` uses `Tools` to complete a `Task` and create a JSON result. A `Werk` coordinates agents and tasks, `Events` record activity, and `Knowledge` provides durable shared memory.
 
 | Section | Covers |
 |---|---|
