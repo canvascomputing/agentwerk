@@ -180,14 +180,77 @@ async def test_task_prompts_stay_fixed_after_the_first_request(werk, scripted_op
     assert werk.get_task(task).get_task() == "Write for {{ company }}"
 
 
-async def test_prompt_render_failure_reaches_hooks_without_a_provider_request(
+async def test_unmatched_selectors_render_nothing_and_reach_provider(
+    werk, scripted_openai
+):
+    expressions = [
+        "{{ result: missing }}",
+        "{{ results: missing | [*].answer }}",
+        "{{ task: missing }}",
+        "{{ tasks: missing | [*].task }}",
+        "{{ event: event.name = missing }}",
+        "{{ events: event.name = missing | [*].data }}",
+    ]
+    scripted_openai.respond_with_tool("finish", {"answer": "done"})
+    werk.add_agent(
+        aw.Agent()
+        .provider(scripted_openai.provider())
+        .model("mock")
+        .role(f"before {''.join(expressions)} after")
+    )
+    task = werk.add_task("go")
+    failures = []
+    werk.on_failure(lambda _werk, event, _task: failures.append(event.get_name()))
+    await asyncio.wait_for(werk.finish(), timeout=5)
+    assert scripted_openai.requests[0]["messages"][0]["content"] == "before  after"
+    assert failures == []
+    assert werk.get_task(task).is_finished()
+
+
+async def test_null_and_empty_array_results_render_nothing(werk, scripted_openai):
+    null = werk.add_task(aw.Task("null", label="null"))
+    empty = werk.add_task(aw.Task("empty", label="empty"))
+    werk.set_task_finished(null, None)
+    werk.set_task_finished(empty, [])
+    scripted_openai.respond_with_tool("finish", {"answer": "done"})
+    werk.add_agent(
+        aw.Agent()
+        .provider(scripted_openai.provider())
+        .model("mock")
+        .role("before {{ result: null }}{{ results: empty }} after")
+    )
+    werk.add_task("go")
+
+    await asyncio.wait_for(werk.finish(), timeout=5)
+
+    assert scripted_openai.requests[0]["messages"][0]["content"] == "before  after"
+
+
+async def test_empty_template_values_render_without_crashing(werk, scripted_openai):
+    werk.set_template("empty", "")
+    scripted_openai.respond_with_tool("finish", {"answer": "done"})
+    werk.add_agent(
+        aw.Agent()
+        .provider(scripted_openai.provider())
+        .model("mock")
+        .role("before {{ empty }} after")
+    )
+    task = werk.add_task("go")
+
+    await asyncio.wait_for(werk.finish(), timeout=5)
+
+    assert scripted_openai.requests[0]["messages"][0]["content"] == "before  after"
+    assert werk.get_task(task).is_finished()
+
+
+async def test_malformed_result_selector_fails_before_provider_request(
     werk, scripted_openai
 ):
     werk.add_agent(
         aw.Agent()
         .provider(scripted_openai.provider())
         .model("mock")
-        .role("{{ result: missing }}")
+        .role("{{ result: task.label = }}")
     )
     task = werk.add_task("go")
     failures = []
@@ -195,7 +258,9 @@ async def test_prompt_render_failure_reaches_hooks_without_a_provider_request(
     await asyncio.wait_for(werk.finish(), timeout=5)
     assert scripted_openai.requests == []
     assert failures == [aw.Event.PROMPT_RENDER_FAILED, aw.Event.TASK_FAILED]
-    assert werk.get_task(task).get_errors()[0].get_data()["expression"] == "result: missing"
+    error = werk.get_task(task).get_errors()[0].get_data()
+    assert error["expression"] == "result: task.label ="
+    assert error["message"] == "The query ends in the middle of a term."
 
 
 async def test_template_cycles_are_inserted_literally(werk, scripted_openai):

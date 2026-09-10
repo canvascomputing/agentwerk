@@ -343,19 +343,42 @@ async fn fail_to_render(
 }
 
 #[tokio::test]
-async fn role_and_task_render_failures_stop_before_the_provider_request() {
+async fn unmatched_result_selectors_render_nothing_and_reach_the_provider() {
     for in_role in [true, false] {
-        let (werk, _dir, provider, id, _failures) =
-            fail_to_render(in_role, "{{ result: absent }}").await;
+        let (werk, _dir) = session();
+        let provider = MockProvider::with_results(vec![Ok(write_result_response("done"))]);
+        let prompt = "before {{ result: absent }} after";
+        let role = if in_role { prompt } else { "role" };
+        werk.add_agent(task_agent(&provider).role(role));
+        let id = werk.add_task(if in_role { "go" } else { prompt });
 
-        assert_eq!(provider.requests(), 0);
-        assert!(werk.get_task(&id).unwrap().is_failed());
+        finish(&werk).await;
+
+        assert_eq!(provider.requests(), 1);
+        let messages = &provider.received()[0];
+        let rendered = if in_role {
+            provider
+                .received_system_prompts()
+                .into_iter()
+                .next()
+                .unwrap()
+        } else {
+            user_text(messages).trim().to_string()
+        };
+        assert_eq!(rendered, "before  after");
+        let task = werk.get_task(&id).unwrap();
+        assert!(task.is_finished());
+        assert!(task
+            .get_errors()
+            .iter()
+            .all(|error| error.get_name() != Event::PROMPT_RENDER_FAILED));
     }
 }
 
 #[tokio::test]
 async fn prompt_render_failures_reach_hooks_and_survive_reload() {
-    let (_werk, dir, _provider, id, failures) = fail_to_render(true, "{{ result: absent }}").await;
+    let (_werk, dir, _provider, id, failures) =
+        fail_to_render(true, "{{ result: task.label = }}").await;
 
     assert_eq!(
         *failures.lock().unwrap(),
@@ -365,7 +388,11 @@ async fn prompt_render_failures_reach_hooks_and_survive_reload() {
     let task = loaded.get_task(&id).unwrap();
     let error = &task.get_errors()[0];
     assert_eq!(error.get_name(), Event::PROMPT_RENDER_FAILED);
-    assert_eq!(error.get_data()["expression"], "result: absent");
+    assert_eq!(error.get_data()["expression"], "result: task.label =");
+    assert_eq!(
+        error.get_data()["message"],
+        "The query ends in the middle of a term."
+    );
 }
 
 #[tokio::test]

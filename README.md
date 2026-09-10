@@ -264,20 +264,20 @@ agentwerk fills placeholders in the role and task just before each task's first 
 |---|---|
 | `{{ name }}` | The value assigned to `name`. |
 | `{{ name \| JSONPath }}` | A value selected from the template variable after parsing it as JSON. |
-| `{{ result: AQL }}` | The first result. Strings appear as text and other values as compact JSON. |
-| `{{ results: AQL }}` | A compact JSON array of matching results. |
+| `{{ result: AQL }}` | The first matching result. Strings appear as text and other values as compact JSON. |
+| `{{ results: AQL }}` | Matching results as a compact JSON array. |
 | `{{ result: AQL \| JSONPath }}` | A value selected from the first result. |
 | `{{ results: AQL \| JSONPath }}` | A value selected from the array of matching results. |
-| `{{ task: AQL }}` | The first matching task as compact JSON, or `null`. |
-| `{{ tasks: AQL }}` | A compact JSON array of matching tasks. |
+| `{{ task: AQL }}` | The first matching task as compact JSON. |
+| `{{ tasks: AQL }}` | Matching tasks as a compact JSON array. |
 | `{{ task: AQL \| JSONPath }}` | A value selected from the first matching task. |
 | `{{ tasks: AQL \| JSONPath }}` | A value selected from the array of matching tasks. |
-| `{{ event: AQL }}` | The first matching event as compact JSON, or `null`. |
-| `{{ events: AQL }}` | A compact JSON array of matching events. |
+| `{{ event: AQL }}` | The first matching event as compact JSON. |
+| `{{ events: AQL }}` | Matching events as a compact JSON array. |
 | `{{ event: AQL \| JSONPath }}` | A value selected from the first matching event. |
 | `{{ events: AQL \| JSONPath }}` | A value selected from the array of matching events. |
 
-Use JSONPath after a template variable or AQL selection. Template variables are parsed as JSON, with malformed JSON becoming `null`. Task and event selectors match the corresponding `find_*` method. Plural selections use the array as the root.
+`null`, empty arrays, and unmatched selectors render to an empty string.
 
 | Record | JSONPath properties |
 |---|---|

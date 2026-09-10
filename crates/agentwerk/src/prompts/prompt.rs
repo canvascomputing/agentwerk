@@ -140,7 +140,7 @@ fn resolve_expression_value(
 ) -> Result<Option<String>, String> {
     if let Some(selection) = selection_expression(expression) {
         let value = resolve_selection(werk, selection, named_value)?;
-        return Ok(Some(result_text(value)));
+        return Ok(Some(value.map(result_text).unwrap_or_default()));
     }
 
     resolve_named_value(expression, named_value)
@@ -170,18 +170,20 @@ fn resolve_selection(
     werk: &Werk,
     selection: SelectionExpression<'_>,
     named_value: &mut impl FnMut(&str) -> Option<String>,
-) -> Result<Value, String> {
+) -> Result<Option<Value>, String> {
     let (query, _had_nested_value) = expand_nested(selection.query, named_value)?;
     let json_path = selection
         .json_path
         .map(JsonPath::parse)
         .transpose()
         .map_err(|error| error.to_string())?;
-    let value = select_value(werk, selection.kind, query.trim())?;
-    let Some(json_path) = json_path else {
-        return Ok(value);
+    let Some(value) = select_value(werk, selection.kind, query.trim())? else {
+        return Ok(None);
     };
-    Ok(json_path.evaluate(&value))
+    let Some(json_path) = json_path else {
+        return Ok(Some(value));
+    };
+    Ok(Some(json_path.evaluate(&value)))
 }
 
 fn expand_nested(
@@ -379,23 +381,33 @@ fn expression_end(body: &str) -> Result<Option<usize>, &'static str> {
     }
 }
 
-fn select_value(werk: &Werk, kind: SelectionKind, query: &str) -> Result<Value, String> {
+fn select_value(werk: &Werk, kind: SelectionKind, query: &str) -> Result<Option<Value>, String> {
     let query = Query::new(query).map_err(|error| error.to_string())?;
     match kind {
-        SelectionKind::Task => serde_json::to_value(werk.find_task(query)),
-        SelectionKind::Tasks => serde_json::to_value(werk.find_tasks(query)),
-        SelectionKind::Event => serde_json::to_value(werk.find_event(query)),
-        SelectionKind::Events => serde_json::to_value(werk.find_events(query)),
+        SelectionKind::Task => werk.find_task(query).map(serde_json::to_value).transpose(),
+        SelectionKind::Tasks => {
+            let values = werk.find_tasks(query);
+            (!values.is_empty())
+                .then(|| serde_json::to_value(values))
+                .transpose()
+        }
+        SelectionKind::Event => werk.find_event(query).map(serde_json::to_value).transpose(),
+        SelectionKind::Events => {
+            let values = werk.find_events(query);
+            (!values.is_empty())
+                .then(|| serde_json::to_value(values))
+                .transpose()
+        }
         kind => return select_result(werk, kind, query),
     }
     .map_err(|error| format!("cannot serialize selection: {error}"))
 }
 
-fn select_result(werk: &Werk, kind: SelectionKind, query: Query) -> Result<Value, String> {
+fn select_result(werk: &Werk, kind: SelectionKind, query: Query) -> Result<Option<Value>, String> {
     let mut tasks = werk.result_tasks(query);
     let is_plural = kind.is_plural();
-    if !is_plural && tasks.is_empty() {
-        return Err("no matching result".into());
+    if tasks.is_empty() {
+        return Ok(None);
     }
     if !is_plural {
         tasks.truncate(1);
@@ -409,15 +421,26 @@ fn select_result(werk: &Werk, kind: SelectionKind, query: Query) -> Result<Value
         })
         .collect::<Vec<_>>();
     if is_plural {
-        return Ok(Value::Array(values));
+        return Ok(Some(Value::Array(values)));
     }
-    Ok(values
-        .into_iter()
-        .next()
-        .expect("singular selection is nonempty"))
+    Ok(values.into_iter().next())
 }
 
 fn result_text(value: Value) -> String {
+    let empty = {
+        let mut pending = vec![&value];
+        loop {
+            match pending.pop() {
+                Some(Value::Null) => {}
+                Some(Value::Array(values)) => pending.extend(values),
+                Some(_) => break false,
+                None => break true,
+            }
+        }
+    };
+    if empty {
+        return String::new();
+    }
     match value {
         Value::String(text) => text,
         value => value.to_string(),
@@ -602,14 +625,11 @@ mod tests {
     }
 
     #[test]
-    fn malformed_template_variable_json_renders_null() {
+    fn malformed_template_variable_json_renders_nothing() {
         let (werk, _dir) = session();
         werk.set_template("profile", "not json");
 
-        assert_eq!(
-            render(&werk, "{{ profile | company.name }}").unwrap(),
-            "null"
-        );
+        assert_eq!(render(&werk, "{{ profile | company.name }}").unwrap(), "");
     }
 
     #[test]
@@ -692,7 +712,7 @@ mod tests {
         );
         assert_eq!(
             render(&werk, "{{ result: research | company.missing }}").unwrap(),
-            "null"
+            ""
         );
         assert_eq!(
             render(&werk, r#"{{ result: research | "}}" }}"#).unwrap(),
@@ -719,7 +739,7 @@ mod tests {
         );
         assert_eq!(
             render(&werk, "{{ results: missing | [*].verdict }}").unwrap(),
-            "[]"
+            ""
         );
     }
 
@@ -763,11 +783,11 @@ mod tests {
     }
 
     #[test]
-    fn unmatched_task_expressions_render_null_or_an_empty_array() {
+    fn unmatched_task_expressions_render_nothing() {
         let (werk, _dir) = session();
 
-        assert_eq!(render(&werk, "{{ task: missing }}").unwrap(), "null");
-        assert_eq!(render(&werk, "{{ tasks: missing }}").unwrap(), "[]");
+        assert_eq!(render(&werk, "{{ task: missing }}").unwrap(), "");
+        assert_eq!(render(&werk, "{{ tasks: missing }}").unwrap(), "");
     }
 
     #[test]
@@ -812,16 +832,16 @@ mod tests {
     }
 
     #[test]
-    fn unmatched_event_expressions_render_null_or_an_empty_array() {
+    fn unmatched_event_expressions_render_nothing() {
         let (werk, _dir) = session();
 
         assert_eq!(
             render(&werk, "{{ event: event.name = absent }}").unwrap(),
-            "null"
+            ""
         );
         assert_eq!(
             render(&werk, "{{ events: event.name = absent }}").unwrap(),
-            "[]"
+            ""
         );
     }
 
@@ -891,6 +911,7 @@ mod tests {
 
         for (prompt, message) in [
             ("{{ result: research | }}", "JSON path cannot be empty"),
+            ("{{ result: missing | }}", "JSON path cannot be empty"),
             (
                 "{{ result: research | answer || missing }}",
                 "unsupported JSON path syntax at byte 6",
@@ -993,16 +1014,78 @@ mod tests {
     }
 
     #[test]
-    fn empty_plural_result_selectors_render_empty_arrays() {
+    fn unmatched_result_expressions_render_nothing() {
         let (werk, _dir) = session();
-        assert_eq!(render(&werk, "{{ results: missing }}").unwrap(), "[]");
+
+        assert_eq!(render(&werk, "{{ result: missing }}").unwrap(), "");
+        assert_eq!(render(&werk, "{{ results: missing }}").unwrap(), "");
     }
 
     #[test]
-    fn missing_singular_result_selectors_are_rejected() {
+    fn unmatched_selectors_with_json_paths_render_nothing() {
         let (werk, _dir) = session();
-        let error = render(&werk, "{{ result: missing }}").unwrap_err();
-        assert_eq!(error.message, "no matching result");
+
+        for expression in [
+            "{{ result: missing | answer }}",
+            "{{ results: missing | [*].answer }}",
+            "{{ task: missing | task.answer }}",
+            "{{ tasks: missing | [*].task.answer }}",
+            "{{ event: event.name = missing | data.answer }}",
+            "{{ events: event.name = missing | [*].data.answer }}",
+        ] {
+            assert_eq!(render(&werk, expression).unwrap(), "", "{expression}");
+        }
+    }
+
+    #[test]
+    fn unmatched_selectors_disappear_without_changing_surrounding_text() {
+        let (werk, _dir) = session();
+
+        for expression in [
+            "{{ result: missing }}",
+            "{{ results: missing }}",
+            "{{ task: missing }}",
+            "{{ tasks: missing }}",
+            "{{ event: event.name = missing }}",
+            "{{ events: event.name = missing }}",
+        ] {
+            let prompt = format!("before {expression} after");
+            assert_eq!(
+                render(&werk, prompt).unwrap(),
+                "before  after",
+                "{expression}"
+            );
+        }
+    }
+
+    #[test]
+    fn result_expressions_suppress_nulls_and_empty_arrays() {
+        let (werk, _dir) = session();
+        let pending = werk.add_task(Task::labeled("research", "pending"));
+        let empty = werk.add_task(Task::labeled("empty", "empty"));
+        let useful = werk.add_task(Task::labeled("useful", "useful"));
+
+        assert_eq!(render(&werk, "{{ result: research }}").unwrap(), "");
+        assert_eq!(render(&werk, "{{ results: research }}").unwrap(), "");
+
+        werk.set_task_finished(&pending, Value::Null).unwrap();
+        werk.set_task_finished(&empty, serde_json::json!([]))
+            .unwrap();
+        werk.set_task_finished(&useful, serde_json::json!(["instruction"]))
+            .unwrap();
+
+        assert_eq!(render(&werk, "{{ result: research }}").unwrap(), "");
+        assert_eq!(render(&werk, "{{ results: research }}").unwrap(), "");
+        assert_eq!(render(&werk, "{{ result: empty }}").unwrap(), "");
+        assert_eq!(render(&werk, "{{ results: empty }}").unwrap(), "");
+        assert_eq!(
+            render(&werk, "{{ result: useful }}").unwrap(),
+            r#"["instruction"]"#
+        );
+        assert_eq!(
+            render(&werk, "{{ results: useful }}").unwrap(),
+            r#"[["instruction"]]"#
+        );
     }
 
     #[test]
