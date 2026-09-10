@@ -11,6 +11,7 @@ import typing
 
 from ._agentwerk import (
     Agent,
+    Condition,
     Policy,
     Event,
     Knowledge,
@@ -234,6 +235,7 @@ def tool(
 __all__ = [
     "tool",
     "Agent",
+    "Condition",
     "Policy",
     "Event",
     "Knowledge",

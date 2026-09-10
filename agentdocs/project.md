@@ -14,7 +14,7 @@ agentwerk is a Rust library for composing LLM agents, tools, tasks, and shared e
 
 **Make every public concept earn its maintenance cost.**
 
-- Prefer extending `Agent`, `Werk`, `Task`, `Tool`, `Event`, or `Knowledge` over adding a parallel concept.
+- Prefer extending `Agent`, `Condition`, `Werk`, `Task`, `Tool`, `Event`, or `Knowledge` over adding a parallel concept.
 - Keep features optional unless correctness requires them.
 - Reject registries, adapters, and aliases that only rename existing behavior.
 - Put exhaustive API detail in rustdoc and `README.md`, not in convention files.
@@ -27,6 +27,7 @@ agentwerk is a Rust library for composing LLM agents, tools, tasks, and shared e
 - Claim each task once while allowing agents with the same label to work concurrently.
 - Attach a `Schema` when a task result needs a machine-checked shape.
 - Keep agent configuration local: no global agent or tool registration.
+- Use runtime AQL conditions when agents or tasks should exist only after matching activity.
 
 ## Provider Independence
 

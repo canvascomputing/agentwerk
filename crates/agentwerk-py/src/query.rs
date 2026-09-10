@@ -32,7 +32,7 @@ impl PyQuery {
     }
 }
 
-fn value_error(message: impl Into<String>) -> PyErr {
+pub(crate) fn value_error(message: impl Into<String>) -> PyErr {
     pyo3::exceptions::PyValueError::new_err(message.into())
 }
 

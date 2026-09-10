@@ -116,6 +116,22 @@ The rules the tables never repeat.
 | Rust | `.dispatch(task: Task): string` | private |
 | Rust | `.register(): Werk` | private |
 
+## `crates/agentwerk/src/agents/condition.rs`
+
+### Public
+
+| Language | Item | Visibility |
+|----------|------|------------|
+| both | `Condition { id: string?, query: Query, agents: Agent[], tasks: Task[], fired: boolean }` | pub with private fields |
+| Rust | `impl Clone for Condition` | pub |
+| Rust | `.new(aql: string): this throws QueryError` | pub |
+| Python | `Condition(aql)`: raises `ValueError` when AQL is invalid | |
+| both | `.id(id: string): this` | pub |
+| both | `.add_agent(agent: Agent): this` | pub |
+| Python | `.add_agent(agent)`: raises `RuntimeError` immediately when the agent has no provider or model | |
+| both | `.add_task(task: Task): this` | pub |
+| both | `.add_task(task)`: a string or json value stands in for the `Task` | |
+
 ## `crates/agentwerk/src/agents/compaction.rs`
 
 ### Internal
@@ -296,13 +312,14 @@ The rules the tables never repeat.
 | Language | Item | Visibility |
 |----------|------|------------|
 | Rust | `mod agent`, `mod policy`, `mod knowledge`, `mod loop`, `mod tasks` | pub |
-| Rust | re-exports `Agent`, `Policy`, `PolicyViolation`, `Knowledge`, `Matcher`, `Query`, `QueryError`, `Reply`, `Status`, `Task`, `TaskError`, `Werk`, `Trajectory` | pub |
+| Rust | re-exports `Agent`, `Condition`, `Policy`, `PolicyViolation`, `Knowledge`, `Matcher`, `Query`, `QueryError`, `Reply`, `Status`, `Task`, `TaskError`, `Werk`, `Trajectory` | pub |
 
 ### Internal
 
 | Language | Item | Visibility |
 |----------|------|------------|
 | Rust | `mod compaction` | crate |
+| Rust | `mod condition` | private |
 | Rust | `mod retry`, `mod stats` | crate |
 
 ## `crates/agentwerk/src/agents/retry.rs`
@@ -643,7 +660,7 @@ The rules the tables never repeat.
 | Python | a string, such as `policy_violated(turns)` | |
 | Rust | `.Drained`, `.PolicyViolated(PolicyViolation)`, `.Cancelled` | pub |
 | Rust | `impl Display for FinishReason` | pub |
-| both | `Werk { weak_self: Weak<Werk>, tasks: Record<string, Task>, agents: Agent[], policy: Policy, run: Run, cancel_filters: CancelFilter[], terminal_transitions: watch::Sender<number>, templates: Record<string, string>, stats: Stats, event_handlers: EventHandler[], awaited_events: AwaitedEvents, event_stream: Sender<Event>, dir: string, events_lock: void, join_handle: JoinHandle<void>?, next_task_id: number? }` | pub |
+| both | `Werk { weak_self: Weak<Werk>, tasks: Record<string, Task>, agents: Agent[], conditions: ConditionRegistry, policy: Policy, run: Run, cancel_filters: CancelFilter[], terminal_transitions: watch::Sender<number>, templates: Record<string, string>, stats: Stats, event_handlers: EventHandler[], awaited_events: AwaitedEvents, event_stream: Sender<Event>, dir: string, events_lock: void, join_handle: JoinHandle<void>?, next_task_id: number? }` | pub |
 | Rust | `.new(): this` | pub |
 | Python | `Werk()` | |
 | both | `.load(werk_dir: string): this throws io::Error` | pub |
@@ -670,6 +687,7 @@ The rules the tables never repeat.
 | both | `.get_policy(): Policy` | pub |
 | both | `.set_dir(dir: string): this` | pub |
 | both | `.get_dir(): string` | pub |
+| both | `.add_condition(condition: Condition): string` | pub |
 | both | `.add_task(task: Task): string` | pub |
 | both | `.add_task(task)`: a string or json value stands in for the `Task` | |
 | both | `.add_reply(id: string, content: string): this` | pub |
@@ -715,6 +733,8 @@ The rules the tables never repeat.
 | Rust | `HandlerWork = Promise<void>` | private |
 | Rust | `AwaitedHandler { matches: (event: Event) => boolean, call: AsyncHandler }` | private |
 | Rust | `Delivery = [Event, Task?]` | private |
+| Rust | `ConditionRegistry { entries: Condition[], runtime_events: Event[], next_id: number }` | private |
+| Rust | `impl Default for ConditionRegistry` | private |
 | Rust | `AwaitedEvents { handlers: AwaitedHandler[], queued: Delivery[], draining: void, queueing: void }` | super |
 | Rust | `Run { phase: Phase }` | crate |
 | Rust | `Phase` | private |
@@ -734,6 +754,9 @@ The rules the tables never repeat.
 | Rust | `.on_awaited(matches: (event: Event) => boolean, call: AsyncHandler): this` | private |
 | Rust | `.queue_events(): void` | private |
 | Rust | `.await_handlers(): Promise<void>` | private |
+| Rust | `.condition_matches(query: Query, event: Event): boolean` | private |
+| Rust | `.apply_conditions(event: Event): void` | private |
+| Rust | `.activate_conditions(conditions: Condition[]): void` | private |
 | Rust | `.label_for(id: string): string?` | private |
 | Rust | `.result_path(id: string): string` | crate |
 | Rust | `.dispatch(task: Task): string` | private |
@@ -980,7 +1003,7 @@ Not bound, like the rest of `codegrep`.
 | Language | Item | Visibility |
 |----------|------|------------|
 | Rust | `mod agents`, `mod event`, `mod providers`, `mod schemas`, `mod tools` | pub |
-| Rust | re-exports `Agent`, `Query`, `Reply`, `Status`, `Task`, `Werk`, `Policy`, `PolicyViolation`, `Knowledge`, `Trajectory`, `Schema`, `Event`, `FinishReason` | pub |
+| Rust | re-exports `Agent`, `Condition`, `Query`, `Reply`, `Status`, `Task`, `Werk`, `Policy`, `PolicyViolation`, `Knowledge`, `Trajectory`, `Schema`, `Event`, `FinishReason` | pub |
 | Python | `agentwerk` exports every bound class from one flat module | |
 
 ### Internal
@@ -2195,6 +2218,27 @@ Binds `agents/agent.rs`, whose section holds the Python spelling of each method.
 | Rust | `.set(edit: (agent: Agent) => Agent): void` | private |
 | Rust | `.ready(): Agent throws PyErr` | crate |
 
+## `crates/agentwerk-py/src/condition.rs`
+
+Binds `agents/condition.rs`.
+
+### Public
+
+| Language | Item | Visibility |
+|----------|------|------------|
+| Rust | `PyCondition { inner: Condition? }` | python with private field |
+| Rust | `.new(aql: string): this throws PyErr` | python |
+| Rust | `.id(id: string): this` | python |
+| Rust | `.add_agent(agent: PyAgent): this throws PyErr` | python |
+| Rust | `.add_task(task: any): this throws PyErr` | python |
+
+### Internal
+
+| Language | Item | Visibility |
+|----------|------|------------|
+| Rust | `PyCondition.set(edit: (condition: Condition) => Condition): void` | private |
+| Rust | `.get(): Condition` | crate |
+
 ## `crates/agentwerk-py/src/policy.rs`
 
 Binds `agents/policy.rs`.
@@ -2310,7 +2354,7 @@ Registers every bound class and function in the `_agentwerk` module.
 
 | Language | Item | Visibility |
 |----------|------|------------|
-| Rust | `mod agent`, `mod policy`, `mod convert`, `mod directives`, `mod event`, `mod knowledge`, `mod providers`, `mod query`, `mod reply`, `mod schema`, `mod task`, `mod werk`, `mod tools`, `mod trajectory` | private |
+| Rust | `mod agent`, `mod condition`, `mod policy`, `mod convert`, `mod directives`, `mod event`, `mod knowledge`, `mod providers`, `mod query`, `mod reply`, `mod schema`, `mod task`, `mod werk`, `mod tools`, `mod trajectory` | private |
 
 ## `crates/agentwerk-py/src/providers.rs`
 
@@ -2358,7 +2402,7 @@ Binds `agents/query.rs`. Python stores the same single, origin-aware compiled qu
 
 | Language | Item | Visibility |
 |----------|------|------------|
-| Rust | `value_error(message: string): PyErr` | private |
+| Rust | `value_error(message: string): PyErr` | crate |
 | Rust | `to_task_matcher(arg: any): Query throws PyErr` | crate |
 | Rust | `to_event_matcher(arg: any): Query throws PyErr` | crate |
 | Rust | `task_predicate(predicate: any, task: Task): boolean` | private |
@@ -2459,6 +2503,7 @@ Binds `agents/tasks/werk.rs` and `store.rs`.
 | Rust | `.new(): this` | python |
 | Rust | `.load(werk_dir: string): this throws PyErr` | python |
 | Rust | `.add_agent(agent: PyAgent): this throws PyErr` | python |
+| Rust | `.add_condition(condition: PyCondition): string` | python |
 | Rust | `.add_task(task: PyTask): string throws PyErr` | python |
 | Rust | `.add_reply(id: string, content: string): this` | python |
 | Rust | `.emit_event(event: PyEvent): PyEvent` | python |

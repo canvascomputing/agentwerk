@@ -45,6 +45,15 @@ The invariants that govern orchestration, tools, providers, events, and durable 
 - Define pending work as unfinished, uncancelled work selected by the query; a task paused for caller input does not keep a completion wait open.
 - Keep cancellation scoped to the current run: `start()` clears cancellation without changing `Status`.
 
+## Conditions
+
+**Release condition actions once per run from current-process AQL matches.**
+
+- Keep condition definitions, event history, and firing state in memory; loading a Werk never restores them or makes loaded records eligible.
+- Test a new condition against non-stream events already emitted by that Werk, then test later events against their current task, event, or joined row. A text chunk is eligible only while it is emitted.
+- Mark all matches before releasing their locks, then add unregistered agents before tasks so concurrent and recursive events cannot fire one condition twice.
+- Re-arm conditions and clear their event history on each actual start. Never count an unmet condition as pending work.
+
 ## Completion
 
 **Preserve one result value across every completion path.**

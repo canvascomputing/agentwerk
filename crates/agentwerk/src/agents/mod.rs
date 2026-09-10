@@ -2,6 +2,7 @@
 
 pub mod agent;
 pub(crate) mod compaction;
+mod condition;
 pub mod knowledge;
 pub(crate) mod r#loop;
 pub mod policy;
@@ -11,6 +12,7 @@ pub(crate) mod stats;
 pub mod tasks;
 
 pub use agent::Agent;
+pub use condition::Condition;
 pub use knowledge::Knowledge;
 pub use policy::{Policy, PolicyViolation};
 pub use query::{Matcher, Query, QueryError};

@@ -26,7 +26,7 @@ Where code, tests, bindings, examples, and repository guidance live.
 
 **Separate orchestration state from one agent's current operation.**
 
-- `agents/agent.rs` configures `Agent`; `agents/tasks/werk.rs` exposes `Werk`.
+- `agents/agent.rs` configures `Agent`; `agents/condition.rs` configures runtime AQL actions; `agents/tasks/werk.rs` exposes `Werk`.
 - `agents/tasks/` owns `Task`, `Reply`, storage transitions, trajectories, and task errors.
 - `agents/loop/` splits execution into the main scheduler, per-agent work, provider requests, compaction, and tool calls.
 - `agents/query.rs` owns AQL; `policy.rs`, `stats.rs`, and `retry.rs` own limits, statistics, and retry timing.
