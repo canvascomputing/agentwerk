@@ -10,6 +10,7 @@ use pyo3::prelude::*;
 use serde_json::Value;
 
 use crate::agent::PyAgent;
+use crate::condition::PyCondition;
 use crate::convert::{py_to_templates, py_to_value, runtime_error, value_to_py};
 use crate::event::{to_py_event, PyEvent};
 use crate::policy::PyPolicy;
@@ -46,6 +47,11 @@ impl PyWerk {
     ) -> PyResult<PyRef<'py, Self>> {
         slf.inner.add_agent(agent.ready()?.clone());
         Ok(slf)
+    }
+
+    /// Add a runtime AQL condition and return its assigned ID.
+    fn add_condition(&self, condition: PyRef<'_, PyCondition>) -> String {
+        self.inner.add_condition(condition.get().clone())
     }
 
     /// Submit a task and return its task ID.

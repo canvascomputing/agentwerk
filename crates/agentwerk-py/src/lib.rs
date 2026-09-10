@@ -3,6 +3,7 @@
 use pyo3::prelude::*;
 
 mod agent;
+mod condition;
 mod convert;
 mod event;
 mod knowledge;
@@ -19,6 +20,7 @@ mod werk;
 #[pymodule]
 fn _agentwerk(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<agent::PyAgent>()?;
+    m.add_class::<condition::PyCondition>()?;
     m.add_class::<werk::PyWerk>()?;
     m.add_class::<policy::PyPolicy>()?;
     m.add_class::<task::PyTask>()?;

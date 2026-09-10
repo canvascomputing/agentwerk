@@ -447,6 +447,7 @@ werk.add_task(Task("Write up the ranking.", label="report"))
 | | `set_dir(dir)` | Define where a session is stored. |
 | | `get_dir()` | Get the session directory. |
 | | `add_agent(agent)` | Add an agent to this Werk. |
+| | `add_condition(condition)` | Add a runtime AQL condition and return its ID. |
 | **Submit and interact** | `add_task(task)` | Submit a task and return its task ID. |
 | | `add_reply(id, content)` | Add a reply to a task. |
 | | `edit_replies(id, editor)` | Rewrite a task's replies now. |
@@ -623,7 +624,7 @@ See [`Task`](https://docs.rs/agentwerk/latest/agentwerk/struct.Task.html).
 
 Agents can pass work and results in five ways:
 
-1. **Result hook**: `on_result` creates follow-up tasks from completed work.
+1. **Follow-up routing**: `on_result` or a runtime condition creates follow-up tasks.
 2. **[Task templates](#template-values)**: interpolate shared values, results, tasks, and events.
 3. **KnowledgeTool**: shares durable pages between agents.
 4. **TaskTool**: reads any finished task's result by ID.
@@ -632,7 +633,7 @@ Agents can pass work and results in five ways:
 <details>
 <summary>Other result-sharing examples</summary>
 
-#### 1. Result hook
+#### Result hook
 
 Use hooks to create new tasks when certain results arrive:
 
@@ -645,7 +646,27 @@ def hand_to_report(werk, done, result):
 werk.on_result(hand_to_report)
 ```
 
-#### 3. KnowledgeTool
+#### Runtime condition
+
+Use an AQL query to create follow-up tasks or add agents based on conditions:
+
+```python
+from agentwerk import Condition
+
+werk.add_condition(
+    Condition("task.label = research AND task.status = finished")
+    .id("report-after-research")
+    .add_agent(Agent.from_env().label("report"))
+    .add_task(
+        Task(
+            "Write {{ result: task.label = research AND task.status = finished }}",
+            label="report",
+        )
+    )
+)
+```
+
+#### KnowledgeTool
 
 Hand both agents one store, and either can write a page the other reads:
 
@@ -658,7 +679,7 @@ writer = Agent.from_env().label("report").knowledge(store)
 analyst.add_task("Rank the products by value, then save the ranking to your knowledge.")
 ```
 
-#### 4. TaskTool
+#### TaskTool
 
 Give the writer `TaskTool`, and it reads what any finished task produced, by ID:
 
@@ -668,7 +689,7 @@ writer = Agent.from_env().label("report").tool(TaskTool())
 writer.add_task("Read the result of t-1, then write the board report.")
 ```
 
-#### 5. ReadFileTool
+#### ReadFileTool
 
 Give the writer `ReadFileTool` instead, and it opens the result file named at the end of its task:
 

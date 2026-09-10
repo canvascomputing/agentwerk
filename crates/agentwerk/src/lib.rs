@@ -65,6 +65,7 @@
 //! # Main types
 //!
 //! - [`Agent`]: picks up tasks and produces results.
+//! - [`Condition`]: releases agents and tasks when AQL matches a task or event.
 //! - [`Werk`]: stores tasks and runs agents.
 //! - [`Task`]: defines work with an optional label and schema.
 //! - [`Query`]: a reusable AQL selection over tasks, events, or joined task-event pairs.
@@ -85,6 +86,7 @@ pub mod tools;
 pub(crate) mod test_util;
 
 pub use agents::Agent;
+pub use agents::Condition;
 pub use agents::Query;
 pub use agents::Reply;
 pub use agents::Status;

@@ -301,7 +301,7 @@ mod tests {
     use crate::agents::agent::Agent;
     use crate::agents::r#loop::test_util::*;
     use crate::agents::tasks::{Author, FinishReason, Status, Task, Werk};
-    use crate::agents::Knowledge;
+    use crate::agents::{Condition, Knowledge};
     use crate::tools::{EventTool, TaskTool};
 
     // Execution lifecycle
@@ -676,6 +676,49 @@ mod tests {
 
         assert_eq!(werk.get_results().len(), 2);
         assert_eq!(werk.get_task("t-2").unwrap().status, Status::Finished);
+    }
+
+    #[tokio::test]
+    async fn finish_waits_through_a_condition_that_activates_the_follow_up_agent() {
+        let results_dir = crate::test_util::TempDir::new().unwrap();
+        let provider = MockProvider::with_results(vec![
+            Ok(write_result_response("draft-done")),
+            Ok(write_result_response("edit-done")),
+        ]);
+        let werk = Werk::new();
+        werk.set_dir(results_dir.path().to_path_buf())
+            .set_policy(Policy {
+                max_request_retries: 0,
+                request_retry_delay: Duration::from_millis(1),
+                ..Default::default()
+            });
+        werk.add_agent(
+            Agent::new()
+                .label("draft")
+                .provider(provider.clone())
+                .model("mock")
+                .role("test"),
+        );
+        werk.add_condition(
+            Condition::new("task.label = draft AND task.status = finished")
+                .unwrap()
+                .add_agent(
+                    Agent::new()
+                        .label("edit")
+                        .provider(provider)
+                        .model("mock")
+                        .role("test"),
+                )
+                .add_task(Task::labeled("edit", "edit the draft")),
+        );
+        werk.add_task(Task::labeled("draft", "write the draft"));
+
+        tokio::time::timeout(Duration::from_secs(5), werk.finish())
+            .await
+            .expect("finish did not wait for the condition's follow-up");
+
+        assert_eq!(werk.get_results().len(), 2);
+        assert_eq!(werk.find_tasks("edit")[0].status, Status::Finished);
     }
 
     #[tokio::test]

@@ -10,6 +10,60 @@ import pytest
 import agentwerk as aw
 
 
+def test_condition_registered_after_matching_activity_releases_a_task(werk):
+    werk.add_task(aw.Task("write", label="draft"))
+    werk.add_condition(
+        aw.Condition("task.label = draft").add_task(aw.Task("edit", label="edit"))
+    )
+
+    assert [task.get_task() for task in werk.find_tasks("edit")] == ["edit"]
+
+
+def test_condition_returns_its_configured_id(werk):
+    condition = aw.Condition("event.name = never").id("edit-after-draft")
+
+    assert werk.add_condition(condition) == "edit-after-draft"
+
+
+def test_condition_rejects_invalid_aql():
+    with pytest.raises(ValueError, match="task.label"):
+        aw.Condition("label = draft")
+
+
+def test_condition_activates_a_configured_agent(werk, offline_agent):
+    editor = offline_agent.label("edit")
+    editor_id = editor.get_id()
+    werk.add_condition(
+        aw.Condition("event.name = ready").add_agent(editor)
+    )
+    assert werk.get_model_for_agent(editor_id) is None
+
+    werk.emit_event(aw.Event("ready"))
+
+    assert werk.get_model_for_agent(editor_id) == "claude-sonnet-4-20250514"
+
+
+@pytest.mark.parametrize("task", ["edit", {"kind": "edit"}])
+def test_condition_accepts_json_compatible_task_values(werk, task):
+    werk.add_condition(aw.Condition("event.name = ready").add_task(task))
+
+    werk.emit_event(aw.Event("ready"))
+
+    assert [released.get_task() for released in werk.get_tasks()] == [task]
+
+
+@pytest.mark.parametrize("missing", ["provider", "model"])
+def test_condition_rejects_an_incomplete_agent(missing):
+    agent = aw.Agent()
+    if missing == "provider":
+        agent.model("mock")
+    else:
+        agent.provider(aw.Anthropic("test-key"))
+
+    with pytest.raises(RuntimeError, match=f"{missing} not set"):
+        aw.Condition("event.name = ready").add_agent(agent)
+
+
 def test_enqueued_task_appears_with_its_status_and_label(werk):
     assert werk.get_tasks() == []
 
