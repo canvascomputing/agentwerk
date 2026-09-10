@@ -904,7 +904,7 @@ mod tests {
             "an edit must not trigger a re-request"
         );
 
-        werk.cancel_all_tasks();
+        werk.cancel();
         werk.finish().await;
     }
 
@@ -1007,7 +1007,7 @@ mod tests {
             .replies
             .last()
             .is_some_and(|r| r.author == Author::Assistant));
-        werk.cancel_all_tasks();
+        werk.cancel();
     }
 
     #[tokio::test]
@@ -1239,7 +1239,7 @@ mod tests {
             });
 
         werk.start();
-        werk.cancel_all_tasks();
+        werk.cancel();
 
         tokio::time::timeout(Duration::from_secs(2), werk.finish())
             .await
@@ -1290,7 +1290,7 @@ mod tests {
                 break;
             }
             if tokio::time::Instant::now() > deadline {
-                werk.cancel_all_tasks();
+                werk.cancel();
                 panic!("analysis task did not finish within 5s");
             }
             tokio::time::sleep(Duration::from_millis(20)).await;
@@ -1308,7 +1308,7 @@ mod tests {
         );
         assert_eq!(researcher.requests(), 0, "the researcher never ran");
 
-        werk.cancel_all_tasks();
+        werk.cancel();
         tokio::time::timeout(Duration::from_secs(2), werk.finish())
             .await
             .expect("finish returns after cancel()");

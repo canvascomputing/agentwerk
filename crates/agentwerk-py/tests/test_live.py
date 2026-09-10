@@ -136,7 +136,7 @@ async def test_compaction_summarizes_the_replies_against_the_live_model(tmp_path
     await _until(lambda: _answered(werk, id))
     werk.add_reply(id, "Now name a second colour.")
     await _until(lambda: "compaction_finished" in kinds)
-    werk.cancel_all_tasks()
+    werk.cancel()
     await werk.finish()
 
     assert "compaction_failed" not in kinds

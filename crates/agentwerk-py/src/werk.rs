@@ -415,8 +415,8 @@ impl PyWerk {
     }
 
     /// Take every task off the Werk, which ends the run.
-    fn cancel_all_tasks(slf: PyRef<'_, Self>) -> PyRef<'_, Self> {
-        slf.inner.cancel_all_tasks();
+    fn cancel(slf: PyRef<'_, Self>) -> PyRef<'_, Self> {
+        slf.inner.cancel();
         slf
     }
 

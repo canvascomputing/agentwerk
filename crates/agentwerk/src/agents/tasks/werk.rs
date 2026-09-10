@@ -1106,7 +1106,7 @@ impl Werk {
     /// A match is neither claimed nor resumed, and an agent already holding one
     /// is taken off it; the task stays `in_progress`. Nothing waits: this is
     /// not async, so it can be called from a ctrl-c handler, a drop guard, or
-    /// anywhere else. Use [`Self::cancel_all_tasks`] to stop the whole run.
+    /// anywhere else. Use [`Self::cancel`] to stop the whole run.
     /// Task-only queries remain live for tasks added later. Event and joined
     /// queries snapshot the task IDs they currently select.
     ///
@@ -1156,7 +1156,7 @@ impl Werk {
     ///
     /// [`Self::finish`] then reports `FinishReason::Cancelled`. Like
     /// [`Self::cancel_tasks`], nothing waits, so a ctrl-c handler can call it.
-    pub fn cancel_all_tasks(&self) -> &Self {
+    pub fn cancel(&self) -> &Self {
         self.cancel_tasks(Query::all().task())
     }
 
@@ -2622,7 +2622,7 @@ mod tests {
 
         assert!(werk.find_tasks("task.cancelled = true").is_empty());
         assert_eq!(werk.find_tasks("task.pending = true").len(), 2);
-        werk.cancel_all_tasks();
+        werk.cancel();
         werk.finish().await;
     }
 
@@ -2640,7 +2640,7 @@ mod tests {
 
         werk.start();
         assert_eq!(werk.find_events("event.name = run_started").len(), 2);
-        werk.cancel_all_tasks();
+        werk.cancel();
         werk.finish().await;
     }
 
@@ -3447,7 +3447,7 @@ mod tests {
     async fn the_finish_reason_is_cleared_by_a_restart() {
         let (werk, _tmp) = test_werk();
         werk.start();
-        werk.cancel_all_tasks();
+        werk.cancel();
         werk.finish().await;
         assert_eq!(werk.get_finish_reason(), Some(FinishReason::Cancelled));
         werk.start();
@@ -3519,7 +3519,7 @@ mod tests {
         let (werk, _tmp) = test_werk();
         let reasons = collect_finish_reasons(&werk);
         werk.start();
-        werk.cancel_all_tasks();
+        werk.cancel();
         werk.finish().await;
         assert_eq!(*reasons.lock().unwrap(), vec![FinishReason::Cancelled]);
         assert_eq!(werk.get_finish_reason(), Some(FinishReason::Cancelled));

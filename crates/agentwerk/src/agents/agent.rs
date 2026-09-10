@@ -1268,7 +1268,7 @@ mod tests {
         let werk = agent.werk.upgrade().unwrap();
         werk.set_dir(dir.path().to_path_buf());
         let task = agent.add_task("cancel before the provider is called");
-        agent.start().cancel_all_tasks();
+        agent.start().cancel();
 
         assert_eq!(agent.finish_task(task.clone()).await, None);
         assert!(agent.finish_tasks(task.clone()).await.is_empty());
