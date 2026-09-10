@@ -216,7 +216,7 @@ fn cancel_on_ctrl_c(werk: Arc<Werk>) {
     tokio::spawn(async move {
         if tokio::signal::ctrl_c().await.is_ok() {
             eprintln!("\nCancelling research…");
-            werk.cancel_all_tasks();
+            werk.cancel();
         }
     });
 }

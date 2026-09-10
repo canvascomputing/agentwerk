@@ -685,7 +685,7 @@ The rules the tables never repeat.
 | Python | `.find_events(matches)` and `.find_event(matches)`: accept a `Query`, AQL string, or event callable | |
 | both | `.cancel_tasks(matches: Matcher<Task>): this`: Task AQL remains live; Event and Joined AQL snapshot current task IDs | pub |
 | Python | `.cancel_tasks(matches)`: accepts a `Query` or a callable | |
-| both | `.cancel_all_tasks(): this` | pub |
+| both | `.cancel(): this` | pub |
 | both | `.add_agent(agent: Agent): this` | pub |
 | both | `.start(): this` | pub |
 | both | `.finish_tasks(matches: Matcher<Task>): Promise<json[]>`: Event and Joined AQL snapshot current task IDs | pub |
@@ -2490,7 +2490,7 @@ Binds `agents/tasks/werk.rs` and `store.rs`.
 | Rust | `.finish_task(matches: any): Promise<any?> throws PyErr` | python |
 | Rust | `.get_finish_reason(): string?` | python |
 | Rust | `.cancel_tasks(matches: any): this throws PyErr` | python |
-| Rust | `.cancel_all_tasks(): this` | python |
+| Rust | `.cancel(): this` | python |
 | Rust | `.find_events(matches: any): PyEvent[] throws PyErr` | python |
 | Rust | `.find_event(matches: any): PyEvent? throws PyErr` | python |
 | Rust | `.get_input_tokens(): number` | python |

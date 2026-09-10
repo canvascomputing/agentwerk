@@ -435,7 +435,7 @@ async fn resumed_session_reuses_the_prompt_and_preserves_existing_messages() {
     werk.set_template("company", "Old").add_agent(agent.clone());
     let id = werk.add_task("{{ company }}");
     finish(&werk).await;
-    werk.cancel_all_tasks();
+    werk.cancel();
     finish(&werk).await;
     drop(werk);
     let loaded = Werk::load(dir.path()).unwrap();
@@ -458,7 +458,7 @@ async fn resumed_session_does_not_record_an_unchanged_system_prompt_twice() {
     werk.add_agent(agent.clone());
     let id = werk.add_task("review");
     finish(&werk).await;
-    werk.cancel_all_tasks();
+    werk.cancel();
     finish(&werk).await;
     drop(werk);
 
@@ -487,7 +487,7 @@ async fn legacy_histories_reuse_the_earliest_system_prompt_without_rewriting_rep
     let id = werk.add_task("review");
     finish(&werk).await;
 
-    werk.cancel_all_tasks();
+    werk.cancel();
     finish(&werk).await;
     werk.append_reply(&id, Reply::system_text("Legacy refresh"));
     drop(werk);

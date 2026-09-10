@@ -465,7 +465,7 @@ werk.add_task(Task("Write up the ranking.", label="report"))
 | | `finish_tasks(query)` | Wait for matching tasks and get their results. |
 | | `finish()` | Run tasks and return their results. |
 | **Cancel** | `cancel_tasks(query)` | Stop work on matching tasks. |
-| | `cancel_all_tasks()` | Stop work on every task. |
+| | `cancel()` | Stop work on every task. |
 | **Inspect tasks** | `get_task(id)` | Get one task by ID. |
 | | `get_tasks()` | Get every task in creation order. |
 | | `find_task(query)` | Get the first matching task. |
@@ -586,7 +586,7 @@ if answer is not None:
 | | `finish_tasks(query)` | Wait for matching tasks and get their results. |
 | | `finish()` | Run tasks and return their results. |
 | **Cancel** | `cancel_tasks(query)` | Stop work on matching tasks. |
-| | `cancel_all_tasks()` | Stop work on every task. |
+| | `cancel()` | Stop work on every task. |
 
 Cancellation affects only the current execution, not persisted task status. Starting a new run with `start()` clears cancellation. Inspect it with `task.is_cancelled()`, or query execution state with `task.cancelled = true` and `task.pending = true`.
 

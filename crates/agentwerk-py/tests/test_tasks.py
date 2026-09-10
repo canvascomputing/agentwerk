@@ -97,7 +97,6 @@ def test_removed_werk_method_names_are_not_compatibility_aliases(werk):
         "reply",
         "set_finished",
         "set_failed",
-        "cancel",
         "cancel_all",
         "finish_result",
         "finish_results",
@@ -451,7 +450,7 @@ async def test_start_clears_cancellation_flags_and_filters(werk):
 
     assert werk.find_tasks("task.cancelled = true") == []
     assert len(werk.find_tasks("task.pending = true")) == 2
-    werk.cancel_all_tasks()
+    assert isinstance(werk.cancel(), aw.Werk)
     await werk.finish()
 
 
@@ -1030,7 +1029,7 @@ async def test_finish_task_is_none_when_nothing_finished(werk):
 async def test_a_cancelled_run_reports_its_reason(werk):
     werk.start()
     werk.add_task("work")
-    werk.cancel_all_tasks()
+    werk.cancel()
     await werk.finish()
     assert werk.get_finish_reason() == "cancelled"
 

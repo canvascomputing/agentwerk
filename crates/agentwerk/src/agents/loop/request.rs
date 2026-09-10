@@ -475,7 +475,7 @@ mod tests {
             for _ in 0..20 {
                 tokio::task::yield_now().await;
             }
-            cancel_handle.cancel_all_tasks();
+            cancel_handle.cancel();
             tokio::time::advance(Duration::from_millis(100)).await;
             for _ in 0..20 {
                 tokio::task::yield_now().await;
