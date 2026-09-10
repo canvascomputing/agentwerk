@@ -87,9 +87,9 @@ agentwerk has five core concepts. An `Agent` uses tools to complete a `Task`, a 
 
 | Section | Covers |
 |---|---|
-| [Agents](#agents) | Roles, behavior, and [providers](#providers). |
-| [Tasks](#tasks) | [Templates](#template-values), [JSONPath](#template-reference), [schemas](#schemas), and [directives](#directives). |
-| [Werk](#werk) | [Queries](#queries), [execution](#execution), [result sharing](#sharing-results), [configuration](#configuration), [compaction](#compaction), and [sessions](#sessions). |
+| [Agents](#agents) | Roles, behavior, and [Providers](#providers). |
+| [Tasks](#tasks) | [Templates](#template-values), [JSONPath](#template-reference), [Schemas](#schemas), and [Directives](#directives). |
+| [Werk](#werk) | [Queries](#queries), [Execution](#execution), [Result sharing](#sharing-results), [Configuration](#configuration), [Compaction](#compaction), and [Sessions](#sessions). |
 | [Tools](#tools) | Controlled capabilities for agents. |
 | [Events](#events) | Observability and hooks. |
 | [Knowledge](#knowledge) | Durable shared memory. |
