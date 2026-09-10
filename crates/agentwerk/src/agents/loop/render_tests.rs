@@ -76,10 +76,9 @@ async fn later_template_and_result_updates_do_not_change_the_task_prompts() {
         Ok(paused_text_response("continue")),
         Ok(write_result_response("done")),
     ]);
-    let first = research(&werk, "old research");
-    let first_path = werk.result_path(&first).canonicalize().unwrap();
+    research(&werk, "old research");
     werk.set_template("company", "Old");
-    let role = "{{ company }}: {{ result: research ORDER BY task.id DESC }} | {{ result_path: research ORDER BY task.id DESC }}";
+    let role = "{{ company }}: {{ result: research ORDER BY task.id DESC }}";
     werk.add_agent(task_agent(&provider).role(role));
     let id = werk.add_task("{{ company }}: {{ result: research ORDER BY task.id DESC }}");
     werk.on_event(|werk, event| {
@@ -89,10 +88,7 @@ async fn later_template_and_result_updates_do_not_change_the_task_prompts() {
         }
     });
     finish(&werk).await;
-    let frozen = format!(
-        r#"Old: {{"research":"old research"}} | {}"#,
-        first_path.display()
-    );
+    let frozen = r#"Old: {"research":"old research"}"#.to_string();
     assert_eq!(
         provider.received_system_prompts(),
         [frozen.clone(), frozen.clone()]

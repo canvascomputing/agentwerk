@@ -1,4 +1,4 @@
-//! Parses and evaluates the navigation subset used by result templates.
+//! Parses and evaluates the navigation subset used by template expressions.
 
 use std::fmt;
 
@@ -471,14 +471,33 @@ mod tests {
 
     #[test]
     fn array_integers_must_fit_the_supported_range() {
-        for path in [
-            "[999999999999999999999999]",
-            "[-999999999999999999999999]",
-            "[999999999999999999999999:]",
-            "[:999999999999999999999999]",
-            "[::999999999999999999999999]",
+        for (path, message) in [
+            (
+                "[999999999999999999999999]",
+                "JSON path array index is outside the supported range",
+            ),
+            (
+                "[-999999999999999999999999]",
+                "JSON path array index is outside the supported range",
+            ),
+            (
+                "[999999999999999999999999:]",
+                "JSON path slice bound is outside the supported range",
+            ),
+            (
+                "[:999999999999999999999999]",
+                "JSON path slice bound is outside the supported range",
+            ),
+            (
+                "[::999999999999999999999999]",
+                "JSON path slice step is outside the supported range",
+            ),
         ] {
-            assert!(JsonPath::parse(path).is_err(), "{path}");
+            assert_eq!(
+                JsonPath::parse(path).unwrap_err().to_string(),
+                message,
+                "{path}"
+            );
         }
     }
 
@@ -526,38 +545,46 @@ mod tests {
     }
 
     #[test]
-    fn unsupported_jmespath_features_are_rejected() {
-        for path in [
-            "items[?active]",
-            "foo == bar",
-            "foo || bar",
-            "length(items)",
-            "[foo,bar]",
-            "{foo: foo}",
-            "'literal'",
-            "`1`",
-            "@",
-            "foo | bar",
+    fn unsupported_jmespath_features_report_the_unsupported_syntax() {
+        for (path, message) in [
+            ("items[?active]", "invalid JSON path array index"),
+            ("foo == bar", "unsupported JSON path syntax at byte 3"),
+            ("foo || bar", "unsupported JSON path syntax at byte 3"),
+            ("length(items)", "unsupported JSON path syntax at byte 6"),
+            ("[foo,bar]", "invalid JSON path array index"),
+            ("{foo: foo}", "unsupported JSON path syntax at byte 0"),
+            ("'literal'", "unsupported JSON path syntax at byte 0"),
+            ("`1`", "unsupported JSON path syntax at byte 0"),
+            ("@", "unsupported JSON path syntax at byte 0"),
+            ("foo | bar", "unsupported JSON path syntax at byte 3"),
         ] {
-            assert!(JsonPath::parse(path).is_err(), "{path}");
+            assert_eq!(
+                JsonPath::parse(path).unwrap_err().to_string(),
+                message,
+                "{path}"
+            );
         }
     }
 
     #[test]
-    fn malformed_json_paths_are_rejected() {
-        for path in [
-            "",
-            "foo.",
-            "foo..bar",
-            "foo bar",
-            "\"",
-            "\"\"",
-            "[",
-            "[one]",
-            "[1:2:3:4]",
-            r#""\q""#,
+    fn malformed_json_paths_report_why_parsing_failed() {
+        for (path, message) in [
+            ("", "JSON path cannot be empty"),
+            ("foo.", "expected a JSON path field at byte 4"),
+            ("foo..bar", "expected a JSON path field at byte 4"),
+            ("foo bar", "unsupported JSON path syntax at byte 3"),
+            ("\"", "unclosed quoted JSON path field"),
+            ("\"\"", "quoted JSON path fields cannot be empty"),
+            ("[", "unclosed JSON path bracket"),
+            ("[one]", "invalid JSON path array index"),
+            ("[1:2:3:4]", "invalid JSON path slice"),
+            (r#""\q""#, "invalid quoted JSON path field"),
         ] {
-            assert!(JsonPath::parse(path).is_err(), "{path}");
+            assert_eq!(
+                JsonPath::parse(path).unwrap_err().to_string(),
+                message,
+                "{path}"
+            );
         }
     }
 }
