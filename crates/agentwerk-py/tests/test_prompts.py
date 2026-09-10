@@ -28,28 +28,22 @@ async def test_shared_template_values_are_inserted_literally(werk, scripted_open
     assert messages[1]["content"] == "For {{ company }}: {{ result: missing }} {{ unknown }}"
 
 
-async def test_direct_aql_expressions_resolve_results_and_paths(
-    werk, tmp_path, scripted_openai
-):
+async def test_direct_aql_expressions_resolve_results(werk, scripted_openai):
     first = werk.add_task(aw.Task("first", label="research"))
     second = werk.add_task(aw.Task("second", label="research"))
     werk.set_task_finished(first, {"research": "one {{ company }}"})
     werk.set_task_finished(second, {"answer": 42})
-    second_path = (tmp_path / "tasks" / second / "result.json").resolve()
-    role = f"{{{{ result: research }}}} | {{{{ result_path: {second} }}}}"
     scripted_openai.respond_with_tool("finish", {"answer": "done"})
     werk.add_agent(
         aw.Agent()
         .provider(scripted_openai.provider())
         .model("mock")
-        .role(role)
+        .role("{{ result: research }}")
     )
     werk.add_task("{{ results: research ORDER BY task.id DESC }}")
     await asyncio.wait_for(werk.finish(), timeout=5)
     messages = scripted_openai.requests[0]["messages"]
-    assert messages[0]["content"] == (
-        f'{{"research":"one {{{{ company }}}}"}} | {second_path}'
-    )
+    assert messages[0]["content"] == '{"research":"one {{ company }}"}'
     assert messages[1]["content"] == (
         '[{"answer":42},{"research":"one {{ company }}"}]'
     )
@@ -76,9 +70,64 @@ async def test_result_json_paths_navigate_selected_json(werk, scripted_openai):
     assert messages[1]["content"] == '["Acme","Canvas"]'
 
 
-async def test_nested_query_values_and_readable_results(
-    werk, scripted_openai
-):
+async def test_template_variable_json_paths(werk, scripted_openai):
+    werk.set_template("profile", '{"company":{"name":"Acme"}}')
+    scripted_openai.respond_with_tool("finish", {"answer": "done"})
+    werk.add_agent(
+        aw.Agent()
+        .provider(scripted_openai.provider())
+        .model("mock")
+        .role("{{ profile | company.name }}")
+    )
+    werk.add_task("go")
+
+    await asyncio.wait_for(werk.finish(), timeout=5)
+
+    messages = scripted_openai.requests[0]["messages"]
+    assert messages[0]["content"] == "Acme"
+
+
+async def test_task_expressions_select_json(werk, scripted_openai):
+    first = werk.add_task(aw.Task({"file": "one"}, label="scan"))
+    second = werk.add_task(aw.Task({"file": "two"}, label="scan"))
+    werk.set_task_finished(first, {"status": "done"})
+    werk.set_task_finished(second, {"status": "done"})
+    scripted_openai.respond_with_tool("finish", {"answer": "done"})
+    werk.add_agent(
+        aw.Agent()
+        .provider(scripted_openai.provider())
+        .model("mock")
+        .role("{{ task: scan ORDER BY task.id DESC | task.file }}")
+    )
+    werk.add_task("{{ tasks: scan | [*].id }}")
+
+    await asyncio.wait_for(werk.finish(), timeout=5)
+
+    messages = scripted_openai.requests[0]["messages"]
+    assert messages[0]["content"] == "two"
+    assert messages[1]["content"] == f'["{first}","{second}"]'
+
+
+async def test_event_expressions_select_json(werk, scripted_openai):
+    werk.emit_event(aw.Event("inspection").data({"name": "one"}))
+    werk.emit_event(aw.Event("inspection").data({"name": "two"}))
+    scripted_openai.respond_with_tool("finish", {"answer": "done"})
+    werk.add_agent(
+        aw.Agent()
+        .provider(scripted_openai.provider())
+        .model("mock")
+        .role("{{ event: event.name = inspection | data.name }}")
+    )
+    werk.add_task("{{ events: event.name = inspection | [*].data.name }}")
+
+    await asyncio.wait_for(werk.finish(), timeout=5)
+
+    messages = scripted_openai.requests[0]["messages"]
+    assert messages[0]["content"] == "one"
+    assert messages[1]["content"] == '["one","two"]'
+
+
+async def test_nested_query_values_select_results(werk, scripted_openai):
     first = werk.add_task(aw.Task("first", label="research"))
     second = werk.add_task(aw.Task("second", label="research"))
     werk.set_task_finished(first, {"title": "Market", "empty": None})
@@ -89,12 +138,12 @@ async def test_nested_query_values_and_readable_results(
         aw.Agent()
         .provider(scripted_openai.provider())
         .model("mock")
-        .role("{{ readable(results: {{ selection }}) }}")
+        .role("{{ results: {{ selection }} }}")
     )
     werk.add_task("go")
     await asyncio.wait_for(werk.finish(), timeout=5)
     assert scripted_openai.requests[0]["messages"][0]["content"] == (
-        "- title: Market\n-\n  - one\n  - two"
+        '[{"empty":null,"title":"Market"},["one",null,"two"]]'
     )
 
 

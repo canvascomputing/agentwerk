@@ -83,11 +83,16 @@ asyncio.run(main())
 
 ## API
 
-- [Agents](#agents): Set agent roles, behavior, and tasks.
-- [Werk](#werk): Assign work and collect results across agents.
-- [Tools](#tools): Give agents controlled ways to act.
-- [Events](#events): Inspect requests, tool calls, and failures.
-- [Knowledge](#knowledge): Share durable memory across agents and tasks.
+agentwerk has five core concepts. An `Agent` uses tools to complete a `Task`, a unit of work whose result is a JSON value. A `Werk` coordinates agents and tasks, and an `Event` records activity.
+
+| Section | Covers |
+|---|---|
+| [Agents](#agents) | Roles, behavior, and [providers](#providers). |
+| [Tasks](#tasks) | [Templates](#template-values), [JSONPath](#template-reference), [schemas](#schemas), and [directives](#directives). |
+| [Werk](#werk) | [Queries](#queries), [execution](#execution), [result sharing](#sharing-results), [configuration](#configuration), [compaction](#compaction), and [sessions](#sessions). |
+| [Tools](#tools) | Controlled capabilities for agents. |
+| [Events](#events) | Observability and hooks. |
+| [Knowledge](#knowledge) | Durable shared memory. |
 
 ## Agents
 
@@ -110,8 +115,6 @@ agent.add_task("Read CHANGELOG.md and summarize the entries added since the last
 
 results = await agent.finish()
 ```
-
-The [prompt skill](../../skills/prompt/SKILL.md) provides a compact template for writing agent roles.
 
 <details>
 <summary>Agent reference</summary>
@@ -239,6 +242,170 @@ agent = Agent().model(
 ```
 
 See [`Provider`](https://docs.rs/agentwerk/latest/agentwerk/providers/struct.Provider.html) and [`Model`](https://docs.rs/agentwerk/latest/agentwerk/providers/struct.Model.html).
+
+</details>
+
+## Tasks
+
+Roles and tasks can interpolate shared values and selected runtime data. The [prompt skill](../../skills/prompt/SKILL.md) provides a compact template for writing agent roles.
+
+### Template values
+
+Define an agent with placeholders, then set the template values before adding its task:
+
+```python
+from agentwerk import Agent, Task
+
+werk.add_agent(
+    Agent.from_env()
+    .label("report")
+    .role(
+        "Write for {{ company }} using:\n"
+        "{{ results: research }}"
+    )
+)
+werk.set_template("company", "Canvas Computing")
+await werk.finish_tasks("research")
+werk.add_task(Task("Write the board report.", label="report"))
+```
+
+agentwerk fills placeholders in the role and task just before each task's first model request. Newly added tasks use the latest template values and results.
+
+<details>
+<summary id="template-reference">Template reference</summary>
+
+| Expression | Output |
+|---|---|
+| `{{ name }}` | The value assigned to `name`. |
+| `{{ name \| JSONPath }}` | A value selected from the template variable after parsing it as JSON. |
+| `{{ result: AQL }}` | The first result. Strings appear as text and other values as compact JSON. |
+| `{{ results: AQL }}` | A compact JSON array of matching results. |
+| `{{ result: AQL \| JSONPath }}` | A value selected from the first result. |
+| `{{ results: AQL \| JSONPath }}` | A value selected from the array of matching results. |
+| `{{ task: AQL }}` | The first matching task as compact JSON, or `null`. |
+| `{{ tasks: AQL }}` | A compact JSON array of matching tasks. |
+| `{{ task: AQL \| JSONPath }}` | A value selected from the first matching task. |
+| `{{ tasks: AQL \| JSONPath }}` | A value selected from the array of matching tasks. |
+| `{{ event: AQL }}` | The first matching event as compact JSON, or `null`. |
+| `{{ events: AQL }}` | A compact JSON array of matching events. |
+| `{{ event: AQL \| JSONPath }}` | A value selected from the first matching event. |
+| `{{ events: AQL \| JSONPath }}` | A value selected from the array of matching events. |
+
+Use JSONPath after a template variable or AQL selection. Template variables are parsed as JSON, with malformed JSON becoming `null`. Task and event selectors match the corresponding `find_*` method. Plural selections use the array as the root.
+
+| Record | JSONPath properties |
+|---|---|
+| Task | `task`, `label`, `schema`, `id`, `status`, `reporter`, `assignee`, `created_at`, `started_at`, `finished_at`, `failed_at` |
+| Event | `name`, `directive`, `data`, `task_id`, `agent_id`, `label`, `created_at` |
+
+`task` is the original JSON input. Unset `label`, `schema`, `assignee`, and `directive` properties are omitted. Task results, errors, replies, and cancellation state are not serialized.
+
+For example, given this `research` result:
+
+```json
+{
+  "company": {"name": "Canvas Computing"},
+  "findings": [{"summary": "one"}, {"summary": "two"}]
+}
+```
+
+This template:
+
+```text
+{{ result: research | company.name }}
+```
+
+Renders as:
+
+```text
+Canvas Computing
+```
+
+Select each task input or event's data:
+
+```text
+{{ tasks: research | [*].task }}
+{{ events: event.name = tool_call_failed | [*].data }}
+```
+
+`research` is shorthand for `task.label = research`.
+
+| Path | Selects |
+|---|---|
+| `company.name` | A nested field. |
+| `metadata."build-id"` | A field that requires JSON quoting. |
+| `findings[0]`, `findings[-1]` | An array element. |
+| `findings[1:4]`, `findings[::-1]` | An array slice. |
+| `findings[*].summary` | The `summary` field from each array element. |
+| `authors.*.name` | The `name` field from each object value, in unspecified order. |
+| `groups[].members` | The `members` field after flattening one array level. |
+
+Missing fields, incompatible types, and out-of-range indexes produce `null`. Wildcards, slices, and flattening omit null values when more path steps follow. Filters, comparisons, logical expressions, literals, multi-selects, functions, and additional pipes are not supported.
+
+`{ name }` stays unchanged. To output the literal text `{{ name }}`, write `{{{{ name }}}}`.
+
+</details>
+
+### Schemas
+
+A `Schema` constrains a task result.
+
+```python
+from agentwerk import Schema, Task
+
+schema = Schema(
+    {
+        "type": "object",
+        "properties": {"title": {"type": "string"}},
+        "required": ["title"],
+    }
+)
+
+werk.add_task(Task("Write a report.", schema=schema))
+```
+
+<details>
+<summary>Schema reference</summary>
+
+agentwerk corrects common result-formatting mistakes, such as a quoted number or a nested object encoded as JSON text. Schema-bound results must be objects. Remaining schema violations trigger a retry, subject to `max_schema_retries`. Without a schema, a task may return any JSON value.
+
+Use shallow, focused schemas for small models. Split complex work into tasks with separate schemas.
+
+| | Method | Description |
+|-|--------|-------------|
+| **Schema** | `Schema(document)` | Create a schema. |
+| | `validate(value)` | Return the validated value and JSON pointers to repaired values, or report violations. |
+
+See [`Schema`](https://docs.rs/agentwerk/latest/agentwerk/schemas/struct.Schema.html).
+
+</details>
+
+### Directives
+
+Directives tell the model how to recover from failures. Override their wording for your model or environment.
+
+```python
+from agentwerk import Agent
+
+
+agent = (
+    Agent.from_env()
+    .directive("grep_failed", "The search did not run. Narrow `path`.")
+    .directives(
+        {
+            "tool_timed_out": "Reduce the command scope.",
+            "cache_miss": "No cache entry exists for {{ path }}.",
+        }
+    )
+)
+```
+
+<details>
+<summary>Directive reference</summary>
+
+Built-in keys override recovery text. Keys without overrides retain their defaults. Templates accept runtime values such as `{{ detail }}`, `{{ attempt }}`, and `{{ path }}`. Placeholders without a value remain unchanged.
+
+See [prompts/directives](https://github.com/canvascomputing/agentwerk/tree/main/crates/agentwerk/src/prompts/directives) for the built-in text.
 
 </details>
 
@@ -457,13 +624,13 @@ See [`Task`](https://docs.rs/agentwerk/latest/agentwerk/struct.Task.html).
 Agents can pass work and results in five ways:
 
 1. **Result hook**: `on_result` creates follow-up tasks from completed work.
-2. **Template values**: enrich prompts with template strings or AQL-selected results.
+2. **[Task templates](#template-values)**: interpolate shared values, results, tasks, and events.
 3. **KnowledgeTool**: shares durable pages between agents.
 4. **TaskTool**: reads any finished task's result by ID.
 5. **ReadFileTool**: opens a task's `result.json` in the session directory.
 
 <details>
-<summary>Result-sharing examples</summary>
+<summary>Other result-sharing examples</summary>
 
 #### 1. Result hook
 
@@ -477,115 +644,6 @@ def hand_to_report(werk, done, result):
 
 werk.on_result(hand_to_report)
 ```
-
-#### 2. Template values
-
-Define an agent with placeholders, then set the template values before adding its task:
-
-```python
-from agentwerk import Agent, Task
-
-werk.add_agent(
-    Agent.from_env()
-    .label("report")
-    .role(
-        "Write for {{ company }} using:\n"
-        "{{ results: research }}"
-    )
-)
-werk.set_template("company", "Canvas Computing")
-await werk.finish_tasks("research")
-werk.add_task(Task("Write the board report.", label="report"))
-```
-
-agentwerk fills placeholders in the role and task just before each task's first model request. Newly added tasks use the latest template values and results.
-
-#### Template reference
-
-| Expression | Output |
-|---|---|
-| `{{ name }}` | The value assigned to `name`. |
-| `{{ result: AQL }}` | The first result. Strings appear as text and other values as compact JSON. |
-| `{{ results: AQL }}` | A compact JSON array of matching results. |
-| `{{ result: AQL \| path }}` | A value selected from the first result. |
-| `{{ results: AQL \| path }}` | A value selected from the array of matching results. |
-| `{{ result_path: AQL }}` | The absolute path of the first matching result file. |
-| `{{ result_paths: AQL }}` | A JSON array of absolute result file paths. |
-| `{{ readable(result: AQL) }}` | The first result as a readable outline. |
-| `{{ readable(results: AQL) }}` | Matching results as a readable outline. |
-
-You can select results with AQL and use ` | path` to select a value from their JSON. You can also use paths with functions such as `readable`: `{{ readable(result: research | findings[*].summary) }}`.
-
-For example, given this `research` result:
-
-```json
-{
-  "company": {"name": "Canvas Computing"},
-  "findings": [{"summary": "one"}, {"summary": "two"}]
-}
-```
-
-This template:
-
-```text
-{{ result: research | company.name }}
-```
-
-Renders as:
-
-```text
-Canvas Computing
-```
-
-Using `readable` with a wildcard:
-
-```text
-{{ readable(result: research | findings[*].summary) }}
-```
-
-Renders as:
-
-```text
-- one
-- two
-```
-
-| Path | Selects |
-|---|---|
-| `company.name` | A nested field. |
-| `metadata."build-id"` | A field that requires JSON quoting. |
-| `findings[0]`, `findings[-1]` | An array element. |
-| `findings[1:4]`, `findings[::-1]` | An array slice. |
-| `findings[*].summary` | The `summary` field from each array element. |
-| `authors.*.name` | The `name` field from each object value, in unspecified order. |
-| `groups[].members` | The `members` field after flattening one array level. |
-
-Missing fields, incompatible types, and out-of-range indexes produce `null`. Wildcards, slices, and flattening omit null values when more path steps follow. Filters, comparisons, logical expressions, literals, multi-selects, functions, and additional pipes are not supported.
-
-`{ name }` stays unchanged. To output the literal text `{{ name }}`, write `{{{{ name }}}}`.
-
-#### Readable results
-
-Use `readable` when an agent should receive structured results as an outline instead of JSON:
-
-```python
-werk.add_agent(
-    Agent.from_env()
-    .label("report")
-    .role("Summarize:\n{{ readable(results: task.label = research) }}")
-)
-```
-
-Results such as `{"title":"Market","updates":["one","two"]}` render as:
-
-```text
-- title: Market
-  updates:
-    - one
-    - two
-```
-
-Nulls and empty collections do not appear.
 
 #### 3. KnowledgeTool
 
@@ -621,40 +679,6 @@ writer.add_task("Read .agentwerk/tasks/t-1/result.json, then write the board rep
 ```
 
 Results live in the session directory, one `result.json` per task.
-
-</details>
-
-### Schemas
-
-A `Schema` constrains a task result.
-
-```python
-from agentwerk import Schema, Task
-
-schema = Schema(
-    {
-        "type": "object",
-        "properties": {"title": {"type": "string"}},
-        "required": ["title"],
-    }
-)
-
-werk.add_task(Task("Write a report.", schema=schema))
-```
-
-<details>
-<summary>Schema reference</summary>
-
-Agentwerk corrects common result-formatting mistakes, such as a quoted number or a nested object encoded as JSON text. Schema-bound results must be objects. Remaining schema violations trigger a retry, subject to `max_schema_retries`. Without a schema, a task may return any JSON value.
-
-Use shallow, focused schemas for small models. Split complex work into tasks with separate schemas.
-
-| | Method | Description |
-|-|--------|-------------|
-| **Schema** | `Schema(document)` | Create a schema. |
-| | `validate(value)` | Return the validated value and JSON pointers to repaired values, or report violations. |
-
-See [`Schema`](https://docs.rs/agentwerk/latest/agentwerk/schemas/struct.Schema.html).
 
 </details>
 
@@ -710,35 +734,6 @@ werk.on_event(watch)
 ```
 
 Each compaction event carries the trigger: `proactive` before a context-window error or `reactive` after one. A failure also carries a stable `kind` and human-readable `message`.
-
-</details>
-
-### Directives
-
-Directives tell the model how to recover from failures. Override their wording for your model or environment.
-
-```python
-from agentwerk import Agent
-
-
-agent = (
-    Agent.from_env()
-    .directive("grep_failed", "The search did not run. Narrow `path`.")
-    .directives(
-        {
-            "tool_timed_out": "Reduce the command scope.",
-            "cache_miss": "No cache entry exists for {{ path }}.",
-        }
-    )
-)
-```
-
-<details>
-<summary>Directive reference</summary>
-
-Built-in keys override recovery text. Keys without overrides retain their defaults. Templates accept runtime values such as `{{ detail }}`, `{{ attempt }}`, and `{{ path }}`. Placeholders without a value remain unchanged.
-
-See [prompts/directives](https://github.com/canvascomputing/agentwerk/tree/main/crates/agentwerk/src/prompts/directives) for the built-in text.
 
 </details>
 

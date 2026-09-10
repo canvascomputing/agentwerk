@@ -1061,28 +1061,26 @@ Not bound: prompt preparation and rendering are private Werk behavior.
 | Rust | `render_values(template: string, named_value: (name: string) => string?): string` | private |
 | Rust | `resolve_expression(werk: Werk, expression: string, named_value: (name: string) => string?): string? throws RenderError` | private |
 | Rust | `resolve_expression_value(werk: Werk, expression: string, named_value: (name: string) => string?): string? throws string` | private |
-| Rust | `resolve_result(werk: Werk, result: ResultExpression, named_value: (name: string) => string?): json throws string` | private |
+| Rust | `resolve_named_value(expression: string, named_value: (name: string) => string?): string? throws string` | private |
+| Rust | `resolve_selection(werk: Werk, selection: SelectionExpression, named_value: (name: string) => string?): json throws string` | private |
 | Rust | `expand_nested(expression: string, named_value: (name: string) => string?): [string, boolean] throws string` | private |
-| Rust | `readable_expression(expression: string): string? throws string` | private |
-| Rust | `ResultKind` | private |
+| Rust | `SelectionKind` | private |
 | Rust | `.Result` | private |
 | Rust | `.Results` | private |
-| Rust | `.ResultPath` | private |
-| Rust | `.ResultPaths` | private |
-| Rust | `.parse(source: string): ResultKind?` | private |
-| Rust | `.selects_values(): boolean` | private |
+| Rust | `.Task` | private |
+| Rust | `.Tasks` | private |
+| Rust | `.Event` | private |
+| Rust | `.Events` | private |
+| Rust | `.parse(source: string): SelectionKind?` | private |
 | Rust | `.is_plural(): boolean` | private |
-| Rust | `.uses_file_paths(): boolean` | private |
-| Rust | `ResultExpression { kind: ResultKind, query: string, json_path: string? }` | private |
-| Rust | `result_expression(expression: string): ResultExpression?` | private |
+| Rust | `SelectionExpression { kind: SelectionKind, query: string, json_path: string? }` | private |
+| Rust | `selection_expression(expression: string): SelectionExpression?` | private |
 | Rust | `split_json_path(source: string): [string, string?]` | private |
 | Rust | `is_json_path_separator(source: string, byte_offset: number): boolean` | private |
 | Rust | `expression_end(body: string): number? throws string` | private |
-| Rust | `select_result(werk: Werk, kind: ResultKind, query: string): json throws string` | private |
+| Rust | `select_value(werk: Werk, kind: SelectionKind, query: string): json throws string` | private |
+| Rust | `select_result(werk: Werk, kind: SelectionKind, query: Query): json throws string` | private |
 | Rust | `result_text(value: json): string` | private |
-| Rust | `readable(value: json): string` | private |
-| Rust | `readable_lines(value: json, indent: number): string[]` | private |
-| Rust | `result_value(werk: Werk, task: Task, use_path: boolean): json throws string` | private |
 
 ## `crates/agentwerk/src/prompts/json_path.rs`
 

@@ -138,44 +138,46 @@ fn resolve_expression_value(
     expression: &str,
     named_value: &mut impl FnMut(&str) -> Option<String>,
 ) -> Result<Option<String>, String> {
-    if let Some(inner) = readable_expression(expression)? {
-        let Some(result) = result_expression(inner) else {
-            return Err("readable expects a result: or results: expression".into());
-        };
-        if !result.kind.selects_values() {
-            return Err("readable expects a result: or results: expression".into());
-        }
-        let value = resolve_result(werk, result, named_value)?;
-        return Ok(Some(readable(&value)));
-    }
-
-    if let Some(result) = result_expression(expression) {
-        let value = resolve_result(werk, result, named_value)?;
+    if let Some(selection) = selection_expression(expression) {
+        let value = resolve_selection(werk, selection, named_value)?;
         return Ok(Some(result_text(value)));
     }
 
-    let (expanded, had_nested_value) = expand_nested(expression, named_value)?;
-    if had_nested_value {
-        return Err("nested values are only supported inside result expressions".into());
-    }
-    Ok(named_value(expanded.trim()))
+    resolve_named_value(expression, named_value)
 }
 
-fn resolve_result(
+fn resolve_named_value(
+    expression: &str,
+    named_value: &mut impl FnMut(&str) -> Option<String>,
+) -> Result<Option<String>, String> {
+    let (name, json_path) = split_json_path(expression);
+    let (expanded, had_nested_value) = expand_nested(name, named_value)?;
+    if had_nested_value {
+        return Err("nested values are only supported inside selection expressions".into());
+    }
+    let Some(text) = named_value(expanded.trim()) else {
+        return Ok(None);
+    };
+    let Some(json_path) = json_path else {
+        return Ok(Some(text));
+    };
+    let json_path = JsonPath::parse(json_path.trim()).map_err(|error| error.to_string())?;
+    let value = serde_json::from_str(&text).unwrap_or(Value::Null);
+    Ok(Some(result_text(json_path.evaluate(&value))))
+}
+
+fn resolve_selection(
     werk: &Werk,
-    result: ResultExpression<'_>,
+    selection: SelectionExpression<'_>,
     named_value: &mut impl FnMut(&str) -> Option<String>,
 ) -> Result<Value, String> {
-    let (query, _had_nested_value) = expand_nested(result.query, named_value)?;
-    if result.json_path.is_some() && !result.kind.selects_values() {
-        return Err("JSON paths require result: or results:".into());
-    }
-    let json_path = result
+    let (query, _had_nested_value) = expand_nested(selection.query, named_value)?;
+    let json_path = selection
         .json_path
         .map(JsonPath::parse)
         .transpose()
         .map_err(|error| error.to_string())?;
-    let value = select_result(werk, result.kind, query.trim())?;
+    let value = select_value(werk, selection.kind, query.trim())?;
     let Some(json_path) = json_path else {
         return Ok(value);
     };
@@ -196,10 +198,7 @@ fn expand_nested(
             return Err("unclosed nested expression".into());
         };
         let name = body[..close].trim();
-        if name.is_empty()
-            || name.contains(EXPRESSION_OPEN)
-            || result_expression(name).is_some()
-            || name.starts_with("readable(")
+        if name.is_empty() || name.contains(EXPRESSION_OPEN) || selection_expression(name).is_some()
         {
             return Err("nested expressions must name a template value".into());
         }
@@ -214,60 +213,46 @@ fn expand_nested(
     Ok((output, expanded))
 }
 
-fn readable_expression(expression: &str) -> Result<Option<&str>, String> {
-    let Some(body) = expression.strip_prefix("readable(") else {
-        return Ok(None);
-    };
-    let Some(body) = body.strip_suffix(')') else {
-        return Err("unclosed readable call".into());
-    };
-    Ok(Some(body.trim()))
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum ResultKind {
+enum SelectionKind {
     Result,
     Results,
-    ResultPath,
-    ResultPaths,
+    Task,
+    Tasks,
+    Event,
+    Events,
 }
 
-impl ResultKind {
+impl SelectionKind {
     fn parse(source: &str) -> Option<Self> {
         Some(match source {
             "result" => Self::Result,
             "results" => Self::Results,
-            "result_path" => Self::ResultPath,
-            "result_paths" => Self::ResultPaths,
+            "task" => Self::Task,
+            "tasks" => Self::Tasks,
+            "event" => Self::Event,
+            "events" => Self::Events,
             _ => return None,
         })
     }
 
-    fn selects_values(self) -> bool {
-        matches!(self, Self::Result | Self::Results)
-    }
-
     fn is_plural(self) -> bool {
-        matches!(self, Self::Results | Self::ResultPaths)
-    }
-
-    fn uses_file_paths(self) -> bool {
-        matches!(self, Self::ResultPath | Self::ResultPaths)
+        matches!(self, Self::Results | Self::Tasks | Self::Events)
     }
 }
 
 #[derive(Debug, Clone, Copy)]
-struct ResultExpression<'a> {
-    kind: ResultKind,
+struct SelectionExpression<'a> {
+    kind: SelectionKind,
     query: &'a str,
     json_path: Option<&'a str>,
 }
 
-fn result_expression(expression: &str) -> Option<ResultExpression<'_>> {
+fn selection_expression(expression: &str) -> Option<SelectionExpression<'_>> {
     let (kind, query) = expression.split_once(':')?;
-    let kind = ResultKind::parse(kind.trim())?;
+    let kind = SelectionKind::parse(kind.trim())?;
     let (query, json_path) = split_json_path(query);
-    Some(ResultExpression {
+    Some(SelectionExpression {
         kind,
         query: query.trim(),
         json_path: json_path.map(str::trim),
@@ -394,8 +379,19 @@ fn expression_end(body: &str) -> Result<Option<usize>, &'static str> {
     }
 }
 
-fn select_result(werk: &Werk, kind: ResultKind, query: &str) -> Result<Value, String> {
+fn select_value(werk: &Werk, kind: SelectionKind, query: &str) -> Result<Value, String> {
     let query = Query::new(query).map_err(|error| error.to_string())?;
+    match kind {
+        SelectionKind::Task => serde_json::to_value(werk.find_task(query)),
+        SelectionKind::Tasks => serde_json::to_value(werk.find_tasks(query)),
+        SelectionKind::Event => serde_json::to_value(werk.find_event(query)),
+        SelectionKind::Events => serde_json::to_value(werk.find_events(query)),
+        kind => return select_result(werk, kind, query),
+    }
+    .map_err(|error| format!("cannot serialize selection: {error}"))
+}
+
+fn select_result(werk: &Werk, kind: SelectionKind, query: Query) -> Result<Value, String> {
     let mut tasks = werk.result_tasks(query);
     let is_plural = kind.is_plural();
     if !is_plural && tasks.is_empty() {
@@ -404,11 +400,14 @@ fn select_result(werk: &Werk, kind: ResultKind, query: &str) -> Result<Value, St
     if !is_plural {
         tasks.truncate(1);
     }
-    let use_file_paths = kind.uses_file_paths();
     let values = tasks
         .iter()
-        .map(|task| result_value(werk, task, use_file_paths))
-        .collect::<Result<Vec<_>, _>>()?;
+        .map(|task| {
+            task.get_result()
+                .cloned()
+                .expect("result selector requires a result")
+        })
+        .collect::<Vec<_>>();
     if is_plural {
         return Ok(Value::Array(values));
     }
@@ -423,88 +422,6 @@ fn result_text(value: Value) -> String {
         Value::String(text) => text,
         value => value.to_string(),
     }
-}
-
-fn readable(value: &Value) -> String {
-    readable_lines(value, 0).join("\n")
-}
-
-fn readable_lines(value: &Value, indent: usize) -> Vec<String> {
-    let padding = " ".repeat(indent);
-    match value {
-        Value::Null => Vec::new(),
-        Value::Bool(_) | Value::Number(_) => vec![format!("{padding}{value}")],
-        Value::String(text) => {
-            if text.is_empty() {
-                return vec![padding];
-            }
-            text.lines()
-                .map(|line| format!("{padding}{line}"))
-                .collect()
-        }
-        Value::Array(values) => {
-            let mut lines = Vec::new();
-            for value in values {
-                let mut nested = readable_lines(value, indent + 2);
-                if nested.is_empty() {
-                    continue;
-                }
-                if value.is_array() {
-                    lines.push(format!("{padding}-"));
-                    lines.extend(nested);
-                    continue;
-                }
-                let first = nested.remove(0);
-                lines.push(format!("{padding}- {}", &first[indent + 2..]));
-                lines.extend(nested);
-            }
-            lines
-        }
-        Value::Object(fields) => {
-            let mut lines = Vec::new();
-            for (key, value) in fields {
-                if let Value::String(text) = value {
-                    let mut text_lines = text.lines();
-                    let first = text_lines.next().unwrap_or_default();
-                    lines.push(format!("{padding}{key}: {first}"));
-                    let continuation = " ".repeat(indent + key.chars().count() + 2);
-                    lines.extend(text_lines.map(|line| format!("{continuation}{line}")));
-                    continue;
-                }
-                let nested = readable_lines(value, indent + 2);
-                if nested.is_empty() {
-                    continue;
-                }
-                if matches!(value, Value::Bool(_) | Value::Number(_)) {
-                    lines.push(format!("{padding}{key}: {}", &nested[0][indent + 2..]));
-                } else {
-                    lines.push(format!("{padding}{key}:"));
-                    lines.extend(nested);
-                }
-            }
-            lines
-        }
-    }
-}
-
-fn result_value(werk: &Werk, task: &crate::Task, use_path: bool) -> Result<Value, String> {
-    if !use_path {
-        return Ok(task
-            .get_result()
-            .cloned()
-            .expect("result selector requires a result"));
-    }
-    let path = werk.result_path(task.get_id());
-    let absolute = path
-        .canonicalize()
-        .map_err(|error| format!("cannot access result file `{}`: {error}", path.display()))?;
-    if !absolute.is_file() {
-        return Err(format!(
-            "result path `{}` is not a file",
-            absolute.display()
-        ));
-    }
-    Ok(Value::String(absolute.to_string_lossy().into_owned()))
 }
 
 #[cfg(test)]
@@ -639,6 +556,92 @@ mod tests {
     }
 
     #[test]
+    fn template_variable_json_paths_select_json() {
+        let (werk, _dir) = session();
+        werk.set_template(
+            "profile",
+            r#"{"company":{"name":"Shared"},"findings":[{"summary":"one"}]}"#,
+        );
+
+        assert_eq!(
+            render(&werk, "{{ profile | findings[*].summary }}").unwrap(),
+            r#"["one"]"#
+        );
+    }
+
+    #[test]
+    fn runtime_variables_override_shared_variables_before_path_selection() {
+        let (werk, _dir) = session();
+        werk.set_template("profile", r#"{"company":{"name":"Shared"}}"#);
+        let runtime = [("profile", r#"{"company":{"name":"Runtime"}}"#.to_string())];
+
+        assert_eq!(
+            werk.render_prompt("{{ profile | company.name }}", &runtime)
+                .unwrap(),
+            "Runtime"
+        );
+    }
+
+    #[test]
+    fn template_variables_without_paths_stay_literal() {
+        let (werk, _dir) = session();
+        let profile = r#"{"company":{"name":"Acme"}}"#;
+        werk.set_template("profile", profile);
+
+        assert_eq!(render(&werk, "{{ profile }}").unwrap(), profile);
+    }
+
+    #[test]
+    fn unknown_template_variables_with_paths_stay_literal() {
+        let werk = Werk::new();
+
+        assert_eq!(
+            render(&werk, "{{ missing | company.name }}").unwrap(),
+            "{{ missing | company.name }}"
+        );
+    }
+
+    #[test]
+    fn malformed_template_variable_json_renders_null() {
+        let (werk, _dir) = session();
+        werk.set_template("profile", "not json");
+
+        assert_eq!(
+            render(&werk, "{{ profile | company.name }}").unwrap(),
+            "null"
+        );
+    }
+
+    #[test]
+    fn only_whitespace_delimited_pipes_start_json_paths() {
+        let (werk, _dir) = session();
+        werk.set_templates([
+            ("profile|company", "compact"),
+            ("profile |company", "left only"),
+            ("profile| company", "right only"),
+        ]);
+
+        for (expression, expected) in [
+            ("{{ profile|company }}", "compact"),
+            ("{{ profile |company }}", "left only"),
+            ("{{ profile| company }}", "right only"),
+        ] {
+            assert_eq!(render(&werk, expression).unwrap(), expected, "{expression}");
+        }
+    }
+
+    #[test]
+    fn invalid_template_variable_json_paths_report_the_parse_failure() {
+        let (werk, _dir) = session();
+        werk.set_template("profile", r#"{"items":[]}"#);
+
+        let error = render(&werk, "{{ profile | items[?active] }}").unwrap_err();
+
+        assert_eq!(error.expression, "profile | items[?active]");
+        assert_eq!(error.message, "invalid JSON path array index");
+    }
+
+    #[test]
     fn four_braces_emit_a_literal_double_brace_expression() {
         let (werk, _dir) = session();
         werk.set_template("company", "Acme");
@@ -721,33 +724,125 @@ mod tests {
     }
 
     #[test]
-    fn readable_formats_the_selected_json_path_value() {
+    fn task_expressions_return_the_first_match_in_query_order() {
         let (werk, _dir) = session();
-        let id = werk.add_task(Task::labeled("research", "go"));
-        werk.set_task_finished(
-            &id,
-            serde_json::json!({"findings": [{"summary": "one"}, {"summary": "two"}]}),
-        )
-        .unwrap();
+        werk.add_task(Task::labeled("scan", serde_json::json!({"file": "one"})));
+        werk.add_task(Task::labeled("scan", serde_json::json!({"file": "two"})));
 
         assert_eq!(
-            render(
-                &werk,
-                "{{ readable(result: research | findings[*].summary) }}",
-            )
-            .unwrap(),
-            "- one\n- two"
+            render(&werk, "{{ task: scan ORDER BY task.id DESC | task.file }}",).unwrap(),
+            "two"
         );
     }
 
     #[test]
-    fn json_path_boundaries_ignore_quoted_aql_pipes() {
+    fn tasks_expressions_use_the_selected_array_as_the_path_root() {
+        let (werk, _dir) = session();
+        let first = werk.add_task(Task::labeled("scan", "one"));
+        let second = werk.add_task(Task::labeled("scan", "two"));
+
+        assert_eq!(
+            render(&werk, "{{ tasks: scan | [*].id }}").unwrap(),
+            serde_json::json!([first, second]).to_string()
+        );
+    }
+
+    #[test]
+    fn task_expressions_use_the_current_task_serde_shape() {
+        let (werk, _dir) = session();
+        werk.add_task(Task::labeled("scan", serde_json::json!({"file": "one"})));
+
+        let serialized: Value =
+            serde_json::from_str(&render(&werk, "{{ task: scan }}").unwrap()).unwrap();
+
+        assert_eq!(serialized["task"]["file"], "one");
+        assert!(serialized.get("result").is_none());
+        assert!(serialized.get("errors").is_none());
+        assert!(serialized.get("replies").is_none());
+        assert!(serialized.get("cancelled").is_none());
+    }
+
+    #[test]
+    fn unmatched_task_expressions_render_null_or_an_empty_array() {
+        let (werk, _dir) = session();
+
+        assert_eq!(render(&werk, "{{ task: missing }}").unwrap(), "null");
+        assert_eq!(render(&werk, "{{ tasks: missing }}").unwrap(), "[]");
+    }
+
+    #[test]
+    fn event_expressions_return_the_first_match_in_log_order() {
+        let (werk, _dir) = session();
+        werk.emit_event(Event::new("inspection").data(serde_json::json!({"name": "one"})));
+        werk.emit_event(Event::new("inspection").data(serde_json::json!({"name": "two"})));
+
+        assert_eq!(
+            render(&werk, "{{ event: event.name = inspection | data.name }}",).unwrap(),
+            "one"
+        );
+    }
+
+    #[test]
+    fn events_expressions_use_the_selected_array_as_the_path_root() {
+        let (werk, _dir) = session();
+        werk.emit_event(Event::new("inspection").data(serde_json::json!({"name": "one"})));
+        werk.emit_event(Event::new("inspection").data(serde_json::json!({"name": "two"})));
+
+        assert_eq!(
+            render(
+                &werk,
+                "{{ events: event.name = inspection | [*].data.name }}",
+            )
+            .unwrap(),
+            r#"["one","two"]"#
+        );
+    }
+
+    #[test]
+    fn event_expressions_use_the_current_event_serde_shape() {
+        let (werk, _dir) = session();
+        werk.emit_event(Event::new("inspection").data(serde_json::json!({"name": "one"})));
+
+        let serialized: Value =
+            serde_json::from_str(&render(&werk, "{{ event: event.name = inspection }}").unwrap())
+                .unwrap();
+
+        assert_eq!(serialized["name"], "inspection");
+        assert_eq!(serialized["data"]["name"], "one");
+    }
+
+    #[test]
+    fn unmatched_event_expressions_render_null_or_an_empty_array() {
+        let (werk, _dir) = session();
+
+        assert_eq!(
+            render(&werk, "{{ event: event.name = absent }}").unwrap(),
+            "null"
+        );
+        assert_eq!(
+            render(&werk, "{{ events: event.name = absent }}").unwrap(),
+            "[]"
+        );
+    }
+
+    #[test]
+    fn removed_template_expressions_stay_literal() {
+        let werk = Werk::new();
+
+        for template in [
+            "{{ readable(result: research) }}",
+            "{{ result_path: research }}",
+            "{{ result_paths: research }}",
+        ] {
+            assert_eq!(render(&werk, template).unwrap(), template);
+        }
+    }
+
+    #[test]
+    fn quoted_aql_pipes_do_not_start_json_paths() {
         let (werk, _dir) = session();
         let id = werk.add_task(Task::labeled("research | notes", "go"));
         werk.set_task_finished(&id, serde_json::json!({"answer": "found"}))
-            .unwrap();
-        let compact = werk.add_task(Task::labeled("research|notes", "go"));
-        werk.set_task_finished(&compact, serde_json::json!("compact"))
             .unwrap();
 
         assert_eq!(
@@ -758,6 +853,15 @@ mod tests {
             .unwrap(),
             "found"
         );
+    }
+
+    #[test]
+    fn compact_aql_pipes_do_not_start_json_paths() {
+        let (werk, _dir) = session();
+        let id = werk.add_task(Task::labeled("research|notes", "go"));
+        werk.set_task_finished(&id, serde_json::json!("compact"))
+            .unwrap();
+
         assert_eq!(
             render(&werk, "{{ result: research|notes }}").unwrap(),
             "compact"
@@ -765,46 +869,65 @@ mod tests {
     }
 
     #[test]
-    fn json_path_boundaries_ignore_parenthesized_and_nested_pipes() {
-        assert_eq!(
-            split_json_path("task.label IN (one | two) | answer"),
-            ("task.label IN (one | two) ", Some(" answer"))
-        );
-        assert_eq!(
-            split_json_path("{{ selection | literal }} | answer"),
-            ("{{ selection | literal }} ", Some(" answer"))
-        );
-        assert_eq!(split_json_path("research|notes"), ("research|notes", None));
-    }
-
-    #[test]
-    fn result_file_paths_cannot_have_json_paths() {
-        let (werk, _dir) = session();
-        let id = werk.add_task("go");
-        werk.set_task_finished(&id, serde_json::json!({"answer": "done"}))
-            .unwrap();
-
-        let error = render(&werk, format!("{{{{ result_path: {id} | answer }}}}")).unwrap_err();
-
-        assert_eq!(error.message, "JSON paths require result: or results:");
-    }
-
-    #[test]
-    fn json_paths_are_static_and_fail_closed() {
+    fn pipes_inside_query_variable_names_do_not_start_json_paths() {
         let (werk, _dir) = session();
         let id = werk.add_task(Task::labeled("research", "go"));
         werk.set_task_finished(&id, serde_json::json!({"answer": "found"}))
             .unwrap();
-        werk.set_templates([("selection", "research | answer"), ("path", "answer")]);
+        werk.set_template("selection | literal", "research");
+
+        assert_eq!(
+            render(&werk, "{{ result: {{ selection | literal }} | answer }}",).unwrap(),
+            "found"
+        );
+    }
+
+    #[test]
+    fn malformed_json_paths_report_the_parse_failure() {
+        let (werk, _dir) = session();
+        let id = werk.add_task(Task::labeled("research", "go"));
+        werk.set_task_finished(&id, serde_json::json!({"answer": "found"}))
+            .unwrap();
+
+        for (prompt, message) in [
+            ("{{ result: research | }}", "JSON path cannot be empty"),
+            (
+                "{{ result: research | answer || missing }}",
+                "unsupported JSON path syntax at byte 6",
+            ),
+        ] {
+            let error = render(&werk, prompt).unwrap_err();
+            assert_eq!(error.expression, prompt[2..prompt.len() - 2].trim());
+            assert_eq!(error.message, message, "{prompt}");
+        }
+    }
+
+    #[test]
+    fn template_variables_cannot_supply_json_paths() {
+        let (werk, _dir) = session();
+        werk.set_templates([("path", "answer"), ("profile", r#"{"answer":"found"}"#)]);
 
         for prompt in [
-            "{{ result: research | }}",
-            "{{ result: research | answer || missing }}",
             "{{ result: research | {{ path }} }}",
-            "{{ result: {{ selection }} }}",
+            "{{ profile | {{ path }} }}",
+            "{{ task: research | {{ path }} }}",
+            "{{ event: event.name = task_finished | {{ path }} }}",
         ] {
-            assert!(render(&werk, prompt).is_err(), "{prompt}");
+            let error = render(&werk, prompt).unwrap_err();
+            assert_eq!(error.expression, prompt[2..prompt.len() - 2].trim());
+            assert_eq!(error.message, "unsupported JSON path syntax at byte 0");
         }
+    }
+
+    #[test]
+    fn query_variables_cannot_introduce_json_paths() {
+        let (werk, _dir) = session();
+        werk.set_template("selection", "research | answer");
+
+        let error = render(&werk, "{{ result: {{ selection }} }}").unwrap_err();
+
+        assert_eq!(error.expression, "result: {{ selection }}");
+        assert_eq!(error.message, "Unexpected `|` in the query.");
     }
 
     #[test]
@@ -872,21 +995,14 @@ mod tests {
     #[test]
     fn empty_plural_result_selectors_render_empty_arrays() {
         let (werk, _dir) = session();
-        for kind in ["results", "result_paths"] {
-            assert_eq!(
-                render(&werk, format!("{{{{ {kind}: missing }}}}")).unwrap(),
-                "[]"
-            );
-        }
+        assert_eq!(render(&werk, "{{ results: missing }}").unwrap(), "[]");
     }
 
     #[test]
     fn missing_singular_result_selectors_are_rejected() {
         let (werk, _dir) = session();
-        for kind in ["result", "result_path"] {
-            let error = render(&werk, format!("{{{{ {kind}: missing }}}}")).unwrap_err();
-            assert_eq!(error.message, "no matching result");
-        }
+        let error = render(&werk, "{{ result: missing }}").unwrap_err();
+        assert_eq!(error.message, "no matching result");
     }
 
     #[test]
@@ -901,6 +1017,16 @@ mod tests {
             (
                 "{{ results: task.label = }}",
                 "results: task.label =",
+                "The query ends in the middle of a term.",
+            ),
+            (
+                "{{ task: task.label = }}",
+                "task: task.label =",
+                "The query ends in the middle of a term.",
+            ),
+            (
+                "{{ events: event.name = }}",
+                "events: event.name =",
                 "The query ends in the middle of a term.",
             ),
         ] {
@@ -919,49 +1045,11 @@ mod tests {
                 "{{ result: task.label = \"oops }}",
                 "unclosed expression or quoted value",
             ),
-            ("{{ readable(result: research }}", "unclosed readable call"),
         ] {
             let error = render(&werk, prompt).unwrap_err();
             assert_eq!(error.message, message, "{prompt}");
             assert!(error.to_string().starts_with("cannot render {{"));
         }
-    }
-
-    #[test]
-    fn result_path_selectors_return_existing_absolute_files() {
-        let (werk, dir) = session();
-        let id = werk.add_task("go");
-        werk.set_task_finished(&id, serde_json::json!({"answer": "done"}))
-            .unwrap();
-        let path = dir
-            .path()
-            .join("tasks")
-            .join(&id)
-            .join("result.json")
-            .canonicalize()
-            .unwrap();
-        assert_eq!(
-            render(&werk, format!("{{{{ result_path: {id} }}}}")).unwrap(),
-            path.to_str().unwrap()
-        );
-        let paths = render(&werk, format!("{{{{ result_paths: {id} }}}}")).unwrap();
-        assert_eq!(
-            serde_json::from_str::<Vec<String>>(&paths).unwrap(),
-            [path.to_string_lossy()]
-        );
-    }
-
-    #[test]
-    fn missing_result_paths_are_rejected_without_recreating_the_file() {
-        let (werk, dir) = session();
-        let id = werk.add_task("go");
-        werk.set_task_finished(&id, serde_json::json!("done"))
-            .unwrap();
-        let path = dir.path().join("tasks").join(&id).join("result.json");
-        std::fs::remove_file(&path).unwrap();
-
-        assert!(render(&werk, format!("{{{{ result_path: {id} }}}}")).is_err());
-        assert!(!path.exists());
     }
 
     #[test]
@@ -978,7 +1066,7 @@ mod tests {
     }
 
     #[test]
-    fn named_query_fragments_expand_before_aql_parsing() {
+    fn query_variables_expand_before_aql_parsing() {
         let (werk, _dir) = session();
         let id = werk.add_task(Task::labeled("research", "go"));
         werk.set_task_finished(&id, serde_json::json!("found"))
@@ -992,7 +1080,7 @@ mod tests {
     }
 
     #[test]
-    fn multiple_named_values_expand_inside_quoted_aql_values() {
+    fn multiple_query_variables_expand_inside_quoted_aql_values() {
         let (werk, _dir) = session();
         let id = werk.add_task(Task::labeled("research", "go"));
         werk.set_task_finished(&id, serde_json::json!("found"))
@@ -1041,7 +1129,7 @@ mod tests {
             ),
             (
                 "{{ prefix {{ name }} }}",
-                "nested values are only supported inside result expressions",
+                "nested values are only supported inside selection expressions",
             ),
         ] {
             assert_eq!(
@@ -1061,121 +1149,5 @@ mod tests {
 
         assert_eq!(error.expression, "result: {{ selection }}");
         assert_eq!(error.message, "The query ends in the middle of a term.");
-    }
-
-    #[test]
-    fn readable_objects_and_arrays_form_an_indented_outline() {
-        let (werk, _dir) = session();
-        let structured = werk.add_task(Task::labeled("detail", "go"));
-        werk.set_task_finished(
-            &structured,
-            serde_json::json!({
-                "name": "Acme",
-                "details": {"active": true, "none": null},
-                "findings": ["one", null, {}, [], "two\ncontinued"],
-                "summary": "Executive\nsummary",
-                "empty": [],
-            }),
-        )
-        .unwrap();
-
-        assert_eq!(
-            render(&werk, "{{ readable(result: detail) }}").unwrap(),
-            "details:\n  active: true\nfindings:\n  - one\n  - two\n    continued\nname: Acme\nsummary: Executive\n         summary"
-        );
-    }
-
-    #[test]
-    fn readable_root_scalars_are_plain_text() {
-        let (werk, _dir) = session();
-        for (label, value, expected) in [
-            ("boolean", serde_json::json!(true), "true"),
-            ("number", serde_json::json!(42), "42"),
-            (
-                "text",
-                serde_json::json!("line one\nline two"),
-                "line one\nline two",
-            ),
-            ("null", Value::Null, ""),
-        ] {
-            let id = werk.add_task(Task::labeled(label, "go"));
-            werk.set_task_finished(&id, value).unwrap();
-            assert_eq!(
-                render(&werk, format!("{{{{ readable(result: {label}) }}}}")).unwrap(),
-                expected,
-            );
-        }
-    }
-
-    #[test]
-    fn readable_empty_root_collections_render_nothing() {
-        let (werk, _dir) = session();
-        for (label, value) in [
-            ("array", serde_json::json!([])),
-            ("object", serde_json::json!({})),
-        ] {
-            let id = werk.add_task(Task::labeled(label, "go"));
-            werk.set_task_finished(&id, value).unwrap();
-            assert_eq!(
-                render(&werk, format!("{{{{ readable(result: {label}) }}}}")).unwrap(),
-                "",
-            );
-        }
-    }
-
-    #[test]
-    fn readable_arrays_render_objects_and_mixed_scalars_as_bullets() {
-        let (werk, _dir) = session();
-        let id = werk.add_task(Task::labeled("mixed", "go"));
-        werk.set_task_finished(
-            &id,
-            serde_json::json!([
-                {"name": "Acme", "active": true},
-                42,
-                false,
-            ]),
-        )
-        .unwrap();
-
-        assert_eq!(
-            render(&werk, "{{ readable(result: mixed) }}").unwrap(),
-            "- active: true\n  name: Acme\n- 42\n- false"
-        );
-    }
-
-    #[test]
-    fn readable_plural_results_omit_empty_values() {
-        let (werk, _dir) = session();
-        let text = werk.add_task(Task::labeled("mixed", "go"));
-        werk.set_task_finished(&text, serde_json::json!("Executive\nsummary"))
-            .unwrap();
-        let empty = werk.add_task(Task::labeled("mixed", "go"));
-        werk.set_task_finished(&empty, Value::Null).unwrap();
-        assert_eq!(
-            render(&werk, "{{ readable(results: mixed) }}").unwrap(),
-            "- Executive\n  summary"
-        );
-    }
-
-    #[test]
-    fn readable_empty_selection_is_empty_text() {
-        let (werk, _dir) = session();
-        assert_eq!(
-            render(&werk, "{{ readable(results: missing) }}").unwrap(),
-            ""
-        );
-    }
-
-    #[test]
-    fn readable_accepts_only_result_selectors() {
-        let (werk, _dir) = session();
-        werk.set_template("name", "research");
-        for prompt in [
-            "{{ readable(name) }}",
-            "{{ readable(result_path: research) }}",
-            "{{ readable(results: {{ readable(result: research) }}) }}",
-        ] {
-            assert!(render(&werk, prompt).is_err(), "{prompt}");
-        }
     }
 }
