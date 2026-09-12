@@ -337,7 +337,11 @@ async fn fail_to_render(
     let id = werk.add_task(if in_role { "go" } else { prompt });
     let failures = Arc::new(Mutex::new(Vec::new()));
     let observed = failures.clone();
-    werk.on_failure(move |_, event, _| observed.lock().unwrap().push(event.get_name().to_string()));
+    werk.on_event(move |_, event| {
+        if event.get_name().ends_with("_failed") {
+            observed.lock().unwrap().push(event.get_name().to_string());
+        }
+    });
     finish(&werk).await;
     (werk, dir, provider, id, failures)
 }

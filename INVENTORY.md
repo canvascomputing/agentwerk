@@ -673,9 +673,6 @@ The rules the tables never repeat.
 | both | `.on_result(handler: (werk: Werk, task: Task, result: json) => void): this` | pub |
 | both | `.on_result_async(handler: (werk: Werk, task: Task, result: json) => Promise<void>): this` | pub |
 | Python | `.on_result_async(handler)`: takes an `async def`, on the same terms as `on_event_async` | |
-| both | `.on_failure(handler: (werk: Werk, event: Event, task: Task) => void): this` | pub |
-| both | `.on_failure_async(handler: (werk: Werk, event: Event, task: Task) => Promise<void>): this` | pub |
-| Python | `.on_failure_async(handler)`: takes an `async def`, on the same terms as `on_event_async` | |
 | both | `.on_task(handler: (werk: Werk, event: Event, task: Task) => void): this` | pub |
 | both | `.on_task_async(handler: (werk: Werk, event: Event, task: Task) => Promise<void>): this` | pub |
 | Python | `.on_task_async(handler)`: takes an `async def`, on the same terms as `on_event_async` | |
@@ -2519,8 +2516,6 @@ Binds `agents/tasks/werk.rs` and `store.rs`.
 | Rust | `.on_event_async(handler: any): this` | python |
 | Rust | `.on_result(handler: any): this` | python |
 | Rust | `.on_result_async(handler: any): this` | python |
-| Rust | `.on_failure(handler: any): this` | python |
-| Rust | `.on_failure_async(handler: any): this` | python |
 | Rust | `.get_model_for_agent(agent_id: string): string?` | python |
 | Rust | `.get_task(id: string): PyTask? throws PyErr` | python |
 | Rust | `.get_tasks(): PyTask[] throws PyErr` | python |

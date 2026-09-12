@@ -664,7 +664,6 @@ def test_emitting_a_builtin_name_activates_name_based_hooks_without_changing_sta
     seen = []
     werk.on_task(lambda *args: seen.append("task"))
     werk.on_result(lambda *args: seen.append("result"))
-    werk.on_failure(lambda *args: seen.append("failure"))
 
     werk.emit_event(aw.Event(aw.Event.TASK_FINISHED).task_id(id))
 
@@ -774,34 +773,6 @@ def test_a_hook_waits_for_the_results_it_needs_before_filing_the_next_step(werk)
     werk.set_task_finished(second, {"verdict": "malicious"})
     filed = [t.get_task() for t in werk.find_tasks(lambda t: t.get_label() == "review")]
     assert filed == ["clean", "malicious"]
-
-
-def test_on_failure_receives_the_failed_task(werk):
-    seen = []
-    werk.on_failure(lambda _, event, task: seen.append((event.get_name(), task.get_id())))
-    id = werk.add_task(aw.Task("scan the corpus"))
-
-    werk.set_task_failed(id)
-
-    assert seen == [("task_failed", id)]
-
-
-def test_on_failure_files_a_retry_through_the_werk_it_is_handed(werk):
-    retried = False
-
-    def retry_once(callback_werk, _, failed):
-        nonlocal retried
-        if not retried:
-            retried = True
-            callback_werk.add_task(aw.Task(failed.get_task(), label="retry"))
-
-    werk.on_failure(retry_once)
-    id = werk.add_task(aw.Task("scan the corpus"))
-
-    werk.set_task_failed(id)
-
-    retry = werk.find_task("task.label = retry")
-    assert retry.get_task() == "scan the corpus"
 
 
 def test_on_event_files_a_follow_up_for_any_kind(werk):
@@ -984,22 +955,6 @@ async def test_on_task_async_awaits_the_handler_before_finish_all_returns(werk):
     await werk.finish()
 
     assert seen == [("task_finished", id)]
-
-
-async def test_on_failure_async_awaits_the_handler_before_finish_all_returns(werk):
-    seen = []
-
-    async def note(_, event, task):
-        await asyncio.sleep(0)
-        seen.append((event.get_name(), task.get_id()))
-
-    werk.on_failure_async(note)
-    id = werk.add_task("scan the corpus")
-    werk.set_task_failed(id)
-
-    await werk.finish()
-
-    assert seen == [("task_failed", id)]
 
 
 async def test_on_event_async_sees_the_kinds_no_task_hook_accepts(werk):

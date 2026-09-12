@@ -601,53 +601,6 @@ impl Werk {
         )
     }
 
-    /// Read every failure together with the task it happened in:
-    /// `task_failed`, `request_failed`, `tool_call_failed`, `file_open_failed`,
-    /// `knowledge_failed`, and `compaction_failed`.
-    ///
-    /// Read `event.get_name()` to tell a failure that ends the task from one
-    /// the agent works around. Each call copies the task's replies, so an
-    /// agent that fails many tool calls pays that copy once per failure.
-    ///
-    /// ```no_run
-    /// # use agentwerk::{Event, Task, Werk};
-    /// # use std::sync::atomic::{AtomicBool, Ordering};
-    /// # use std::sync::Arc;
-    /// let werk = Werk::new();
-    /// let retried = Arc::new(AtomicBool::new(false));
-    /// werk.on_failure(move |werk, event, failed| {
-    ///     if event.get_name() == Event::TASK_FAILED
-    ///         && !retried.swap(true, Ordering::SeqCst)
-    ///     {
-    ///         werk.add_task(Task::new(failed.get_task().clone()));
-    ///     }
-    /// });
-    /// ```
-    pub fn on_failure<F>(&self, handler: F) -> &Self
-    where
-        F: Fn(&Arc<Werk>, &Event, &Task) + Send + Sync + 'static,
-    {
-        self.on_task_event(is_failure, handler)
-    }
-
-    /// Read every failure together with the task it happened in, in a handler
-    /// [`Self::finish_tasks`] waits for before it returns.
-    ///
-    /// [`Self::on_failure`] on the terms [`Self::on_event_async`] sets.
-    ///
-    /// Your handler MUST NOT call [`Self::finish`], [`Self::finish_task`], or
-    /// [`Self::finish_tasks`], or it waits forever on the handler it is running inside.
-    pub fn on_failure_async<F, Fut>(&self, handler: F) -> &Self
-    where
-        F: Fn(Arc<Werk>, Event, Task) -> Fut + Send + Sync + 'static,
-        Fut: Future<Output = ()> + Send + 'static,
-    {
-        self.on_awaited(is_failure, move |werk, event, task| match task {
-            Some(task) => Box::pin(handler(werk, event, task)),
-            None => Box::pin(std::future::ready(())),
-        })
-    }
-
     /// Read a task as it starts, finishes, or fails.
     ///
     /// The handler receives the event plus the task it names, already
@@ -717,7 +670,7 @@ impl Werk {
                 // task as it was when the event arrived. Only for the kinds a
                 // task-shaped hook accepts: resolving copies every reply,
                 // which on `TextChunkReceived` would cost once per piece.
-                let task = match is_task_event(event) || is_failure(event) {
+                let task = match is_task_event(event) {
                     true => werk.get_task(&event.task_id),
                     false => None,
                 };
@@ -2922,7 +2875,7 @@ mod tests {
     }
 
     #[test]
-    fn named_events_do_not_fire_task_result_or_failure_hooks() {
+    fn named_events_do_not_fire_task_or_result_hooks() {
         let (werk, _tmp) = test_werk();
         let id = werk.add_task("work");
         let event_calls = Arc::new(AtomicUsize::new(0));
@@ -2939,11 +2892,6 @@ mod tests {
         werk.on_result(move |_, _, _| {
             result_calls.fetch_add(1, Ordering::Relaxed);
         });
-        let failure_calls = Arc::clone(&calls);
-        werk.on_failure(move |_, _, _| {
-            failure_calls.fetch_add(1, Ordering::Relaxed);
-        });
-
         werk.emit_event(Event::new("work_noted").task_id(id));
 
         assert_eq!(calls.load(Ordering::Relaxed), 0);
@@ -2965,11 +2913,6 @@ mod tests {
         werk.on_result(move |_, _, _| {
             seen.fetch_add(1, Ordering::Relaxed);
         });
-        let seen = Arc::clone(&task_calls);
-        werk.on_failure(move |_, _, _| {
-            seen.fetch_add(1, Ordering::Relaxed);
-        });
-
         werk.emit_event(Event::new(Event::TASK_FINISHED).task_id(&id));
 
         assert_eq!(werk.get_task(&id).unwrap().status, Status::Todo);
@@ -3262,32 +3205,6 @@ mod tests {
     }
 
     #[test]
-    fn on_failure_fires_for_a_tool_call_failure_not_only_a_failed_task() {
-        let (werk, _tmp) = test_werk();
-        let seen = Arc::new(Mutex::new(Vec::new()));
-        let record = Arc::clone(&seen);
-        werk.on_failure(move |_, event, task| {
-            record
-                .lock()
-                .unwrap()
-                .push((event.get_name().to_string(), task.id.clone()))
-        });
-        let id = werk.add_task("work");
-
-        emit_event(&werk, &id, "agent", Event::new(Event::TURN_STARTED));
-        emit_event(&werk, &id, "agent", tool_call_failed("no such directory"));
-        werk.set_task_failed(&id).unwrap();
-
-        assert_eq!(
-            *seen.lock().unwrap(),
-            vec![
-                ("tool_call_failed".to_string(), id.clone()),
-                ("task_failed".to_string(), id.clone()),
-            ]
-        );
-    }
-
-    #[test]
     fn failures_accumulate_on_the_task_in_order() {
         let (werk, dir) = test_werk();
         let id = werk.add_task("work");
@@ -3389,23 +3306,6 @@ mod tests {
         let task = resumed.get_task(&id).unwrap();
         assert_eq!(task.errors.len(), 1);
         assert_eq!(task.errors[0].get_name(), "tool_call_failed");
-    }
-
-    #[test]
-    fn on_failure_files_a_retry_through_the_werk_it_is_handed() {
-        let (werk, _tmp) = test_werk();
-        let retried = Arc::new(std::sync::atomic::AtomicBool::new(false));
-        werk.on_failure(move |werk, _, failed| {
-            if !retried.swap(true, Ordering::SeqCst) {
-                werk.add_task(Task::new(failed.task.clone()).label("retry"));
-            }
-        });
-        let id = werk.add_task("work");
-
-        werk.set_task_failed(&id).unwrap();
-
-        let retry = werk.find_task("task.label = retry").unwrap();
-        assert_eq!(retry.task, serde_json::json!("work"));
     }
 
     #[test]
@@ -3681,28 +3581,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn on_failure_async_hands_over_the_failed_task() {
-        let (werk, _tmp) = test_werk();
-        let seen = Arc::new(Mutex::new(Vec::new()));
-        let record = Arc::clone(&seen);
-        werk.on_failure_async(move |_, event, task| {
-            let record = Arc::clone(&record);
-            async move {
-                record
-                    .lock()
-                    .unwrap()
-                    .push((event.get_name().to_string(), task.id.clone()))
-            }
-        });
-        let id = werk.add_task("scan the corpus");
-        werk.set_task_failed(&id).unwrap();
-
-        werk.finish().await;
-
-        assert_eq!(*seen.lock().unwrap(), vec![("task_failed".to_string(), id)]);
-    }
-
-    #[tokio::test]
     async fn an_async_handler_files_a_follow_up_through_the_werk_it_is_handed() {
         let (werk, _tmp) = test_werk();
         werk.on_result_async(|werk, _, _| async move {
@@ -3801,9 +3679,11 @@ mod tests {
         let (handler_entered, entered_handlers) = std::sync::mpsc::channel();
         let release_handlers = Arc::new(std::sync::Barrier::new(3));
         let handler_release = Arc::clone(&release_handlers);
-        werk.on_failure(move |_, _, _| {
-            handler_entered.send(()).unwrap();
-            handler_release.wait();
+        werk.on_event(move |_, event| {
+            if event.get_name() == Event::TASK_FAILED {
+                handler_entered.send(()).unwrap();
+                handler_release.wait();
+            }
         });
 
         let first_werk = Arc::clone(&werk);
