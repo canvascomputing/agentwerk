@@ -200,7 +200,12 @@ async def test_unmatched_selectors_render_nothing_and_reach_provider(
     )
     task = werk.add_task("go")
     failures = []
-    werk.on_failure(lambda _werk, event, _task: failures.append(event.get_name()))
+
+    def record_failure(_werk, event):
+        if event.get_name().endswith("_failed"):
+            failures.append(event.get_name())
+
+    werk.on_event(record_failure)
     await asyncio.wait_for(werk.finish(), timeout=5)
     assert scripted_openai.requests[0]["messages"][0]["content"] == "before  after"
     assert failures == []
@@ -254,7 +259,12 @@ async def test_malformed_result_selector_fails_before_provider_request(
     )
     task = werk.add_task("go")
     failures = []
-    werk.on_failure(lambda _werk, event, _task: failures.append(event.get_name()))
+
+    def record_failure(_werk, event):
+        if event.get_name().endswith("_failed"):
+            failures.append(event.get_name())
+
+    werk.on_event(record_failure)
     await asyncio.wait_for(werk.finish(), timeout=5)
     assert scripted_openai.requests == []
     assert failures == [aw.Event.PROMPT_RENDER_FAILED, aw.Event.TASK_FAILED]

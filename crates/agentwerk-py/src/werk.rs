@@ -200,40 +200,6 @@ impl PyWerk {
         slf
     }
 
-    /// Read every failure together with the task it happened in: a failed
-    /// task, tool call, or request, a file that would not open, or compaction
-    /// that could not finish. Read `event.get_name()` to tell them apart.
-    fn on_failure<'py>(slf: PyRef<'py, Self>, handler: Py<PyAny>) -> PyRef<'py, Self> {
-        slf.inner
-            .on_failure(move |werk, event: &Event, task: &Task| {
-                Python::attach(|py| {
-                    if let Err(err) = call_with_task(py, &handler, werk, event, task) {
-                        err.print(py);
-                    }
-                });
-            });
-        slf
-    }
-
-    /// Read every failure together with the task it happened in, in an
-    /// `async def` that `finish` waits for before it returns, on the terms
-    /// `on_event_async` sets.
-    ///
-    /// Handlers run while `finish`, `finish_task`, or `finish_tasks` is awaited.
-    /// They MUST NOT call these methods themselves: that waits forever on
-    /// the handler they are running inside.
-    fn on_failure_async<'py>(slf: PyRef<'py, Self>, handler: Py<PyAny>) -> PyRef<'py, Self> {
-        slf.inner
-            .on_failure_async(move |werk, event: Event, task: Task| {
-                let coroutine = Python::attach(|py| {
-                    let produced = call_with_task(py, &handler, &werk, &event, &task)?;
-                    pyo3_async_runtimes::tokio::into_future(produced)
-                });
-                await_coroutine(coroutine)
-            });
-        slf
-    }
-
     /// Get the model that agent runs, or `None` when no agent of that name is
     /// added. `Trajectory.from_task` needs it.
     fn get_model_for_agent(&self, agent_id: &str) -> Option<String> {
@@ -519,8 +485,8 @@ fn call_with_result<'py>(
         .call1((as_py_werk(py, werk)?, view, value))
 }
 
-/// Call a Python function with the Werk, event, and task the `on_task` and
-/// `on_failure` hooks pass in.
+/// Call a Python function with the Werk, event, and task an `on_task` hook
+/// passes in.
 fn call_with_task<'py>(
     py: Python<'py>,
     callable: &Py<PyAny>,

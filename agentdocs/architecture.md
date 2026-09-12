@@ -84,7 +84,7 @@ The invariants that govern orchestration, tools, providers, events, and durable 
 - Do not make publication mutate task state; completion through `EventTool` is the explicit exception.
 - Append events to `events.jsonl` before handlers run, excluding `text_chunk_received`, and fold policy statistics from the same records.
 - Keep synchronous handlers cheap; async hook variants are queued and drained by the completion call.
-- Build `on_result`, `on_failure`, and `on_task` on the ordered `on_event` chain so handlers coexist.
+- Build `on_result` and `on_task` on the ordered `on_event` chain so handlers coexist.
 - Let an explicit directive keyed by a non-terminal `EventTool` event name replace its model-facing acknowledgement, binding the event's JSON data.
 
 ## Providers and Retries

@@ -851,8 +851,6 @@ werk.start();
 | | `on_event_async(handler)` | Read every event in an async hook. |
 | | `on_result(handler)` | Read every finished task together with its result. |
 | | `on_result_async(handler)` | Read every finished task and result in an async hook. |
-| | `on_failure(handler)` | Read every failure together with its task. |
-| | `on_failure_async(handler)` | Read every failure and task in an async hook. |
 | | `on_task(handler)` | Read task state changes. |
 | | `on_task_async(handler)` | Read task state changes in an async hook. |
 | **Run** | `start()` | Keep processing tasks in the background. |
@@ -882,12 +880,11 @@ See [`Werk`](https://docs.rs/agentwerk/latest/agentwerk/struct.Werk.html).
 
 ## Events
 
-Events provide detailed observability into agent behavior during execution. Register hooks to react to every event, finished result, failure, or task state change:
+Events provide detailed observability into agent behavior during execution. Register hooks to react to every event, finished result, or task state change:
 
 ```rust
 werk.on_event(|_, event| eprintln!("event: {}", event.get_name()));
 werk.on_result(|_, task, result| println!("{}: {result}", task.get_id()));
-werk.on_failure(|_, event, task| eprintln!("{}: {}", task.get_id(), event.get_name()));
 werk.on_task(|_, event, task| eprintln!("{}: {}", task.get_id(), event.get_name()));
 ```
 

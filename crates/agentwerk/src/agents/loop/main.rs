@@ -48,7 +48,7 @@ mod tests {
     use crate::tools::TaskTool;
 
     #[tokio::test]
-    async fn completion_waits_for_failure_handlers_and_wakes_when_they_finish() {
+    async fn completion_waits_for_event_handlers_and_wakes_when_they_finish() {
         let results_dir = crate::test_util::TempDir::new().unwrap();
         let werk = Werk::new();
         werk.set_dir(results_dir.path().to_path_buf());
@@ -57,7 +57,7 @@ mod tests {
         let entered = Mutex::new(Some(entered));
         let (release, released) = std::sync::mpsc::channel();
         let released = Mutex::new(released);
-        werk.on_failure(move |_, event, _| {
+        werk.on_event(move |_, event| {
             if event.get_name() == Event::TASK_FAILED {
                 entered.lock().unwrap().take().unwrap().send(()).unwrap();
                 released.lock().unwrap().recv().unwrap();
@@ -70,7 +70,7 @@ mod tests {
         tokio::pin!(completion);
         tokio::select! {
             biased;
-            _ = &mut completion => panic!("completion returned before the failure hook"),
+            _ = &mut completion => panic!("completion returned before the event hook"),
             _ = tokio::task::yield_now() => {},
         }
         release.send(()).unwrap();
