@@ -8,17 +8,15 @@
   <strong>A minimal agentic loop for building efficient harnesses.</strong>
 </div>
 
+<div align="center">Coordinate agent fleets across complex tasks, with detailed observability and shared knowledge.</div>
+
 <div align="center">
   <a href="#installation">Installation</a> •
-  <a href="https://github.com/canvascomputing/agentwerk/blob/main/README.md">Rust</a> •
-  <a href="#quick-start">Quick Start</a> •
-  <a href="#api">API</a> •
-  <a href="#use-cases">Use Cases</a> •
-  <a href="#security">Security</a> •
-  <a href="#development">Development</a>
+  <a href="../../README.md">Rust</a> •
+  <a href="API.md">API</a> •
+  <a href="../../DEVELOPMENT.md">Development</a> •
+  <a href="../../SECURITY.md">Security</a>
 </div>
-
-<div align="center">Coordinate agent fleets across complex tasks, with shared knowledge and detailed observability.</div>
 
 <br />
 
@@ -29,50 +27,39 @@
 <div align="center">
   <img src="https://raw.githubusercontent.com/canvascomputing/agentwerk/main/assets/demo.gif" width="800" />
 </div>
-<div align="center"><a href="https://github.com/canvascomputing/agentwerk/blob/main/crates/agentwerk-py/examples/apparat_fabrik.py">Apparat Fabrik</a></div>
+<div align="center"><a href="examples/apparat_fabrik.py">Apparat Fabrik</a></div>
 <div align="center"><em>“Werk” is German for both a factory and a work of art.</em></div>
 
 ---
 
-## Why use agentwerk?
-
-- **Simple interface:** create agents with a few lines of code.
-- **Efficient harness:** optimized for small and fast LLMs with low memory footprint.
-- **Complex interactions:** let agents collaborate through a shared Werk, event hooks, and knowledge.
-- **Deep observability:** inspect every request, tool call, and failure.
-- **Facilitate training:** store trajectories based on granular events for fine-tuning models.
-
 ## Installation
-
-Install the Python package from PyPI or follow the [separate guide](https://github.com/canvascomputing/agentwerk/blob/main/README.md) for the Rust crate.
-
-### Python
 
 ```bash
 pip install agentwerk
 ```
 
-## Quick Start
+[Rust crate](../../README.md)
 
-This example gives one agent read-only tools to search Rust source files, then waits for one result.
+## Introduction
+
+Create `Agents` with `Tools` and assign them `Tasks` to create results. Coordinate their work in a `Werk`, observe detailed `Events`, and derive `Knowledge`.
+
+Build a file explorer by creating an `Agent`, giving it a `ListDirectoryTool`, adding a `Task`, and calling `finish_task` to collect the result.
 
 ```python
 import asyncio
-from agentwerk import Agent, GrepTool, ReadFileTool
+
+from agentwerk import Agent, ListDirectoryTool
 
 
 async def main():
     agent = (
         Agent.from_env()
-        .role("Explore Rust source files and answer the question.")
-        .tool(ReadFileTool())
-        .tool(GrepTool())
+        .role("You are a filesystem explorer.")
+        .tool(ListDirectoryTool())
     )
 
-    task = agent.add_task(
-        "Find every `pub trait` defined under src/ and explain each in one sentence."
-    )
-
+    task = agent.add_task("Explore this directory.")
     result = await agent.finish_task(task)
 
     print(result)
@@ -81,1014 +68,209 @@ async def main():
 asyncio.run(main())
 ```
 
-## API
+Further reading:
 
-agentwerk has six core concepts. An `Agent` uses `Tools` to complete a `Task` and create a JSON result. A `Werk` coordinates agents and tasks, `Events` record activity, and `Knowledge` provides durable shared memory.
+- [Agents](API.md#agents): [Providers](API.md#providers), [Interactive agents](API.md#interactive-agents)
+- [Tools](API.md#tools) and [Tasks](API.md#tasks)
 
-| Section | Covers |
-|---|---|
-| [Agents](#agents) | Roles, behavior, and [Providers](#providers). |
-| [Tasks](#tasks) | [Templates](#template-values), [Schemas](#schemas), and [Directives](#directives). |
-| [Tools](#tools) | Controlled capabilities for agents. |
-| [Werk](#werk) | [Execution](#execution), [Queries](#queries), [Result sharing](#sharing-results), [Configuration](#configuration), [Compaction](#compaction), and [Sessions](#sessions). |
-| [Events](#events) | Observability and hooks. |
-| [Knowledge](#knowledge) | Durable shared memory. |
+## Tools, Tasks, and Schemas
 
-## Agents
-
-An `Agent` uses a language model and the tools you provide to complete tasks.
-
-<img src="https://raw.githubusercontent.com/canvascomputing/agentwerk/main/assets/agents.gif" width="600" alt="An agent processing tasks" />
+Build a release check by giving an `Agent` an allowlisted `CommandTool`, inserting the target branch through a template, and constraining its `Task` with a `Schema`.
 
 ```python
-from agentwerk import Agent, ReadFileTool
+import asyncio
 
-agent = (
-    Agent.from_env()
-    .role("You are a release manager who prepares release notes.")
-    .tool(ReadFileTool())
-)
+from agentwerk import Agent, CommandTool, Task
+from schema import release_status_schema
 
-agent.add_task("Read CHANGELOG.md and summarize the entries added since the last release.")
 
-results = await agent.finish()
-```
-
-<details>
-<summary>Agent reference</summary>
-
-| Area | Method | Description |
-|------|--------|-------------|
-| **Configure** | `role(role)` | Define who the agent is and how it should work. |
-| | `tool(tool)` | Register a tool the agent may call. |
-| | `tools(tools)` | Register several tools the agent may call. |
-| | `label(label)` | Restrict the agent to tasks carrying this label. |
-| | `dir(dir)` | Set the directory the agent has access to. |
-| | `template(key, value)` | Set a shared template. |
-| | `templates(variables)` | Set several shared templates together. |
-| | `directive(key, template)` | Set a directive template by key. |
-| | `directives(overrides)` | Set more than one directive template. |
-| | `knowledge(store)` | Share a knowledge store and register its `KnowledgeTool`. |
-| | `interactive()` | Let the agent wait for new instructions to keep a task in-progress. |
-| **Work** | `add_task(task)` | Submit a task, or a `Task` carrying a label or schema, and return its task ID. |
-| | `start()` | Keep processing tasks in the background. |
-| | `finish_task(query)` | Wait for all matches and return the first result in query order. |
-| | `finish_tasks(query)` | Wait for matching tasks and get their results. |
-| | `finish()` | Run tasks and return their results. |
-| | `get_id()` | Get the unique identifier of an agent. |
-
-See [`Agent`](https://docs.rs/agentwerk/latest/agentwerk/agents/agent/struct.Agent.html).
-
-</details>
-
-### Providers
-
-Connect agents to Anthropic, OpenAI, Mistral, or a LiteLLM proxy.
-
-```python
-from agentwerk import Agent, Anthropic
-
-agent = (
-    Agent()
-    .provider(Anthropic(key))
-    .model("claude-sonnet-4-20250514")
-)
-```
-
-<details>
-<summary>Provider and model reference</summary>
-
-| Method | Description |
-|--------|-------------|
-| `provider(provider)` | Define the LLM provider. |
-| `model(model)` | Set the model. |
-| `Agent.from_env()` | Read the provider and the model from environment variables. |
-| `verify(model)` | Verify that the provider can answer with a model. |
-| `Anthropic(key, base_url=..., timeout=...)` | Configure an Anthropic endpoint. `OpenAi`, `Mistral`, and `LiteLlm` accept the same options. |
-
-You can also read the model or provider individually: `.provider(Provider.from_env())` or `.model(Model.from_env())`.
-
-| Variable | Description |
-|----------|-------------|
-| `LITELLM_PROVIDER` | Choose `anthropic`, `mistral`, `openai`, or `litellm` outright, ahead of the keys below. |
-| `LITELLM_API_KEY`, `MISTRAL_API_KEY`, `ANTHROPIC_API_KEY`, `OPENAI_API_KEY` | Authenticate with that vendor. The first one set picks the LLM provider, in this order. |
-| `LITELLM_BASE_URL`, `MISTRAL_BASE_URL`, `ANTHROPIC_BASE_URL`, `OPENAI_BASE_URL` | Set a different API address for that vendor. |
-| `SSL_CERT_FILE`, `SSL_CERT_DIR` | Trust these CA certificates instead of the built-in root store. |
-
-Set a model's context window or reasoning level when the defaults do not fit. Claude, GPT, Mistral, and Qwen families have built-in settings.
-
-| Method | Description |
-|--------|-------------|
-| `context_window(size)` | Set the context window size for a model. |
-| `get_context_window()` | Get the configured window size. |
-| `reasoning_effort(effort)` | Set the reasoning level. |
-| `get_reasoning_effort()` | Get the configured effort. |
-
-| Variable | Description |
-|----------|-------------|
-| `MODEL` | Set the model name. |
-| `ANTHROPIC_MODEL`, `OPENAI_MODEL`, `MISTRAL_MODEL`, `LITELLM_MODEL` | Set the model for the detected provider when `MODEL` is unset. |
-| `MODEL_CONTEXT_WINDOW` | Set the context window size in tokens. |
-
-Configure a custom model:
-
-```python
-from agentwerk import Agent, Model
-
-agent = Agent().model(
-    Model("my-local-model").context_window(128_000).reasoning_effort("high")
-)
-```
-
-See [`Provider`](https://docs.rs/agentwerk/latest/agentwerk/providers/struct.Provider.html) and [`Model`](https://docs.rs/agentwerk/latest/agentwerk/providers/struct.Model.html).
-
-</details>
-
-<a id="interactive"></a>
-
-### Interactive agents
-
-An interactive agent keeps a task open across replies. It has no completion tool by default.
-
-```python
-agent = Agent.from_env().interactive()
-id = agent.add_task("Where does the configuration get loaded?")
-
-werk = agent.start()
-await werk.finish()
-
-werk.add_reply(id, "And which environment variables override it?")
-await werk.finish()
-```
-
-<details>
-<summary>Interactive agent reference</summary>
-
-Replies pause the task in `in_progress`, and completion methods return when it pauses. Use `add_reply(id, content)` to resume and `set_task_finished(id, result)` to end the conversation. Intermediate replies arrive as [events](#events). `on_result` receives the final result.
-
-</details>
-
-## Tasks
-
-A `Task` holds the work an agent should complete, its status, and its eventual result.
-
-```python
-from agentwerk import Task
-
-task = Task("Review the release notes.", label="review")
-werk.add_task(task)
-```
-
-<details>
-<summary>Task reference</summary>
-
-| Area | Member | Description |
-|------|--------|-------------|
-| **Identity** | `get_id()` | Get the task ID, of the form `t-N`. |
-| | `get_task()` | Get the work the agent is asked to do. |
-| | `get_label()` | Get the label carried by the task. |
-| | `get_reporter()` | Get the ID of the agent that created the task. |
-| | `get_assignee()` | Get the ID of the agent that claimed the task. |
-| **Outcome** | `get_status()` | Get the task's current status. |
-| | `is_todo()` | Check whether the task is waiting to be claimed. |
-| | `is_in_progress()` | Check whether an agent is working on the task. |
-| | `is_finished()` | Check whether the task finished. |
-| | `is_failed()` | Check whether the task failed. |
-| | `is_pending()` | Check whether the task has work in this run. |
-| | `is_cancelled()` | Check whether this run has excluded the task from scheduling. |
-| | `get_result()` | Get the result the agent produced. |
-| | `get_errors()` | Get failures recorded against the task as events. |
-| | `get_replies()` | Get messages exchanged with the model. |
-| | `get_schema()` | Get the optional schema the result must satisfy. |
-| **Timestamps** | `get_created_at()` | Get the creation time in milliseconds. |
-| | `get_started_at()` | Get the claim time in milliseconds. |
-| | `get_finished_at()` | Get the finish time in milliseconds. |
-| | `get_failed_at()` | Get the failure time in milliseconds. |
-
-See [`Task`](https://docs.rs/agentwerk/latest/agentwerk/struct.Task.html).
-
-</details>
-
-### Template values
-
-Roles and tasks can interpolate shared values and selected runtime data. The [prompt skill](../../skills/prompt/SKILL.md) provides a compact template for writing agent roles.
-
-Define an agent with template expressions, then set their values before adding its task:
-
-```python
-from agentwerk import Agent, Task
-
-writer = (
-    Agent.from_env()
-    .label("report")
-    .role(
-        "Write for {{ company }} using:\n"
-        "{{ results: research }}"
+async def main():
+    git = (
+        CommandTool("git")
+        .allow("git branch --show-current")
+        .allow("git status --short")
     )
-)
 
-werk.add_agent(writer)
-werk.set_template("company", "Canvas Computing")
-await werk.finish_tasks("research")
-werk.add_task(Task("Write the board report.", label="report"))
+    agent = (
+        Agent.from_env()
+        .role("You are a release engineer.")
+        .template("release_branch", "main")
+        .tool(git)
+    )
+
+    schema = release_status_schema()
+    task = Task(
+        "Check whether this repository is ready to release from "
+        "{{ release_branch }}.",
+        schema=schema,
+    )
+
+    task = agent.add_task(task)
+    result = await agent.finish_task(task)
+
+    print(result)
+
+
+asyncio.run(main())
 ```
 
 <details>
-<summary id="template-reference">Template reference</summary>
-
-agentwerk renders templates in the role and task just before each task's first model request. Newly added tasks use the latest template values and results.
-
-Use `{{ context }}` in a prompt to include the current task and execution limits:
-
-```markdown
-- Task: t-7
-- Date: 2026-05-06
-- Working directory: /Users/caro
-- Platform: darwin 25.1.0
-- Turns remaining: 8
-- Input tokens remaining: 95000
-- Output tokens remaining: 12000
-- Time remaining: 240s
-```
-
-Each context field is also available separately: `{{ task_id }}`, `{{ date }}`, `{{ dir }}`, `{{ platform }}`, `{{ os_version }}`, `{{ turns_remaining }}`, `{{ input_tokens_remaining }}`, `{{ output_tokens_remaining }}`, and `{{ time_remaining }}`.
-
-| Expression | Output |
-|---|---|
-| `{{ name }}` | The value assigned to `name`. |
-| `{{ name \| JSONPath }}` | A value selected from the template variable after parsing it as JSON. |
-| `{{ result: AQL }}` | The first matching result. Strings appear as text and other values as compact JSON. |
-| `{{ results: AQL }}` | Matching results as a compact JSON array. |
-| `{{ result: AQL \| JSONPath }}` | A value selected from the first result. |
-| `{{ results: AQL \| JSONPath }}` | A value selected from the array of matching results. |
-| `{{ task: AQL }}` | The first matching task as compact JSON. |
-| `{{ tasks: AQL }}` | Matching tasks as a compact JSON array. |
-| `{{ task: AQL \| JSONPath }}` | A value selected from the first matching task. |
-| `{{ tasks: AQL \| JSONPath }}` | A value selected from the array of matching tasks. |
-| `{{ event: AQL }}` | The first matching event as compact JSON. |
-| `{{ events: AQL }}` | Matching events as a compact JSON array. |
-| `{{ event: AQL \| JSONPath }}` | A value selected from the first matching event. |
-| `{{ events: AQL \| JSONPath }}` | A value selected from the array of matching events. |
-
-`null`, empty arrays, and unmatched selectors render to an empty string.
-
-| Record | JSONPath properties |
-|---|---|
-| Task | `task`, `label`, `schema`, `id`, `status`, `reporter`, `assignee`, `created_at`, `started_at`, `finished_at`, `failed_at` |
-| Event | `name`, `directive`, `data`, `task_id`, `agent_id`, `label`, `created_at` |
-
-`task` is the original JSON input. Unset `label`, `schema`, `assignee`, and `directive` properties are omitted. Task results, errors, replies, and cancellation state are not serialized.
-
-For example, given this `research` result:
-
-```json
-{
-  "company": {"name": "Canvas Computing"},
-  "findings": [{"summary": "one"}, {"summary": "two"}]
-}
-```
-
-This template:
-
-```text
-{{ result: research | company.name }}
-```
-
-Renders as:
-
-```text
-Canvas Computing
-```
-
-Select each task input or event's data:
-
-```text
-{{ tasks: research | [*].task }}
-{{ events: event.name = tool_call_failed | [*].data }}
-```
-
-`research` is shorthand for `task.label = research`.
-
-| Path | Selects |
-|---|---|
-| `company.name` | A nested field. |
-| `metadata."build-id"` | A field that requires JSON quoting. |
-| `findings[0]`, `findings[-1]` | An array element. |
-| `findings[1:4]`, `findings[::-1]` | An array slice. |
-| `findings[*].summary` | The `summary` field from each array element. |
-| `authors.*.name` | The `name` field from each object value, in unspecified order. |
-| `groups[].members` | The `members` field after flattening one array level. |
-
-Missing fields, incompatible types, and out-of-range indexes produce `null`. Wildcards, slices, and flattening omit null values when more path steps follow. Filters, comparisons, logical expressions, literals, multi-selects, functions, and additional pipes are not supported.
-
-`{ name }` stays unchanged. To output the literal text `{{ name }}`, write `{{{{ name }}}}`.
-
-</details>
-
-### Schemas
-
-A `Schema` constrains a task result.
+<summary><code>schema.py</code></summary>
 
 ```python
-from agentwerk import Schema, Task
-
-schema = Schema(
-    {
-        "type": "object",
-        "properties": {"title": {"type": "string"}},
-        "required": ["title"],
-    }
-)
-
-werk.add_task(Task("Write a report.", schema=schema))
-```
-
-<details>
-<summary>Schema reference</summary>
-
-agentwerk corrects common result-formatting mistakes, such as a quoted number or a nested object encoded as JSON text. Schema-bound results must be objects. Remaining schema violations trigger a retry, subject to `max_schema_retries`. Without a schema, a task may return any JSON value.
-
-Use shallow, focused schemas for small models. Split complex work into tasks with separate schemas.
-
-| Area | Method | Description |
-|------|--------|-------------|
-| **Schema** | `Schema(document)` | Create a schema. |
-| | `validate(value)` | Return the validated value and JSON pointers to repaired values, or report violations. |
-
-See [`Schema`](https://docs.rs/agentwerk/latest/agentwerk/schemas/struct.Schema.html).
-
-</details>
-
-### Directives
-
-Directives tell the model how to recover from failures. Override their wording for your model or environment.
-
-```python
-from agentwerk import Agent
+from agentwerk import Schema
 
 
-agent = (
-    Agent.from_env()
-    .directive("grep_failed", "The search did not run. Narrow `path`.")
-    .directives(
+def release_status_schema():
+    return Schema(
         {
-            "tool_timed_out": "Reduce the command scope.",
-            "cache_miss": "No cache entry exists for {{ path }}.",
+            "type": "object",
+            "properties": {
+                "branch": {"type": "string"},
+                "clean": {"type": "boolean"},
+                "ready": {"type": "boolean"},
+            },
+            "required": ["branch", "clean", "ready"],
+            "additionalProperties": False,
         }
     )
-)
-```
-
-<details>
-<summary>Directive reference</summary>
-
-Built-in keys override recovery text. Keys without overrides retain their defaults. Templates accept runtime values such as `{{ detail }}`, `{{ attempt }}`, and `{{ path }}`. Expressions without a value remain unchanged.
-
-See [prompts/directives](https://github.com/canvascomputing/agentwerk/tree/main/crates/agentwerk/src/prompts/directives) for the built-in text.
-
-</details>
-
-## Tools
-
-Tools give agents controlled access to files, commands, URLs, tasks, and shared knowledge.
-
-```python
-from agentwerk import Agent, CommandTool, GrepTool, ReadFileTool
-
-agent = (
-    Agent()
-    .tool(ReadFileTool())
-    .tool(GrepTool())
-    .tool(CommandTool("git").allow("git *"))
-)
-```
-
-<details>
-<summary>Tool reference</summary>
-
-| Area | Tool | Description |
-|------|------|-------------|
-| **File** | `ReadFileTool` | Read a file with line numbers, offset, and limit. |
-| | `WriteFileTool` | Create or overwrite a file. |
-| | `EditFileTool` | Replace text in a file. |
-| **Search** | `GlobTool` | Find files by pattern. |
-| | `GrepTool` | Search file contents by regular expression, or by code shape with `syntax: "code"`. |
-| | `ListDirectoryTool` | List files and directories. |
-| **Command** | `CommandTool` | Give access to specific commands. |
-| **Web** | `FetchTool` | Fetch a URL and read its body. |
-| **Events** | `EventTool` | Publish an event. `task_finished` also completes the current task. |
-| **Tasks** | `FinishTool` | Write the result for the current task and mark it finished. |
-| | `TaskTool` | Read the Werk and create or edit tasks. |
-| **Knowledge** | `KnowledgeTool` | Write, read, remove, or list pages in a knowledge store. |
-
-#### FinishTool
-
-Agents use `FinishTool` to end their task and share their outcomes:
-
-```json
-{
-  "answer": "The configuration is loaded in src/config.rs.",
-  "confidence": 0.9
-}
-```
-
-To return a result, the agent must call `FinishTool`. If the task has a result schema, the tool validates the object against it. For a non-interactive task without a schema, the agent can instead finish by responding with plain text.
-
-[Interactive agents](#interactive) are the exception: they have no `FinishTool` unless you add one explicitly with `.tool(FinishTool())`.
-
-#### Timeouts
-
-Override a tool's limit with `timeout(seconds)`. Zero disables it.
-
-```python
-from agentwerk import FetchTool
-
-quick_fetch = FetchTool().timeout(15)
-patient_fetch = FetchTool().timeout(0)
-```
-
-| Tool | Default timeout |
-|------|-----------------|
-| `FetchTool` | 60 seconds |
-| `GrepTool` | 180 seconds |
-| `CommandTool` | The call's `timeout_ms`, or 120 seconds if omitted |
-| All other tools | None |
-
-When a Python tool times out, the agent stops waiting, but its worker thread may continue in the background.
-
-#### EventTool
-
-Give an agent `EventTool` to let it publish custom events:
-
-```python
-from agentwerk import EventTool
-
-agent = Agent().tool(EventTool())
-```
-
-The model supplies a name and optional JSON data:
-
-```json
-{
-  "name": "...",
-  "data": {}
-}
-```
-
-Events carry the current task and agent context. See [Events](#events) for hooks and queries. Names are unrestricted. Lowercase snake case is conventional.
-
-Only `task_finished` completes the current task. Its `data` is the result dictionary:
-
-```json
-{
-  "name": "task_finished",
-  "data": { "answer": "..." }
-}
-```
-
-Use [Directives](#directives) to customize the acknowledgement sent to the model.
-
-#### CommandTool
-
-The `CommandTool` lets you specify exactly which commands and flags are allowed or denied.
-
-```python
-git = (
-    CommandTool("git")
-    .allow("git status")
-    .allow("git log *")
-    .deny("git push*")
-    .deny_flag("--force")
-)
-```
-
-With an `allow_flag` set, a command carrying any other flag is refused:
-
-```python
-cargo = CommandTool("cargo").allow("cargo test*").allow_flag("--all-features")
-```
-
-#### FetchTool
-
-The `FetchTool` fetches a URL and returns its text with the user agent `agentwerk/<version>`. `impersonate()` uses the headers and HTTP/2 settings of a browser.
-
-```python
-web = FetchTool().impersonate()
-```
-
-#### Custom tools
-
-Use `concurrent=True` when a custom tool has no side effects and may run in parallel with other calls.
-
-agentwerk uses type annotations to tell the model which arguments it can pass.
-Arguments without default values are required. It understands lists,
-dictionaries, tuples, `Literal`, `Optional`, and unions. Use `schema=` when
-annotations are not enough.
-
-```python
-from agentwerk import tool
-
-
-@tool(concurrent=True, timeout=5)
-def greet(name: str) -> str:
-    """Say hello."""
-    return f"Hello, {name}!"
-```
-
-See [`Tool`](https://docs.rs/agentwerk/latest/agentwerk/tools/struct.Tool.html).
-
-</details>
-
-## Werk
-
-A `Werk` stores tasks, assigns them to matching agents, and records their results.
-
-<img src="https://raw.githubusercontent.com/canvascomputing/agentwerk/main/assets/werk.gif" width="600" alt="A Werk coordinating agents and tasks" />
-
-```python
-from agentwerk import Agent, Task, Werk
-
-analyst = (
-    Agent.from_env()
-    .label("analysis")
-)
-
-writer = (
-    Agent.from_env()
-    .label("report")
-)
-
-werk = Werk()
-werk.add_agent(analyst).add_agent(writer)
-
-werk.add_task(Task("Rank all products by value.", label="analysis"))
-werk.add_task(Task("Write up the ranking.", label="report"))
-```
-
-### Execution
-
-`start()` keeps processing tasks in the background. `finish()` runs tasks and waits for results.
-
-```python
-task = werk.add_task("Write a report.")
-
-answer = await werk.finish_task(task)
-if answer is not None:
-    print(answer)
-```
-
-<details>
-<summary>Execution reference</summary>
-
-Cancellation affects only the current execution, not persisted task status. Starting a new run with `start()` clears cancellation. Inspect it with `task.is_cancelled()`, or query execution state with `task.cancelled = true` and `task.pending = true`.
-
-</details>
-
-### Queries
-
-Agent Query Language (AQL) filters tasks and events. Pass an AQL string
-directly, or compile it with `Query` to reuse it.
-
-```python
-# Find tasks labeled "scan".
-werk.find_tasks("scan")
-
-# Find failed tool calls from scan tasks.
-werk.find_events("scan AND event.name = tool_call_failed")
-
-# Find the result produced by task "t-3".
-werk.find_results("t-3")
-```
-
-<details>
-<summary>Query reference</summary>
-
-#### Terms
-
-| Operation | Syntax | Meaning |
-|-----------|--------|---------|
-| **Match** | `field = value`, `field != value` | Include or exclude one exact value. |
-| | `field IN (a, b)`, `field NOT IN (a, b)` | Include or exclude a list. |
-| **Presence** | `field IS EMPTY`, `field IS NOT EMPTY` | Test whether an optional field has a value. |
-| **Search** | `field ~ text`, `field !~ text` | Include or exclude case-insensitive text. |
-| **Compare** | `field > value`, `>=`, `<`, `<=` | Compare a time field. |
-| **Combine** | `A AND B`, `A OR B`, `NOT A`, `(A OR B)` | Combine or group conditions. |
-| **Task label** | `scan`, `"needs review"` | Short for `task.label = scan`. Quote labels containing spaces or query words. |
-| **Task ID** | `t-3` | Short for `task.id = t-3`. IDs take precedence over labels. |
-| **Sort** | `ORDER BY field DESC` | Sort matches. `ASC` is the default. |
-
-#### Fields
-
-| Origin | Fields |
-|--------|--------|
-| **Task** | `task.id`, `task.label`, `task.status`, `task.pending`, `task.cancelled`, `task.assignee`, `task.input`, `task.result`, `task.errors`, `task.created`, `task.started`, `task.finished`, `task.failed` |
-| **Event** | `event.name`, `event.agent_id`, `event.task_id`, `event.label`, `event.created`, `event.data` |
-
-Queries using both namespaces match events with their referenced tasks. Events without an existing task do not match. Joined matches default to event-log order. `ORDER BY` accepts task or event fields.
-
-Result finders return raw results where `task.result` is present. They select finished tasks unless the query specifies another status.
-
-Completion methods and `cancel_tasks` also accept AQL. Event and joined queries snapshot matching task IDs when the operation starts. Task-only cancellation also applies to later matching tasks.
-
-An invalid query string raises `ValueError`. `Query(query)` checks a query without running it and raises the same error.
-
-#### Examples
-
-```python
-# Find tasks referenced by failed tool-call events.
-werk.find_tasks("event.name = tool_call_failed")
-
-# Find events attached to tasks labeled "scan".
-werk.find_events("scan")
-
-# Find results produced by tasks with finished events.
-werk.find_results("event.name = task_finished")
-
-werk.find_results("report AND task.result ~ risk")
-werk.find_tasks("task.errors ~ tool_call_failed")
-werk.find_tasks("task.status = todo AND task.assignee IS EMPTY")
-werk.find_tasks("task.failed > -1h ORDER BY task.failed DESC")
-werk.find_tasks(lambda t: len(t.get_replies()) > 4)       # a callable, for what no field carries
 ```
 
 </details>
 
-### Sharing results
+Further reading:
 
-Agents can pass work and results in five ways:
+- [Tools](API.md#tools): [CommandTool](API.md#commandtool), [FetchTool](API.md#fetchtool), [Custom tools](API.md#custom-tools), [Timeouts](API.md#timeouts)
+- [Tasks](API.md#tasks): [Templates](API.md#templates), [Schemas](API.md#schemas), [Directives](API.md#directives)
 
-1. **Follow-up routing**: `on_result` or a runtime condition creates follow-up tasks.
-2. **[Task templates](#template-values)**: interpolate shared values, results, tasks, and events.
-3. **[Knowledge](#knowledge)**: shares durable pages between agents.
-4. **[TaskTool](#tools)**: reads any finished task's result by ID.
-5. **[ReadFileTool](#tools)**: opens a task's `result.json` in the session directory.
+## Werk, Events, and Knowledge
+
+Build a two-stage research workflow by loading shared `Knowledge`, giving the research `Agent` [Brave Search](../use-cases/src/deep_research/web_search.rs) and `FetchTool`, coordinating both `Agents` in a `Werk`, observing their `Events`, and using an AQL `Condition` to start the writing `Task`.
+
+Save each agent prompt beside the Python example.
 
 <details>
-<summary>Result-sharing reference</summary>
+<summary><code>researcher.md</code></summary>
 
-#### Result hook
+```markdown
+# Researcher
 
-Use hooks to create new tasks when certain results arrive:
+Research the question for the Writer. Save verified evidence and source
+links in shared knowledge.
 
-```python
-def hand_to_report(werk, done, result):
-    if done.get_label() == "research":
-        werk.add_task(Task(result, label="report"))
+Your strengths:
 
+- Finding and verifying primary sources
 
-werk.on_result(hand_to_report)
+Guidelines:
+
+- Search with Brave. Open every source with `fetch` before using it,
+  because search summaries are only leads
+- IMPORTANT: Record conflicts and gaps instead of guessing
+
+Output:
+
+- Save two to four knowledge pages, then call `finish` once with a
+  `summary` of no more than three sentences
+
+Example outputs:
+
+- "Saved three verified findings and one unresolved gap."
+
+NOTE: Stop when the Writer has enough evidence to answer the question.
 ```
 
-#### Runtime condition
+</details>
 
-Use an AQL query to create follow-up tasks or add agents based on conditions:
+<details>
+<summary><code>writer.md</code></summary>
+
+```markdown
+# Writer
+
+Answer the question for the reader using shared knowledge.
+
+Your strengths:
+
+- Turning evidence into a concise explanation
+
+Guidelines:
+
+- Read the available knowledge pages before drafting the report
+- Link every factual claim to its source
+- NEVER add facts absent from shared knowledge, because this agent has
+  no research tools
+
+Output:
+
+- Call `finish` once with a `title` of no more than 80 characters and a
+  `report` of three to five paragraphs
+
+Example outputs:
+
+- "The evidence supports lower latency, but not lower cost for every
+  workload."
+
+NOTE: Return one grounded report and nothing beyond it.
+```
+
+</details>
 
 ```python
-from agentwerk import Condition
+import asyncio
+import os
+from pathlib import Path
 
-werk.add_condition(
-    Condition("task.label = research AND task.status = finished")
-    .id("report-after-research")
-    .add_agent(Agent.from_env().label("report"))
-    .add_task(
-        Task(
-            "Write {{ result: task.label = research AND task.status = finished }}",
-            label="report",
-        )
+from agentwerk import Agent, Condition, FetchTool, Knowledge, Task, Werk
+from web_search import brave_search_tool
+
+
+async def main():
+    researcher_role = Path("researcher.md").read_text()
+    writer_role = Path("writer.md").read_text()
+
+    question = "What makes an agent harness efficient?"
+    knowledge = Knowledge.load(".agentwerk/research")
+    brave_search = brave_search_tool(os.environ["BRAVE_API_KEY"])
+
+    researcher = (
+        Agent.from_env()
+        .label("research")
+        .role(researcher_role)
+        .knowledge(knowledge)
+        .tool(brave_search)
+        .tool(FetchTool())
     )
-)
-```
 
-</details>
-
-### Configuration
-
-A `Policy` sets limits for turns, tokens, elapsed time, retries, and compaction.
-
-```python
-werk.set_policy(Policy(max_turns=40, max_time=300.0))
-```
-
-<details>
-<summary>Configuration reference</summary>
-
-| Field | Description |
-|-------|-------------|
-| `max_turns` | Limit the total number of turns. |
-| `max_time` | Limit the total elapsed duration. |
-| `max_input_tokens` | Limit the total input tokens. |
-| `max_output_tokens` | Limit the total output tokens. |
-| `max_request_tokens` | Limit the output tokens of a single request. |
-| `max_schema_retries` | Limit consecutive failed tool calls or silent replies. A successful call resets the count. |
-| `max_request_retries` | Limit how often a failing request is retried. |
-| `request_retry_delay` | Set the base delay for exponential backoff between request retries. |
-| `compaction_threshold` | Compact once the next request would fill this share of the window. |
-
-`set_policy(policy)` replaces the whole configuration, and `get_policy()` reads it back. A violated limit emits `Event.POLICY_VIOLATED`. `compaction_threshold` is the exception, see [Compaction](#compaction).
-
-</details>
-
-### Compaction
-
-Compaction summarizes older messages as a task approaches the model's context limit or after the provider reports an overflow.
-
-```python
-werk.set_policy(Policy(compaction_threshold=0.7))
-```
-
-<details>
-<summary>Compaction reference</summary>
-
-`compaction_threshold` is a fraction of the model's context window, `0.85` by default. Reaching it summarizes the older messages and the agent continues its task.
-
-Compaction also runs after the LLM provider reports that the window was exceeded. `compaction_started`, `compaction_progress`, `compaction_finished`, and `compaction_failed` report each step, see [Events](#events).
-
-```python
-def watch(werk, event):
-    if event.get_name() == Event.COMPACTION_FINISHED:
-        print(f"[{event.get_task_id()}] compacted {event.get_data()['trigger']}")
-
-
-werk.on_event(watch)
-```
-
-Each compaction event carries the trigger: `proactive` before a context-window error or `reactive` after one. A failure also carries a stable `kind` and human-readable `message`.
-
-</details>
-
-### Sessions
-
-A `Werk` saves tasks, replies, and recorded events so you can resume a session.
-
-<img src="https://raw.githubusercontent.com/canvascomputing/agentwerk/main/assets/sessions.gif" width="600" alt="A persisted agentwerk session" />
-
-The session directory is `./.agentwerk` by default.
-
-```python
-werk = Werk.load(".agentwerk")
-werk.add_agent(my_agent)
-werk.start()
-```
-
-<details>
-<summary>Session file reference</summary>
-
-```
-.agentwerk/
-├── events.jsonl                        recorded events, one per line
-├── tasks/
-│   └── t-1/
-│       ├── task.json                   task metadata and input
-│       ├── result.json                 task result
-│       ├── replies.jsonl               model messages, one per line
-│       └── outputs/<tool_use_id>.txt   full tool outputs
-└── knowledge/
-    ├── pages/<slug>.md                 knowledge pages
-    └── index.md                        knowledge index
-```
-
-</details>
-
-<details>
-<summary>Werk reference</summary>
-
-| Area | Method | Description |
-|------|--------|-------------|
-| **Configure** | `set_policy(policy)` | Set execution limits and retry settings. |
-| | `get_policy()` | Get the policy in force. |
-| | `set_dir(dir)` | Define where a session is stored. |
-| | `get_dir()` | Get the session directory. |
-| | `add_agent(agent)` | Add an agent to this Werk. |
-| | `add_condition(condition)` | Add a runtime AQL condition and return its ID. |
-| **Submit and interact** | `add_task(task)` | Submit a task and return its task ID. |
-| | `add_reply(id, content)` | Add a reply to a task. |
-| | `edit_replies(id, editor)` | Rewrite a task's replies now. |
-| | `set_task_finished(id, result)` | Finish a task with a result. |
-| | `set_task_failed(id)` | Fail a task. |
-| **Observe** | `on_event(handler)` | Read every event as it is emitted. |
-| | `on_event_async(handler)` | Read every event in an async hook. |
-| | `on_result(handler)` | Read every finished task together with its result. |
-| | `on_result_async(handler)` | Read every finished task and result in an async hook. |
-| | `on_task(handler)` | Read task state changes. |
-| | `on_task_async(handler)` | Read task state changes in an async hook. |
-| **Run** | `start()` | Keep processing tasks in the background. |
-| | `finish_task(query)` | Wait for all matches and return the first result in query order. |
-| | `finish_tasks(query)` | Wait for matching tasks and get their results. |
-| | `finish()` | Run tasks and return their results. |
-| **Cancel** | `cancel_tasks(query)` | Stop work on matching tasks. |
-| | `cancel()` | Stop work on every task. |
-| **Inspect tasks** | `get_task(id)` | Get one task by ID. |
-| | `get_tasks()` | Get every task in creation order. |
-| | `find_task(query)` | Get the first matching task. |
-| | `find_tasks(query)` | Get every matching task. |
-| **Inspect results and events** | `get_results()` | Get every finished task result in creation order. |
-| | `find_result(query)` | Get the first result in query order. |
-| | `find_results(query)` | Get every result in query order. |
-| | `find_event(query)` | Get the first recorded event in query order. |
-| | `find_events(query)` | Get every recorded event in query order. |
-| **Inspect execution** | `get_finish_reason()` | Get why the last execution ended. |
-| | `get_model_for_agent(agent_id)` | Get the model used by an agent. |
-| | `get_input_tokens()` | Get input tokens across finished requests. |
-| | `get_output_tokens()` | Get output tokens across finished requests. |
-| | `get_duration()` | Get the elapsed execution duration. |
-
-See [`Werk`](https://docs.rs/agentwerk/latest/agentwerk/struct.Werk.html).
-
-</details>
-
-## Events
-
-Events provide detailed observability into agent behavior during execution. Register hooks to react to every event, finished result, or task state change:
-
-```python
-werk.on_event(lambda _, event: print(f"event: {event.get_name()}"))
-werk.on_result(lambda _, task, result: print(f"{task.get_id()}: {result}"))
-werk.on_task(lambda _, event, task: print(f"{task.get_id()}: {event.get_name()}"))
-```
-
-<details>
-<summary>Event reference</summary>
-
-#### Event names
-
-| Area | Name | Description |
-|------|------|-------------|
-| **Run** | `run_started` | Execution began. |
-| | `run_finished` | Execution ended, carrying its outcome. |
-| | `policy_violated` | A limit was breached and execution stopped. |
-| **Task** | `task_started` | An agent claimed a task. |
-| | `task_created` | A task was added to the Werk. |
-| | `task_finished` | A task finished successfully, carrying its result when it has one. |
-| | `task_failed` | A task failed. |
-| | `turn_started` | The agent began another turn on its task. |
-| | `schema_retried` | A tool call or result the model created was invalid. |
-| **LLM provider** | `request_started` | A request went out to the model. |
-| | `request_finished` | A request finished and reported its token usage. |
-| | `request_failed` | A request failed and was not retried. |
-| | `prompt_render_failed` | A role or task expression could not render before its request. |
-| | `request_retried` | A temporary LLM provider error triggered a retry. |
-| | `text_chunk_received` | Part of the reply arrived. |
-| **Tool** | `tool_call_declined` | A tool call proposed by the model was declined. |
-| | `tool_call_repaired` | A tool call or value the model created was invalid and was corrected. |
-| | `tool_call_started` | A tool invocation began, carrying its registered name, call ID, and raw input. |
-| | `tool_call_finished` | A tool invocation finished. |
-| | `tool_call_failed` | A tool invocation failed but the task continues. |
-| **Knowledge** | `knowledge_written` | A page was written. |
-| | `knowledge_read` | A page was read. |
-| | `knowledge_removed` | A page was removed. |
-| | `knowledge_listed` | The pages were listed. |
-| | `knowledge_failed` | An action against the store did not go through. |
-| **Compaction** | `compaction_started` | Compaction is about to rewrite the older messages. |
-| | `compaction_progress` | Compaction finished part of the work. |
-| | `compaction_finished` | Compaction replaced the older messages. |
-| | `compaction_failed` | Compaction could not finish. |
-| **Custom** | name chosen by your application | An event published with `emit_event`. |
-
-<a id="hooks"></a>
-
-#### Observe events and hooks
-
-`on_result` runs synchronously on the agent. Keep it brief. Use `on_result_async` for work that needs to await.
-
-Async hooks run while a completion method is waiting, and finish before it returns. `start()` alone does not run them. Do not call `finish`, `finish_task`, or `finish_tasks` inside an async hook: it can deadlock. Python hooks use `async def` and run on the caller's event loop.
-
-#### Publish events
-
-Publish custom events through the Werk. Add agent or task context when relevant:
-
-```python
-from agentwerk import Event
-
-werk.emit_event(
-    Event("document_indexed")
-    .data({"documents": 42})
-    .task_id("t-1")
-    .agent_id("indexer-1")
-)
-
-werk.emit_event(Event("index_refreshed"))
-```
-
-`Werk.emit_event()` does not change task status. Use [EventTool](#eventtool) for model-driven completion through `task_finished`.
-
-#### Read events
-
-Events are saved to `.agentwerk/events.jsonl`, except `text_chunk_received`.
-
-| Event method | Description |
-|--------------|-------------|
-| `get_name()` | Read the event name. |
-| `get_data()` | Read the event payload. |
-| `get_task_id()` | Read the associated task ID. |
-| `get_agent_id()` | Read the associated agent ID. |
-| `get_label()` | Read the associated task's label. |
-| `get_created_at()` | Read the timestamp in epoch milliseconds. |
-| `directive(value)` | Set directive metadata. This does not send an instruction to the model. |
-| `get_directive()` | Read the directive metadata. |
-
-The default logger runs when no event hook is installed.
-
-#### Query events
-
-Query events with AQL or a predicate. See [Queries](#queries) for shared syntax.
-
-```python
-werk.find_events("event.name = tool_call_failed")
-werk.find_events("event.name = request_finished AND event.agent_id = research-1")
-werk.find_events("event.task_id = t-3 ORDER BY event.created DESC")
-werk.find_events("event.data ~ timeout AND event.created > -1h")
-```
-
-| Operation | Field | Description |
-|-----------|-------|-------------|
-| **Match** | `event.name` | The event name, such as `run_started` or `tool_call_failed`. |
-| | `event.agent_id` | The attributed agent ID, when the event has agent context. |
-| | `event.task_id` | The attributed task ID, when the event has task context. |
-| | `event.label` | The attributed task's label, when the task is known and labelled. |
-| **Search** | `event.data` | Search only the serialized raw event data as text. |
-| **Compare** | `event.created` | When the event was recorded. |
-
-Use `IS EMPTY` to find events without agent, task, or label context. `event.data` searches only the payload, not the name. Events default to oldest-first order.
-
-See [`Event`](https://docs.rs/agentwerk/latest/agentwerk/event/struct.Event.html) and [`Werk`](https://docs.rs/agentwerk/latest/agentwerk/struct.Werk.html).
-
-</details>
-
-## Knowledge
-
-`Knowledge` provides durable memory that agents share across tasks and with other agents.
-
-<img src="https://raw.githubusercontent.com/canvascomputing/agentwerk/main/assets/knowledge.gif" width="600" alt="Agents sharing knowledge" />
-
-```python
-from agentwerk import Agent, Knowledge
-
-store = Knowledge.load("./notes")
-alice = Agent().knowledge(store)
-bob = Agent().knowledge(store)
-```
-
-<details>
-<summary>Knowledge reference</summary>
-
-Calling `.knowledge(store)` registers a `KnowledgeTool` bound to that store, so the agent can read and update its shared pages.
-
-Pages use the Open Knowledge Format (OKF) and are stored at `./notes/pages/<slug>.md`. Each has an entry in `./notes/index.md`, which is included in the prompts of agents sharing the store.
-
-| Method | Description |
-|--------|-------------|
-| `get_index()` | Get the index, which is injected into the agent prompt. |
-| `set_index_char_limit(count)` | Limit how much of the index is injected into the prompt. |
-| `get_index_char_limit()` | Get the index size limit in force. |
-| `get_pages()` | Get the page collection for reading and writing pages. |
-| `get_pages().get_all()` | Get every page in the store. |
-| `clear()` | Remove every page from the store. |
-
-By default, prompts include up to 12,000 characters of the index. Agents can read the rest from `index.md`. Pages are always saved in full.
-
-Create entries in code:
-
-```python
-from agentwerk import Page
-
-store.get_pages().save(
-    Page(
-        "build-command",
-        "How the project is built.",
-        "Run `make` to compile.",
-        tags=["build"],
+    writer = (
+        Agent.from_env()
+        .label("report")
+        .role(writer_role)
+        .knowledge(knowledge)
     )
-)
 
-page = store.get_pages().get_page("build-command")
-store.get_pages().remove("build-command")
+    werk = Werk()
+    werk.on_event(lambda _, event: print(event.get_name()))
+    werk.add_agent(researcher)
+    werk.add_agent(writer)
+
+    write_report = Condition(
+        "task.label = research AND task.status = finished"
+    ).add_task(Task(question, label="report"))
+
+    werk.add_condition(write_report)
+    werk.add_task(Task(question, label="research"))
+    await werk.finish()
+
+    result = werk.find_result("report") or {}
+
+    print(result.get("report", ""))
+
+
+asyncio.run(main())
 ```
 
-See [`Knowledge`](https://docs.rs/agentwerk/latest/agentwerk/agents/knowledge/struct.Knowledge.html).
+Further reading:
 
-</details>
-
-## Use Cases
-
-Example projects built with agentwerk:
-
-- [Hello World](https://github.com/canvascomputing/agentwerk/tree/main/crates/use-cases/src/hello_world/): basic example, also available as a [Python example](https://github.com/canvascomputing/agentwerk/blob/main/crates/agentwerk-py/examples/hello_world.py)
-- [Terminal REPL](https://github.com/canvascomputing/agentwerk/tree/main/crates/use-cases/src/terminal_repl/): minimal multi-turn terminal chat
-- [Editorial Review](https://github.com/canvascomputing/agentwerk/tree/main/crates/use-cases/src/editorial_review/): route a draft through an editor with a result hook and AQL, also available as a [Python example](https://github.com/canvascomputing/agentwerk/blob/main/crates/agentwerk-py/examples/editorial_review.py)
-- [Deep Research](https://github.com/canvascomputing/agentwerk/tree/main/crates/use-cases/src/deep_research/): research across several sources (requires `BRAVE_API_KEY`)
-- [Malware Scanner](https://github.com/canvascomputing/malwi): find signs of malware in a software package
-- [Apparat Fabrik](https://github.com/canvascomputing/agentwerk/blob/main/crates/agentwerk-py/examples/apparat_fabrik.py): simulate agents inspecting and assembling factory parts
-
-> Configure an LLM provider first (see [Environment](https://github.com/canvascomputing/agentwerk/blob/main/DEVELOPMENT.md#environment)).
-
-```bash
-python examples/editorial_review.py "Draft a short release announcement."
-```
-
-## Security
-
-Report a vulnerability to security@canvascomputing.org, not in a public issue. See [SECURITY.md](https://github.com/canvascomputing/agentwerk/blob/main/SECURITY.md).
-
-## Development
-
-See [DEVELOPMENT.md](https://github.com/canvascomputing/agentwerk/blob/main/DEVELOPMENT.md) for build, test, and release instructions.
+- [Werk](API.md#werk): [AQL](API.md#aql), [Collaboration](API.md#collaboration), [Hooks](API.md#hooks), [Conditions](API.md#conditions), [Configuration](API.md#configuration), [Compaction](API.md#compaction), [Sessions](API.md#sessions)
+- [Events](API.md#events) and [Knowledge](API.md#knowledge)
