@@ -1,10 +1,29 @@
 # agentwerk Python API
 
-This guide covers the complete Python API, from a single agent to coordinated work with shared knowledge.
+Use this guide to configure a Python agent, add tools and tasks, run several agents together, and share knowledge.
 
 ## Agents
 
-Agents combine a role, a model, and a set of tools.
+Create an agent with a role, a model, and the tools it can call.
+
+<img src="https://raw.githubusercontent.com/canvascomputing/agentwerk/main/assets/agents.gif" width="600" alt="An agent processing tasks" />
+
+```python
+from agentwerk import Agent, ReadFileTool
+
+agent = (
+    Agent.from_env()
+    .role("You are a release manager who prepares release notes.")
+    .tool(ReadFileTool())
+)
+
+agent.add_task("Read CHANGELOG.md and summarize the entries added since the last release.")
+
+results = await agent.finish()
+```
+
+<details>
+<summary>Agent reference</summary>
 
 | Area | Method | Description |
 |------|--------|-------------|
@@ -26,35 +45,11 @@ Agents combine a role, a model, and a set of tools.
 | | `finish()` | Run tasks and return their results. |
 | | `get_id()` | Get the agent's unique identifier. |
 
-<img src="https://raw.githubusercontent.com/canvascomputing/agentwerk/main/assets/agents.gif" width="600" alt="An agent processing tasks" />
-
-```python
-from agentwerk import Agent, ReadFileTool
-
-agent = (
-    Agent.from_env()
-    .role("You are a release manager who prepares release notes.")
-    .tool(ReadFileTool())
-)
-
-agent.add_task("Read CHANGELOG.md and summarize the entries added since the last release.")
-
-results = await agent.finish()
-```
-
-See [`Agent`](https://docs.rs/agentwerk/latest/agentwerk/agents/agent/struct.Agent.html).
+</details>
 
 ### Providers
 
-Providers connect agents to Anthropic, OpenAI, Mistral, or a LiteLLM proxy.
-
-| Method | Description |
-|--------|-------------|
-| `provider(provider)` | Set the LLM provider. |
-| `model(model)` | Set the model. |
-| `Agent.from_env()` | Read the provider and model from environment variables. |
-| `verify(model)` | Verify that the provider can answer with a model. |
-| `Anthropic(key, base_url=..., timeout=...)` | Configure an Anthropic endpoint. `OpenAi`, `Mistral`, and `LiteLlm` accept the same options. |
+Send an agent's model requests to Anthropic, OpenAI, Mistral, or a LiteLLM proxy.
 
 ```python
 from agentwerk import Agent, Anthropic
@@ -68,27 +63,7 @@ agent = (
 
 You can also read the model or provider individually: `.provider(Provider.from_env())` or `.model(Model.from_env())`.
 
-| Variable | Description |
-|----------|-------------|
-| `LITELLM_PROVIDER` | Choose `anthropic`, `mistral`, `openai`, or `litellm` outright, ahead of the keys below. |
-| `LITELLM_API_KEY`, `MISTRAL_API_KEY`, `ANTHROPIC_API_KEY`, `OPENAI_API_KEY` | Authenticate with that vendor. The first one set picks the LLM provider, in this order. |
-| `LITELLM_BASE_URL`, `MISTRAL_BASE_URL`, `ANTHROPIC_BASE_URL`, `OPENAI_BASE_URL` | Set a different API address for that vendor. |
-| `SSL_CERT_FILE`, `SSL_CERT_DIR` | Trust these CA certificates instead of the built-in root store. |
-
 Set a model's context window or reasoning level when the defaults do not fit. Claude, GPT, Mistral, and Qwen families have built-in settings.
-
-| Method | Description |
-|--------|-------------|
-| `context_window(size)` | Set the context window size for a model. |
-| `get_context_window()` | Get the configured window size. |
-| `reasoning_effort(effort)` | Set the reasoning level. |
-| `get_reasoning_effort()` | Get the configured effort. |
-
-| Variable | Description |
-|----------|-------------|
-| `MODEL` | Set the model name. |
-| `ANTHROPIC_MODEL`, `OPENAI_MODEL`, `MISTRAL_MODEL`, `LITELLM_MODEL` | Set the model for the detected provider when `MODEL` is unset. |
-| `MODEL_CONTEXT_WINDOW` | Set the context window size in tokens. |
 
 Configure a custom model:
 
@@ -100,11 +75,50 @@ agent = Agent().model(
 )
 ```
 
-See [`Provider`](https://docs.rs/agentwerk/latest/agentwerk/providers/struct.Provider.html) and [`Model`](https://docs.rs/agentwerk/latest/agentwerk/providers/struct.Model.html).
+<details>
+<summary>Provider reference</summary>
+
+Provider methods:
+
+| Method | Description |
+|--------|-------------|
+| `provider(provider)` | Set the LLM provider. |
+| `model(model)` | Set the model. |
+| `Agent.from_env()` | Read the provider and model from environment variables. |
+| `verify(model)` | Verify that the provider can answer with a model. |
+| `Anthropic(key, base_url=..., timeout=...)` | Configure an Anthropic endpoint. `OpenAi`, `Mistral`, and `LiteLlm` accept the same options. |
+
+Provider environment variables:
+
+| Variable | Description |
+|----------|-------------|
+| `LITELLM_PROVIDER` | Choose `anthropic`, `mistral`, `openai`, or `litellm` outright, ahead of the keys below. |
+| `LITELLM_API_KEY`, `MISTRAL_API_KEY`, `ANTHROPIC_API_KEY`, `OPENAI_API_KEY` | Authenticate with that vendor. The first one set picks the LLM provider, in this order. |
+| `LITELLM_BASE_URL`, `MISTRAL_BASE_URL`, `ANTHROPIC_BASE_URL`, `OPENAI_BASE_URL` | Set a different API address for that vendor. |
+| `SSL_CERT_FILE`, `SSL_CERT_DIR` | Trust these CA certificates instead of the built-in root store. |
+
+Model methods:
+
+| Method | Description |
+|--------|-------------|
+| `context_window(size)` | Set the context window size for a model. |
+| `get_context_window()` | Get the configured window size. |
+| `reasoning_effort(effort)` | Set the reasoning level. |
+| `get_reasoning_effort()` | Get the configured effort. |
+
+Model environment variables:
+
+| Variable | Description |
+|----------|-------------|
+| `MODEL` | Set the model name. |
+| `ANTHROPIC_MODEL`, `OPENAI_MODEL`, `MISTRAL_MODEL`, `LITELLM_MODEL` | Set the model for the detected provider when `MODEL` is unset. |
+| `MODEL_CONTEXT_WINDOW` | Set the context window size in tokens. |
+
+</details>
 
 ### Interactive agents
 
-An interactive agent keeps a task open across replies. It has no completion tool by default.
+Call `interactive()` to keep a task open for follow-up replies. Interactive agents have no completion tool by default.
 
 ```python
 agent = Agent.from_env().interactive()
@@ -126,7 +140,17 @@ Replies pause the task in `in_progress`, and completion methods return when it p
 
 ## Tasks
 
-Tasks describe the work and track it from creation to result.
+Put each piece of work in a task. The task records its status and result.
+
+```python
+from agentwerk import Task
+
+task = Task("Review the release notes.", label="review")
+werk.add_task(task)
+```
+
+<details>
+<summary>Task reference</summary>
 
 | Area | Member | Description |
 |------|--------|-------------|
@@ -151,18 +175,11 @@ Tasks describe the work and track it from creation to result.
 | | `get_finished_at()` | Get the finish time in milliseconds. |
 | | `get_failed_at()` | Get the failure time in milliseconds. |
 
-```python
-from agentwerk import Task
-
-task = Task("Review the release notes.", label="review")
-werk.add_task(task)
-```
-
-See [`Task`](https://docs.rs/agentwerk/latest/agentwerk/struct.Task.html).
+</details>
 
 ### Templates
 
-Roles and tasks can interpolate shared values and selected runtime data. The [prompt skill](../../skills/prompt/SKILL.md) provides a compact template for writing agent roles.
+Use templates to insert shared values, task results, and event data into roles and tasks. The [prompt skill](../../skills/prompt/SKILL.md) provides a compact template for writing agent roles.
 
 Define an agent with template expressions, then set their values before adding its task:
 
@@ -278,7 +295,7 @@ Missing fields, incompatible types, and out-of-range indexes produce `null`. Wil
 
 ### Schemas
 
-A `Schema` constrains a task result.
+Attach a `Schema` when a task must return a specific JSON object structure.
 
 ```python
 from agentwerk import Schema, Task
@@ -306,13 +323,11 @@ Use shallow, focused schemas for small models. Split complex work into tasks wit
 | **Schema** | `Schema(document)` | Create a schema. |
 | | `validate(value)` | Return the validated value and JSON pointers to repaired values, or report violations. |
 
-See [`Schema`](https://docs.rs/agentwerk/latest/agentwerk/schemas/struct.Schema.html).
-
 </details>
 
 ### Directives
 
-Directives tell the model how to recover from failures. Override their wording for your model or environment.
+Directives tell the model what to do when an operation fails or returns invalid data. Override their wording for your model or environment.
 
 ```python
 from agentwerk import Agent
@@ -341,7 +356,21 @@ See [prompts/directives](https://github.com/canvascomputing/agentwerk/tree/main/
 
 ## Tools
 
-Tools let agents interact with files, commands, URLs, tasks, and shared knowledge.
+Add tools to let an agent read and write files, run commands, fetch URLs, manage tasks, and use shared knowledge.
+
+```python
+from agentwerk import Agent, CommandTool, GrepTool, ReadFileTool
+
+agent = (
+    Agent()
+    .tool(ReadFileTool())
+    .tool(GrepTool())
+    .tool(CommandTool("git").allow("git *"))
+)
+```
+
+<details>
+<summary>Tool reference</summary>
 
 | Area | Tool | Description |
 |------|------|-------------|
@@ -358,20 +387,11 @@ Tools let agents interact with files, commands, URLs, tasks, and shared knowledg
 | | `TaskTool` | Read the Werk and create or edit tasks. |
 | **Knowledge** | `KnowledgeTool` | Write, read, remove, or list pages in a knowledge store. |
 
-```python
-from agentwerk import Agent, CommandTool, GrepTool, ReadFileTool
-
-agent = (
-    Agent()
-    .tool(ReadFileTool())
-    .tool(GrepTool())
-    .tool(CommandTool("git").allow("git *"))
-)
-```
+</details>
 
 #### FinishTool
 
-Agents use `FinishTool` to end their task and share their outcomes:
+An agent calls `FinishTool` to finish its task and return a result:
 
 ```json
 {
@@ -386,7 +406,7 @@ To return a result, the agent must call `FinishTool`. If the task has a result s
 
 #### Timeouts
 
-Override a tool's limit with `timeout(seconds)`. Zero disables it.
+Call `timeout(seconds)` to override a tool's limit. Use zero to disable it.
 
 ```python
 from agentwerk import FetchTool
@@ -395,6 +415,11 @@ quick_fetch = FetchTool().timeout(15)
 patient_fetch = FetchTool().timeout(0)
 ```
 
+When a Python tool times out, the agent stops waiting, but its worker thread may continue in the background.
+
+<details>
+<summary>Timeout reference</summary>
+
 | Tool | Default timeout |
 |------|-----------------|
 | `FetchTool` | 60 seconds |
@@ -402,11 +427,11 @@ patient_fetch = FetchTool().timeout(0)
 | `CommandTool` | The call's `timeout_ms`, or 120 seconds if omitted |
 | All other tools | None |
 
-When a Python tool times out, the agent stops waiting, but its worker thread may continue in the background.
+</details>
 
 #### EventTool
 
-Give an agent `EventTool` to let it publish custom events:
+Add `EventTool` when an agent needs to publish custom events:
 
 ```python
 from agentwerk import EventTool
@@ -438,7 +463,7 @@ Use [Directives](#directives) to customize the acknowledgement sent to the model
 
 #### CommandTool
 
-The `CommandTool` lets you specify exactly which commands and flags are allowed or denied.
+Use `CommandTool` to allow or deny specific commands and flags.
 
 ```python
 git = (
@@ -458,7 +483,7 @@ cargo = CommandTool("cargo").allow("cargo test*").allow_flag("--all-features")
 
 #### FetchTool
 
-The `FetchTool` fetches a URL and returns its text with the user agent `agentwerk/<version>`. `impersonate()` uses the headers and HTTP/2 settings of a browser.
+Use `FetchTool` to fetch a URL as text. It sends the user agent `agentwerk/<version>`. `impersonate()` uses a browser's headers and HTTP/2 settings.
 
 ```python
 web = FetchTool().impersonate()
@@ -466,7 +491,7 @@ web = FetchTool().impersonate()
 
 #### Custom tools
 
-Use `concurrent=True` when a custom tool has no side effects and may run in parallel with other calls.
+Mark a custom tool as concurrent with `concurrent=True` only when it has no side effects and can safely run beside other calls.
 
 agentwerk uses type annotations to tell the model which arguments it can pass.
 Arguments without default values are required. It understands lists,
@@ -483,11 +508,45 @@ def greet(name: str) -> str:
     return f"Hello, {name}!"
 ```
 
-See [`Tool`](https://docs.rs/agentwerk/latest/agentwerk/tools/struct.Tool.html).
-
 ## Werk
 
-A Werk coordinates agents, tasks, results, and execution.
+A `Werk` assigns tasks to agents and collects their results and events.
+
+<img src="https://raw.githubusercontent.com/canvascomputing/agentwerk/main/assets/werk.gif" width="600" alt="A Werk coordinating agents and tasks" />
+
+```python
+from agentwerk import Agent, Task, Werk
+
+analyst = (
+    Agent.from_env()
+    .label("analysis")
+)
+
+writer = (
+    Agent.from_env()
+    .label("report")
+)
+
+werk = Werk()
+werk.add_agent(analyst)
+werk.add_agent(writer)
+
+werk.add_task(Task("Rank all products by value.", label="analysis"))
+werk.add_task(Task("Write up the ranking.", label="report"))
+```
+
+`start()` keeps processing tasks in the background. `finish()` runs tasks and waits for results.
+
+```python
+task = werk.add_task("Write a report.")
+
+answer = await werk.finish_task(task)
+if answer is not None:
+    print(answer)
+```
+
+<details>
+<summary>Werk reference</summary>
 
 | Area | Method | Description |
 |------|--------|-------------|
@@ -529,42 +588,11 @@ A Werk coordinates agents, tasks, results, and execution.
 | | `get_output_tokens()` | Get output tokens across finished requests. |
 | | `get_duration()` | Get the elapsed execution duration. |
 
-<img src="https://raw.githubusercontent.com/canvascomputing/agentwerk/main/assets/werk.gif" width="600" alt="A Werk coordinating agents and tasks" />
-
-```python
-from agentwerk import Agent, Task, Werk
-
-analyst = (
-    Agent.from_env()
-    .label("analysis")
-)
-
-writer = (
-    Agent.from_env()
-    .label("report")
-)
-
-werk = Werk()
-werk.add_agent(analyst)
-werk.add_agent(writer)
-
-werk.add_task(Task("Rank all products by value.", label="analysis"))
-werk.add_task(Task("Write up the ranking.", label="report"))
-```
-
-`start()` keeps processing tasks in the background. `finish()` runs tasks and waits for results.
-
-```python
-task = werk.add_task("Write a report.")
-
-answer = await werk.finish_task(task)
-if answer is not None:
-    print(answer)
-```
+</details>
 
 ### AQL
 
-Agent Query Language (AQL) filters tasks and events. Pass an AQL string
+Use Agent Query Language (AQL) to find tasks and events. Pass an AQL string
 directly, or compile it with `Query` to reuse it.
 
 ```python
@@ -616,7 +644,7 @@ Cancellation affects only the current execution, not persisted task status. Star
 
 ### Collaboration
 
-Agents can pass work and results in five ways:
+Agents can pass work and results in these ways:
 
 1. **Follow-up routing**: [hooks](#hooks) or a condition creates follow-up tasks.
 2. **[Task templates](#templates)**: interpolate shared values, results, tasks, and events.
@@ -639,7 +667,7 @@ werk.on_result(hand_to_report)
 
 #### Conditions
 
-Use an AQL query to create follow-up tasks or add agents based on conditions:
+Use a condition to create follow-up tasks or add agents when an AQL query matches:
 
 ```python
 from agentwerk import Condition
@@ -658,7 +686,7 @@ werk.add_condition(
 
 ### Configuration
 
-A `Policy` sets limits for turns, tokens, elapsed time, retries, and compaction.
+Use a `Policy` to set turn, token, and time limits, retry behavior, and compaction.
 
 ```python
 werk.set_policy(Policy(max_turns=40, max_time=300.0))
@@ -685,7 +713,7 @@ werk.set_policy(Policy(max_turns=40, max_time=300.0))
 
 ### Compaction
 
-Compaction summarizes older messages as a task approaches the model's context limit or after the provider reports an overflow.
+Compaction replaces older messages with a summary as a task approaches the model's context limit or after the provider reports an overflow.
 
 ```python
 werk.set_policy(Policy(compaction_threshold=0.7))
@@ -713,7 +741,7 @@ Each compaction event carries the trigger: `proactive` before a context-window e
 
 ### Sessions
 
-A `Werk` saves tasks, replies, and recorded events so you can resume a session.
+Use a session directory to save tasks, replies, and recorded events, then resume them in a later run.
 
 <img src="https://raw.githubusercontent.com/canvascomputing/agentwerk/main/assets/sessions.gif" width="600" alt="A persisted agentwerk session" />
 
@@ -744,11 +772,35 @@ werk.start()
 
 </details>
 
-See [`Werk`](https://docs.rs/agentwerk/latest/agentwerk/struct.Werk.html).
-
 ## Events
 
-Events show what happened throughout a run.
+Use events to inspect what happened during a run.
+
+Publish custom events through the Werk. Add agent or task context when relevant:
+
+```python
+from agentwerk import Event
+
+werk.emit_event(
+    Event("document_indexed")
+    .data({"documents": 42})
+    .task_id("t-1")
+    .agent_id("indexer-1")
+)
+
+werk.emit_event(Event("index_refreshed"))
+```
+
+`Werk.emit_event()` does not change task status. Use [EventTool](#eventtool) for model-driven completion through `task_finished`.
+
+Events are saved to `.agentwerk/events.jsonl`, except `text_chunk_received`.
+
+Query recorded events with [AQL](#aql).
+
+<details>
+<summary>Event reference</summary>
+
+Event names:
 
 | Area | Name | Description |
 |------|------|-------------|
@@ -783,24 +835,7 @@ Events show what happened throughout a run.
 | | `compaction_failed` | Compaction could not finish. |
 | **Custom** | name chosen by your application | An event published with `emit_event`. |
 
-Publish custom events through the Werk. Add agent or task context when relevant:
-
-```python
-from agentwerk import Event
-
-werk.emit_event(
-    Event("document_indexed")
-    .data({"documents": 42})
-    .task_id("t-1")
-    .agent_id("indexer-1")
-)
-
-werk.emit_event(Event("index_refreshed"))
-```
-
-`Werk.emit_event()` does not change task status. Use [EventTool](#eventtool) for model-driven completion through `task_finished`.
-
-Events are saved to `.agentwerk/events.jsonl`, except `text_chunk_received`.
+Event methods:
 
 | Event method | Description |
 |--------------|-------------|
@@ -813,11 +848,11 @@ Events are saved to `.agentwerk/events.jsonl`, except `text_chunk_received`.
 | `directive(value)` | Set directive metadata. This does not send an instruction to the model. |
 | `get_directive()` | Read the directive metadata. |
 
-Query recorded events with [AQL](#aql).
+</details>
 
 ### Hooks
 
-Register hooks to react to every event, finished result, or task state change.
+Use hooks to run code when an event arrives, a task finishes, or a task changes.
 
 ```python
 werk.on_event(lambda _, event: print(f"event: {event.get_name()}"))
@@ -831,20 +866,9 @@ Async hooks run while a completion method is waiting, and finish before it retur
 
 The default logger runs when no event hook is installed.
 
-See [`Event`](https://docs.rs/agentwerk/latest/agentwerk/event/struct.Event.html) and [`Werk`](https://docs.rs/agentwerk/latest/agentwerk/struct.Werk.html).
-
 ## Knowledge
 
-Knowledge keeps useful pages on disk so agents can share them across tasks.
-
-| Method | Description |
-|--------|-------------|
-| `get_index()` | Get the index, which is injected into the agent prompt. |
-| `set_index_char_limit(count)` | Limit how much of the index is injected into the prompt. |
-| `get_index_char_limit()` | Get the index size limit in force. |
-| `get_pages()` | Get the page collection for reading and writing pages. |
-| `get_pages().get_all()` | Get every page in the store. |
-| `clear()` | Remove every page from the store. |
+Use `Knowledge` to store pages on disk and share them between agents and tasks.
 
 <img src="https://raw.githubusercontent.com/canvascomputing/agentwerk/main/assets/knowledge.gif" width="600" alt="Agents sharing knowledge" />
 
@@ -880,4 +904,16 @@ page = store.get_pages().get_page("build-command")
 store.get_pages().remove("build-command")
 ```
 
-See [`Knowledge`](https://docs.rs/agentwerk/latest/agentwerk/agents/knowledge/struct.Knowledge.html).
+<details>
+<summary>Knowledge reference</summary>
+
+| Method | Description |
+|--------|-------------|
+| `get_index()` | Get the index, which is injected into the agent prompt. |
+| `set_index_char_limit(count)` | Limit how much of the index is injected into the prompt. |
+| `get_index_char_limit()` | Get the index size limit in force. |
+| `get_pages()` | Get the page collection for reading and writing pages. |
+| `get_pages().get_all()` | Get every page in the store. |
+| `clear()` | Remove every page from the store. |
+
+</details>
