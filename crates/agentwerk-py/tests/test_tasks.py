@@ -19,10 +19,11 @@ def test_condition_registered_after_matching_activity_releases_a_task(werk):
     assert [task.get_task() for task in werk.find_tasks("edit")] == ["edit"]
 
 
-def test_condition_returns_its_configured_id(werk):
-    condition = aw.Condition("event.name = never").id("edit-after-draft")
+def test_conditions_receive_sequential_ids(werk):
+    first = werk.add_condition(aw.Condition("event.name = never"))
+    second = werk.add_condition(aw.Condition("event.name = never"))
 
-    assert werk.add_condition(condition) == "edit-after-draft"
+    assert (first, second) == ("condition-1", "condition-2")
 
 
 def test_condition_rejects_invalid_aql():
