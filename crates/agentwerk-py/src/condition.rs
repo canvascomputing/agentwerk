@@ -32,12 +32,6 @@ impl PyCondition {
         })
     }
 
-    /// Set the runtime identity, replacing one already set.
-    fn id(mut slf: PyRefMut<'_, Self>, id: String) -> PyRefMut<'_, Self> {
-        slf.set(|condition| condition.id(id));
-        slf
-    }
-
     /// Add an agent to activate when the condition matches.
     fn add_agent<'py>(
         mut slf: PyRefMut<'py, Self>,

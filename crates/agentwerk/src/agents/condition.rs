@@ -15,17 +15,15 @@ use super::{Agent, Query, QueryError, Task};
 /// let werk = Werk::new();
 /// let id = werk.add_condition(
 ///     Condition::new("task.label = draft AND task.status = finished")?
-///         .id("edit-after-draft")
 ///         .add_agent(Agent::from_env().label("edit"))
 ///         .add_task(Task::labeled("edit", "Edit the completed draft.")),
 /// );
-/// assert_eq!(id, "edit-after-draft");
+/// assert_eq!(id, "condition-1");
 /// # Ok(())
 /// # }
 /// ```
 #[derive(Clone)]
 pub struct Condition {
-    pub(crate) id: Option<String>,
     pub(crate) query: Query,
     pub(crate) agents: Vec<Agent>,
     pub(crate) tasks: Vec<Task>,
@@ -36,18 +34,11 @@ impl Condition {
     /// Compile `aql` as the query that releases this condition's work.
     pub fn new(aql: &str) -> Result<Self, QueryError> {
         Ok(Self {
-            id: None,
             query: Query::new(aql)?,
             agents: Vec::new(),
             tasks: Vec::new(),
             fired: false,
         })
-    }
-
-    /// Set the runtime identity, replacing one already set.
-    pub fn id(mut self, id: impl Into<String>) -> Self {
-        self.id = Some(id.into());
-        self
     }
 
     /// Add an agent to activate when the condition matches.
@@ -83,12 +74,5 @@ mod tests {
     #[test]
     fn rejects_invalid_aql() {
         assert!(Condition::new("label = draft").is_err());
-    }
-
-    #[test]
-    fn the_last_configured_id_is_returned_when_registered() {
-        let condition = Condition::new("draft").unwrap().id("first").id("second");
-
-        assert_eq!(crate::Werk::new().add_condition(condition), "second");
     }
 }

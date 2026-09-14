@@ -928,63 +928,37 @@ impl Werk {
     /// for the next run. Loaded session history is excluded, conditions are not
     /// persisted, and text chunks are tested live without being retained.
     ///
-    /// IDs default to the next unused `condition-<N>`. Reusing an ID replaces
-    /// its definition while preserving whether it already fired in the current run.
-    pub fn add_condition(&self, mut condition: Condition) -> String {
+    /// IDs use the next sequential `condition-<N>` value.
+    pub fn add_condition(&self, condition: Condition) -> String {
         for agent in &condition.agents {
             agent.require_provider_and_model();
         }
 
         let mut registry = self.conditions.lock().unwrap();
-        let id = condition.id.take().unwrap_or_else(|| loop {
-            registry.next_id += 1;
-            let candidate = format!("condition-{}", registry.next_id);
-            if registry
-                .entries
-                .iter()
-                .all(|entry| entry.id.as_deref() != Some(candidate.as_str()))
-            {
-                break candidate;
-            }
-        });
-        let existing = registry
-            .entries
-            .iter()
-            .position(|entry| entry.id.as_deref() == Some(id.as_str()));
-        let fired = existing
-            .map(|position| registry.entries[position].fired)
-            .unwrap_or(false);
+        registry.next_id += 1;
+        let id = format!("condition-{}", registry.next_id);
+        let position = registry.entries.len();
         let query = condition.query.clone();
-        condition.id = Some(id.clone());
-        condition.fired = fired;
-        match existing {
-            Some(position) => registry.entries[position] = condition,
-            None => registry.entries.push(condition),
-        }
+        registry.entries.push(condition);
         let runtime_events = registry.runtime_events.clone();
         drop(registry);
 
-        if fired
-            || !runtime_events
-                .iter()
-                .any(|event| self.condition_matches(&query, event))
+        if !runtime_events
+            .iter()
+            .any(|event| self.condition_matches(&query, event))
         {
             return id;
         }
 
         let triggered_condition = {
             let mut registry = self.conditions.lock().unwrap();
-            registry
-                .entries
-                .iter_mut()
-                .find(|condition| condition.id.as_deref() == Some(id.as_str()))
-                .and_then(|condition| {
-                    if condition.fired {
-                        return None;
-                    }
-                    condition.fired = true;
-                    Some(condition.clone())
-                })
+            let condition = &mut registry.entries[position];
+            if condition.fired {
+                None
+            } else {
+                condition.fired = true;
+                Some(condition.clone())
+            }
         };
         self.activate_conditions(triggered_condition);
         id
@@ -1690,20 +1664,6 @@ mod tests {
     }
 
     #[test]
-    fn generated_condition_ids_skip_explicit_ids() {
-        let (werk, _tmp) = test_werk();
-        werk.add_condition(
-            Condition::new("event.name = never")
-                .unwrap()
-                .id("condition-1"),
-        );
-
-        let generated = werk.add_condition(Condition::new("event.name = never").unwrap());
-
-        assert_eq!(generated, "condition-2");
-    }
-
-    #[test]
     fn a_condition_registered_after_matching_activity_fires_immediately() {
         let (werk, _tmp) = test_werk();
         werk.add_task(Task::labeled("draft", "write"));
@@ -1716,54 +1676,6 @@ mod tests {
         );
 
         assert_eq!(werk.find_tasks("edit").len(), 1);
-    }
-
-    #[test]
-    fn replacing_a_fired_condition_keeps_it_fired_for_the_current_run() {
-        let (werk, _tmp) = test_werk();
-        werk.add_condition(
-            Condition::new("event.name = first")
-                .unwrap()
-                .id("route")
-                .add_task(Task::labeled("first", "one")),
-        );
-        werk.emit_event(Event::new("first"));
-
-        let replaced = werk.add_condition(
-            Condition::new("event.name = second")
-                .unwrap()
-                .id("route")
-                .add_task(Task::labeled("second", "two")),
-        );
-        werk.emit_event(Event::new("second"));
-
-        assert_eq!(replaced, "route");
-        assert_eq!(werk.find_tasks("first").len(), 1);
-        assert!(werk.find_tasks("second").is_empty());
-    }
-
-    #[test]
-    fn replacing_an_unfired_condition_replaces_its_query_and_actions() {
-        let (werk, _tmp) = test_werk();
-        werk.add_condition(
-            Condition::new("event.name = first")
-                .unwrap()
-                .id("route")
-                .add_task(Task::labeled("old", "one")),
-        );
-        werk.add_condition(
-            Condition::new("event.name = second")
-                .unwrap()
-                .id("route")
-                .add_task(Task::labeled("new", "two")),
-        );
-
-        werk.emit_event(Event::new("first"));
-        assert!(werk.find_tasks("old").is_empty());
-        assert!(werk.find_tasks("new").is_empty());
-
-        werk.emit_event(Event::new("second"));
-        assert_eq!(werk.find_tasks("new").len(), 1);
     }
 
     #[test]

@@ -23,7 +23,6 @@ async fn main() {
     werk.add_condition(
         Condition::new(FINISHED_DRAFT)
             .expect("finished draft condition is valid AQL")
-            .id("edit-after-draft")
             .add_agent(
                 Agent::from_env()
                     .label(EDIT)

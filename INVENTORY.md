@@ -122,11 +122,10 @@ The rules the tables never repeat.
 
 | Language | Item | Visibility |
 |----------|------|------------|
-| both | `Condition { id: string?, query: Query, agents: Agent[], tasks: Task[], fired: boolean }` | pub with private fields |
+| both | `Condition { query: Query, agents: Agent[], tasks: Task[], fired: boolean }` | pub with private fields |
 | Rust | `impl Clone for Condition` | pub |
 | Rust | `.new(aql: string): this throws QueryError` | pub |
 | Python | `Condition(aql)`: raises `ValueError` when AQL is invalid | |
-| both | `.id(id: string): this` | pub |
 | both | `.add_agent(agent: Agent): this` | pub |
 | Python | `.add_agent(agent)`: raises `RuntimeError` immediately when the agent has no provider or model | |
 | both | `.add_task(task: Task): this` | pub |

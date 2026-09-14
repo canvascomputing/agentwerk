@@ -618,7 +618,6 @@ use agentwerk::Condition;
 
 werk.add_condition(
     Condition::new("task.label = research AND task.status = finished")?
-        .id("report-after-research")
         .add_agent(Agent::from_env().label("report"))
         .add_task(Task::labeled(
             "report",
