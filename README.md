@@ -128,7 +128,7 @@ let writer = Agent::from_env()
     .role(writer_role);
 ```
 
-APIs: [Agents](API.md#agents), [Providers](API.md#providers), [Interactive agents](API.md#interactive-agents), and [Prompt Skill](skills/prompt/SKILL.md).
+APIs: [Agents](API.md#agents), [Providers](API.md#providers), and [Prompt Skill](skills/prompt/SKILL.md).
 
 ## Tools
 
