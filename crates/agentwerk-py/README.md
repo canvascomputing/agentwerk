@@ -256,7 +256,7 @@ async def main():
 
     write_report = Condition(
         "task.label = research AND task.status = finished"
-    ).add_task(Task(question, label="report"))
+    ).task(Task(question, label="report"))
 
     werk.add_condition(write_report)
     werk.add_task(Task(question, label="research"))

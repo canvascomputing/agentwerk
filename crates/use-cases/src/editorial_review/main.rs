@@ -22,13 +22,12 @@ async fn main() {
     );
     werk.add_condition(
         Condition::new(FINISHED_DRAFT)
-            .expect("finished draft condition is valid AQL")
-            .add_agent(
+            .agent(
                 Agent::from_env()
                     .label(EDIT)
                     .role("Edit the draft for clarity and brevity. Return only the final text."),
             )
-            .add_task(Task::labeled(
+            .task(Task::labeled(
                 EDIT,
                 "Edit this draft:\n\n{{ result: task.label = draft AND task.status = finished }}",
             )),

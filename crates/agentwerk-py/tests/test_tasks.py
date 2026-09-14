@@ -13,7 +13,7 @@ import agentwerk as aw
 def test_condition_registered_after_matching_activity_releases_a_task(werk):
     werk.add_task(aw.Task("write", label="draft"))
     werk.add_condition(
-        aw.Condition("task.label = draft").add_task(aw.Task("edit", label="edit"))
+        aw.Condition("task.label = draft").task(aw.Task("edit", label="edit"))
     )
 
     assert [task.get_task() for task in werk.find_tasks("edit")] == ["edit"]
@@ -31,30 +31,66 @@ def test_condition_rejects_invalid_aql():
         aw.Condition("label = draft")
 
 
-def test_condition_activates_a_configured_agent(werk, offline_agent):
-    editor = offline_agent.label("edit")
-    editor_id = editor.get_id()
-    werk.add_condition(
-        aw.Condition("event.name = ready").add_agent(editor)
-    )
-    assert werk.get_model_for_agent(editor_id) is None
+def test_condition_accepts_a_compiled_query(werk):
+    werk.add_condition(aw.Condition(aw.Query("event.name = ready")).task("edit"))
 
     werk.emit_event(aw.Event("ready"))
 
-    assert werk.get_model_for_agent(editor_id) == "claude-sonnet-4-20250514"
+    assert [task.get_task() for task in werk.get_tasks()] == ["edit"]
+
+
+def test_condition_rejects_an_unsupported_query_type():
+    with pytest.raises(TypeError, match="Query or AQL string"):
+        aw.Condition(object())
+
+
+def test_condition_singular_and_plural_builders_release_every_action_once(werk):
+    def agent(label):
+        return (
+            aw.Agent()
+            .provider(aw.Anthropic("test-key"))
+            .model("claude-sonnet-4-20250514")
+            .label(label)
+        )
+
+    first = agent("first")
+    second = agent("second")
+    third = agent("third")
+    agent_ids = [candidate.get_id() for candidate in (first, second, third)]
+    condition = (
+        aw.Condition("event.name = ready")
+        .agent(first)
+        .agents([second, third])
+        .task("one")
+        .tasks(["two", {"task": "three"}])
+    )
+    werk.add_condition(condition)
+
+    werk.emit_event(aw.Event("ready"))
+    werk.emit_event(aw.Event("ready"))
+
+    assert [werk.get_model_for_agent(id) for id in agent_ids] == [
+        "claude-sonnet-4-20250514"
+    ] * 3
+    assert [task.get_task() for task in werk.get_tasks()] == [
+        "one",
+        "two",
+        {"task": "three"},
+    ]
 
 
 @pytest.mark.parametrize("task", ["edit", {"kind": "edit"}])
 def test_condition_accepts_json_compatible_task_values(werk, task):
-    werk.add_condition(aw.Condition("event.name = ready").add_task(task))
+    werk.add_condition(aw.Condition("event.name = ready").task(task))
 
     werk.emit_event(aw.Event("ready"))
 
     assert [released.get_task() for released in werk.get_tasks()] == [task]
 
 
+@pytest.mark.parametrize("builder", ["agent", "agents"])
 @pytest.mark.parametrize("missing", ["provider", "model"])
-def test_condition_rejects_an_incomplete_agent(missing):
+def test_condition_rejects_an_incomplete_agent_immediately(builder, missing):
     agent = aw.Agent()
     if missing == "provider":
         agent.model("mock")
@@ -62,7 +98,8 @@ def test_condition_rejects_an_incomplete_agent(missing):
         agent.provider(aw.Anthropic("test-key"))
 
     with pytest.raises(RuntimeError, match=f"{missing} not set"):
-        aw.Condition("event.name = ready").add_agent(agent)
+        argument = agent if builder == "agent" else [agent]
+        getattr(aw.Condition("event.name = ready"), builder)(argument)
 
 
 def test_enqueued_task_appears_with_its_status_and_label(werk):

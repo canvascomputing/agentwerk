@@ -229,13 +229,9 @@ impl PyAgent {
     }
 
     /// Wait for matching tasks in the bound Werk, starting automatically. Awaitable.
-    fn finish_tasks<'py>(
-        &self,
-        py: Python<'py>,
-        matches: Py<PyAny>,
-    ) -> PyResult<Bound<'py, PyAny>> {
+    fn finish_tasks<'py>(&self, py: Python<'py>, query: Py<PyAny>) -> PyResult<Bound<'py, PyAny>> {
         let inner = self.ready()?.clone();
-        let query = to_task_matcher(py, &matches)?;
+        let query = to_task_matcher(py, &query)?;
         pyo3_async_runtimes::tokio::future_into_py(py, async move {
             let results = inner.finish_tasks(query).await;
             Python::attach(|py| {
@@ -265,9 +261,9 @@ impl PyAgent {
     /// Wait for the matching tasks to be done, then give back the first result
     /// in query order. `None` means no matching task finished with a result.
     /// Awaitable.
-    fn finish_task<'py>(&self, py: Python<'py>, matches: Py<PyAny>) -> PyResult<Bound<'py, PyAny>> {
+    fn finish_task<'py>(&self, py: Python<'py>, query: Py<PyAny>) -> PyResult<Bound<'py, PyAny>> {
         let inner = self.ready()?.clone();
-        let query = to_task_matcher(py, &matches)?;
+        let query = to_task_matcher(py, &query)?;
         pyo3_async_runtimes::tokio::future_into_py(py, async move {
             let result = inner.finish_task(query).await;
             Python::attach(|py| {

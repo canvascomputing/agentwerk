@@ -993,8 +993,8 @@ impl Werk {
     ///
     /// Your condition MUST NOT call another `Werk` method that reads
     /// the task store, or the call deadlocks.
-    pub fn find_tasks(&self, predicate: impl Matcher<Task>) -> Vec<Task> {
-        let query = predicate.into_query().task_if_originless();
+    pub fn find_tasks(&self, query: impl Matcher<Task>) -> Vec<Task> {
+        let query = query.into_query().task_if_originless();
         self.tasks_selected_by(&query)
     }
 
@@ -1003,8 +1003,8 @@ impl Werk {
     ///
     /// Your condition MUST NOT call another `Werk` method that reads
     /// the task store, or the call deadlocks.
-    pub fn find_task(&self, predicate: impl Matcher<Task>) -> Option<Task> {
-        let query = predicate.into_query().task_if_originless();
+    pub fn find_task(&self, query: impl Matcher<Task>) -> Option<Task> {
+        let query = query.into_query().task_if_originless();
         match query.origin() {
             Origin::Task => self.first_matching_task(&query),
             Origin::Event | Origin::Joined => self.tasks_selected_by(&query).into_iter().next(),
@@ -1094,15 +1094,15 @@ impl Werk {
     /// a total is a fold over the events themselves. A log that cannot be read
     /// finds nothing, and `TextChunkReceived` is never recorded, so a condition
     /// naming it never matches.
-    pub fn find_events(&self, matcher: impl Matcher<Event>) -> Vec<Event> {
-        let query = matcher.into_query().event_if_originless();
+    pub fn find_events(&self, query: impl Matcher<Event>) -> Vec<Event> {
+        let query = query.into_query().event_if_originless();
         self.events_selected_by(&query)
     }
 
     /// Get the first event selected directly, through a matching task, or from
     /// a matching joined task-event row.
-    pub fn find_event(&self, matcher: impl Matcher<Event>) -> Option<Event> {
-        let query = matcher.into_query().event_if_originless();
+    pub fn find_event(&self, query: impl Matcher<Event>) -> Option<Event> {
+        let query = query.into_query().event_if_originless();
         if query.origin() != Origin::Event {
             return self.events_selected_by(&query).into_iter().next();
         }
@@ -1179,8 +1179,8 @@ impl Werk {
     /// let werk = Werk::new();
     /// werk.cancel_tasks("scan");
     /// ```
-    pub fn cancel_tasks(&self, matches: impl Matcher<Task>) -> &Self {
-        let query = matches.into_query().task_if_originless();
+    pub fn cancel_tasks(&self, query: impl Matcher<Task>) -> &Self {
+        let query = query.into_query().task_if_originless();
         match query.origin() {
             Origin::Task => {
                 self.cancel_filters
@@ -1453,8 +1453,8 @@ impl Werk {
     /// }
     /// # }
     /// ```
-    pub async fn finish_tasks(&self, matches: impl Matcher<Task>) -> Vec<serde_json::Value> {
-        let query = matches.into_query().task_if_originless();
+    pub async fn finish_tasks(&self, query: impl Matcher<Task>) -> Vec<serde_json::Value> {
+        let query = query.into_query().task_if_originless();
         let snapshot = match query.origin() {
             Origin::Task => None,
             Origin::Event | Origin::Joined => Some(
@@ -1550,8 +1550,8 @@ impl Werk {
     /// }
     /// # }
     /// ```
-    pub async fn finish_task(&self, matches: impl Matcher<Task>) -> Option<serde_json::Value> {
-        self.finish_tasks(matches).await.into_iter().next()
+    pub async fn finish_task(&self, query: impl Matcher<Task>) -> Option<serde_json::Value> {
+        self.finish_tasks(query).await.into_iter().next()
     }
 
     /// Get why the last run ended, or `None` while one is still going.
@@ -1603,8 +1603,8 @@ impl Werk {
     /// let werk = Werk::new();
     /// let scans = werk.find_results("scan");
     /// ```
-    pub fn find_results(&self, matches: impl Matcher<Task>) -> Vec<serde_json::Value> {
-        self.result_tasks(matches)
+    pub fn find_results(&self, query: impl Matcher<Task>) -> Vec<serde_json::Value> {
+        self.result_tasks(query)
             .into_iter()
             .filter_map(|task| task.result)
             .collect()
@@ -1614,15 +1614,15 @@ impl Werk {
     ///
     /// Status defaults to `finished` as in [`Self::find_results`], and the
     /// order is that method's too.
-    pub fn find_result(&self, matches: impl Matcher<Task>) -> Option<serde_json::Value> {
-        self.result_tasks(matches)
+    pub fn find_result(&self, query: impl Matcher<Task>) -> Option<serde_json::Value> {
+        self.result_tasks(query)
             .into_iter()
             .next()
             .and_then(|task| task.result)
     }
 
-    pub(crate) fn result_tasks(&self, matches: impl Matcher<Task>) -> Vec<Task> {
-        let query = matches
+    pub(crate) fn result_tasks(&self, query: impl Matcher<Task>) -> Vec<Task> {
+        let query = query
             .into_query()
             .task_if_originless()
             .default_task_status(Status::Finished)
@@ -1648,16 +1648,8 @@ mod tests {
     fn conditions_receive_sequential_default_ids() {
         let (werk, _tmp) = test_werk();
 
-        let first = werk.add_condition(
-            Condition::new("event.name = never")
-                .unwrap()
-                .add_task("first"),
-        );
-        let second = werk.add_condition(
-            Condition::new("event.name = never")
-                .unwrap()
-                .add_task("second"),
-        );
+        let first = werk.add_condition(Condition::new("event.name = never").task("first"));
+        let second = werk.add_condition(Condition::new("event.name = never").task("second"));
 
         assert_eq!(first, "condition-1");
         assert_eq!(second, "condition-2");
@@ -1670,9 +1662,7 @@ mod tests {
         assert!(werk.find_tasks("edit").is_empty());
 
         werk.add_condition(
-            Condition::new("task.label = draft")
-                .unwrap()
-                .add_task(Task::labeled("edit", "edit")),
+            Condition::new("task.label = draft").task(Task::labeled("edit", "edit")),
         );
 
         assert_eq!(werk.find_tasks("edit").len(), 1);
@@ -1682,9 +1672,7 @@ mod tests {
     fn a_task_condition_is_checked_when_the_task_event_is_emitted() {
         let (werk, _tmp) = test_werk();
         werk.add_condition(
-            Condition::new("task.label = draft")
-                .unwrap()
-                .add_task(Task::labeled("task-match", "matched")),
+            Condition::new("task.label = draft").task(Task::labeled("task-match", "matched")),
         );
         assert!(werk.find_tasks("task-match").is_empty());
 
@@ -1697,9 +1685,7 @@ mod tests {
     fn an_event_condition_is_checked_when_the_event_is_emitted() {
         let (werk, _tmp) = test_werk();
         werk.add_condition(
-            Condition::new("event.name = ready")
-                .unwrap()
-                .add_task(Task::labeled("event-match", "matched")),
+            Condition::new("event.name = ready").task(Task::labeled("event-match", "matched")),
         );
         assert!(werk.find_tasks("event-match").is_empty());
 
@@ -1714,8 +1700,7 @@ mod tests {
         let draft = werk.add_task(Task::labeled("draft", "write"));
         werk.add_condition(
             Condition::new("task.label = draft AND event.name = ready")
-                .unwrap()
-                .add_task(Task::labeled("joined-match", "matched")),
+                .task(Task::labeled("joined-match", "matched")),
         );
         assert!(werk.find_tasks("joined-match").is_empty());
 
@@ -1730,9 +1715,7 @@ mod tests {
         werk.on_event(|werk, event| {
             if event.get_name() == "ready" {
                 werk.add_condition(
-                    Condition::new("event.name = ready")
-                        .unwrap()
-                        .add_task(Task::labeled("released", "work")),
+                    Condition::new("event.name = ready").task(Task::labeled("released", "work")),
                 );
             }
         });
@@ -1748,8 +1731,7 @@ mod tests {
         let draft = werk.add_task(Task::labeled("draft", "write"));
         werk.add_condition(
             Condition::new("task.status = finished AND event.name = task_finished")
-                .unwrap()
-                .add_task(Task::labeled("edit", "edit")),
+                .task(Task::labeled("edit", "edit")),
         );
         assert!(werk.find_tasks("edit").is_empty());
 
@@ -1766,9 +1748,7 @@ mod tests {
 
         let loaded = Werk::load(tmp.path()).unwrap();
         loaded.add_condition(
-            Condition::new("task.label = draft")
-                .unwrap()
-                .add_task(Task::labeled("edit", "edit")),
+            Condition::new("task.label = draft").task(Task::labeled("edit", "edit")),
         );
         assert!(loaded.find_tasks("edit").is_empty());
 
@@ -1780,9 +1760,7 @@ mod tests {
     fn registered_conditions_are_not_restored_with_a_session() {
         let (werk, tmp) = test_werk();
         werk.add_condition(
-            Condition::new("event.name = ready")
-                .unwrap()
-                .add_task(Task::labeled("released", "work")),
+            Condition::new("event.name = ready").task(Task::labeled("released", "work")),
         );
         drop(werk);
 
@@ -1798,8 +1776,7 @@ mod tests {
         werk.emit_event(Event::new(Event::TEXT_CHUNK_RECEIVED));
         werk.add_condition(
             Condition::new("event.name = text_chunk_received")
-                .unwrap()
-                .add_task(Task::labeled("stream", "seen")),
+                .task(Task::labeled("stream", "seen")),
         );
         assert!(werk.find_tasks("stream").is_empty());
 
@@ -1808,12 +1785,30 @@ mod tests {
     }
 
     #[test]
-    fn concurrent_matching_events_release_one_action_set() {
+    fn condition_singular_and_plural_builders_release_every_action_once() {
         let (werk, _tmp) = test_werk();
         werk.add_condition(
             Condition::new("event.name = ready")
-                .unwrap()
-                .add_task(Task::labeled("released", "work")),
+                .agent(minimal_agent("first"))
+                .agents([minimal_agent("second"), minimal_agent("third")])
+                .task(Task::labeled("one", "one"))
+                .tasks([Task::labeled("two", "two"), Task::labeled("three", "three")]),
+        );
+
+        werk.emit_event(Event::new("ready"));
+        werk.emit_event(Event::new("ready"));
+
+        assert_eq!(werk.agents.lock().unwrap().len(), 3);
+        assert_eq!(werk.find_tasks("one").len(), 1);
+        assert_eq!(werk.find_tasks("two").len(), 1);
+        assert_eq!(werk.find_tasks("three").len(), 1);
+    }
+
+    #[test]
+    fn concurrent_matching_events_release_one_action_set() {
+        let (werk, _tmp) = test_werk();
+        werk.add_condition(
+            Condition::new("event.name = ready").task(Task::labeled("released", "work")),
         );
         let threads = (0..8)
             .map(|_| {
@@ -1834,9 +1829,7 @@ mod tests {
     fn task_events_created_by_an_action_cannot_retrigger_the_condition() {
         let (werk, _tmp) = test_werk();
         werk.add_condition(
-            Condition::new("event.name = task_created")
-                .unwrap()
-                .add_task(Task::labeled("released", "work")),
+            Condition::new("event.name = task_created").task(Task::labeled("released", "work")),
         );
 
         werk.add_task("trigger");
@@ -1848,9 +1841,7 @@ mod tests {
     async fn conditions_fire_once_per_run_and_rearm_for_the_next_run() {
         let (werk, _tmp) = test_werk();
         werk.add_condition(
-            Condition::new("event.name = ready")
-                .unwrap()
-                .add_task(Task::labeled("unclaimed", "work")),
+            Condition::new("event.name = ready").task(Task::labeled("unclaimed", "work")),
         );
 
         werk.start().emit_event(Event::new("ready"));
@@ -1870,9 +1861,7 @@ mod tests {
     async fn a_run_started_condition_releases_work_into_the_starting_run() {
         let (werk, _tmp) = test_werk();
         werk.add_condition(
-            Condition::new("event.name = run_started")
-                .unwrap()
-                .add_task(Task::labeled("startup", "work")),
+            Condition::new("event.name = run_started").task(Task::labeled("startup", "work")),
         );
         assert!(werk.find_tasks("startup").is_empty());
 
@@ -1887,9 +1876,7 @@ mod tests {
     async fn a_run_finished_condition_queues_work_for_the_next_run() {
         let (werk, _tmp) = test_werk();
         werk.add_condition(
-            Condition::new("event.name = run_finished")
-                .unwrap()
-                .add_task(Task::labeled("after-run", "work")),
+            Condition::new("event.name = run_finished").task(Task::labeled("after-run", "work")),
         );
         assert!(werk.find_tasks("after-run").is_empty());
 
@@ -1903,11 +1890,7 @@ mod tests {
     #[tokio::test]
     async fn reactivating_a_condition_does_not_duplicate_its_agent() {
         let (werk, _tmp) = test_werk();
-        werk.add_condition(
-            Condition::new("event.name = ready")
-                .unwrap()
-                .add_agent(minimal_agent("worker")),
-        );
+        werk.add_condition(Condition::new("event.name = ready").agent(minimal_agent("worker")));
 
         werk.start().emit_event(Event::new("ready"));
         assert_eq!(werk.agents.lock().unwrap().len(), 1);
@@ -1923,11 +1906,7 @@ mod tests {
     #[tokio::test]
     async fn an_unmet_condition_does_not_keep_finish_open() {
         let (werk, _tmp) = test_werk();
-        werk.add_condition(
-            Condition::new("event.name = never")
-                .unwrap()
-                .add_task("work"),
-        );
+        werk.add_condition(Condition::new("event.name = never").task("work"));
 
         tokio::time::timeout(std::time::Duration::from_secs(2), werk.finish())
             .await

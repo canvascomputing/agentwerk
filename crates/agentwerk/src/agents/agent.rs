@@ -449,8 +449,8 @@ impl Agent {
     /// let result = agent.finish_task(task).await;
     /// # }
     /// ```
-    pub async fn finish_task(&self, matches: impl Matcher<Task>) -> Option<serde_json::Value> {
-        self.register().finish_task(matches).await
+    pub async fn finish_task(&self, query: impl Matcher<Task>) -> Option<serde_json::Value> {
+        self.register().finish_task(query).await
     }
 
     /// Wait for matching tasks and get their results in query order.
@@ -458,8 +458,8 @@ impl Agent {
     /// Registers this agent if needed and delegates to [`Werk::finish_tasks`],
     /// including automatic startup and selection across the shared Werk.
     /// Configure the agent before its first start or finish call.
-    pub async fn finish_tasks(&self, matches: impl Matcher<Task>) -> Vec<serde_json::Value> {
-        self.register().finish_tasks(matches).await
+    pub async fn finish_tasks(&self, query: impl Matcher<Task>) -> Vec<serde_json::Value> {
+        self.register().finish_tasks(query).await
     }
 
     /// Wait for every task in the bound Werk and get results in creation order.

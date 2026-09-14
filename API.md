@@ -617,9 +617,9 @@ Use an AQL query to create follow-up tasks or add agents based on conditions:
 use agentwerk::Condition;
 
 werk.add_condition(
-    Condition::new("task.label = research AND task.status = finished")?
-        .add_agent(Agent::from_env().label("report"))
-        .add_task(Task::labeled(
+    Condition::new("task.label = research AND task.status = finished")
+        .agent(Agent::from_env().label("report"))
+        .task(Task::labeled(
             "report",
             "Write {{ result: task.label = research AND task.status = finished }}",
         )),

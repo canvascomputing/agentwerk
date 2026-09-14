@@ -225,8 +225,8 @@ impl PyWerk {
 
     /// Get tasks selected directly, through events, or through joined rows.
     /// A callable always receives a task.
-    fn find_tasks(&self, py: Python<'_>, predicate: Py<PyAny>) -> PyResult<Vec<Py<PyTask>>> {
-        let tasks = self.inner.find_tasks(to_task_matcher(py, &predicate)?);
+    fn find_tasks(&self, py: Python<'_>, query: Py<PyAny>) -> PyResult<Vec<Py<PyTask>>> {
+        let tasks = self.inner.find_tasks(to_task_matcher(py, &query)?);
         tasks
             .iter()
             .map(|task| Py::new(py, PyTask::from_task(task)))
@@ -235,8 +235,8 @@ impl PyWerk {
 
     /// Get the first task selected directly or through a matching event.
     /// A callable always receives a task.
-    fn find_task(&self, py: Python<'_>, predicate: Py<PyAny>) -> PyResult<Option<Py<PyTask>>> {
-        let task = self.inner.find_task(to_task_matcher(py, &predicate)?);
+    fn find_task(&self, py: Python<'_>, query: Py<PyAny>) -> PyResult<Option<Py<PyTask>>> {
+        let task = self.inner.find_task(to_task_matcher(py, &query)?);
         match task {
             Some(task) => Ok(Some(Py::new(py, PyTask::from_task(&task))?)),
             None => Ok(None),
@@ -324,13 +324,9 @@ impl PyWerk {
 
     /// Wait for the matching tasks to be done, then give back their results
     /// in query order. Accepts a Query or callable. Awaitable.
-    fn finish_tasks<'py>(
-        &self,
-        py: Python<'py>,
-        matches: Py<PyAny>,
-    ) -> PyResult<Bound<'py, PyAny>> {
+    fn finish_tasks<'py>(&self, py: Python<'py>, query: Py<PyAny>) -> PyResult<Bound<'py, PyAny>> {
         let inner = Arc::clone(&self.inner);
-        let query = to_task_matcher(py, &matches)?;
+        let query = to_task_matcher(py, &query)?;
         pyo3_async_runtimes::tokio::future_into_py(py, async move {
             let results = inner.finish_tasks(query).await;
             Python::attach(|py| {
@@ -360,9 +356,9 @@ impl PyWerk {
     /// Wait for the matching tasks to be done, then give back the first result
     /// in query order. `None` means no matching task finished with a result.
     /// Awaitable.
-    fn finish_task<'py>(&self, py: Python<'py>, matches: Py<PyAny>) -> PyResult<Bound<'py, PyAny>> {
+    fn finish_task<'py>(&self, py: Python<'py>, query: Py<PyAny>) -> PyResult<Bound<'py, PyAny>> {
         let inner = Arc::clone(&self.inner);
-        let query = to_task_matcher(py, &matches)?;
+        let query = to_task_matcher(py, &query)?;
         pyo3_async_runtimes::tokio::future_into_py(py, async move {
             let result = inner.finish_task(query).await;
             Python::attach(|py| {
@@ -381,8 +377,8 @@ impl PyWerk {
     }
 
     /// Take every matching task off the Werk. Accepts a Query or callable.
-    fn cancel_tasks<'py>(slf: PyRef<'py, Self>, matches: Py<PyAny>) -> PyResult<PyRef<'py, Self>> {
-        slf.inner.cancel_tasks(to_task_matcher(slf.py(), &matches)?);
+    fn cancel_tasks<'py>(slf: PyRef<'py, Self>, query: Py<PyAny>) -> PyResult<PyRef<'py, Self>> {
+        slf.inner.cancel_tasks(to_task_matcher(slf.py(), &query)?);
         Ok(slf)
     }
 
@@ -394,15 +390,15 @@ impl PyWerk {
 
     /// Get events selected directly, through tasks, or through joined rows.
     /// A callable always receives an event.
-    fn find_events(&self, matches: Py<PyAny>, py: Python<'_>) -> PyResult<Vec<PyEvent>> {
-        let found = self.inner.find_events(to_event_matcher(py, &matches)?);
+    fn find_events(&self, query: Py<PyAny>, py: Python<'_>) -> PyResult<Vec<PyEvent>> {
+        let found = self.inner.find_events(to_event_matcher(py, &query)?);
         Ok(found.iter().map(to_py_event).collect())
     }
 
     /// Get the first event selected directly or through a matching task.
     /// A callable always receives an event.
-    fn find_event(&self, matches: Py<PyAny>, py: Python<'_>) -> PyResult<Option<PyEvent>> {
-        let found = self.inner.find_event(to_event_matcher(py, &matches)?);
+    fn find_event(&self, query: Py<PyAny>, py: Python<'_>) -> PyResult<Option<PyEvent>> {
+        let found = self.inner.find_event(to_event_matcher(py, &query)?);
         Ok(found.as_ref().map(to_py_event))
     }
 
