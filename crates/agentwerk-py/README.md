@@ -139,8 +139,7 @@ The researcher needs the [Brave Search Tool](examples/web_search.py) and `FetchT
 ```python
 brave_key = os.environ["BRAVE_API_KEY"]
 brave_search = brave_search_tool(brave_key)
-researcher.tool(brave_search)
-researcher.tool(FetchTool())
+researcher.tool(brave_search).tool(FetchTool())
 ```
 
 APIs: [Tools](API.md#tools), [FetchTool](API.md#fetchtool), and [Custom tools](API.md#custom-tools).
