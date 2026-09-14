@@ -1,9 +1,16 @@
 """Test the helpers shipped with the Python examples."""
 
 import io
+from importlib.util import module_from_spec, spec_from_file_location
+from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
-from examples import web_search
+
+example_path = Path(__file__).parents[1] / "examples" / "web_search.py"
+example_spec = spec_from_file_location("web_search_example", example_path)
+assert example_spec is not None and example_spec.loader is not None
+web_search = module_from_spec(example_spec)
+example_spec.loader.exec_module(web_search)
 
 
 class Response(io.BytesIO):
