@@ -624,7 +624,20 @@ Agents can pass work and results in five ways:
 4. **[TaskTool](#tools)**: reads any finished task's result by ID.
 5. **[ReadFileTool](#tools)**: opens a task's `result.json` in the session directory.
 
-### Conditions
+#### Result hook
+
+Use a hook to create a new task when a matching result arrives:
+
+```python
+def hand_to_report(werk, done, result):
+    if done.get_label() == "research":
+        werk.add_task(Task(result, label="report"))
+
+
+werk.on_result(hand_to_report)
+```
+
+#### Conditions
 
 Use an AQL query to create follow-up tasks or add agents based on conditions:
 
@@ -810,17 +823,6 @@ Register hooks to react to every event, finished result, or task state change.
 werk.on_event(lambda _, event: print(f"event: {event.get_name()}"))
 werk.on_result(lambda _, task, result: print(f"{task.get_id()}: {result}"))
 werk.on_task(lambda _, event, task: print(f"{task.get_id()}: {event.get_name()}"))
-```
-
-Use `on_result` to create a task when a result arrives:
-
-```python
-def hand_to_report(werk, done, result):
-    if done.get_label() == "research":
-        werk.add_task(Task(result, label="report"))
-
-
-werk.on_result(hand_to_report)
 ```
 
 `on_result` runs synchronously on the agent. Keep it brief. Use `on_result_async` for work that needs to await.

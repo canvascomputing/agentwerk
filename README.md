@@ -137,8 +137,9 @@ The researcher needs the [Brave Search Tool](crates/use-cases/src/deep_research/
 ```rust
 let brave_key = std::env::var("BRAVE_API_KEY")?;
 let brave_search = brave_search_tool(brave_key);
-let researcher = researcher.tool(brave_search);
-let researcher = researcher.tool(FetchTool::new());
+let researcher = researcher
+    .tool(brave_search)
+    .tool(FetchTool::new());
 ```
 
 APIs: [Tools](API.md#tools), [FetchTool](API.md#fetchtool), and [Custom tools](API.md#custom-tools).
