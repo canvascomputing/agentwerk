@@ -23,7 +23,7 @@ impl PyQuery {
     fn new(query: &str) -> PyResult<Self> {
         Ok(PyQuery {
             source: query.to_string(),
-            query: Query::new(query).map_err(|error| value_error(error.to_string()))?,
+            query: compile_query(query)?,
         })
     }
 
@@ -36,6 +36,23 @@ pub(crate) fn value_error(message: impl Into<String>) -> PyErr {
     pyo3::exceptions::PyValueError::new_err(message.into())
 }
 
+fn compile_query(query: &str) -> PyResult<Query> {
+    Query::new(query).map_err(|error| value_error(error.to_string()))
+}
+
+/// Read a compiled query or an AQL string without accepting a callable.
+pub(crate) fn to_query(arg: &Bound<'_, PyAny>) -> PyResult<Query> {
+    if let Ok(query) = arg.extract::<PyRef<'_, PyQuery>>() {
+        return Ok(query.query.clone());
+    }
+    if let Ok(query) = arg.extract::<String>() {
+        return compile_query(&query);
+    }
+    Err(pyo3::exceptions::PyTypeError::new_err(
+        "expected a Query or AQL string",
+    ))
+}
+
 /// Read a Python argument for an operation that ultimately selects tasks: a
 /// `Query`, a string in AQL, or a callable as a condition of its own. Named
 /// AQL may originate from tasks, events, or their join; callables receive a
@@ -45,7 +62,7 @@ pub fn to_task_matcher(py: Python<'_>, arg: &Py<PyAny>) -> PyResult<Query> {
         return Ok(query.query.clone());
     }
     if let Ok(query) = arg.extract::<String>(py) {
-        return Query::new(&query).map_err(|error| value_error(error.to_string()));
+        return compile_query(&query);
     }
     let callable = arg.clone_ref(py);
     Ok(Matcher::into_query(move |task: &Task| {
@@ -60,7 +77,7 @@ pub fn to_event_matcher(py: Python<'_>, arg: &Py<PyAny>) -> PyResult<Query> {
         return Ok(query.query.clone());
     }
     if let Ok(query) = arg.extract::<String>(py) {
-        return Query::new(&query).map_err(|error| value_error(error.to_string()));
+        return compile_query(&query);
     }
     let callable = arg.clone_ref(py);
     Ok(Matcher::into_query(move |event: &Event| {

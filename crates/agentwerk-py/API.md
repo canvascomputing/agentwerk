@@ -633,8 +633,8 @@ from agentwerk import Condition
 
 werk.add_condition(
     Condition("task.label = research AND task.status = finished")
-    .add_agent(Agent.from_env().label("report"))
-    .add_task(
+    .agent(Agent.from_env().label("report"))
+    .task(
         Task(
             "Write {{ result: task.label = research AND task.status = finished }}",
             label="report",

@@ -84,10 +84,10 @@ The rules the tables never repeat.
 | both | `.add_task(task)`: a string or json value stands in for the `Task` | |
 | both | `.start(): Werk` | pub |
 | Python | `.start()`: raises `RuntimeError` where Rust panics on a missing provider or model | |
-| both | `.finish_task(matches: Matcher<Task>): Promise<json?>` | pub |
-| both | `.finish_tasks(matches: Matcher<Task>): Promise<json[]>` | pub |
+| both | `.finish_task(query: Matcher<Task>): Promise<json?>` | pub |
+| both | `.finish_tasks(query: Matcher<Task>): Promise<json[]>` | pub |
 | both | `.finish(): Promise<json[]>`: waits across the bound Werk | pub |
-| Python | `.finish_task(matches)` / `.finish_tasks(matches)`: accepts a `Query`, string, or callable | |
+| Python | `.finish_task(query)` / `.finish_tasks(query)`: accepts a `Query`, string, or callable | |
 | Python | `.finish_*()`: raises `RuntimeError` where Rust panics on a missing provider or model | |
 
 ### Internal
@@ -124,12 +124,16 @@ The rules the tables never repeat.
 |----------|------|------------|
 | both | `Condition { query: Query, agents: Agent[], tasks: Task[], fired: boolean }` | pub with private fields |
 | Rust | `impl Clone for Condition` | pub |
-| Rust | `.new(aql: string): this throws QueryError` | pub |
-| Python | `Condition(aql)`: raises `ValueError` when AQL is invalid | |
-| both | `.add_agent(agent: Agent): this` | pub |
-| Python | `.add_agent(agent)`: raises `RuntimeError` immediately when the agent has no provider or model | |
-| both | `.add_task(task: Task): this` | pub |
-| both | `.add_task(task)`: a string or json value stands in for the `Task` | |
+| Rust | `.new(query: Query): this`; strings convert through `Query::from` | pub |
+| Python | `Condition(query: Query or string)`: invalid text raises `ValueError`; unsupported values raise `TypeError` | |
+| both | `.agent(agent: Agent): this` | pub |
+| Python | `.agent(agent)`: raises `RuntimeError` immediately when the agent has no provider or model | |
+| both | `.agents(agents: Agent[]): this` | pub |
+| Python | `.agents(agents)`: validates every agent before updating the condition | |
+| both | `.task(task: Task): this` | pub |
+| both | `.task(task)`: a string or json value stands in for the `Task` | |
+| both | `.tasks(tasks: Task[]): this` | pub |
+| Python | `.tasks(tasks)`: strings and json values stand in for `Task` values | |
 
 ## `crates/agentwerk/src/agents/compaction.rs`
 
@@ -690,28 +694,28 @@ The rules the tables never repeat.
 | both | `.emit_event(event: Event): Event` | pub |
 | both | `.get_task(id: string): Task?` | pub |
 | both | `.get_tasks(): Task[]` | pub |
-| both | `.find_tasks(predicate: Matcher<Task>): Task[]`: AQL selects tasks directly, through matching events, or through joined task-event rows | pub |
-| Python | `.find_tasks(predicate)`: accepts a `Query`, AQL string, or task callable | |
-| both | `.find_task(predicate: Matcher<Task>): Task?`: singular form of `find_tasks` | pub |
-| Python | `.find_task(predicate)`: accepts a `Query`, AQL string, or task callable | |
-| both | `.find_events(matcher: Matcher<Event>): Event[]`: AQL selects events directly, through matching tasks, or through joined task-event rows | pub |
-| both | `.find_event(matcher: Matcher<Event>): Event?`: singular form of `find_events` | pub |
-| Python | `.find_events(matches)` and `.find_event(matches)`: accept a `Query`, AQL string, or event callable | |
-| both | `.cancel_tasks(matches: Matcher<Task>): this`: Task AQL remains live; Event and Joined AQL snapshot current task IDs | pub |
-| Python | `.cancel_tasks(matches)`: accepts a `Query` or a callable | |
+| both | `.find_tasks(query: Matcher<Task>): Task[]`: AQL selects tasks directly, through matching events, or through joined task-event rows | pub |
+| Python | `.find_tasks(query)`: accepts a `Query`, AQL string, or task callable | |
+| both | `.find_task(query: Matcher<Task>): Task?`: singular form of `find_tasks` | pub |
+| Python | `.find_task(query)`: accepts a `Query`, AQL string, or task callable | |
+| both | `.find_events(query: Matcher<Event>): Event[]`: AQL selects events directly, through matching tasks, or through joined task-event rows | pub |
+| both | `.find_event(query: Matcher<Event>): Event?`: singular form of `find_events` | pub |
+| Python | `.find_events(query)` and `.find_event(query)`: accept a `Query`, AQL string, or event callable | |
+| both | `.cancel_tasks(query: Matcher<Task>): this`: Task AQL remains live; Event and Joined AQL snapshot current task IDs | pub |
+| Python | `.cancel_tasks(query)`: accepts a `Query` or a callable | |
 | both | `.cancel(): this` | pub |
 | both | `.add_agent(agent: Agent): this` | pub |
 | both | `.start(): this` | pub |
-| both | `.finish_tasks(matches: Matcher<Task>): Promise<json[]>`: Event and Joined AQL snapshot current task IDs | pub |
-| Python | `.finish_tasks(matches)`: accepts a `Query` or a callable | |
+| both | `.finish_tasks(query: Matcher<Task>): Promise<json[]>`: Event and Joined AQL snapshot current task IDs | pub |
+| Python | `.finish_tasks(query)`: accepts a `Query` or a callable | |
 | both | `.finish(): Promise<json[]>` | pub |
-| both | `.finish_task(matches: Matcher<Task>): Promise<json?>` | pub |
+| both | `.finish_task(query: Matcher<Task>): Promise<json?>` | pub |
 | Rust | `.get_finish_reason(): FinishReason?` | pub |
 | Python | `.get_finish_reason(): str?`: the string it prints as, such as `policy_violated(turns)` | |
 | both | `.get_results(): json[]` | pub |
-| both | `.find_results(matches: Matcher<Task>): json[]`: AQL selects producing tasks directly, through matching events, or through joined task-event rows | pub |
+| both | `.find_results(query: Matcher<Task>): json[]`: AQL selects producing tasks directly, through matching events, or through joined task-event rows | pub |
 | Python | `.find_results(query)`: accepts a `Query`, AQL string, or task callable | |
-| both | `.find_result(matches: Matcher<Task>): json?`: singular form of `find_results` | pub |
+| both | `.find_result(query: Matcher<Task>): json?`: singular form of `find_results` | pub |
 | Python | `.find_result(query)`: accepts a `Query`, AQL string, or task callable | |
 
 ### Internal
@@ -2202,8 +2206,8 @@ Binds `agents/agent.rs`, whose section holds the Python spelling of each method.
 | Rust | `.tools(tools: any): this throws PyErr` | python |
 | Rust | `.add_task(task: PyTask): string throws PyErr` | python |
 | Rust | `.start(): PyWerk throws PyErr` | python |
-| Rust | `.finish_task(matches: any): Promise<any?> throws PyErr` | python |
-| Rust | `.finish_tasks(matches: any): Promise<any[]> throws PyErr` | python |
+| Rust | `.finish_task(query: any): Promise<any?> throws PyErr` | python |
+| Rust | `.finish_tasks(query: any): Promise<any[]> throws PyErr` | python |
 | Rust | `.finish(): Promise<any[]> throws PyErr` | python |
 
 ### Internal
@@ -2223,10 +2227,11 @@ Binds `agents/condition.rs`.
 | Language | Item | Visibility |
 |----------|------|------------|
 | Rust | `PyCondition { inner: Condition? }` | python with private field |
-| Rust | `.new(aql: string): this throws PyErr` | python |
-| Rust | `.id(id: string): this` | python |
-| Rust | `.add_agent(agent: PyAgent): this throws PyErr` | python |
-| Rust | `.add_task(task: any): this throws PyErr` | python |
+| Rust | `.new(query: any): this throws PyErr` | python |
+| Rust | `.agent(agent: PyAgent): this throws PyErr` | python |
+| Rust | `.agents(agents: any): this throws PyErr` | python |
+| Rust | `.task(task: any): this throws PyErr` | python |
+| Rust | `.tasks(tasks: any): this throws PyErr` | python |
 
 ### Internal
 
@@ -2399,6 +2404,8 @@ Binds `agents/query.rs`. Python stores the same single, origin-aware compiled qu
 | Language | Item | Visibility |
 |----------|------|------------|
 | Rust | `value_error(message: string): PyErr` | crate |
+| Rust | `compile_query(query: string): Query throws PyErr` | private |
+| Rust | `to_query(arg: any): Query throws PyErr` | crate |
 | Rust | `to_task_matcher(arg: any): Query throws PyErr` | crate |
 | Rust | `to_event_matcher(arg: any): Query throws PyErr` | crate |
 | Rust | `task_predicate(predicate: any, task: Task): boolean` | private |
@@ -2518,20 +2525,20 @@ Binds `agents/tasks/werk.rs` and `store.rs`.
 | Rust | `.get_model_for_agent(agent_id: string): string?` | python |
 | Rust | `.get_task(id: string): PyTask? throws PyErr` | python |
 | Rust | `.get_tasks(): PyTask[] throws PyErr` | python |
-| Rust | `.find_tasks(predicate: any): PyTask[] throws PyErr` | python |
-| Rust | `.find_task(predicate: any): PyTask? throws PyErr` | python |
+| Rust | `.find_tasks(query: any): PyTask[] throws PyErr` | python |
+| Rust | `.find_task(query: any): PyTask? throws PyErr` | python |
 | Rust | `.on_task(handler: any): this` | python |
 | Rust | `.on_task_async(handler: any): this` | python |
 | Rust | `.edit_replies(id: string, editor: any): this throws PyErr` | python |
 | Rust | `.start(): this` | python |
-| Rust | `.finish_tasks(matches: any): Promise<any[]> throws PyErr` | python |
+| Rust | `.finish_tasks(query: any): Promise<any[]> throws PyErr` | python |
 | Rust | `.finish(): Promise<any[]> throws PyErr` | python |
-| Rust | `.finish_task(matches: any): Promise<any?> throws PyErr` | python |
+| Rust | `.finish_task(query: any): Promise<any?> throws PyErr` | python |
 | Rust | `.get_finish_reason(): string?` | python |
-| Rust | `.cancel_tasks(matches: any): this throws PyErr` | python |
+| Rust | `.cancel_tasks(query: any): this throws PyErr` | python |
 | Rust | `.cancel(): this` | python |
-| Rust | `.find_events(matches: any): PyEvent[] throws PyErr` | python |
-| Rust | `.find_event(matches: any): PyEvent? throws PyErr` | python |
+| Rust | `.find_events(query: any): PyEvent[] throws PyErr` | python |
+| Rust | `.find_event(query: any): PyEvent? throws PyErr` | python |
 | Rust | `.get_input_tokens(): number` | python |
 | Rust | `.get_output_tokens(): number` | python |
 | Rust | `.get_duration(): number?` | python |

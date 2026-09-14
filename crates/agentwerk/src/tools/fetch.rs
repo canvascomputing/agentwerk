@@ -93,8 +93,8 @@ impl FetchTool {
     ///
     /// Agent::new().tool(FetchTool::new().timeout(Duration::from_secs(30)));
     /// ```
-    pub fn timeout(mut self, timeout: Duration) -> Self {
-        self.timeout = Some(timeout);
+    pub fn timeout(mut self, duration: Duration) -> Self {
+        self.timeout = Some(duration);
         self
     }
 }

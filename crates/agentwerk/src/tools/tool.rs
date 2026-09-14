@@ -374,11 +374,11 @@ impl Tool {
     /// The limit starts after the arguments have been validated and the call
     /// has been admitted for execution. Calling this replaces a built-in
     /// tool's default timeout.
-    pub fn timeout(mut self, timeout: Duration) -> Self {
-        self.timeout = if timeout.is_zero() {
+    pub fn timeout(mut self, duration: Duration) -> Self {
+        self.timeout = if duration.is_zero() {
             TimeoutPolicy::Unlimited
         } else {
-            TimeoutPolicy::Fixed(timeout)
+            TimeoutPolicy::Fixed(duration)
         };
         self
     }

@@ -701,15 +701,14 @@ mod tests {
         );
         werk.add_condition(
             Condition::new("task.label = draft AND task.status = finished")
-                .unwrap()
-                .add_agent(
+                .agent(
                     Agent::new()
                         .label("edit")
                         .provider(provider)
                         .model("mock")
                         .role("test"),
                 )
-                .add_task(Task::labeled("edit", "edit the draft")),
+                .task(Task::labeled("edit", "edit the draft")),
         );
         werk.add_task(Task::labeled("draft", "write the draft"));
 

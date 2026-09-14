@@ -100,6 +100,9 @@ def test_removed_api_names_are_absent_from_runtime_exports_and_stub():
     assert "get_parent" not in stub_class_members("Task")
     assert "id" not in stub_class_members("Condition")
     assert not hasattr(aw.Condition, "id")
+    for name in ("add_agent", "add_task"):
+        assert name not in stub_class_members("Condition")
+        assert not hasattr(aw.Condition, name)
 
 
 def test_every_class_member_is_declared_in_the_stub():
@@ -126,6 +129,30 @@ def test_every_stub_parameter_is_named_as_the_module_names_it():
             if stub_parameters(method) != expected:
                 renamed[f"{name}.{method.name}"] = (stub_parameters(method), expected)
     assert renamed == {}
+
+
+def test_every_matcher_style_parameter_is_named_query():
+    methods = {
+        "Agent": ("finish_task", "finish_tasks"),
+        "Werk": (
+            "find_task",
+            "find_tasks",
+            "find_event",
+            "find_events",
+            "find_result",
+            "find_results",
+            "finish_task",
+            "finish_tasks",
+            "cancel_tasks",
+        ),
+    }
+    for class_name, method_names in methods.items():
+        declared = {method.name: method for method in stub_methods(class_name)}
+        for method_name in method_names:
+            assert stub_parameters(declared[method_name]) == ["query"]
+
+    condition = {method.name: method for method in stub_methods("Condition")}
+    assert stub_parameters(condition["__init__"]) == ["query"]
 
 
 def test_the_stub_declares_nothing_the_module_lacks():

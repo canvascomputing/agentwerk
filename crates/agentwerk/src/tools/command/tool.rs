@@ -57,9 +57,10 @@ impl CommandTool {
 
     /// Create a tool the model calls by `name`. With no [`CommandTool::allow`]
     /// pattern it permits the bare `name` and nothing else.
-    pub fn new(name: &str) -> Self {
+    pub fn new(name: impl Into<String>) -> Self {
+        let name = name.into();
         let mut tool = Self {
-            tool_name: name.to_string(),
+            tool_name: name,
             allow: Vec::new(),
             allow_flags: Vec::new(),
             deny: Vec::new(),
@@ -79,8 +80,8 @@ impl CommandTool {
     /// single spaces. Quoting is gone by then, so a quoted argument holding
     /// spaces satisfies the same pattern as separate words while reaching the
     /// program as one argument.
-    pub fn allow(mut self, pattern: &str) -> Self {
-        self.allow.push(pattern.trim().to_string());
+    pub fn allow(mut self, pattern: impl Into<String>) -> Self {
+        self.allow.push(pattern.into().trim().to_string());
         self.render_description();
         self
     }
@@ -103,8 +104,9 @@ impl CommandTool {
     ///
     /// When `flag` does not read as one, such as `force` or `-5`: the rule
     /// would otherwise permit nothing.
-    pub fn allow_flag(mut self, flag: &str) -> Self {
-        self.allow_flags.push(flag_rule("allow_flag", flag));
+    pub fn allow_flag(mut self, flag: impl Into<String>) -> Self {
+        let flag = flag.into();
+        self.allow_flags.push(flag_rule("allow_flag", &flag));
         self.render_description();
         self
     }
@@ -115,8 +117,8 @@ impl CommandTool {
     /// The pattern is matched against the program and its arguments joined by
     /// single spaces, so `git  push` and `git "push"` are caught by the same
     /// `git push*` that catches `git push`.
-    pub fn deny(mut self, pattern: &str) -> Self {
-        self.deny.push(pattern.trim().to_string());
+    pub fn deny(mut self, pattern: impl Into<String>) -> Self {
+        self.deny.push(pattern.into().trim().to_string());
         self.render_description();
         self
     }
@@ -137,9 +139,10 @@ impl CommandTool {
     ///
     /// When `flag` does not read as one, such as `force` or `-5`: the rule
     /// would otherwise sit inert and deny nothing.
-    pub fn deny_flag(mut self, flag: &str) -> Self {
+    pub fn deny_flag(mut self, flag: impl Into<String>) -> Self {
+        let flag = flag.into();
         self.deny_flags
-            .push(DeniedFlag::new(flag_rule("deny_flag", flag)));
+            .push(DeniedFlag::new(flag_rule("deny_flag", &flag)));
         self.render_description();
         self
     }
@@ -443,6 +446,21 @@ mod tests {
     #[test]
     fn a_tool_takes_its_name_from_its_only_argument() {
         assert_eq!(Tool::from(CommandTool::new("echo")).get_name(), "echo");
+    }
+
+    #[test]
+    fn every_string_builder_accepts_an_owned_string() {
+        let tool = CommandTool::new(String::from("git"))
+            .allow(String::from("git *"))
+            .allow_flag(String::from("--verbose"))
+            .deny(String::from("git push*"))
+            .deny_flag(String::from("--force"));
+
+        assert_eq!(tool.tool_name, "git");
+        assert_eq!(tool.allow, ["git *"]);
+        assert_eq!(tool.allow_flags, ["--verbose"]);
+        assert_eq!(tool.deny, ["git push*"]);
+        assert_eq!(tool.deny_flags.len(), 1);
     }
 
     #[test]

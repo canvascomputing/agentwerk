@@ -236,8 +236,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     werk.add_agent(researcher);
     werk.add_agent(writer);
 
-    let write_report = Condition::new("task.label = research AND task.status = finished")?
-        .add_task(Task::labeled("report", question));
+    let write_report = Condition::new("task.label = research AND task.status = finished")
+        .task(Task::labeled("report", question));
 
     werk.add_condition(write_report);
     werk.add_task(Task::labeled("research", question));
