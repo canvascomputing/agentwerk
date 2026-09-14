@@ -40,100 +40,13 @@ cargo add agentwerk
 
 [Python bindings](crates/agentwerk-py/README.md)
 
-## Introduction
+## Let's Build a Research Workflow
 
-Create `Agents` with `Tools` and assign them `Tasks` to create results. Coordinate their work in a `Werk`, observe detailed `Events`, and derive `Knowledge`.
+We'll use the [Brave Search Tool](crates/use-cases/src/deep_research/web_search.rs) to research a question and write a report with citations.
 
-Build a file explorer by creating an `Agent`, giving it a `ListDirectoryTool`, adding a `Task`, and calling `finish_task` to collect the result.
+## Agents
 
-```rust
-use agentwerk::tools::ListDirectoryTool;
-use agentwerk::Agent;
-
-#[tokio::main]
-async fn main() {
-    let agent = Agent::from_env()
-        .role("You are a filesystem explorer.")
-        .tool(ListDirectoryTool);
-
-    let task = agent.add_task("Explore this directory.");
-    let result = agent.finish_task(task).await.unwrap();
-
-    println!("{result}");
-}
-```
-
-Further reading:
-
-- [Agents](API.md#agents): [Providers](API.md#providers), [Interactive agents](API.md#interactive-agents)
-- [Tools](API.md#tools) and [Tasks](API.md#tasks)
-
-## Tools, Tasks, and Schemas
-
-Build a release check by giving an `Agent` an allowlisted `CommandTool`, inserting the target branch through a template, and constraining its `Task` with a `Schema`.
-
-```rust
-use agentwerk::tools::CommandTool;
-use agentwerk::{Agent, Task};
-
-#[tokio::main]
-async fn main() {
-    let git = CommandTool::new("git")
-        .allow("git branch --show-current")
-        .allow("git status --short");
-
-    let agent = Agent::from_env()
-        .role("You are a release engineer.")
-        .template("release_branch", "main")
-        .tool(git);
-
-    let schema = release_status_schema();
-    let task = Task::new(
-        "Check whether this repository is ready to release from \
-         {{ release_branch }}.",
-    )
-    .schema(schema);
-
-    let task = agent.add_task(task);
-    let result = agent.finish_task(task).await.unwrap();
-
-    println!("{result}");
-}
-```
-
-<details>
-<summary>Result schema</summary>
-
-```rust
-use agentwerk::schemas::Schema;
-use serde_json::json;
-
-fn release_status_schema() -> Schema {
-    let schema = json!({
-        "type": "object",
-        "properties": {
-            "branch": { "type": "string" },
-            "clean": { "type": "boolean" },
-            "ready": { "type": "boolean" }
-        },
-        "required": ["branch", "clean", "ready"],
-        "additionalProperties": false
-    });
-
-    Schema::new(schema).expect("release status schema is valid")
-}
-```
-
-</details>
-
-Further reading:
-
-- [Tools](API.md#tools): [CommandTool](API.md#commandtool), [FetchTool](API.md#fetchtool), [Custom tools](API.md#custom-tools), [Timeouts](API.md#timeouts)
-- [Tasks](API.md#tasks): [Templates](API.md#templates), [Schemas](API.md#schemas), [Directives](API.md#directives)
-
-## Werk, Events, and Knowledge
-
-Build a two-stage research workflow by loading shared `Knowledge`, giving the research `Agent` [Brave Search](crates/use-cases/src/deep_research/web_search.rs) and `FetchTool`, coordinating both `Agents` in a `Werk`, observing their `Events`, and using an AQL `Condition` to start the writing `Task`.
+Create a researcher and a writer. `Agent::from_env()` reads the provider and model from environment variables. The researcher gathers sources, while the writer turns those findings into a report.
 
 <details>
 <summary><code>researcher.md</code></summary>
@@ -141,29 +54,31 @@ Build a two-stage research workflow by loading shared `Knowledge`, giving the re
 ```markdown
 # Researcher
 
-Research the question for the Writer. Save verified evidence and source
-links in shared knowledge.
+You are a web researcher who gathers source material for the writer. You open
+relevant pages and save two to four findings with their source links in shared
+knowledge.
 
 Your strengths:
-
-- Finding and verifying primary sources
+- Finding relevant primary sources
+- Distinguishing source evidence from search result descriptions
 
 Guidelines:
-
-- Search with Brave. Open every source with `fetch` before using it,
-  because search summaries are only leads
-- IMPORTANT: Record conflicts and gaps instead of guessing
+- Start with one `brave_search` call
+- Open two useful results with `fetch`, because result descriptions can miss context
+- Run one more search only when those pages cannot answer the question
+- Save each finding and its source link with `knowledge`
+- Call `finish` immediately after saving the findings
+- NEVER run more than two searches or open more than four pages, because
+  extra browsing delays the writer
 
 Output:
-
-- Save two to four knowledge pages, then call `finish` once with a
-  `summary` of no more than three sentences
+- Call `finish` once with `summary`
+- `summary` (1 sentence): what you saved for the writer
 
 Example outputs:
+- `finish({"summary": "Saved three findings with source links."})`
 
-- "Saved three verified findings and one unresolved gap."
-
-NOTE: Stop when the Writer has enough evidence to answer the question.
+NOTE: Leave the final report to the writer.
 ```
 
 </details>
@@ -174,83 +89,132 @@ NOTE: Stop when the Writer has enough evidence to answer the question.
 ```markdown
 # Writer
 
-Answer the question for the reader using shared knowledge.
+You are a report writer who turns shared research into a concise answer for the
+reader. You explain the findings clearly and cite their sources.
 
 Your strengths:
-
-- Turning evidence into a concise explanation
+- Explaining evidence clearly
+- Citing sources and making uncertainty clear
 
 Guidelines:
-
-- Read the available knowledge pages before drafting the report
-- Link every factual claim to its source
-- NEVER add facts absent from shared knowledge, because this agent has
-  no research tools
+- Read the available findings with `knowledge`
+- Add an inline citation to every factual claim
+- Mention missing or conflicting evidence
+- NEVER write more than three paragraphs, because the caller expects a concise
+  report
 
 Output:
-
-- Call `finish` once with a `title` of no more than 80 characters and a
-  `report` of three to five paragraphs
+- Call `finish` once with `report`
+- `report` (1-3 paragraphs): a concise answer with inline citations
 
 Example outputs:
+- `finish({"report": "Small tools reduce errors [Source](https://example.com)."})`
 
-- "The evidence supports lower latency, but not lower cost for every
-  workload."
-
-NOTE: Return one grounded report and nothing beyond it.
+NOTE: Keep the report focused on the assigned question.
 ```
 
 </details>
 
 ```rust
-mod web_search;
+let researcher_role = include_str!("researcher.md");
+let writer_role = include_str!("writer.md");
 
-use agentwerk::tools::FetchTool;
-use agentwerk::{Agent, Condition, Knowledge, Task, Werk};
-use web_search::brave_search_tool;
+let researcher = Agent::from_env()
+    .label("research")
+    .role(researcher_role);
 
-#[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let researcher_role = include_str!("researcher.md");
-    let writer_role = include_str!("writer.md");
-
-    let question = "What makes an agent harness efficient?";
-    let knowledge = Knowledge::load(".agentwerk/research")?;
-    let brave_key = std::env::var("BRAVE_API_KEY")?;
-    let brave_search = brave_search_tool(brave_key);
-
-    let researcher = Agent::from_env()
-        .label("research")
-        .role(researcher_role)
-        .knowledge(&knowledge)
-        .tool(brave_search)
-        .tool(FetchTool::new());
-
-    let writer = Agent::from_env()
-        .label("report")
-        .role(writer_role)
-        .knowledge(&knowledge);
-
-    let werk = Werk::new();
-    werk.on_event(|_, event| eprintln!("{}", event.get_name()));
-    werk.add_agent(researcher);
-    werk.add_agent(writer);
-
-    let write_report = Condition::new("task.label = research AND task.status = finished")
-        .task(Task::labeled("report", question));
-
-    werk.add_condition(write_report);
-    werk.add_task(Task::labeled("research", question));
-    werk.finish().await;
-
-    let result = werk.find_result("report").unwrap();
-
-    println!("{}", result["report"].as_str().unwrap_or_default());
-    Ok(())
-}
+let writer = Agent::from_env()
+    .label("report")
+    .role(writer_role);
 ```
 
-Further reading:
+APIs: [Agents](API.md#agents), [Providers](API.md#providers), and [Interactive agents](API.md#interactive-agents).
 
-- [Werk](API.md#werk): [AQL](API.md#aql), [Collaboration](API.md#collaboration), [Hooks](API.md#hooks), [Conditions](API.md#conditions), [Configuration](API.md#configuration), [Compaction](API.md#compaction), [Sessions](API.md#sessions)
-- [Events](API.md#events) and [Knowledge](API.md#knowledge)
+## Tools
+
+The researcher needs the [Brave Search Tool](crates/use-cases/src/deep_research/web_search.rs) and `FetchTool` to gather web sources. The writer works from shared knowledge.
+
+```rust
+let brave_key = std::env::var("BRAVE_API_KEY")?;
+let brave_search = brave_search_tool(brave_key);
+let researcher = researcher.tool(brave_search);
+let researcher = researcher.tool(FetchTool::new());
+```
+
+APIs: [Tools](API.md#tools), [FetchTool](API.md#fetchtool), and [Custom tools](API.md#custom-tools).
+
+## Tasks
+
+Create one task for research and another for writing. Each label routes the task to the matching agent. The `{{ question }}` placeholder inserts a shared value into both prompts.
+
+```rust
+let task_prompt = "{{ question }}";
+let research_task = Task::labeled("research", task_prompt);
+let report_task = Task::labeled("report", task_prompt);
+```
+
+APIs: [Tasks](API.md#tasks), [Templates](API.md#templates), [Schemas](API.md#schemas), and [Directives](API.md#directives).
+
+## Knowledge
+
+Use one `Knowledge` store for both agents, so the findings remain available between runs. The researcher writes the findings, and the writer reads them.
+
+```rust
+let knowledge = Knowledge::load(".agentwerk/research")?;
+let researcher = researcher.knowledge(&knowledge);
+let writer = writer.knowledge(&knowledge);
+```
+
+APIs: [Knowledge](API.md#knowledge).
+
+## Werk
+
+Add both agents and the research task to a `Werk`. Set the shared template value, then use an AQL condition to queue the report task after the research finishes.
+
+```rust
+let werk = Werk::new();
+werk.set_template("question", "What makes an agent harness efficient?");
+werk.add_agent(researcher);
+werk.add_agent(writer);
+
+let finished_research = "task.label = research AND task.status = finished";
+let write_report = Condition::new(finished_research)
+    .task(report_task);
+
+werk.add_condition(write_report);
+werk.add_task(research_task);
+```
+
+APIs: [Werk](API.md#werk), [AQL](API.md#aql), [Collaboration](API.md#collaboration), and [Conditions](API.md#conditions).
+
+## Events
+
+Log each event while the workflow runs, then print the writer's report.
+
+```rust
+werk.on_event(|_, event| eprintln!("{}", event.get_name()));
+werk.finish().await;
+
+let result = werk.find_result("report").unwrap();
+let report = result["report"].as_str().unwrap_or_default();
+println!("{report}");
+```
+
+APIs: [Events](API.md#events) and [Hooks](API.md#hooks).
+
+## Use Cases
+
+Example projects built with agentwerk:
+
+- [Hello World](crates/use-cases/src/hello_world/): basic example
+- [Terminal REPL](crates/use-cases/src/terminal_repl/): minimal multi-turn terminal chat
+- [Editorial Review](crates/use-cases/src/editorial_review/): route a draft through an editor with a result hook and AQL
+- [Deep Research](crates/use-cases/src/deep_research/): research across several sources (requires `BRAVE_API_KEY`)
+- [Malware Scanner](https://github.com/canvascomputing/malwi): find signs of malware in a software package
+
+> Configure an LLM provider first (see [Environment](DEVELOPMENT.md#environment)).
+
+```bash
+make use_case                # list available names
+make use_case name=<name>    # run one
+```

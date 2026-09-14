@@ -1,18 +1,15 @@
-Searches the public web and returns result titles, URLs, and descriptions.
+Searches the web and returns titles, URLs, and descriptions.
 
-Use the results to find pages worth opening with `fetch`. A result description is a lead, not evidence.
+Use the results to choose pages to open with `fetch`. Result descriptions are
+leads, not sources.
 
 Usage:
 - `query`: the exact search query
-- `count`: optional result count from 1 to 20; defaults to 5
+- `count`: results from 1 to 20. Defaults to 5
 
 # Instructions
-- Write a focused query for the assigned research angle
-- Use another query only when the first results leave a specific gap
-- NEVER cite the returned description, because it may omit or distort the source page
+- Write a focused query for the assigned research topic
+- Open a result before citing it, because descriptions can omit page context
 
 Example usage:
-
-<example>
-brave_search({"query":"software API compatibility maintenance case study","count":5})
-</example>
+brave_search({"query": "software API maintenance", "count": 5})
