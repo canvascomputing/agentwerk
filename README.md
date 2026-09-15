@@ -132,13 +132,103 @@ APIs: [Agents](API.md#agents), [Providers](API.md#providers), and [Prompt Skill]
 
 ## Tools
 
-The researcher needs the [Brave Search Tool](crates/use-cases/src/deep_research/web_search.rs) and `FetchTool` to gather web sources. The writer works from shared knowledge.
+The researcher uses a [custom Brave Search tool](crates/use-cases/src/deep_research/web_search.rs) to find sources and the built-in `FetchTool` to open them.
+
+<details>
+<summary><code>web_search.rs</code></summary>
+
+```rust
+fn brave_search_tool(api_key: String) -> Tool {
+    let endpoint = "https://api.search.brave.com/res/v1/web/search";
+    let description = "Search the web and return titles, URLs, and descriptions.";
+    let schema = json!({
+        "type": "object",
+        "properties": {
+            "query": { "type": "string", "description": "The search query." },
+            "count": { "type": "integer", "description": "Results to return, from 1 to 20. Defaults to 5." }
+        },
+        "required": ["query"]
+    });
+    let handler = move |input: Value| {
+        let api_key = api_key.clone();
+        async move {
+            let query = input["query"].as_str().unwrap_or_default().trim();
+            if query.is_empty() {
+                return Event::tool_call_failed("query must not be empty");
+            }
+            let result_count = input["count"]
+                .as_u64()
+                .unwrap_or(5)
+                .clamp(1, 20)
+                .to_string();
+
+            let request = reqwest::Client::new()
+                .get(endpoint)
+                .query(&[("q", query), ("count", &result_count)])
+                .header("X-Subscription-Token", api_key)
+                .header("Accept", "application/json");
+            let response = match request.send().await {
+                Ok(response) => response,
+                Err(error) => {
+                    return Event::tool_call_failed(format!("Brave search failed: {error}"));
+                }
+            };
+            if !response.status().is_success() {
+                return Event::tool_call_failed(format!(
+                    "Brave search returned {}",
+                    response.status()
+                ));
+            }
+
+            let body = match response.json::<Value>().await {
+                Ok(body) => body,
+                Err(error) => {
+                    return Event::tool_call_failed(format!(
+                        "Brave returned invalid JSON: {error}"
+                    ));
+                }
+            };
+            let search_results = body["web"]["results"]
+                .as_array()
+                .cloned()
+                .unwrap_or_default();
+            let rendered_results = search_results
+                .iter()
+                .map(|result| {
+                    format!(
+                        "## {}\n{}\n{}",
+                        result["title"].as_str().unwrap_or_default(),
+                        result["url"].as_str().unwrap_or_default(),
+                        result["description"].as_str().unwrap_or_default(),
+                    )
+                })
+                .collect::<Vec<_>>()
+                .join("\n\n");
+            let output = if rendered_results.is_empty() {
+                "No results found.".to_string()
+            } else {
+                rendered_results
+            };
+
+            Event::tool_call_finished(output)
+        }
+    };
+
+    Tool::new("brave_search")
+        .description(description)
+        .schema(schema)
+        .concurrent(true)
+        .handler(handler)
+}
+```
+
+</details>
 
 ```rust
 let brave_key = std::env::var("BRAVE_API_KEY")?;
-let brave_search = brave_search_tool(brave_key);
+let web_search = brave_search_tool(brave_key);
 let researcher = researcher
-    .tool(brave_search)
+    .tool(web_search)
     .tool(FetchTool::new());
 ```
 
@@ -146,19 +236,25 @@ APIs: [Tools](API.md#tools), [FetchTool](API.md#fetchtool), and [Custom tools](A
 
 ## Tasks
 
-Create one task for research and another for writing. Each label routes the task to the matching agent. The `{{ question }}` placeholder inserts a shared value into both prompts.
+Create one task for research and another for writing. Each label routes the task to the matching agent. The `question` and `focus` templates insert shared values into the prompts.
 
 ```rust
-let task_prompt = "{{ question }}";
-let research_task = Task::labeled("research", task_prompt);
-let report_task = Task::labeled("report", task_prompt);
+let research_task = Task::labeled(
+    "research",
+    "Research {{ question }} with emphasis on {{ focus }}.",
+);
+
+let report_task = Task::labeled(
+    "report",
+    "Write a cited report answering:\n\n{{ question }}",
+);
 ```
 
 APIs: [Tasks](API.md#tasks), [Templates](API.md#templates), [Schemas](API.md#schemas), and [Directives](API.md#directives).
 
 ## Knowledge
 
-Use one `Knowledge` store for both agents, so the findings remain available between runs. The researcher writes the findings, and the writer reads them.
+Assign both agents a shared `Knowledge` base. The researcher records sourced findings there, and the writer uses that evidence to produce the report.
 
 ```rust
 let knowledge = Knowledge::load(".agentwerk/research")?;
@@ -170,11 +266,12 @@ APIs: [Knowledge](API.md#knowledge).
 
 ## Werk
 
-Add both agents and the research task to a `Werk`. Set the shared template value, then use an AQL condition to queue the report task after the research finishes.
+Add both agents and the research task to a `Werk`. Set the shared template values and use an AQL condition to queue the report task after the research finishes.
 
 ```rust
 let werk = Werk::new();
 werk.set_template("question", "What makes an agent harness efficient?");
+werk.set_template("focus", "latency and reliability");
 werk.add_agent(researcher);
 werk.add_agent(writer);
 
@@ -190,10 +287,24 @@ APIs: [Werk](API.md#werk), [AQL](API.md#aql), [Collaboration](API.md#collaborati
 
 ## Events
 
-Log each event while the workflow runs, then print the writer's report.
+Announce each knowledge page as it is saved.
 
 ```rust
-werk.on_event(|_, event| eprintln!("{}", event.get_name()));
+werk.on_event(|_, event| {
+    if event.get_name() == Event::KNOWLEDGE_WRITTEN {
+        let slug = event.get_data()["slug"].as_str().unwrap_or_default();
+        eprintln!("Saved research: {slug}");
+    }
+});
+```
+
+APIs: [Events](API.md#events) and [Hooks](API.md#hooks).
+
+## Results
+
+Wait for the workflow to finish, then print the writer's report.
+
+```rust
 werk.finish().await;
 
 let result = werk.find_result("report").unwrap();
@@ -201,7 +312,7 @@ let report = result["report"].as_str().unwrap_or_default();
 println!("{report}");
 ```
 
-APIs: [Events](API.md#events) and [Hooks](API.md#hooks).
+APIs: [Werk](API.md#werk) and [AQL](API.md#aql).
 
 ## Use Cases
 

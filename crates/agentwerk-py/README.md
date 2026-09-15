@@ -134,31 +134,84 @@ APIs: [Agents](API.md#agents), [Providers](API.md#providers), and [Prompt Skill]
 
 ## Tools
 
-The researcher needs the [Brave Search Tool](examples/web_search.py) and `FetchTool` to gather web sources. The writer works from shared knowledge.
+The researcher uses a [custom Brave Search tool](examples/web_search.py) to find sources and the built-in `FetchTool` to open them.
+
+<details>
+<summary><code>web_search.py</code></summary>
+
+```python
+def brave_search_tool(api_key: str):
+    endpoint = "https://api.search.brave.com/res/v1/web/search"
+    description = "Search the web and return titles, URLs, and descriptions."
+
+    @tool(
+        name="brave_search",
+        description=description,
+        concurrent=True,
+        timeout=60,
+    )
+    def brave_search(query: str, count: int = 5) -> str:
+        query = query.strip()
+        if not query:
+            raise ValueError("query must not be empty")
+
+        result_count = max(1, min(count, 20))
+        parameters = {"q": query, "count": result_count}
+        url = f"{endpoint}?{urlencode(parameters)}"
+        headers = {
+            "Accept": "application/json",
+            "X-Subscription-Token": api_key,
+        }
+        request = Request(url, headers=headers)
+        with urlopen(request, timeout=60) as response:
+            body = json.load(response)
+
+        search_results = body.get("web", {}).get("results", [])
+        if not search_results:
+            return "No results found."
+
+        rendered_results = (
+            f"## {result.get('title', '')}\n"
+            f"{result.get('url', '')}\n"
+            f"{result.get('description', '')}"
+            for result in search_results
+        )
+        return "\n\n".join(rendered_results)
+
+    return brave_search
+```
+
+</details>
 
 ```python
 brave_key = os.environ["BRAVE_API_KEY"]
-brave_search = brave_search_tool(brave_key)
-researcher.tool(brave_search).tool(FetchTool())
+web_search = brave_search_tool(brave_key)
+researcher.tool(web_search).tool(FetchTool())
 ```
 
 APIs: [Tools](API.md#tools), [FetchTool](API.md#fetchtool), and [Custom tools](API.md#custom-tools).
 
 ## Tasks
 
-Create one task for research and another for writing. Each label routes the task to the matching agent. The `{{ question }}` placeholder inserts a shared value into both prompts.
+Create one task for research and another for writing. Each label routes the task to the matching agent. The `question` and `focus` templates insert shared values into the prompts.
 
 ```python
-task_prompt = "{{ question }}"
-research_task = Task(task_prompt, label="research")
-report_task = Task(task_prompt, label="report")
+research_task = Task(
+    "Research {{ question }} with emphasis on {{ focus }}.",
+    label="research",
+)
+
+report_task = Task(
+    "Write a cited report answering:\n\n{{ question }}",
+    label="report",
+)
 ```
 
 APIs: [Tasks](API.md#tasks), [Templates](API.md#templates), [Schemas](API.md#schemas), and [Directives](API.md#directives).
 
 ## Knowledge
 
-Use one `Knowledge` store for both agents, so the findings remain available between runs. The researcher writes the findings, and the writer reads them.
+Assign both agents a shared `Knowledge` base. The researcher records sourced findings there, and the writer uses that evidence to produce the report.
 
 ```python
 knowledge = Knowledge.load(".agentwerk/research")
@@ -170,11 +223,12 @@ APIs: [Knowledge](API.md#knowledge).
 
 ## Werk
 
-Add both agents and the research task to a `Werk`. Set the shared template value, then use an AQL condition to queue the report task after the research finishes.
+Add both agents and the research task to a `Werk`. Set the shared template values and use an AQL condition to queue the report task after the research finishes.
 
 ```python
 werk = Werk()
 werk.set_template("question", "What makes an agent harness efficient?")
+werk.set_template("focus", "latency and reliability")
 werk.add_agent(researcher)
 werk.add_agent(writer)
 
@@ -190,10 +244,24 @@ APIs: [Werk](API.md#werk), [AQL](API.md#aql), [Collaboration](API.md#collaborati
 
 ## Events
 
-Log each event while the workflow runs, then print the writer's report.
+Announce each knowledge page as it is saved.
 
 ```python
-werk.on_event(lambda _, event: print(event.get_name()))
+def log_research(_, event):
+    if event.get_name() == Event.KNOWLEDGE_WRITTEN:
+        slug = event.get_data().get("slug", "")
+        print(f"Saved research: {slug}")
+
+werk.on_event(log_research)
+```
+
+APIs: [Events](API.md#events) and [Hooks](API.md#hooks).
+
+## Results
+
+Wait for the workflow to finish, then print the writer's report.
+
+```python
 await werk.finish()
 
 result = werk.find_result("report") or {}
@@ -201,7 +269,7 @@ report = result.get("report", "")
 print(report)
 ```
 
-APIs: [Events](API.md#events) and [Hooks](API.md#hooks).
+APIs: [Werk](API.md#werk) and [AQL](API.md#aql).
 
 ## Use Cases
 

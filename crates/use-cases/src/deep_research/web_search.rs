@@ -16,21 +16,24 @@ pub(super) fn brave_key_from_env() -> Result<String, String> {
 }
 
 pub(super) fn brave_search_tool(api_key: String) -> Tool {
+    let schema = json!({
+        "type": "object",
+        "properties": {
+            "query": { "type": "string", "description": "The search query." },
+            "count": { "type": "integer", "description": "Results to return, from 1 to 20. Defaults to 5." }
+        },
+        "required": ["query"]
+    });
+    let handler = move |input: Value| {
+        let api_key = api_key.clone();
+        async move { search(&api_key, &input).await }
+    };
+
     Tool::new("brave_search")
         .description(DESCRIPTION)
-        .schema(json!({
-            "type": "object",
-            "properties": {
-                "query": { "type": "string", "description": "The search query." },
-                "count": { "type": "integer", "description": "Results to return, from 1 to 20. Defaults to 5." }
-            },
-            "required": ["query"]
-        }))
+        .schema(schema)
         .concurrent(true)
-        .handler(move |input: Value| {
-            let api_key = api_key.clone();
-            async move { search(&api_key, &input).await }
-        })
+        .handler(handler)
 }
 
 async fn search(api_key: &str, input: &Value) -> Event {

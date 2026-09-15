@@ -5,13 +5,15 @@
 mod web_search;
 
 use agentwerk::tools::FetchTool;
-use agentwerk::{Agent, Condition, Knowledge, Task, Werk};
+use agentwerk::{Agent, Condition, Event, Knowledge, Task, Werk};
 
 use web_search::{brave_key_from_env, brave_search_tool};
 
 const RESEARCHER_ROLE: &str = include_str!("prompts/researcher.role.md");
 const WRITER_ROLE: &str = include_str!("prompts/writer.role.md");
-const TASK_PROMPT: &str = "{{ question }}";
+const RESEARCH_TASK: &str = "Research {{ question }} with emphasis on {{ focus }}.";
+const REPORT_TASK: &str = "Write a cited report answering:\n\n{{ question }}";
+const FOCUS: &str = "latency and reliability";
 const RESEARCH: &str = "research";
 const REPORT: &str = "report";
 
@@ -34,14 +36,20 @@ async fn main() {
         .role(WRITER_ROLE)
         .knowledge(&knowledge);
 
-    let research_task = Task::labeled(RESEARCH, TASK_PROMPT);
-    let report_task = Task::labeled(REPORT, TASK_PROMPT);
+    let research_task = Task::labeled(RESEARCH, RESEARCH_TASK);
+    let report_task = Task::labeled(REPORT, REPORT_TASK);
     let finished_research = "task.label = research AND task.status = finished";
     let write_report = Condition::new(finished_research).task(report_task);
 
     let werk = Werk::new();
     werk.set_template("question", question);
-    werk.on_event(|_, event| eprintln!("{}", event.get_name()));
+    werk.set_template("focus", FOCUS);
+    werk.on_event(|_, event| {
+        if event.get_name() == Event::KNOWLEDGE_WRITTEN {
+            let slug = event.get_data()["slug"].as_str().unwrap_or_default();
+            eprintln!("Saved research: {slug}");
+        }
+    });
     werk.add_agent(researcher);
     werk.add_agent(writer);
     werk.add_condition(write_report);

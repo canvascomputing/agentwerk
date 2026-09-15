@@ -8,7 +8,7 @@ import os
 import sys
 from pathlib import Path
 
-from agentwerk import Agent, Condition, FetchTool, Knowledge, Task, Werk
+from agentwerk import Agent, Condition, Event, FetchTool, Knowledge, Task, Werk
 
 from web_search import brave_search_tool
 
@@ -16,9 +16,17 @@ from web_search import brave_search_tool
 PROMPTS = Path(__file__).with_name("prompts")
 RESEARCHER_ROLE = (PROMPTS / "researcher.role.md").read_text()
 WRITER_ROLE = (PROMPTS / "writer.role.md").read_text()
-TASK_PROMPT = "{{ question }}"
+RESEARCH_TASK = "Research {{ question }} with emphasis on {{ focus }}."
+REPORT_TASK = "Write a cited report answering:\n\n{{ question }}"
+FOCUS = "latency and reliability"
 RESEARCH = "research"
 REPORT = "report"
+
+
+def log_research(_, event) -> None:
+    if event.get_name() == Event.KNOWLEDGE_WRITTEN:
+        slug = event.get_data().get("slug", "")
+        print(f"Saved research: {slug}", file=sys.stderr)
 
 
 async def main(question: str) -> None:
@@ -36,14 +44,15 @@ async def main(question: str) -> None:
     writer.role(WRITER_ROLE)
     writer.knowledge(knowledge)
 
-    research_task = Task(TASK_PROMPT, label=RESEARCH)
-    report_task = Task(TASK_PROMPT, label=REPORT)
+    research_task = Task(RESEARCH_TASK, label=RESEARCH)
+    report_task = Task(REPORT_TASK, label=REPORT)
     write_report = Condition("task.label = research AND task.status = finished")
     write_report.task(report_task)
 
     werk = Werk()
     werk.set_template("question", question)
-    werk.on_event(lambda _, event: print(event.get_name(), file=sys.stderr))
+    werk.set_template("focus", FOCUS)
+    werk.on_event(log_research)
     werk.add_agent(researcher)
     werk.add_agent(writer)
     werk.add_condition(write_report)
