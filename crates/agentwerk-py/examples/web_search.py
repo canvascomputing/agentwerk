@@ -41,7 +41,7 @@ def _ssl_context() -> ssl.SSLContext:
 def brave_search_tool(api_key: str):
     """Create a Brave Search tool authenticated with ``api_key``."""
 
-    context = _ssl_context()
+    ssl_context = _ssl_context()
 
     @tool(
         name="brave_search",
@@ -54,25 +54,26 @@ def brave_search_tool(api_key: str):
         if not query:
             raise ValueError("query must not be empty")
 
-        count = max(1, min(count, _MAX_RESULTS))
-        url = f"{_ENDPOINT}?{urlencode({'q': query, 'count': count})}"
+        result_count = max(1, min(count, _MAX_RESULTS))
+        parameters = {"q": query, "count": result_count}
+        url = f"{_ENDPOINT}?{urlencode(parameters)}"
         headers = {
             "Accept": "application/json",
             "X-Subscription-Token": api_key,
         }
         request = Request(url, headers=headers)
-        with urlopen(request, timeout=60, context=context) as response:
+        with urlopen(request, timeout=60, context=ssl_context) as response:
             body = json.load(response)
 
-        results = body.get("web", {}).get("results", [])
-        if not results:
+        search_results = body.get("web", {}).get("results", [])
+        if not search_results:
             return "No results found."
 
         rendered_results = (
             f"## {result.get('title', '')}\n"
             f"{result.get('url', '')}\n"
             f"{result.get('description', '')}"
-            for result in results
+            for result in search_results
         )
         return "\n\n".join(rendered_results)
 
