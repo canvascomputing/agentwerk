@@ -186,6 +186,7 @@ def brave_search_tool(api_key: str):
 ```python
 brave_key = os.environ["BRAVE_API_KEY"]
 web_search = brave_search_tool(brave_key)
+
 researcher.tool(web_search).tool(FetchTool())
 ```
 
@@ -214,7 +215,8 @@ APIs: [Tasks](API.md#tasks), [Templates](API.md#templates), [Schemas](API.md#sch
 Assign both agents a shared `Knowledge` base. The researcher records sourced findings there, and the writer uses that evidence to produce the report.
 
 ```python
-knowledge = Knowledge.load(".agentwerk/research")
+knowledge = Knowledge.load("./research")
+
 researcher.knowledge(knowledge)
 writer.knowledge(knowledge)
 ```
@@ -227,14 +229,16 @@ Add both agents and the research task to a `Werk`. Set the shared template value
 
 ```python
 werk = Werk()
+
 werk.set_template("question", "What makes an agent harness efficient?")
 werk.set_template("focus", "latency and reliability")
+
 werk.add_agent(researcher)
 werk.add_agent(writer)
 
-finished_research = "task.label = research AND task.status = finished"
-write_report = Condition(finished_research)
-write_report.task(report_task)
+write_report = Condition(
+    "task.label = research AND task.status = finished"
+).task(report_task)
 
 werk.add_condition(write_report)
 werk.add_task(research_task)
@@ -244,13 +248,15 @@ APIs: [Werk](API.md#werk), [AQL](API.md#aql), [Collaboration](API.md#collaborati
 
 ## Events
 
-Announce each knowledge page as it is saved.
+Observe each knowledge page as it is saved and log every other event by name.
 
 ```python
 def log_research(_, event):
     if event.get_name() == Event.KNOWLEDGE_WRITTEN:
         slug = event.get_data().get("slug", "")
         print(f"Saved research: {slug}")
+    else:
+        print(f"Event: {event.get_name()}")
 
 werk.on_event(log_research)
 ```
@@ -266,18 +272,19 @@ await werk.finish()
 
 result = werk.find_result("report") or {}
 report = result.get("report", "")
+
 print(report)
 ```
 
 APIs: [Werk](API.md#werk) and [AQL](API.md#aql).
 
-## Use Cases
+## More Use Cases
 
 Example projects built with agentwerk:
 
-- [Hello World](https://github.com/canvascomputing/agentwerk/tree/main/crates/use-cases/src/hello_world/): basic example, also available as a [Python example](https://github.com/canvascomputing/agentwerk/blob/main/crates/agentwerk-py/examples/hello_world.py)
-- [Terminal REPL](https://github.com/canvascomputing/agentwerk/tree/main/crates/use-cases/src/terminal_repl/): minimal multi-turn terminal chat
-- [Editorial Review](https://github.com/canvascomputing/agentwerk/tree/main/crates/use-cases/src/editorial_review/): route a draft through an editor with a result hook and AQL, also available as a [Python example](https://github.com/canvascomputing/agentwerk/blob/main/crates/agentwerk-py/examples/editorial_review.py)
+- [Hello World](https://github.com/canvascomputing/agentwerk/blob/main/crates/use-cases/src/hello_world/main.rs): basic example, also available as a [Python example](https://github.com/canvascomputing/agentwerk/blob/main/crates/agentwerk-py/examples/hello_world.py)
+- [Terminal REPL](https://github.com/canvascomputing/agentwerk/blob/main/crates/use-cases/src/terminal_repl/main.rs): minimal multi-turn terminal chat
+- [Editorial Review](https://github.com/canvascomputing/agentwerk/blob/main/crates/use-cases/src/editorial_review/main.rs): route a draft through an editor with a result hook and AQL, also available as a [Python example](https://github.com/canvascomputing/agentwerk/blob/main/crates/agentwerk-py/examples/editorial_review.py)
 - [Deep Research](https://github.com/canvascomputing/agentwerk/blob/main/crates/agentwerk-py/examples/deep_research.py): research across several sources (requires `BRAVE_API_KEY`)
 - [Malware Scanner](https://github.com/canvascomputing/malwi): find signs of malware in a software package
 - [Apparat Fabrik](https://github.com/canvascomputing/agentwerk/blob/main/crates/agentwerk-py/examples/apparat_fabrik.py): simulate agents inspecting and assembling factory parts
@@ -285,5 +292,10 @@ Example projects built with agentwerk:
 > Configure an LLM provider first (see [Environment](https://github.com/canvascomputing/agentwerk/blob/main/DEVELOPMENT.md#environment)).
 
 ```bash
+python examples/hello_world.py
+make -C ../.. use_case name=terminal-repl
 python examples/editorial_review.py "Draft a short release announcement."
+python examples/deep_research.py "What makes an agent harness efficient?"
+make -C ../.. use_case name=malware-scanner args=./path/to/package
+python examples/apparat_fabrik.py
 ```
