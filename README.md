@@ -227,6 +227,7 @@ fn brave_search_tool(api_key: String) -> Tool {
 ```rust
 let brave_key = std::env::var("BRAVE_API_KEY")?;
 let web_search = brave_search_tool(brave_key);
+
 let researcher = researcher
     .tool(web_search)
     .tool(FetchTool::new());
@@ -257,7 +258,8 @@ APIs: [Tasks](API.md#tasks), [Templates](API.md#templates), [Schemas](API.md#sch
 Assign both agents a shared `Knowledge` base. The researcher records sourced findings there, and the writer uses that evidence to produce the report.
 
 ```rust
-let knowledge = Knowledge::load(".agentwerk/research")?;
+let knowledge = Knowledge::load("./research")?;
+
 let researcher = researcher.knowledge(&knowledge);
 let writer = writer.knowledge(&knowledge);
 ```
@@ -270,13 +272,14 @@ Add both agents and the research task to a `Werk`. Set the shared template value
 
 ```rust
 let werk = Werk::new();
+
 werk.set_template("question", "What makes an agent harness efficient?");
 werk.set_template("focus", "latency and reliability");
+
 werk.add_agent(researcher);
 werk.add_agent(writer);
 
-let finished_research = "task.label = research AND task.status = finished";
-let write_report = Condition::new(finished_research)
+let write_report = Condition::new("task.label = research AND task.status = finished")
     .task(report_task);
 
 werk.add_condition(write_report);
@@ -287,13 +290,15 @@ APIs: [Werk](API.md#werk), [AQL](API.md#aql), [Collaboration](API.md#collaborati
 
 ## Events
 
-Announce each knowledge page as it is saved.
+Observe each knowledge page as it is saved and log every other event by name.
 
 ```rust
 werk.on_event(|_, event| {
     if event.get_name() == Event::KNOWLEDGE_WRITTEN {
         let slug = event.get_data()["slug"].as_str().unwrap_or_default();
         eprintln!("Saved research: {slug}");
+    } else {
+        eprintln!("Event: {}", event.get_name());
     }
 });
 ```
@@ -309,24 +314,28 @@ werk.finish().await;
 
 let result = werk.find_result("report").unwrap();
 let report = result["report"].as_str().unwrap_or_default();
+
 println!("{report}");
 ```
 
 APIs: [Werk](API.md#werk) and [AQL](API.md#aql).
 
-## Use Cases
+## More Use Cases
 
 Example projects built with agentwerk:
 
-- [Hello World](crates/use-cases/src/hello_world/): basic example
-- [Terminal REPL](crates/use-cases/src/terminal_repl/): minimal multi-turn terminal chat
-- [Editorial Review](crates/use-cases/src/editorial_review/): route a draft through an editor with a result hook and AQL
-- [Deep Research](crates/use-cases/src/deep_research/): research across several sources (requires `BRAVE_API_KEY`)
+- [Hello World](crates/use-cases/src/hello_world/main.rs): basic example
+- [Terminal REPL](crates/use-cases/src/terminal_repl/main.rs): minimal multi-turn terminal chat
+- [Editorial Review](crates/use-cases/src/editorial_review/main.rs): route a draft through an editor with a result hook and AQL
+- [Deep Research](crates/use-cases/src/deep_research/main.rs): research across several sources (requires `BRAVE_API_KEY`)
 - [Malware Scanner](https://github.com/canvascomputing/malwi): find signs of malware in a software package
 
 > Configure an LLM provider first (see [Environment](DEVELOPMENT.md#environment)).
 
 ```bash
-make use_case                # list available names
-make use_case name=<name>    # run one
+make use_case name=hello-world
+make use_case name=terminal-repl
+make use_case name=editorial-review args='"Draft a short release announcement."'
+make use_case name=deep-research args='"What makes an agent harness efficient?"'
+make use_case name=malware-scanner args=./path/to/package
 ```
