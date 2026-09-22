@@ -8,7 +8,7 @@ import os
 import sys
 from pathlib import Path
 
-from agentwerk import Agent, Condition, Event, FetchTool, Knowledge, Task, Werk
+from agentwerk import Agent, Condition, Event, FetchTool, Knowledge, Policy, Task, Werk
 
 from web_search import brave_search_tool
 
@@ -50,6 +50,7 @@ async def main(question: str) -> None:
     write_report.task(report_task)
 
     werk = Werk()
+    werk.set_policy(Policy(max_time=300))
     werk.set_template("question", question)
     werk.set_template("focus", FOCUS)
     werk.on_event(log_research)

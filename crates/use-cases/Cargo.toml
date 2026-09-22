@@ -24,8 +24,8 @@ name = "terminal-repl"
 path = "src/terminal_repl/main.rs"
 
 [[bin]]
-name = "editorial-review"
-path = "src/editorial_review/main.rs"
+name = "coding-harness"
+path = "src/coding_harness/main.rs"
 
 [[bin]]
 name = "malware-scanner"

@@ -684,6 +684,71 @@ werk.add_condition(
 )
 ```
 
+#### Task templates
+
+Wait for the research task, then insert its result into the report task:
+
+```python
+werk.add_task(Task("Rank all products by value.", label="research"))
+await werk.finish_task("research")
+
+werk.add_task(
+    Task(
+        "Write the board report from:\n\n{{ result: research }}",
+        label="report",
+    )
+)
+```
+
+#### Knowledge
+
+Give agents the same knowledge store so either can write pages that the other reads:
+
+```python
+from agentwerk import Knowledge
+
+store = Knowledge.load("./notes")
+
+researcher = Agent.from_env().label("research").knowledge(store)
+writer = Agent.from_env().label("report").knowledge(store)
+```
+
+#### TaskTool
+
+Give an agent `TaskTool()` to read a finished task's result from the same Werk. Here, `t-1` is the completed research task:
+
+```python
+from agentwerk import TaskTool
+
+writer = Agent.from_env().label("report").tool(TaskTool())
+
+werk.add_agent(writer)
+werk.add_task(
+    Task(
+        "Read the result of t-1 with the task tool, then write the board report.",
+        label="report",
+    )
+)
+```
+
+#### ReadFileTool
+
+An agent with `ReadFileTool()` can instead open the persisted result in the session directory:
+
+```python
+from agentwerk import ReadFileTool
+
+writer = Agent.from_env().label("report").tool(ReadFileTool())
+
+werk.add_agent(writer)
+werk.add_task(
+    Task(
+        "Read .agentwerk/tasks/t-1/result.json, then write the board report.",
+        label="report",
+    )
+)
+```
+
 ### Configuration
 
 Use a `Policy` to set turn, token, and time limits, retry behavior, and compaction.

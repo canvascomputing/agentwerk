@@ -32,7 +32,7 @@
 
 ---
 
-## Installation
+# Installation
 
 ```bash
 cargo add agentwerk
@@ -40,7 +40,7 @@ cargo add agentwerk
 
 [Python bindings](crates/agentwerk-py/README.md)
 
-## Let's Build a Research Workflow
+# Let's Build a Research Harness
 
 We'll use the [Brave Search Tool](crates/use-cases/src/deep_research/web_search.rs) to research a question and write a report with citations.
 
@@ -237,7 +237,7 @@ APIs: [Tools](API.md#tools), [FetchTool](API.md#fetchtool), and [Custom tools](A
 
 ## Tasks
 
-Create one task for research and another for writing. Each label routes the task to the matching agent. The `question` and `focus` templates insert shared values into the prompts.
+Create one task for research and another for writing. Each label routes the task to the matching agent. The `question` and `focus` templates insert shared values into the prompts. A condition queues the report after the research finishes.
 
 ```rust
 let research_task = Task::labeled(
@@ -249,9 +249,12 @@ let report_task = Task::labeled(
     "report",
     "Write a cited report answering:\n\n{{ question }}",
 );
+
+let write_report = Condition::new("task.label = research AND task.status = finished")
+    .task(report_task);
 ```
 
-APIs: [Tasks](API.md#tasks), [Templates](API.md#templates), [Schemas](API.md#schemas), and [Directives](API.md#directives).
+APIs: [Tasks](API.md#tasks), [Templates](API.md#templates), [Schemas](API.md#schemas), [Directives](API.md#directives), [AQL](API.md#aql), and [Conditions](API.md#conditions).
 
 ## Knowledge
 
@@ -268,10 +271,15 @@ APIs: [Knowledge](API.md#knowledge).
 
 ## Werk
 
-Add both agents and the research task to a `Werk`. Set the shared template values and use an AQL condition to queue the report task after the research finishes.
+A `Werk` coordinates the agents, tasks, and conditions for one run. Set the shared template values, then add the parts of the research harness.
 
 ```rust
 let werk = Werk::new();
+
+werk.set_policy(Policy {
+    max_time: Some(Duration::from_secs(300)),
+    ..Default::default()
+});
 
 werk.set_template("question", "What makes an agent harness efficient?");
 werk.set_template("focus", "latency and reliability");
@@ -279,14 +287,11 @@ werk.set_template("focus", "latency and reliability");
 werk.add_agent(researcher);
 werk.add_agent(writer);
 
-let write_report = Condition::new("task.label = research AND task.status = finished")
-    .task(report_task);
-
 werk.add_condition(write_report);
 werk.add_task(research_task);
 ```
 
-APIs: [Werk](API.md#werk), [AQL](API.md#aql), [Collaboration](API.md#collaboration), and [Conditions](API.md#conditions).
+APIs: [Werk](API.md#werk), [Policy](API.md#configuration), and [Collaboration](API.md#collaboration).
 
 ## Events
 
@@ -318,7 +323,169 @@ let report = result["report"].as_str().unwrap_or_default();
 println!("{report}");
 ```
 
-APIs: [Werk](API.md#werk) and [AQL](API.md#aql).
+---
+
+# Let's Build a Coding Harness
+
+We’ll use a [planner and coder agent](crates/use-cases/src/coding_harness/main.rs) to make changes to a repository. The coder is interactive, meaning its coding task remains active until you end it.
+
+Give both agents read-only repository tools, then add editing tools only to the coder. The planner returns a grounded plan for the coder to implement.
+
+<details>
+<summary><code>planner.md</code></summary>
+
+```markdown
+# Planner
+
+You inspect a repository and turn one requested change into a grounded implementation
+plan for the coder. You return the files, steps, and checks the coder needs
+without modifying the repository.
+
+Your strengths:
+- Finding the smallest code surface that can satisfy a request
+- Turning repository conventions and tests into concrete implementation steps
+
+Guidelines:
+- Read the request, relevant code, nearby tests, and repository guidance before planning
+- Inspect manifests and neighboring implementations before choosing dependencies or patterns, because the coder must follow the repository
+- Inspect `git status` and `git diff`, because existing work must remain outside the plan
+- Name exact repository-relative files when the code identifies them
+- Order the plan from implementation through verification so the coder can execute it directly
+- Include repository-provided format, check, and test commands when they apply
+- IMPORTANT: Keep the plan to one through six steps, because the coder receives it as an execution checklist
+- NEVER edit or create files, because planning must leave the workspace unchanged for the coder
+- NEVER run build, format, or test commands, because the coder owns verification after making the change
+- CRITICAL: Ground every step in inspected repository evidence, because guesses can send the coder into unrelated code
+
+Output:
+- Call `finish` once with `plan`, `files`, and `checks`
+- `plan` (1-6 items): ordered implementation and verification steps
+- `files`: repository-relative files expected to change
+- `checks`: exact allowed commands the coder should run
+
+Example outputs:
+- `finish({"plan":["Update src/lib.rs to return the sum","Run the focused test"],"files":["src/lib.rs"],"checks":["cargo test"]})`
+
+NOTE: Produce the plan only after inspecting the repository. Leave every edit and check to the coder.
+```
+
+</details>
+
+<details>
+<summary><code>coder.md</code></summary>
+
+```markdown
+# Coder
+
+You implement one requested repository change from a plan prepared by the planner.
+You inspect the repository, make the smallest complete change, verify it, and report
+what changed to the caller.
+
+Your strengths:
+- Translating a grounded plan into a narrow, complete code change
+- Verifying behavior with repository checks instead of relying on code inspection alone
+
+Guidelines:
+- Read the request, plan, named files, nearby tests, and repository guidance before editing
+- Recheck the plan against the code, because repository state may reveal a safer or smaller implementation
+- Match neighboring style and use existing dependencies, because unverified conventions and libraries can break the project
+- Preserve unrelated existing work and limit edits to what the request requires
+- Run the repository's relevant format, check, and test commands after editing and repair failures caused by the change
+- Inspect `git status` and `git diff` before finishing so the result names every changed file
+- IMPORTANT: Record the exact command and `passed` or `failed` for every check you actually ran
+- NEVER edit `./session`, because it contains the harness state needed to resume the task
+- NEVER report an unexecuted check as passed, because the caller treats `checks` as verification evidence
+- NEVER run git write or publishing operations, because the harness grants git only for inspecting work
+- CRITICAL: Do not overwrite unrelated changes, because they belong to the caller
+
+Output:
+- Reply after each turn with progress, a focused question, or the completed change
+- `summary` (1-2 sentences): what changed and why
+- `changed_files`: repository-relative paths actually changed
+- `checks`: exact commands followed by `passed` or `failed`
+
+Example outputs:
+- `Implemented addition using the existing numeric API. Changed files: src/lib.rs. Checks: cargo test: passed.`
+
+NOTE: Do not call `finish`. The user accepts the change or sends another instruction after each reply.
+```
+
+</details>
+
+```rust
+fn read_tools() -> Vec<Tool> {
+    vec![
+        ListDirectoryTool.into(),
+        GlobTool.into(),
+        GrepTool.into(),
+        ReadFileTool.into(),
+    ]
+}
+
+let planner = Agent::from_env()
+    .label("plan")
+    .role(include_str!("planner.md"))
+    .tools(read_tools());
+
+let coder = Agent::from_env()
+    .label("coding")
+    .role(include_str!("coder.md"))
+    .interactive()
+    .tools(read_tools())
+    .tool(EditFileTool)
+    .tool(WriteFileTool);
+```
+
+Both agents can inspect the working tree, but only the coder can run Rust checks. These rules limit the commands available to each agent; they do not create an operating-system sandbox.
+
+```rust
+let git = || CommandTool::new("git")
+    .allow("git status*")
+    .allow("git diff*");
+
+let planner = planner.tool(git());
+
+let coder = coder
+    .tool(git())
+    .tool(CommandTool::new("cargo")
+        .allow("cargo fmt*")
+        .allow("cargo check*")
+        .allow("cargo test*"));
+```
+
+A condition starts the coder with the saved plan as soon as the planner finishes.
+Store the session in `./session` so you can stop the program and continue the same plan and coder conversation later.
+
+```rust
+let werk = Werk::new();
+werk.set_dir("./session");
+
+let coder_task = Task::labeled(
+    "coding",
+    "Implement this plan:\n\n{{ result: plan }}",
+);
+
+let start_coder = Condition::new("task.label = plan AND task.status = finished")
+    .task(coder_task);
+```
+
+Register the agents and condition, add the planning task, then run until the interactive coder pauses.
+
+```rust
+let plan_task = Task::labeled(
+    "plan",
+    "Add a --dry-run flag to the database migration command.",
+);
+
+werk.add_agent(planner);
+werk.add_agent(coder);
+werk.add_condition(start_coder);
+werk.add_task(plan_task);
+
+werk.finish().await;
+```
+
+APIs: [CommandTool](API.md#commandtool), [Werk](API.md#werk), [Templates](API.md#templates), [Collaboration](API.md#collaboration), [Conditions](API.md#conditions), and [Interactive agents](API.md#interactive-agents).
 
 ## More Use Cases
 
@@ -326,16 +493,6 @@ Example projects built with agentwerk:
 
 - [Hello World](crates/use-cases/src/hello_world/main.rs): basic example
 - [Terminal REPL](crates/use-cases/src/terminal_repl/main.rs): minimal multi-turn terminal chat
-- [Editorial Review](crates/use-cases/src/editorial_review/main.rs): route a draft through an editor with a result hook and AQL
+- [Coding Harness](crates/use-cases/src/coding_harness/main.rs): plan, implement, and verify a repository change
 - [Deep Research](crates/use-cases/src/deep_research/main.rs): research across several sources (requires `BRAVE_API_KEY`)
 - [Malware Scanner](https://github.com/canvascomputing/malwi): find signs of malware in a software package
-
-> Configure an LLM provider first (see [Environment](DEVELOPMENT.md#environment)).
-
-```bash
-make use_case name=hello-world
-make use_case name=terminal-repl
-make use_case name=editorial-review args='"Draft a short release announcement."'
-make use_case name=deep-research args='"What makes an agent harness efficient?"'
-make use_case name=malware-scanner args=./path/to/package
-```

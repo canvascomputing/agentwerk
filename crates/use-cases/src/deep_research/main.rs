@@ -4,8 +4,10 @@
 
 mod web_search;
 
+use std::time::Duration;
+
 use agentwerk::tools::FetchTool;
-use agentwerk::{Agent, Condition, Event, Knowledge, Task, Werk};
+use agentwerk::{Agent, Condition, Event, Knowledge, Policy, Task, Werk};
 
 use web_search::{brave_key_from_env, brave_search_tool};
 
@@ -42,6 +44,10 @@ async fn main() {
     let write_report = Condition::new(finished_research).task(report_task);
 
     let werk = Werk::new();
+    werk.set_policy(Policy {
+        max_time: Some(Duration::from_secs(300)),
+        ..Default::default()
+    });
     werk.set_template("question", question);
     werk.set_template("focus", FOCUS);
     werk.on_event(|_, event| {
