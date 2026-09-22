@@ -32,7 +32,7 @@
 
 ---
 
-# Installation
+## Installation
 
 ```bash
 cargo add agentwerk
@@ -40,13 +40,15 @@ cargo add agentwerk
 
 [Python bindings](crates/agentwerk-py/README.md)
 
-# Let's Build a Research Harness
+---
+
+## Let's Build a Research Harness
 
 We'll use the [Brave Search Tool](crates/use-cases/src/deep_research/web_search.rs) to research a question and write a report with citations.
 
-## Agents
+### Agents
 
-Create a researcher and a writer. `Agent::from_env()` reads the provider and model from environment variables. The researcher gathers sources, while the writer turns those findings into a report.
+Create a researcher and a writer. `Agent::from_env()` reads the provider and model from [environment variables](API.md#providers). The researcher gathers sources, while the writer turns those findings into a report.
 
 <details>
 <summary><code>researcher.md</code></summary>
@@ -130,7 +132,7 @@ let writer = Agent::from_env()
 
 APIs: [Agents](API.md#agents), [Providers](API.md#providers), and [Prompt Skill](skills/prompt/SKILL.md).
 
-## Tools
+### Tools
 
 The researcher uses a [custom Brave Search tool](crates/use-cases/src/deep_research/web_search.rs) to find sources and the built-in `FetchTool` to open them.
 
@@ -235,7 +237,7 @@ let researcher = researcher
 
 APIs: [Tools](API.md#tools), [FetchTool](API.md#fetchtool), and [Custom tools](API.md#custom-tools).
 
-## Tasks
+### Tasks
 
 Create one task for research and another for writing. Each label routes the task to the matching agent. The `question` and `focus` templates insert shared values into the prompts. A condition queues the report after the research finishes.
 
@@ -256,7 +258,7 @@ let write_report = Condition::new("task.label = research AND task.status = finis
 
 APIs: [Tasks](API.md#tasks), [Templates](API.md#templates), [Schemas](API.md#schemas), [Directives](API.md#directives), [AQL](API.md#aql), and [Conditions](API.md#conditions).
 
-## Knowledge
+### Knowledge
 
 Assign both agents a shared `Knowledge` base. The researcher records sourced findings there, and the writer uses that evidence to produce the report.
 
@@ -269,7 +271,7 @@ let writer = writer.knowledge(&knowledge);
 
 APIs: [Knowledge](API.md#knowledge).
 
-## Werk
+### Werk
 
 A `Werk` coordinates the agents, tasks, and conditions for one run. Set the shared template values, then add the parts of the research harness.
 
@@ -293,7 +295,7 @@ werk.add_task(research_task);
 
 APIs: [Werk](API.md#werk), [Policy](API.md#configuration), and [Collaboration](API.md#collaboration).
 
-## Events
+### Events
 
 Observe each knowledge page as it is saved and log every other event by name.
 
@@ -310,7 +312,7 @@ werk.on_event(|_, event| {
 
 APIs: [Events](API.md#events) and [Hooks](API.md#hooks).
 
-## Results
+### Results
 
 Wait for the workflow to finish, then print the writer's report.
 
@@ -325,7 +327,7 @@ println!("{report}");
 
 ---
 
-# Let's Build a Coding Harness
+## Let's Build a Coding Harness
 
 We’ll use a [planner and coder agent](crates/use-cases/src/coding_harness/main.rs) to make changes to a repository. The coder is interactive, meaning its coding task remains active until you end it.
 
@@ -436,7 +438,7 @@ let coder = Agent::from_env()
     .tool(WriteFileTool);
 ```
 
-Both agents can inspect the working tree, but only the coder can run Rust checks. These rules limit the commands available to each agent; they do not create an operating-system sandbox.
+Both agents can inspect the working tree, but only the coder can run Rust checks.
 
 ```rust
 let git = || CommandTool::new("git")
@@ -485,9 +487,9 @@ werk.add_task(plan_task);
 werk.finish().await;
 ```
 
-APIs: [CommandTool](API.md#commandtool), [Werk](API.md#werk), [Templates](API.md#templates), [Collaboration](API.md#collaboration), [Conditions](API.md#conditions), and [Interactive agents](API.md#interactive-agents).
+APIs: [CommandTool](API.md#commandtool), [Templates](API.md#templates), [Collaboration](API.md#collaboration), [Conditions](API.md#conditions), [Sessions](API.md#sessions), and [Interactive agents](API.md#interactive-agents).
 
-## More Use Cases
+### More Use Cases
 
 Example projects built with agentwerk:
 
