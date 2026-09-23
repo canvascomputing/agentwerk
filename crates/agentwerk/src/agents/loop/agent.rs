@@ -7,7 +7,7 @@ use crate::agents::policy::{Policy, PolicyViolation};
 use crate::agents::query::Matcher;
 use crate::agents::tasks::{policy_violated, Author, Reply, Status, Task, Werk};
 use crate::event::Event;
-use crate::prompts::directives::{NO_TOOL_CALLED, REPLY_REJECTED};
+use crate::prompts::templates::{NO_TOOL_CALLED, REPLY_REJECTED};
 use crate::prompts::RenderError;
 use crate::providers::{ContentBlock, ModelResponse, ProviderError, ResponseStatus};
 
@@ -212,7 +212,7 @@ impl Agent {
         werk.emit_event(event.task_id(task_id).agent_id(self.get_id()))
     }
 
-    fn fail_render(&self, werk: &Werk, task_id: &str, error: RenderError) {
+    pub(super) fn fail_render(&self, werk: &Werk, task_id: &str, error: RenderError) {
         self.emit_event(
             werk,
             task_id,
@@ -246,7 +246,13 @@ impl Agent {
             self.fail_task(werk, task_id);
             return false;
         }
-        let detail = self.get_directives().render(NO_TOOL_CALLED, &[]);
+        let detail = match werk.render_template(NO_TOOL_CALLED, &[]) {
+            Ok(detail) => detail,
+            Err(error) => {
+                self.fail_render(werk, task_id, error);
+                return false;
+            }
+        };
         let attempt = *consecutive_schema_failures;
         self.emit_event(
             werk,
@@ -258,7 +264,7 @@ impl Agent {
                 "message": detail,
             })),
         );
-        let directive = self.get_directives().render(
+        let message = match werk.render_template(
             REPLY_REJECTED,
             &[
                 ("detail", &detail),
@@ -267,8 +273,14 @@ impl Agent {
                 ("task_id", task_id),
                 ("agent", self.get_id()),
             ],
-        );
-        werk.append_reply(task_id, Reply::user_text(directive));
+        ) {
+            Ok(message) => message,
+            Err(error) => {
+                self.fail_render(werk, task_id, error);
+                return false;
+            }
+        };
+        werk.append_reply(task_id, Reply::user_text(message));
         true
     }
 }
@@ -296,7 +308,7 @@ mod tests {
     use super::plain_text_result;
     use crate::agents::policy::Policy;
     use crate::event::Event;
-    use crate::prompts::directives::{DirectiveStore, REPLY_REJECTED};
+    use crate::prompts::templates::REPLY_REJECTED;
 
     use crate::agents::r#loop::test_util::*;
     use crate::agents::tasks::{Author, FinishReason, Status, Task, Werk};
@@ -462,10 +474,9 @@ mod tests {
         );
     }
 
-    // retry directive
+    // retry template
 
-    #[tokio::test]
-    async fn a_replacement_replaces_the_silence_directive() {
+    async fn retry_message(configure: impl FnOnce(crate::Agent, &Werk) -> crate::Agent) -> String {
         let results_dir = crate::test_util::TempDir::new().unwrap();
         let provider = MockProvider::with_results(vec![
             Ok(text_response("just thinking, no tool call")),
@@ -478,13 +489,11 @@ mod tests {
             max_schema_retries: Some(3),
             ..Default::default()
         });
-        werk.add_agent(
-            crate::Agent()
-                .provider(provider.clone())
-                .model("mock")
-                .role("test")
-                .directive(REPLY_REJECTED, "PLEASE CALL A TOOL NOW"),
-        );
+        let agent = crate::Agent()
+            .provider(provider.clone())
+            .model("mock")
+            .role("test");
+        werk.add_agent(configure(agent, &werk));
 
         werk.start();
         werk.add_task(Task::new("go").schema(string_schema()));
@@ -492,15 +501,52 @@ mod tests {
             .await
             .expect("finish did not finish within 5s");
 
-        let injected = user_text(&provider.received()[1]);
+        user_text(&provider.received()[1]).to_string()
+    }
+
+    fn assert_custom_retry(injected: &str, expected: &str) {
         assert!(
-            injected.contains("PLEASE CALL A TOOL NOW"),
+            injected.contains(expected),
             "the replacement must be injected: {injected:?}",
         );
         assert!(
             !injected.contains("was not accepted"),
             "default framing must be suppressed: {injected:?}",
         );
+    }
+
+    #[tokio::test]
+    async fn an_agent_template_replaces_the_silence_message() {
+        let injected =
+            retry_message(|agent, _| agent.template(REPLY_REJECTED, "AGENT TEMPLATE")).await;
+        assert_custom_retry(&injected, "AGENT TEMPLATE");
+    }
+
+    #[tokio::test]
+    async fn agent_templates_replace_the_silence_message() {
+        let injected =
+            retry_message(|agent, _| agent.templates([(REPLY_REJECTED, "AGENT TEMPLATES")])).await;
+        assert_custom_retry(&injected, "AGENT TEMPLATES");
+    }
+
+    #[tokio::test]
+    async fn a_werk_template_replaces_the_silence_message() {
+        let injected = retry_message(|agent, werk| {
+            werk.set_template(REPLY_REJECTED, "WERK TEMPLATE");
+            agent
+        })
+        .await;
+        assert_custom_retry(&injected, "WERK TEMPLATE");
+    }
+
+    #[tokio::test]
+    async fn werk_templates_replace_the_silence_message() {
+        let injected = retry_message(|agent, werk| {
+            werk.set_templates([(REPLY_REJECTED, "WERK TEMPLATES")]);
+            agent
+        })
+        .await;
+        assert_custom_retry(&injected, "WERK TEMPLATES");
     }
 
     #[tokio::test]
@@ -522,7 +568,7 @@ mod tests {
                 .provider(provider.clone())
                 .model("mock")
                 .role("test")
-                .directive(
+                .template(
                     REPLY_REJECTED,
                     "attempt {{ attempt }} of {{ max_attempts }}",
                 ),
@@ -538,6 +584,39 @@ mod tests {
         assert!(
             injected.contains("attempt 1 of 3"),
             "the retry must bind what it emitted: {injected:?}",
+        );
+    }
+
+    #[tokio::test]
+    async fn an_invalid_retry_template_fails_the_task_without_another_request() {
+        let results_dir = crate::test_util::TempDir::new().unwrap();
+        let provider =
+            MockProvider::with_results(vec![Ok(text_response("just thinking, no tool call"))]);
+        let werk = Werk(results_dir.path().to_path_buf()).unwrap();
+        werk.set_policy(Policy {
+            max_schema_retries: Some(3),
+            ..Default::default()
+        });
+        werk.add_agent(
+            crate::Agent()
+                .provider(provider.clone())
+                .model("mock")
+                .template(REPLY_REJECTED, "{{ find_result(task.label =) }}"),
+        );
+        let id = werk.add_task(Task::new("go").schema(string_schema()));
+
+        tokio::time::timeout(Duration::from_secs(5), werk.finish())
+            .await
+            .expect("finish did not finish within 5s");
+
+        assert_eq!(provider.requests(), 1);
+        assert!(werk.get_task(&id).unwrap().is_failed());
+        assert_eq!(
+            werk.find_events(format!(
+                "task.id = {id} AND event.name = prompt_render_failed"
+            ))
+            .len(),
+            1,
         );
     }
 
@@ -566,7 +645,7 @@ mod tests {
                 .provider(scout.clone())
                 .model("mock")
                 .role("test")
-                .directive(REPLY_REJECTED, "{{ agent }}, CALL A TOOL"),
+                .template(REPLY_REJECTED, "{{ agent }}, CALL A TOOL"),
         );
         werk.add_agent(
             crate::Agent()
@@ -574,7 +653,7 @@ mod tests {
                 .provider(worker.clone())
                 .model("mock")
                 .role("test")
-                .directive(REPLY_REJECTED, "{{ agent }}, CALL A TOOL"),
+                .template(REPLY_REJECTED, "{{ agent }}, CALL A TOOL"),
         );
 
         werk.start();
@@ -587,7 +666,7 @@ mod tests {
         let scouted = user_text(&scout.received()[1]);
         assert!(
             scouted.contains("scout-1, CALL A TOOL"),
-            "the directive must bind the agent it addresses: {scouted:?}",
+            "the template must bind the agent it addresses: {scouted:?}",
         );
         let worked = user_text(&worker.received()[1]);
         assert!(
@@ -597,7 +676,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn the_built_in_directive_is_injected_when_nothing_replaces_it() {
+    async fn the_built_in_message_is_injected_without_a_template() {
         let results_dir = crate::test_util::TempDir::new().unwrap();
         let provider = MockProvider::with_results(vec![
             Ok(text_response("just thinking, no tool call")),
@@ -626,7 +705,7 @@ mod tests {
         let injected = user_text(&provider.received()[1]);
         assert!(
             injected.contains("was not accepted"),
-            "an unreplaced directive must render its built-in text: {injected:?}",
+            "an unconfigured template must render its built-in text: {injected:?}",
         );
     }
 
@@ -1243,7 +1322,7 @@ mod tests {
             schema_retries,
             vec![(
                 1,
-                DirectiveStore::default().render(crate::prompts::directives::NO_TOOL_CALLED, &[]),
+                crate::prompts::templates::built_in(crate::prompts::templates::NO_TOOL_CALLED, &[],),
             )],
             "exactly one SchemaRetried at attempt 1 with the silence detail",
         );

@@ -85,13 +85,13 @@ impl PyWerk {
         self.inner.set_task_failed(id).map_err(runtime_error)
     }
 
-    /// Insert or replace a shared value used by new tasks before their first request.
+    /// Insert or replace a shared prompt, corrective, or custom event template.
     fn set_template<'py>(slf: PyRef<'py, Self>, key: String, value: String) -> PyRef<'py, Self> {
         slf.inner.set_template(key, value);
         slf
     }
 
-    /// Insert or replace multiple shared values together.
+    /// Insert or replace multiple shared templates together.
     fn set_templates<'py>(
         slf: PyRef<'py, Self>,
         variables: &Bound<'_, pyo3::types::PyDict>,

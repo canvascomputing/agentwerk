@@ -33,7 +33,7 @@ use std::sync::Arc;
 
 use serde_json::{Map, Number, Value};
 
-use crate::prompts::directives::{
+use crate::prompts::templates::{
     built_in, SCHEMA_ANY_OF_UNMATCHED, SCHEMA_ARRAY_TOO_LONG, SCHEMA_ARRAY_TOO_SHORT,
     SCHEMA_CONST_MISMATCHED, SCHEMA_ENUM_MISMATCHED, SCHEMA_FALSE_REJECTED, SCHEMA_HINT_JSON,
     SCHEMA_HINT_QUOTE, SCHEMA_HINT_UNQUOTE, SCHEMA_NOT_MATCHED, SCHEMA_NUMBER_TOO_LARGE,

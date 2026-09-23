@@ -8,7 +8,7 @@ use crate::agents::policy::Policy;
 use crate::agents::tasks::{Reply, Werk};
 use crate::agents::PolicyViolation;
 use crate::event::Event;
-use crate::prompts::directives::{NO_TOOLS_REGISTERED, TOOL_NOT_FOUND, TOOL_PANICKED};
+use crate::prompts::templates::{NO_TOOLS_REGISTERED, TOOL_NOT_FOUND, TOOL_PANICKED};
 use crate::providers::ContentBlock;
 use crate::tools::{Tool, ToolContext};
 
@@ -68,8 +68,7 @@ impl Agent {
             .run(Arc::clone(&werk.run))
             .werk(Arc::clone(werk))
             .agent_id(self.get_id().to_string())
-            .task_id(task_id.to_string())
-            .directives(self.get_directives());
+            .task_id(task_id.to_string());
         let semaphore = Arc::new(tokio::sync::Semaphore::new(MAX_CONCURRENT_CALLS));
         let mut answers: Vec<Option<Event>> = calls.iter().map(|_| None).collect();
         let mut cursor = 0;
@@ -104,7 +103,7 @@ impl Agent {
             }
         }
 
-        let directives = self.get_directives();
+        let templates = tool_context.templates.clone();
         let mut results: Vec<Event> = calls
             .iter()
             .zip(answers)
@@ -114,12 +113,16 @@ impl Agent {
                     _ => "unknown",
                 };
                 answer.unwrap_or_else(|| {
-                    Event::error(directives.render(TOOL_PANICKED, &[("tool", tool_name)]))
-                        .directive(TOOL_PANICKED)
+                    Event::error(templates.render(TOOL_PANICKED, &[("tool", tool_name)]))
+                        .template(TOOL_PANICKED)
                 })
             })
             .collect();
         Event::cap_tool_results(&calls, &mut results, &tool_context);
+        if let Some(error) = tool_context.templates.take_error() {
+            self.fail_render(werk, task_id, error);
+            return false;
+        }
 
         let mut first_schema_failure: Option<String> = None;
         let mut offloaded = std::collections::HashMap::new();
@@ -234,23 +237,23 @@ impl Agent {
         };
         async move {
             let Some(tool) = tool else {
-                let (directive, content) = if available.is_empty() {
+                let (template, content) = if available.is_empty() {
                     (
                         NO_TOOLS_REGISTERED,
                         context
-                            .directives
+                            .templates
                             .render(NO_TOOLS_REGISTERED, &[("name", &tool_name)]),
                     )
                 } else {
                     (
                         TOOL_NOT_FOUND,
-                        context.directives.render(
+                        context.templates.render(
                             TOOL_NOT_FOUND,
                             &[("name", &tool_name), ("available", &available)],
                         ),
                     )
                 };
-                return Event::tool_failure(content, "not_found").directive(directive);
+                return Event::tool_failure(content, "not_found").template(template);
             };
             tool.invoke(input, &context).await
         }
@@ -413,7 +416,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn a_schema_miss_answers_in_the_tool_result_and_injects_no_directive() {
+    async fn a_schema_miss_answers_in_the_tool_result_and_injects_no_extra_message() {
         let results_dir = crate::test_util::TempDir::new().unwrap();
         let provider = MockProvider::with_results(vec![
             Ok(write_result_response("not json")),
@@ -457,7 +460,7 @@ mod tests {
         assert!(answered.contains("partial_sum"), "{answered}");
         assert!(
             !user_text(second).contains("was not accepted"),
-            "no directive block rides beside the tool result",
+            "no extra message rides beside the tool result",
         );
     }
 
@@ -673,6 +676,92 @@ mod tests {
         assert_eq!(werk.get_tasks()[0].status, Status::Finished);
     }
 
+    #[tokio::test]
+    async fn an_invalid_event_template_fails_the_task_without_publishing_the_event() {
+        use crate::providers::types::{ModelResponse, ResponseStatus, TokenUsage};
+        use crate::tools::EventTool;
+
+        let provider = MockProvider::with_results(vec![Ok(ModelResponse {
+            content: vec![ContentBlock::ToolUse {
+                id: "c1".into(),
+                name: "event".into(),
+                input: serde_json::json!({
+                    "name": "candidate_found",
+                    "data": {"path": "src/lib.rs"},
+                }),
+            }],
+            status: ResponseStatus::ToolUse,
+            usage: TokenUsage::default(),
+            model: "mock".into(),
+        })]);
+        let results_dir = crate::test_util::TempDir::new().unwrap();
+        let werk = Werk(results_dir.path().to_path_buf()).unwrap();
+        werk.set_template("candidate_found", "{{ find_result(task.label =) }}");
+        werk.add_agent(
+            crate::Agent()
+                .provider(provider.clone())
+                .model("mock")
+                .tool(EventTool),
+        );
+        let id = werk.add_task("go");
+
+        let _ = werk.finish().await;
+
+        assert_eq!(provider.requests(), 1);
+        assert!(werk.get_task(&id).unwrap().is_failed());
+        assert!(werk
+            .find_event("event.name = prompt_render_failed")
+            .is_some());
+        assert!(werk.find_event("event.name = candidate_found").is_none());
+    }
+
+    #[tokio::test]
+    async fn a_sibling_render_failure_does_not_suppress_a_valid_custom_event() {
+        use crate::prompts::templates::TOOL_NOT_FOUND;
+        use crate::providers::types::{ModelResponse, ResponseStatus, TokenUsage};
+        use crate::tools::EventTool;
+
+        let provider = MockProvider::with_results(vec![Ok(ModelResponse {
+            content: vec![
+                ContentBlock::ToolUse {
+                    id: "c1".into(),
+                    name: "missing".into(),
+                    input: serde_json::json!({}),
+                },
+                ContentBlock::ToolUse {
+                    id: "c2".into(),
+                    name: "event".into(),
+                    input: serde_json::json!({
+                        "name": "candidate_found",
+                        "data": {"path": "src/lib.rs"},
+                    }),
+                },
+            ],
+            status: ResponseStatus::ToolUse,
+            usage: TokenUsage::default(),
+            model: "mock".into(),
+        })]);
+        let results_dir = crate::test_util::TempDir::new().unwrap();
+        let werk = Werk(results_dir.path().to_path_buf()).unwrap();
+        werk.set_template(TOOL_NOT_FOUND, "{{ find_result(task.label =) }}");
+        werk.add_agent(
+            crate::Agent()
+                .provider(provider.clone())
+                .model("mock")
+                .tool(EventTool),
+        );
+        let id = werk.add_task("go");
+
+        let _ = werk.finish().await;
+
+        assert_eq!(provider.requests(), 1);
+        assert!(werk.get_task(&id).unwrap().is_failed());
+        assert!(werk
+            .find_event("event.name = prompt_render_failed")
+            .is_some());
+        assert!(werk.find_event("event.name = candidate_found").is_some());
+    }
+
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn concurrent_calls_have_independent_timeouts_and_the_agent_continues() {
         use crate::providers::types::{ModelResponse, ResponseStatus, TokenUsage};
@@ -738,7 +827,7 @@ mod tests {
         assert!(events.iter().any(|event| {
             event.get_name() == Event::TOOL_CALL_FAILED
                 && event.get_data()["tool_name"] == "wait"
-                && event.get_directive() == Some(crate::prompts::directives::TOOL_TIMED_OUT)
+                && event.get_template() == Some(crate::prompts::templates::TOOL_TIMED_OUT)
         }));
         assert!(events.iter().any(|event| {
             event.get_name() == Event::TOOL_CALL_FINISHED

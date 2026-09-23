@@ -34,8 +34,6 @@ results = await agent.finish()
 | | `dir(dir)` | Set the directory the agent can access. |
 | | `template(key, value)` | Set a shared template value. |
 | | `templates(variables)` | Set several shared template values together. |
-| | `directive(key, template)` | Set a directive template. |
-| | `directives(overrides)` | Set several directive templates together. |
 | | `knowledge(store)` | Share a knowledge store and register its `KnowledgeTool`. |
 | | `interactive()` | Keep a task in progress while waiting for new instructions. |
 | **Work** | `add_task(task)` | Submit a task and return its ID. |
@@ -242,9 +240,9 @@ Each context field is also available separately: `{{ task_id }}`, `{{ date }}`, 
 | Record | JSONPath properties |
 |---|---|
 | Task | `task`, `label`, `schema`, `id`, `status`, `reporter`, `assignee`, `created_at`, `started_at`, `finished_at`, `failed_at` |
-| Event | `name`, `directive`, `data`, `task_id`, `agent_id`, `label`, `created_at` |
+| Event | `name`, `template`, `data`, `task_id`, `agent_id`, `label`, `created_at` |
 
-`task` is the original JSON input. Unset `label`, `schema`, `assignee`, and `directive` properties are omitted. Task results, errors, replies, and cancellation state are not serialized.
+`task` is the original JSON input. Unset `label`, `schema`, `assignee`, and `template` properties are omitted. Task results, errors, replies, and cancellation state are not serialized.
 
 For example, given this `research` result:
 
@@ -324,9 +322,9 @@ Use shallow, focused schemas for small models. Split complex work into tasks wit
 
 </details>
 
-### Directives
+### Corrective templates
 
-Directives tell the model what to do when an operation fails or returns invalid data. Override their wording for your model or environment.
+Corrective templates also cover custom event responses and use the same values as role and task templates. Set a bundled corrective key or custom event name to customize the next template across the Werk.
 
 ```python
 from agentwerk import Agent
@@ -334,8 +332,8 @@ from agentwerk import Agent
 
 agent = (
     Agent.from_env()
-    .directive("grep_failed", "The search did not run. Narrow `path`.")
-    .directives(
+    .template("grep_failed", "The search did not run. Narrow `path`.")
+    .templates(
         {
             "tool_timed_out": "Reduce the command scope.",
             "cache_miss": "No cache entry exists for {{ path }}.",
@@ -345,11 +343,11 @@ agent = (
 ```
 
 <details>
-<summary>Directive reference</summary>
+<summary>Corrective template reference</summary>
 
-Built-in keys override recovery text. Keys without overrides retain their defaults. Templates accept runtime values such as `{{ detail }}`, `{{ attempt }}`, and `{{ path }}`. Expressions without a value remain unchanged.
+Agentwerk uses its bundled corrective template when you do not customize one. A custom event without a matching template returns its standard text. Runtime values such as `{{ detail }}`, `{{ attempt }}`, and event payload fields take precedence over shared values. Named values and AQL selectors use the full template language. An invalid expression emits `prompt_render_failed` and fails the current task.
 
-See [prompts/directives](https://github.com/canvascomputing/agentwerk/tree/main/crates/agentwerk/src/prompts/directives) for the built-in text.
+See [prompts/templates](https://github.com/canvascomputing/agentwerk/tree/main/crates/agentwerk/src/prompts/templates) for the bundled corrective templates.
 
 </details>
 
@@ -458,7 +456,7 @@ Only `task_finished` completes the current task. Its `data` is the result dictio
 }
 ```
 
-Use [Directives](#directives) to customize the acknowledgement sent to the model.
+Set a [corrective template](#corrective-templates) under the event name to customize the text returned to the model.
 
 #### CommandTool
 
@@ -628,7 +626,7 @@ Filter tasks and events through these fields.
 | Origin | Fields |
 |--------|--------|
 | **Task** | `task.id`, `task.label`, `task.status`, `task.pending`, `task.cancelled`, `task.assignee`, `task.input`, `task.result`, `task.errors`, `task.created`, `task.started`, `task.finished`, `task.failed` |
-| **Event** | `event.name`, `event.agent_id`, `event.task_id`, `event.label`, `event.created`, `event.data` |
+| **Event** | `event.name`, `event.agent_id`, `event.task_id`, `event.label`, `event.template`, `event.created`, `event.data` |
 
 Queries using both namespaces match events with their referenced tasks. Events without an existing task do not match. Joined matches default to event-log order. `ORDER BY` accepts task or event fields.
 
@@ -881,7 +879,7 @@ Event names:
 | **LLM provider** | `request_started` | A request went out to the model. |
 | | `request_finished` | A request finished and reported its token usage. |
 | | `request_failed` | A request failed and was not retried. |
-| | `prompt_render_failed` | A role or task expression could not render before its request. |
+| | `prompt_render_failed` | A prompt or template could not render. |
 | | `request_retried` | A temporary LLM provider error triggered a retry. |
 | | `text_chunk_received` | Part of the reply arrived. |
 | **Tool** | `tool_call_declined` | A tool call proposed by the model was declined. |
@@ -910,8 +908,8 @@ Event methods:
 | `get_agent_id()` | Read the associated agent ID. |
 | `get_label()` | Read the associated task's label. |
 | `get_created_at()` | Read the timestamp in epoch milliseconds. |
-| `directive(value)` | Set directive metadata. This does not send an instruction to the model. |
-| `get_directive()` | Read the directive metadata. |
+| `template(value)` | Set template metadata. |
+| `get_template()` | Read the template metadata. |
 
 </details>
 

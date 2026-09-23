@@ -5,7 +5,7 @@ use serde_json::Value;
 
 use crate::agents::tasks::Werk;
 use crate::event::Event;
-use crate::prompts::directives::{DirectiveStore, WERK_UNAVAILABLE};
+use crate::prompts::templates::{TemplateRenderer, WERK_UNAVAILABLE};
 use crate::schemas::Schema;
 
 use super::task::{resolve_current_id, task_error_message};
@@ -76,7 +76,7 @@ pub(super) fn dispatch(
     tool_name: &str,
 ) -> Result<Event, Box<Event>> {
     let werk = ctx.werk.clone().ok_or_else(|| {
-        Event::error(ctx.directives.render(WERK_UNAVAILABLE, &[])).directive(WERK_UNAVAILABLE)
+        Event::error(ctx.templates.render(WERK_UNAVAILABLE, &[])).template(WERK_UNAVAILABLE)
     })?;
     let name = input["name"].as_str().unwrap_or_default();
     let data = input
@@ -90,26 +90,31 @@ pub(super) fn dispatch(
 
     let task_id = ctx.task_id.as_deref().unwrap_or_default();
     let agent_id = ctx.agent_id.as_deref().unwrap_or_default();
-    let acknowledgement = event_directive(name, &data, &ctx.directives);
+    let template = custom_event_template(name, &data, &ctx.templates)
+        .map_err(|_| Event::error("template rendering failed"))?;
     let mut event = Event::new(name)
         .data(data)
         .task_id(task_id)
         .agent_id(agent_id);
-    if acknowledgement.is_some() {
-        event = event.directive(name);
+    if template.is_some() {
+        event = event.template(name);
     }
     werk.emit_event(event);
 
-    Ok(match acknowledgement {
-        Some(content) => Event::success(content).directive(name),
+    Ok(match template {
+        Some(content) => Event::success(content).template(name),
         None => Event::success(format!("Event {name} published")),
     })
 }
 
-/// Render an explicit application-event override from its JSON payload. The
+/// Render an explicit custom-event response from its JSON payload. The
 /// complete payload is `{{ data }}`; top-level object fields are variables of
 /// their own.
-fn event_directive(name: &str, data: &Value, directives: &DirectiveStore) -> Option<String> {
+fn custom_event_template(
+    name: &str,
+    data: &Value,
+    templates: &TemplateRenderer,
+) -> Result<Option<String>, crate::prompts::RenderError> {
     let mut owned = vec![("data".to_string(), json_template_value(data))];
     if let Some(fields) = data.as_object() {
         owned.extend(
@@ -122,7 +127,7 @@ fn event_directive(name: &str, data: &Value, directives: &DirectiveStore) -> Opt
         .iter()
         .map(|(key, value)| (key.as_str(), value.as_str()))
         .collect();
-    directives.render_override(name, &values)
+    templates.render_event_template(name, &values)
 }
 
 fn json_template_value(value: &Value) -> String {
@@ -147,7 +152,7 @@ fn finish(
         werk,
         schema,
         tool_name,
-        directives: &ctx.directives,
+        templates: &ctx.templates,
     };
     let (_, repaired) = completion.attach_result(&id, result)?;
     completion.mark_finished(&id, &agent)?;
@@ -160,14 +165,14 @@ struct CompletionContext<'a> {
     werk: &'a Werk,
     schema: Option<&'a Schema>,
     tool_name: &'a str,
-    directives: &'a DirectiveStore,
+    templates: &'a TemplateRenderer,
 }
 
 impl CompletionContext<'_> {
     fn mark_finished(&self, id: &str, agent: &str) -> Result<(), Box<Event>> {
         self.werk
             .set_finished_by(id, agent)
-            .map_err(|error| Event::error(task_error_message(error, self.directives)).into())
+            .map_err(|error| Event::error(task_error_message(error, self.templates)).into())
     }
 
     fn attach_result(&self, id: &str, result: Value) -> Result<(Value, Vec<String>), Box<Event>> {
@@ -177,7 +182,7 @@ impl CompletionContext<'_> {
                     self.tool_name,
                     &violations.to_string(),
                     self.schema.map(Schema::get_raw_schema),
-                    self.directives,
+                    self.templates,
                 ),
                 "schema_failed",
             )
@@ -233,7 +238,7 @@ mod tests {
 
         assert_eq!(outcome.get_name(), Event::TOOL_CALL_FINISHED);
         assert_eq!(outcome.get_content(), "Event candidate_found published");
-        assert_eq!(outcome.get_directive(), None);
+        assert_eq!(outcome.get_template(), None);
         let event = seen.lock().unwrap().clone().expect("event observed");
         assert_eq!(event.get_task_id(), id);
         assert_eq!(event.get_agent_id(), "alice");
@@ -249,14 +254,13 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn a_custom_event_override_binds_its_data_and_marks_the_events() {
+    async fn a_custom_event_template_binds_its_data_and_marks_the_events() {
         let (_dir, werk, _id, ctx) = claimed_task();
-        let mut directives = DirectiveStore::default();
-        directives.insert(
+        werk.set_template("company", "Acme");
+        werk.set_template(
             "candidate_found",
-            "Found {{ path }} at {{ line }} with {{ meta }}; keep {{ missing }}. Payload: {{ data }}",
+            "Found {{ path }} for {{ company }} at {{ line }} with {{ meta }}; keep {{ missing }}. Payload: {{ data }}",
         );
-        let ctx = ctx.directives(Arc::new(directives));
 
         let outcome = Tool::from(EventTool)
             .call(
@@ -273,22 +277,22 @@ mod tests {
             )
             .await;
 
-        assert_eq!(outcome.get_directive(), Some("candidate_found"));
-        assert!(outcome
-            .get_content()
-            .starts_with("Found src/auth.rs at 42 with {\"reviewed\":true}; keep {{ missing }}.",));
+        assert_eq!(outcome.get_template(), Some("candidate_found"));
+        assert!(outcome.get_content().starts_with(
+            "Found src/auth.rs for Acme at 42 with {\"reviewed\":true}; keep {{ missing }}.",
+        ));
         assert!(outcome.get_content().contains("\"path\":\"src/auth.rs\""));
         assert!(outcome.get_content().contains("\"data\":\"shadow\""));
         assert_eq!(
             werk.find_event(r#"event.name = "candidate_found""#)
                 .unwrap()
-                .get_directive(),
+                .get_template(),
             Some("candidate_found"),
         );
     }
 
     #[tokio::test]
-    async fn a_catalogue_key_used_as_an_event_name_keeps_the_generic_acknowledgement() {
+    async fn a_catalogue_key_used_as_an_event_name_keeps_the_generic_response() {
         let (_dir, _werk, _id, ctx) = claimed_task();
 
         let outcome = Tool::from(EventTool)
@@ -299,7 +303,7 @@ mod tests {
             .await;
 
         assert_eq!(outcome.get_content(), "Event grep_failed published");
-        assert_eq!(outcome.get_directive(), None);
+        assert_eq!(outcome.get_template(), None);
     }
 
     #[tokio::test]
@@ -365,11 +369,9 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn task_finished_does_not_use_an_event_name_override() {
+    async fn task_finished_does_not_use_an_event_name_template() {
         let (_dir, werk, id, ctx) = claimed_task();
-        let mut directives = DirectiveStore::default();
-        directives.insert(Event::TASK_FINISHED, "keep working");
-        let ctx = ctx.directives(Arc::new(directives));
+        werk.set_template(Event::TASK_FINISHED, "keep working");
 
         let outcome = Tool::from(EventTool)
             .call(

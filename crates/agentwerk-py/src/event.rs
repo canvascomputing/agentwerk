@@ -316,8 +316,8 @@ impl PyEvent {
         Ok(slf)
     }
 
-    fn directive<'py>(mut slf: PyRefMut<'py, Self>, directive: &str) -> PyRefMut<'py, Self> {
-        slf.inner = slf.inner.clone().directive(directive);
+    fn template<'py>(mut slf: PyRefMut<'py, Self>, template: &str) -> PyRefMut<'py, Self> {
+        slf.inner = slf.inner.clone().template(template);
         slf
     }
 
@@ -335,8 +335,8 @@ impl PyEvent {
         self.inner.get_name()
     }
 
-    fn get_directive(&self) -> Option<&str> {
-        self.inner.get_directive()
+    fn get_template(&self) -> Option<&str> {
+        self.inner.get_template()
     }
 
     fn get_data<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {

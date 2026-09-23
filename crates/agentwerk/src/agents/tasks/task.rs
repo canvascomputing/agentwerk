@@ -440,7 +440,7 @@ impl AsUserMessage for Task {
         // Show the result shape up front: the finish tool validates against it, and
         // the role prompt alone is a thin thread for the model to hold.
         if let Some(schema) = &self.schema {
-            body.push_str(&crate::prompts::schema_directive(schema));
+            body.push_str(&crate::prompts::result_schema_template(schema));
         }
         Message::user(body)
     }

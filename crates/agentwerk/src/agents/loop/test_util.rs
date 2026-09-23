@@ -259,7 +259,7 @@ pub fn schema_retries_in(events: &[Event]) -> Vec<(u32, u32, String)> {
 }
 
 /// Concatenated text of every user-role message, one block per line.
-/// Reveals the corrective directive the loop injected on the prior turn.
+/// Reveals the corrective template the loop injected on the prior turn.
 pub fn user_text(messages: &[Message]) -> String {
     let mut out = String::new();
     for message in messages {

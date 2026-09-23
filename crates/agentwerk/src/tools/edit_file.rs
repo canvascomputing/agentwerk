@@ -1,7 +1,7 @@
 //! In-place find-and-replace on a file, so a model can modify existing code without restating the whole file.
 
 use super::tool::{Event, Tool, ToolContext};
-use crate::prompts::directives::{
+use crate::prompts::templates::{
     EDIT_FILE_OLD_STRING_NOT_FOUND, EDIT_FILE_OLD_STRING_NOT_UNIQUE, EDIT_FILE_READ_FAILED,
     EDIT_FILE_WRITE_FAILED,
 };
@@ -52,11 +52,11 @@ async fn run(args: EditFileArgs, ctx: ToolContext) -> Event {
     let content = match std::fs::read_to_string(&resolved) {
         Ok(c) => c,
         Err(e) => {
-            return Event::error(ctx.directives.render(
+            return Event::error(ctx.templates.render(
                 EDIT_FILE_READ_FAILED,
                 &[("path", &path), ("error", &e.to_string())],
             ))
-            .directive(EDIT_FILE_READ_FAILED);
+            .template(EDIT_FILE_READ_FAILED);
         }
     };
 
@@ -64,18 +64,18 @@ async fn run(args: EditFileArgs, ctx: ToolContext) -> Event {
 
     if count == 0 {
         return Event::error(
-            ctx.directives
+            ctx.templates
                 .render(EDIT_FILE_OLD_STRING_NOT_FOUND, &[("path", &path)]),
         )
-        .directive(EDIT_FILE_OLD_STRING_NOT_FOUND);
+        .template(EDIT_FILE_OLD_STRING_NOT_FOUND);
     }
 
     if count > 1 && !replace_all {
-        return Event::error(ctx.directives.render(
+        return Event::error(ctx.templates.render(
             EDIT_FILE_OLD_STRING_NOT_UNIQUE,
             &[("path", &path), ("count", &count.to_string())],
         ))
-        .directive(EDIT_FILE_OLD_STRING_NOT_UNIQUE);
+        .template(EDIT_FILE_OLD_STRING_NOT_UNIQUE);
     }
 
     let new_content = if replace_all {
@@ -86,11 +86,11 @@ async fn run(args: EditFileArgs, ctx: ToolContext) -> Event {
 
     match std::fs::write(&resolved, &new_content) {
         Ok(()) => Event::success(format!("Edited {path}: replaced {count} occurrence(s)")),
-        Err(e) => Event::error(ctx.directives.render(
+        Err(e) => Event::error(ctx.templates.render(
             EDIT_FILE_WRITE_FAILED,
             &[("path", &path), ("error", &e.to_string())],
         ))
-        .directive(EDIT_FILE_WRITE_FAILED),
+        .template(EDIT_FILE_WRITE_FAILED),
     }
 }
 

@@ -10,7 +10,6 @@ use crate::tools::{EventTool, FinishTool, KnowledgeTool, Tool};
 use super::knowledge::Knowledge;
 use super::query::Matcher;
 use super::tasks::{Task, Werk};
-use crate::prompts::directives::DirectiveStore;
 
 /// One counter per label, behind the ids [`Agent::get_id`] hands out.
 /// Numbering restarts at 1 for each label, so a host that creates the same
@@ -84,7 +83,6 @@ pub struct Agent {
     tools: Vec<Tool>,
     dir: PathBuf,
     knowledge: Arc<Knowledge>,
-    directives: Arc<DirectiveStore>,
 }
 
 impl Clone for Agent {
@@ -96,7 +94,6 @@ impl Clone for Agent {
             id: OnceLock::from(self.get_id().to_string()),
             label: self.label.clone(),
             interactive: self.interactive,
-            directives: Arc::clone(&self.directives),
             werk: self.werk.clone(),
             provider: self.provider.clone(),
             model: self.model.clone(),
@@ -135,7 +132,6 @@ impl Agent {
             tools: Vec::new(),
             dir: std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")),
             knowledge,
-            directives: Arc::new(DirectiveStore::default()),
         }
     }
 
@@ -210,6 +206,8 @@ impl Agent {
     ///
     /// Placeholders are filled just before each task's first request. All agents
     /// in the Werk share these values, which remain literal after insertion.
+    /// A key matching a bundled corrective or custom event template also
+    /// customizes that template when it is next needed.
     pub fn template(self, key: impl Into<String>, value: impl Into<String>) -> Self {
         self.werk
             .upgrade()
@@ -265,32 +263,6 @@ impl Agent {
     pub fn knowledge(mut self, store: &Arc<Knowledge>) -> Self {
         self.register_tool(KnowledgeTool(Arc::clone(store)));
         self.knowledge = Arc::clone(store);
-        self
-    }
-
-    /// Override one model-facing directive.
-    ///
-    /// The key is exact and may name a built-in directive or an application
-    /// event published through `EventTool`. Runtime placeholders such as
-    /// `{{ path }}` remain available in the replacement.
-    pub fn directive(mut self, key: impl Into<String>, template: impl Into<String>) -> Self {
-        Arc::make_mut(&mut self.directives).insert(key, template);
-        self
-    }
-
-    /// Override several model-facing directives.
-    ///
-    /// Later entries replace earlier entries carrying the same key.
-    pub fn directives<I, K, V>(mut self, overrides: I) -> Self
-    where
-        I: IntoIterator<Item = (K, V)>,
-        K: Into<String>,
-        V: Into<String>,
-    {
-        let directives = Arc::make_mut(&mut self.directives);
-        for (key, template) in overrides {
-            directives.insert(key, template);
-        }
         self
     }
 
@@ -363,10 +335,6 @@ impl Agent {
 
     pub(super) fn get_knowledge(&self) -> Arc<Knowledge> {
         Arc::clone(&self.knowledge)
-    }
-
-    pub(super) fn get_directives(&self) -> Arc<DirectiveStore> {
-        Arc::clone(&self.directives)
     }
 
     pub(super) fn get_dir(&self) -> PathBuf {
@@ -583,59 +551,6 @@ mod tests {
     fn a_clone_keeps_the_id_of_the_agent_it_came_from() {
         let agent = crate::Agent().label("cloned_id");
         assert_eq!(agent.clone().get_id(), agent.get_id());
-    }
-
-    #[test]
-    fn directive_and_directives_apply_overrides_in_order() {
-        let agent = crate::Agent()
-            .directive("cache_miss", "one")
-            .directives([("cache_miss", "two"), ("cache_hit", "three")]);
-        let directives = agent.get_directives();
-
-        assert_eq!(
-            directives.render_override("cache_miss", &[]).as_deref(),
-            Some("two"),
-        );
-        assert_eq!(
-            directives.render_override("cache_hit", &[]).as_deref(),
-            Some("three"),
-        );
-    }
-
-    #[test]
-    fn adding_an_override_to_a_clone_does_not_change_the_original() {
-        let original = crate::Agent().directive("cache_miss", "original");
-        let changed = original.clone().directive("cache_miss", "changed");
-
-        assert_eq!(
-            original
-                .get_directives()
-                .render_override("cache_miss", &[])
-                .as_deref(),
-            Some("original"),
-        );
-        assert_eq!(
-            changed
-                .get_directives()
-                .render_override("cache_miss", &[])
-                .as_deref(),
-            Some("changed"),
-        );
-    }
-
-    #[test]
-    fn agent_template_values_do_not_bind_directive_placeholders() {
-        let agent = crate::Agent()
-            .template("path", "src/lib.rs")
-            .directive("cache_miss", "Missing {{ path }}");
-
-        assert_eq!(
-            agent
-                .get_directives()
-                .render_override("cache_miss", &[])
-                .as_deref(),
-            Some("Missing {{ path }}"),
-        );
     }
 
     fn create_system_prompt(
@@ -882,6 +797,23 @@ mod tests {
             create_system_prompt(&agent, None, &Policy::default(), &Stats::new(), "T-1"),
             "Hello, Alice."
         );
+    }
+
+    #[test]
+    fn agent_templates_join_one_werk_without_overwriting_its_values() {
+        let werk = Werk::new();
+        werk.set_template("shared", "werk");
+        werk.add_agent(callable(
+            crate::Agent().templates([("shared", "first"), ("from_first", "one")]),
+        ));
+        werk.add_agent(callable(
+            crate::Agent().templates([("shared", "second"), ("from_second", "two")]),
+        ));
+
+        let values = werk.template_values();
+        assert_eq!(values["shared"], "werk");
+        assert_eq!(values["from_first"], "one");
+        assert_eq!(values["from_second"], "two");
     }
 
     #[test]

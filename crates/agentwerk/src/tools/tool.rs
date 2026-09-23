@@ -10,8 +10,8 @@ use serde_json::Value;
 
 use crate::agents::tasks::{Run, Werk};
 pub(crate) use crate::event::Event;
-use crate::prompts::directives::{
-    DirectiveStore, ARGUMENTS_REJECTED, TOOL_OUTPUT_EMPTY, TOOL_OUTPUT_OFFLOADED, TOOL_TIMED_OUT,
+use crate::prompts::templates::{
+    TemplateRenderer, ARGUMENTS_REJECTED, TOOL_OUTPUT_EMPTY, TOOL_OUTPUT_OFFLOADED, TOOL_TIMED_OUT,
 };
 use crate::providers::ContentBlock;
 use crate::schemas::Schema;
@@ -38,7 +38,7 @@ pub(crate) struct ToolContext {
     pub(crate) werk: Option<Arc<Werk>>,
     pub(crate) agent_id: Option<String>,
     pub(crate) task_id: Option<String>,
-    pub(crate) directives: Arc<DirectiveStore>,
+    pub(crate) templates: TemplateRenderer,
 }
 
 impl ToolContext {
@@ -49,7 +49,7 @@ impl ToolContext {
             werk: None,
             agent_id: None,
             task_id: None,
-            directives: Arc::new(DirectiveStore::default()),
+            templates: TemplateRenderer::default(),
         }
     }
 
@@ -59,6 +59,7 @@ impl ToolContext {
     }
 
     pub(crate) fn werk(mut self, werk: Arc<Werk>) -> Self {
+        self.templates = TemplateRenderer::new(Arc::clone(&werk));
         self.werk = Some(werk);
         self
     }
@@ -70,11 +71,6 @@ impl ToolContext {
 
     pub(crate) fn task_id(mut self, id: String) -> Self {
         self.task_id = Some(id);
-        self
-    }
-
-    pub(crate) fn directives(mut self, directives: Arc<DirectiveStore>) -> Self {
-        self.directives = directives;
         self
     }
 
@@ -111,16 +107,16 @@ impl Event {
     pub(crate) fn tool_timed_out(
         tool: &str,
         timeout: Duration,
-        directives: &DirectiveStore,
+        templates: &TemplateRenderer,
     ) -> Self {
-        Event::error(directives.render(
+        Event::error(templates.render(
             TOOL_TIMED_OUT,
             &[
                 ("tool", tool),
                 ("milliseconds", &timeout.as_millis().to_string()),
             ],
         ))
-        .directive(TOOL_TIMED_OUT)
+        .template(TOOL_TIMED_OUT)
     }
 
     /// The text returned to the model by a terminal tool-call event.
@@ -478,11 +474,11 @@ impl Tool {
                         self.get_name(),
                         &violations.to_string(),
                         Some(self.schema.get_raw_schema()),
-                        &ctx.directives,
+                        &ctx.templates,
                     ),
                     "schema_failed",
                 )
-                .directive(ARGUMENTS_REJECTED);
+                .template(ARGUMENTS_REJECTED);
             }
         };
         let timeout = self.timeout.resolve(&input);
@@ -490,7 +486,7 @@ impl Tool {
         let event = match timeout {
             Some(duration) => match tokio::time::timeout(duration, call).await {
                 Ok(event) => event,
-                Err(_) => Event::tool_timed_out(self.get_name(), duration, &ctx.directives),
+                Err(_) => Event::tool_timed_out(self.get_name(), duration, &ctx.templates),
             },
             None => call.await,
         };
@@ -626,7 +622,7 @@ fn cap_results(calls: &[ContentBlock], results: &mut [Event], ctx: &ToolContext)
         let ContentBlock::ToolUse { id, name, .. } = call else {
             continue;
         };
-        replace_empty_output(result, name, &ctx.directives);
+        replace_empty_output(result, name, &ctx.templates);
         cap_oversized_result(result, ctx, id, PER_TOOL_CAP);
     }
     cap_aggregate_outputs(calls, results, ctx, PER_TURN_CAP);
@@ -634,7 +630,7 @@ fn cap_results(calls: &[ContentBlock], results: &mut [Event], ctx: &ToolContext)
 
 /// Put a placeholder in place of an empty result, since empty content has upset
 /// LLM providers.
-fn replace_empty_output(result: &mut Event, tool_name: &str, directives: &DirectiveStore) {
+fn replace_empty_output(result: &mut Event, tool_name: &str, templates: &TemplateRenderer) {
     if result.name != Event::TOOL_CALL_FINISHED {
         return;
     }
@@ -642,7 +638,7 @@ fn replace_empty_output(result: &mut Event, tool_name: &str, directives: &Direct
         return;
     };
     if content.is_empty() {
-        *content = directives.render(TOOL_OUTPUT_EMPTY, &[("tool", tool_name)]);
+        *content = templates.render(TOOL_OUTPUT_EMPTY, &[("tool", tool_name)]);
     }
 }
 
@@ -724,7 +720,7 @@ fn write_out(content: &mut String, ctx: &ToolContext, call_id: &str) -> Option<P
     let output = persist_output(ctx, call_id, content)?;
     let preview = truncate_preview(content);
     let stub =
-        format_oversized_tool_result(content.len(), &output.display, preview, &ctx.directives);
+        format_oversized_tool_result(content.len(), &output.display, preview, &ctx.templates);
     *content = stub;
     Some(output.rel)
 }
@@ -756,11 +752,11 @@ fn format_oversized_tool_result(
     original_len: usize,
     path: &Path,
     preview: &str,
-    directives: &DirectiveStore,
+    templates: &TemplateRenderer,
 ) -> String {
-    // The tags stay out of the directive: `cap_aggregate_outputs` reads the
+    // The tags stay out of the message: `cap_aggregate_outputs` reads the
     // opening one to tell an already-stubbed result from a fresh one.
-    let body = directives.render(
+    let body = templates.render(
         TOOL_OUTPUT_OFFLOADED,
         &[
             ("size", &format_bytes(original_len)),
@@ -844,7 +840,7 @@ mod tests {
         let result = tool.invoke(serde_json::json!({}), &test_ctx()).await;
 
         assert_eq!(result.get_name(), Event::TOOL_CALL_FAILED);
-        assert_eq!(result.get_directive(), Some(TOOL_TIMED_OUT));
+        assert_eq!(result.get_template(), Some(TOOL_TIMED_OUT));
         assert_eq!(result.get_data()["kind"], "execution_failed");
         assert!(result.get_content().contains("slow"));
         assert!(result.get_content().contains("10ms"));
@@ -867,7 +863,7 @@ mod tests {
             .await;
 
         assert_eq!(result.get_name(), Event::TOOL_CALL_FAILED);
-        assert_eq!(result.get_directive(), Some(TOOL_TIMED_OUT));
+        assert_eq!(result.get_template(), Some(TOOL_TIMED_OUT));
         assert!(result
             .get_content()
             .contains("Tool `fetch` timed out after 10ms"));
@@ -904,7 +900,7 @@ mod tests {
         let result = tool.invoke(serde_json::json!({}), &test_ctx()).await;
 
         assert_eq!(result.get_name(), Event::TOOL_CALL_FAILED);
-        assert_eq!(result.get_directive(), Some(ARGUMENTS_REJECTED));
+        assert_eq!(result.get_template(), Some(ARGUMENTS_REJECTED));
     }
 
     #[test]
@@ -1679,7 +1675,7 @@ mod tests {
             1_048_576,
             &path,
             "preview-body",
-            &DirectiveStore::default(),
+            &TemplateRenderer::default(),
         );
         assert!(stub.starts_with("<persisted-output>"));
         assert!(stub.contains("Output too large (1.0 MB)."));
@@ -1725,14 +1721,14 @@ mod tests {
     #[test]
     fn replace_empty_output_substitutes_placeholder() {
         let mut result = Event::success("");
-        replace_empty_output(&mut result, "bash", &DirectiveStore::default());
+        replace_empty_output(&mut result, "bash", &TemplateRenderer::default());
         assert_eq!(result.get_content(), "(bash completed with no output)");
     }
 
     #[test]
     fn replace_empty_output_passes_non_empty_through() {
         let mut result = Event::success("hello");
-        replace_empty_output(&mut result, "bash", &DirectiveStore::default());
+        replace_empty_output(&mut result, "bash", &TemplateRenderer::default());
         assert_eq!(result.get_content(), "hello");
     }
 
@@ -1741,7 +1737,7 @@ mod tests {
         // The guard reads the variant, not the content, so even an empty
         // failure message is left as the tool reported it.
         let mut result = Event::error("");
-        replace_empty_output(&mut result, "bash", &DirectiveStore::default());
+        replace_empty_output(&mut result, "bash", &TemplateRenderer::default());
         assert_eq!(result.get_content(), "");
     }
 
