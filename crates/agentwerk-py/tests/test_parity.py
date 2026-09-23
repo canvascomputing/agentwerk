@@ -153,6 +153,7 @@ def test_every_matcher_style_parameter_is_named_query():
 
     condition = {method.name: method for method in stub_methods("Condition")}
     assert stub_parameters(condition["__init__"]) == ["query"]
+    assert stub_parameters(condition["times"]) == ["times"]
 
 
 def test_the_stub_declares_nothing_the_module_lacks():

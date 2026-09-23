@@ -667,7 +667,7 @@ werk.on_result(hand_to_report)
 
 #### Conditions
 
-Use a condition to create follow-up tasks or add agents when an AQL query matches:
+Use a condition to create follow-up tasks or add agents when an AQL query matches. It activates once per run by default. Call `.times(3)` to set a finite count, or `.times(None)` or `.times(0)` to activate for every match. Counts reset at the start of each run. A condition sees the event being handled when a synchronous handler registers it, but does not replay events completed before registration.
 
 ```python
 from agentwerk import Condition

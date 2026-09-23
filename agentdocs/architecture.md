@@ -47,12 +47,12 @@ The invariants that govern orchestration, tools, providers, events, and durable 
 
 ## Conditions
 
-**Release condition actions once per run from current-process AQL matches.**
+**Release condition actions up to their per-run trigger count from live AQL matches.**
 
-- Keep condition definitions, event history, and firing state in memory; loading a Werk never restores them or makes loaded records eligible.
-- Test a new condition against non-stream events already emitted by that Werk, then test later events against their current task, event, or joined row. A text chunk is eligible only while it is emitted.
-- Mark all matches before releasing their locks, then add unregistered agents before tasks so concurrent and recursive events cannot fire one condition twice.
-- Re-arm conditions and clear their event history on each actual start. Never count an unmet condition as pending work.
+- Keep condition definitions and remaining trigger counts in memory; loading a Werk never restores them or makes loaded records eligible.
+- Test events against conditions registered by the time condition evaluation begins. A condition added by a synchronous handler sees that handler's event; completed earlier events are never replayed.
+- Claim finite trigger capacity before releasing the registry lock, then add unregistered agents before tasks. Recursive matches consume finite capacity; an unlimited condition that reproduces its match can recurse without bound.
+- Restore configured trigger counts on each actual start. Never count an unmet condition as pending work.
 
 ## Completion
 

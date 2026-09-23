@@ -10,11 +10,14 @@ import pytest
 import agentwerk as aw
 
 
-def test_condition_registered_after_matching_activity_releases_a_task(werk):
-    werk.add_task(aw.Task("write", label="draft"))
+def test_condition_registered_after_matching_activity_waits_for_the_next_event(werk):
+    draft = werk.add_task(aw.Task("write", label="draft"))
     werk.add_condition(
         aw.Condition("task.label = draft").task(aw.Task("edit", label="edit"))
     )
+    assert werk.find_tasks("edit") == []
+
+    werk.emit_event(aw.Event("draft_changed").task_id(draft))
 
     assert [task.get_task() for task in werk.find_tasks("edit")] == ["edit"]
 
@@ -37,6 +40,48 @@ def test_condition_accepts_a_compiled_query(werk):
     werk.emit_event(aw.Event("ready"))
 
     assert [task.get_task() for task in werk.get_tasks()] == ["edit"]
+
+
+def test_condition_fires_up_to_its_configured_count(werk):
+    werk.add_condition(aw.Condition("event.name = ready").times(3).task("work"))
+
+    for _ in range(4):
+        werk.emit_event(aw.Event("ready"))
+
+    assert [task.get_task() for task in werk.get_tasks()] == ["work"] * 3
+
+
+async def test_condition_trigger_count_resets_for_the_next_run(werk):
+    werk.add_condition(aw.Condition("event.name = ready").times(2).task("work"))
+
+    werk.start()
+    for _ in range(3):
+        werk.emit_event(aw.Event("ready"))
+    assert [task.get_task() for task in werk.get_tasks()] == ["work"] * 2
+    werk.cancel()
+    await werk.finish()
+
+    werk.start()
+    for _ in range(3):
+        werk.emit_event(aw.Event("ready"))
+    assert [task.get_task() for task in werk.get_tasks()] == ["work"] * 4
+    werk.cancel()
+    await werk.finish()
+
+
+@pytest.mark.parametrize("times", [None, 0])
+def test_none_and_zero_allow_every_matching_event(werk, times):
+    werk.add_condition(aw.Condition("event.name = ready").times(times).task("work"))
+
+    for _ in range(3):
+        werk.emit_event(aw.Event("ready"))
+
+    assert [task.get_task() for task in werk.get_tasks()] == ["work"] * 3
+
+
+def test_condition_rejects_a_negative_trigger_count():
+    with pytest.raises(OverflowError):
+        aw.Condition("event.name = ready").times(-1)
 
 
 def test_condition_rejects_an_unsupported_query_type():
