@@ -228,7 +228,7 @@ fn coder_agent(repo: &Path) -> Agent {
     .tool(WriteFileTool)
     .tool(git_tool())
     .tool(
-        CommandTool::new("cargo")
+        CommandTool("cargo")
             .allow("cargo fmt*")
             .allow("cargo check*")
             .allow("cargo test*"),
@@ -244,9 +244,7 @@ fn read_only_agent(agent: Agent) -> Agent {
 }
 
 fn git_tool() -> CommandTool {
-    CommandTool::new("git")
-        .allow("git status*")
-        .allow("git diff*")
+    CommandTool("git").allow("git status*").allow("git diff*")
 }
 
 fn coder_condition() -> Condition {

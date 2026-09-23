@@ -39,7 +39,7 @@
 //!     werk.add_agent(
 //!         Agent::from_env()
 //!             .label("research")
-//!             .tool(FetchTool::new()),
+//!             .tool(FetchTool),
 //!     );
 //! }
 //!

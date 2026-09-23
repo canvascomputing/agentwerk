@@ -816,9 +816,9 @@ mod tests {
             crate::tools::GlobTool.into(),
             crate::tools::GrepTool.into(),
             crate::tools::ListDirectoryTool.into(),
-            crate::tools::FetchTool::new().into(),
-            crate::tools::KnowledgeTool::new(store).into(),
-            crate::tools::CommandTool::new("git").allow("git *").into(),
+            crate::tools::FetchTool.into(),
+            crate::tools::KnowledgeTool(store).into(),
+            crate::tools::CommandTool("git").allow("git *").into(),
             crate::tools::EventTool.into(),
             crate::tools::FinishTool.into(),
             crate::tools::TaskTool.into(),
@@ -847,7 +847,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_fetch_timeout_uses_the_shared_tool_event() {
-        let tool = Tool::from(crate::tools::FetchTool::new())
+        let tool = Tool::from(crate::tools::FetchTool)
             .timeout(Duration::from_millis(10))
             .handler(|_: Value| async {
                 tokio::time::sleep(Duration::from_millis(100)).await;
@@ -907,9 +907,7 @@ mod tests {
         let empty = serde_json::json!({});
         assert_eq!(Tool::new("custom").timeout.resolve(&empty), None);
         assert_eq!(
-            Tool::from(crate::tools::FetchTool::new())
-                .timeout
-                .resolve(&empty),
+            Tool::from(crate::tools::FetchTool).timeout.resolve(&empty),
             Some(Duration::from_secs(60))
         );
         assert_eq!(
@@ -924,7 +922,7 @@ mod tests {
             Some(Duration::from_secs(5))
         );
 
-        let command = Tool::from(crate::tools::CommandTool::new("echo"));
+        let command = Tool::from(crate::tools::CommandTool("echo"));
         assert_eq!(
             command.timeout.resolve(&empty),
             Some(Duration::from_secs(120))
@@ -947,16 +945,16 @@ mod tests {
     fn fetch_timeout_overrides_its_default_before_conversion() {
         let input = serde_json::json!({});
         let before_impersonation = Tool::from(
-            crate::tools::FetchTool::new()
+            crate::tools::FetchTool
                 .timeout(Duration::from_secs(15))
                 .impersonate(),
         );
         let after_impersonation = Tool::from(
-            crate::tools::FetchTool::new()
+            crate::tools::FetchTool
                 .impersonate()
                 .timeout(Duration::from_secs(30)),
         );
-        let unlimited = Tool::from(crate::tools::FetchTool::new().timeout(Duration::ZERO));
+        let unlimited = Tool::from(crate::tools::FetchTool.timeout(Duration::ZERO));
 
         assert_eq!(
             before_impersonation.timeout.resolve(&input),

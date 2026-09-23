@@ -246,7 +246,7 @@ impl Run {
 ///     werk.add_agent(
 ///         Agent::from_env()
 ///             .label("research")
-///             .tool(FetchTool::new()),
+///             .tool(FetchTool),
 ///     );
 /// }
 /// werk.add_task(Task::labeled("research", "Summarize https://canvascomputing.org"));

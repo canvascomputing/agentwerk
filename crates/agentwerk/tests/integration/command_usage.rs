@@ -27,9 +27,9 @@ async fn command_tools_produce_the_schema_bound_result(
         "required": ["files", "line_count"]
     }))?;
 
-    let ls = CommandTool::new("ls").allow("ls*").concurrent(true);
-    let cat = CommandTool::new("cat").allow("cat *").concurrent(true);
-    let wc = CommandTool::new("wc").allow("wc *").concurrent(true);
+    let ls = CommandTool("ls").allow("ls*").concurrent(true);
+    let cat = CommandTool("cat").allow("cat *").concurrent(true);
+    let wc = CommandTool("wc").allow("wc *").concurrent(true);
 
     let werk = Werk::new();
 

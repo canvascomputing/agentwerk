@@ -351,7 +351,7 @@ use agentwerk::tools::{CommandTool, GrepTool, ReadFileTool};
 let agent = Agent::new()
     .tool(ReadFileTool)
     .tool(GrepTool)
-    .tool(CommandTool::new("git").allow("git *"));
+    .tool(CommandTool("git").allow("git *"));
 ```
 
 <details>
@@ -397,8 +397,8 @@ Call `timeout(duration)` to override a tool's limit. Use zero to disable it.
 use std::time::Duration;
 use agentwerk::tools::FetchTool;
 
-let quick_fetch = FetchTool::new().timeout(Duration::from_secs(15));
-let patient_fetch = FetchTool::new().timeout(Duration::ZERO);
+let quick_fetch = FetchTool.timeout(Duration::from_secs(15));
+let patient_fetch = FetchTool.timeout(Duration::ZERO);
 ```
 
 <details>
@@ -450,7 +450,7 @@ Use [Directives](#directives) to customize the acknowledgement sent to the model
 Use `CommandTool` to allow or deny specific commands and flags.
 
 ```rust
-let git = CommandTool::new("git")
+let git = CommandTool("git")
     .allow("git status")
     .allow("git log *")
     .deny("git push*")
@@ -460,7 +460,7 @@ let git = CommandTool::new("git")
 With an `allow_flag` set, a command carrying any other flag is refused:
 
 ```rust
-let cargo = CommandTool::new("cargo")
+let cargo = CommandTool("cargo")
     .allow("cargo test*")
     .allow_flag("--all-features");
 ```
@@ -470,7 +470,7 @@ let cargo = CommandTool::new("cargo")
 Use `FetchTool` to fetch a URL as text. It sends the user agent `agentwerk/<version>`. `impersonate()` uses a browser's headers and HTTP/2 settings.
 
 ```rust
-let web = FetchTool::new().impersonate();
+let web = FetchTool.impersonate();
 ```
 
 #### Custom tools
