@@ -80,7 +80,7 @@ async fn traces_three_hop_call_path() -> std::result::Result<(), Box<dyn std::er
         max_turns: Some(15),
         ..Default::default()
     });
-    let agent = Agent::new()
+    let agent = Agent()
         .provider(provider)
         .model(&model)
         .dir(root)

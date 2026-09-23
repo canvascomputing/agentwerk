@@ -24,7 +24,7 @@ async fn replaces_substring_in_place() -> std::result::Result<(), Box<dyn std::e
         max_turns: Some(10),
         ..Default::default()
     });
-    let agent = Agent::new()
+    let agent = Agent()
         .provider(provider)
         .model(&model)
         .dir(root)

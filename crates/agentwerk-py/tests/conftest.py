@@ -128,7 +128,7 @@ def pytest_collection_modifyitems(config, items):
 @pytest.fixture
 def werk(tmp_path):
     """Provide an empty Werk with an isolated session directory."""
-    return aw.Werk().set_dir(str(tmp_path))
+    return aw.Werk(str(tmp_path))
 
 
 @pytest.fixture

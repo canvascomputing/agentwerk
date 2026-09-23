@@ -240,8 +240,8 @@ impl Run {
 /// use agentwerk::{Agent, Task, Werk};
 /// use agentwerk::tools::FetchTool;
 ///
-/// # async fn run() {
-/// let werk = Werk();
+/// # async fn run() -> Result<(), Box<dyn std::error::Error>> {
+/// let werk = Werk(".agentwerk")?;
 /// for _ in 0..4 {
 ///     werk.add_agent(
 ///         Agent::from_env()
@@ -251,6 +251,7 @@ impl Run {
 /// }
 /// werk.add_task(Task("Summarize https://canvascomputing.org").label("research"));
 /// werk.finish().await;
+/// # Ok(())
 /// # }
 /// ```
 ///
@@ -258,14 +259,14 @@ impl Run {
 ///
 /// A `Werk` writes every task, reply, statistic, and lifecycle
 /// event to its working directory (default `./.agentwerk`). That directory is
-/// the session: stop the process, and `Werk::load(dir)` reopens it
+/// the session: stop the process, and `Werk(dir)` reopens it
 /// from disk and continues from where it stopped.
 ///
 /// ```no_run
 /// use agentwerk::Werk;
 ///
 /// # fn run() -> Result<(), Box<dyn std::error::Error>> {
-/// let werk = Werk::load(".agentwerk")?;
+/// let werk = Werk(".agentwerk")?;
 /// // Re-register the agents, then call .start() or .finish().await.
 /// # let _ = werk;
 /// # Ok(())
@@ -313,16 +314,22 @@ pub struct Werk {
     /// life of the Werk, so one registered per call would grow without bound
     /// in a host that awaits in a loop.
     pub(super) event_stream: broadcast::Sender<Event>,
-    pub(super) dir: Mutex<PathBuf>,
+    pub(super) dir: PathBuf,
     pub(super) events_lock: Mutex<()>,
     /// The main loop, held so `start()` can join a previous one before starting
     /// the next.
     pub(super) join_handle: Mutex<Option<JoinHandle<()>>>,
     /// Next `t-<N>` ID to hand out, or `None` until it is known.
-    /// `load()` seeds it from the tasks it just read off disk. `new()` leaves
+    /// `Werk(path)` seeds it from the tasks it just read off disk. `new()` leaves
     /// it `None` and the first `insert()` scans for the highest existing ID,
     /// since `new()` never reads the directory itself.
     pub(super) next_task_id: Mutex<Option<u64>>,
+}
+
+/// Continue a session from `werk_dir`, or start one there when it is empty.
+#[allow(non_snake_case)]
+pub fn Werk(werk_dir: impl Into<PathBuf>) -> io::Result<Arc<Werk>> {
+    Werk::open(werk_dir)
 }
 
 impl Werk {
@@ -342,7 +349,7 @@ impl Werk {
             event_handlers: Mutex::new(Vec::new()),
             awaited_events: AwaitedEvents::default(),
             event_stream: broadcast::Sender::new(EVENT_STREAM_CAPACITY),
-            dir: Mutex::new(PathBuf::from(".agentwerk")),
+            dir: PathBuf::from(".agentwerk"),
             events_lock: Mutex::new(()),
             join_handle: Mutex::new(None),
             next_task_id: Mutex::new(None),
@@ -364,7 +371,7 @@ impl Werk {
     /// it, rather than handing back a store quietly missing that task. Files
     /// written by an older version are the usual cause: delete the session
     /// directory, or migrate it, and load again.
-    pub fn load(werk_dir: impl Into<PathBuf>) -> io::Result<Arc<Self>> {
+    fn open(werk_dir: impl Into<PathBuf>) -> io::Result<Arc<Self>> {
         let werk_dir = werk_dir.into();
         std::fs::create_dir_all(werk_dir.join("tasks"))?;
 
@@ -430,7 +437,7 @@ impl Werk {
             event_handlers: Mutex::new(Vec::new()),
             awaited_events: AwaitedEvents::default(),
             event_stream: broadcast::Sender::new(EVENT_STREAM_CAPACITY),
-            dir: Mutex::new(werk_dir),
+            dir: werk_dir,
             events_lock: Mutex::new(()),
             join_handle: Mutex::new(None),
             next_task_id: Mutex::new(Some(next_id)),
@@ -466,12 +473,15 @@ impl Werk {
     ///
     /// ```no_run
     /// # use agentwerk::{Event, Task, Werk};
-    /// let werk = Werk();
+    /// # fn run() -> Result<(), Box<dyn std::error::Error>> {
+    /// let werk = Werk(".agentwerk")?;
     /// werk.on_event(|werk, event| {
     ///     if event.get_name() == Event::TASK_FAILED {
     ///         werk.add_task(Task("Look into the failure.").label("triage"));
     ///     }
     /// });
+    /// # Ok(())
+    /// # }
     /// ```
     pub fn on_event(&self, handler: impl Fn(&Arc<Werk>, &Event) + Send + Sync + 'static) -> &Self {
         self.event_handlers.lock().unwrap().push(Arc::new(handler));
@@ -497,12 +507,13 @@ impl Werk {
     ///
     /// ```no_run
     /// # use agentwerk::Werk;
-    /// # async fn run() {
-    /// let werk = Werk();
+    /// # async fn run() -> Result<(), Box<dyn std::error::Error>> {
+    /// let werk = Werk(".agentwerk")?;
     /// werk.on_event_async(|_, event| async move {
     ///     println!("{}", event.get_name());
     /// });
     /// werk.finish().await;
+    /// # Ok(())
     /// # }
     /// ```
     pub fn on_event_async<F, Fut>(&self, handler: F) -> &Self
@@ -542,12 +553,15 @@ impl Werk {
     ///
     /// ```no_run
     /// # use agentwerk::{Task, Werk};
-    /// let werk = Werk();
+    /// # fn run() -> Result<(), Box<dyn std::error::Error>> {
+    /// let werk = Werk(".agentwerk")?;
     /// werk.on_result(|werk, done, result| {
     ///     if result["needs_review"] == true {
     ///         werk.add_task(Task(done.get_task().clone()).label("review"));
     ///     }
     /// });
+    /// # Ok(())
+    /// # }
     /// ```
     pub fn on_result<F>(&self, handler: F) -> &Self
     where
@@ -578,12 +592,13 @@ impl Werk {
     ///
     /// ```no_run
     /// # use agentwerk::Werk;
-    /// # async fn run() {
-    /// let werk = Werk();
+    /// # async fn run() -> Result<(), Box<dyn std::error::Error>> {
+    /// let werk = Werk(".agentwerk")?;
     /// werk.on_result_async(|_, task, result| async move {
     ///     println!("{} produced {result}", task.get_id());
     /// });
     /// werk.finish().await;
+    /// # Ok(())
     /// # }
     /// ```
     pub fn on_result_async<F, Fut>(&self, handler: F) -> &Self
@@ -867,18 +882,9 @@ impl Werk {
         self.templates.lock().unwrap().clone()
     }
 
-    /// Define where a session is stored, `./.agentwerk` by default.
-    ///
-    /// Loading knowledge from `<dir>/knowledge` keeps its pages beside the
-    /// session.
-    pub fn set_dir(&self, dir: impl Into<PathBuf>) -> &Self {
-        *self.dir.lock().unwrap() = dir.into();
-        self
-    }
-
     /// Get the session directory.
     pub fn get_dir(&self) -> PathBuf {
-        self.dir.lock().unwrap().clone()
+        self.dir.clone()
     }
 
     /// Where task `id`'s result is stored. Named for agents, which read a
@@ -1044,8 +1050,11 @@ impl Werk {
     ///
     /// ```no_run
     /// # use agentwerk::Werk;
-    /// let werk = Werk();
+    /// # fn run() -> Result<(), Box<dyn std::error::Error>> {
+    /// let werk = Werk(".agentwerk")?;
     /// werk.find_events("event.name = tool_call_failed AND event.created > -1h");
+    /// # Ok(())
+    /// # }
     /// ```
     ///
     /// Read from the session's `events.jsonl`, so this answers for a run that
@@ -1135,8 +1144,11 @@ impl Werk {
     ///
     /// ```no_run
     /// # use agentwerk::Werk;
-    /// let werk = Werk();
+    /// # fn run() -> Result<(), Box<dyn std::error::Error>> {
+    /// let werk = Werk(".agentwerk")?;
     /// werk.cancel_tasks("scan");
+    /// # Ok(())
+    /// # }
     /// ```
     pub fn cancel_tasks(&self, query: impl Matcher<Task>) -> &Self {
         let query = query.into_query().task_if_originless();
@@ -1404,11 +1416,12 @@ impl Werk {
     ///
     /// ```no_run
     /// # use agentwerk::Werk;
-    /// # async fn run() {
-    /// let werk = Werk();
+    /// # async fn run() -> Result<(), Box<dyn std::error::Error>> {
+    /// let werk = Werk(".agentwerk")?;
     /// for finding in werk.finish_tasks("research").await {
     ///     println!("{finding}");
     /// }
+    /// # Ok(())
     /// # }
     /// ```
     pub async fn finish_tasks(&self, query: impl Matcher<Task>) -> Vec<serde_json::Value> {
@@ -1482,11 +1495,12 @@ impl Werk {
     ///
     /// ```no_run
     /// # use agentwerk::Werk;
-    /// # async fn run() {
-    /// let werk = Werk();
+    /// # async fn run() -> Result<(), Box<dyn std::error::Error>> {
+    /// let werk = Werk(".agentwerk")?;
     /// for finding in werk.finish().await {
     ///     println!("{finding}");
     /// }
+    /// # Ok(())
     /// # }
     /// ```
     pub async fn finish(&self) -> Vec<serde_json::Value> {
@@ -1501,11 +1515,12 @@ impl Werk {
     ///
     /// ```no_run
     /// # use agentwerk::Werk;
-    /// # async fn run() {
-    /// let werk = Werk();
+    /// # async fn run() -> Result<(), Box<dyn std::error::Error>> {
+    /// let werk = Werk(".agentwerk")?;
     /// if let Some(answer) = werk.finish_task("ORDER BY task.created DESC").await {
     ///     println!("{answer}");
     /// }
+    /// # Ok(())
     /// # }
     /// ```
     pub async fn finish_task(&self, query: impl Matcher<Task>) -> Option<serde_json::Value> {
@@ -1558,8 +1573,11 @@ impl Werk {
     ///
     /// ```no_run
     /// # use agentwerk::Werk;
-    /// let werk = Werk();
+    /// # fn run() -> Result<(), Box<dyn std::error::Error>> {
+    /// let werk = Werk(".agentwerk")?;
     /// let scans = werk.find_results("scan");
+    /// # Ok(())
+    /// # }
     /// ```
     pub fn find_results(&self, query: impl Matcher<Task>) -> Vec<serde_json::Value> {
         self.result_tasks(query)
@@ -1620,7 +1638,7 @@ mod tests {
         assert!(werk.find_tasks("edit").is_empty());
 
         werk.add_condition(
-            Condition::new("task.label = draft").task(crate::Task("edit").label("edit")),
+            crate::Condition("task.label = draft").task(crate::Task("edit").label("edit")),
         );
         assert!(werk.find_tasks("edit").is_empty());
 
@@ -1633,7 +1651,7 @@ mod tests {
     fn a_task_condition_is_checked_when_the_task_event_is_emitted() {
         let (werk, _tmp) = test_werk();
         werk.add_condition(
-            Condition::new("task.label = draft").task(crate::Task("matched").label("task-match")),
+            crate::Condition("task.label = draft").task(crate::Task("matched").label("task-match")),
         );
         assert!(werk.find_tasks("task-match").is_empty());
 
@@ -1646,7 +1664,8 @@ mod tests {
     fn an_event_condition_is_checked_when_the_event_is_emitted() {
         let (werk, _tmp) = test_werk();
         werk.add_condition(
-            Condition::new("event.name = ready").task(crate::Task("matched").label("event-match")),
+            crate::Condition("event.name = ready")
+                .task(crate::Task("matched").label("event-match")),
         );
         assert!(werk.find_tasks("event-match").is_empty());
 
@@ -1676,7 +1695,7 @@ mod tests {
         werk.on_event(|werk, event| {
             if event.get_name() == "ready" {
                 werk.add_condition(
-                    Condition::new("event.name = ready")
+                    crate::Condition("event.name = ready")
                         .task(crate::Task("work").label("released")),
                 );
             }
@@ -1708,9 +1727,9 @@ mod tests {
         let draft = werk.add_task(crate::Task("write").label("draft"));
         drop(werk);
 
-        let loaded = Werk::load(tmp.path()).unwrap();
+        let loaded = Werk(tmp.path()).unwrap();
         loaded.add_condition(
-            Condition::new("task.label = draft").task(crate::Task("edit").label("edit")),
+            crate::Condition("task.label = draft").task(crate::Task("edit").label("edit")),
         );
         assert!(loaded.find_tasks("edit").is_empty());
 
@@ -1722,11 +1741,11 @@ mod tests {
     fn registered_conditions_are_not_restored_with_a_session() {
         let (werk, tmp) = test_werk();
         werk.add_condition(
-            Condition::new("event.name = ready").task(crate::Task("work").label("released")),
+            crate::Condition("event.name = ready").task(crate::Task("work").label("released")),
         );
         drop(werk);
 
-        let loaded = Werk::load(tmp.path()).unwrap();
+        let loaded = Werk(tmp.path()).unwrap();
         loaded.emit_event(Event::new("ready"));
 
         assert!(loaded.find_tasks("released").is_empty());
@@ -1796,7 +1815,8 @@ mod tests {
     fn task_events_created_by_an_action_cannot_retrigger_the_condition() {
         let (werk, _tmp) = test_werk();
         werk.add_condition(
-            Condition::new("event.name = task_created").task(crate::Task("work").label("released")),
+            crate::Condition("event.name = task_created")
+                .task(crate::Task("work").label("released")),
         );
 
         werk.add_task("trigger");
@@ -1867,7 +1887,7 @@ mod tests {
     async fn a_run_started_condition_releases_work_into_the_starting_run() {
         let (werk, _tmp) = test_werk();
         werk.add_condition(
-            Condition::new("event.name = run_started").task(crate::Task("work").label("startup")),
+            crate::Condition("event.name = run_started").task(crate::Task("work").label("startup")),
         );
         assert!(werk.find_tasks("startup").is_empty());
 
@@ -1882,7 +1902,7 @@ mod tests {
     async fn a_run_finished_condition_queues_work_for_the_next_run() {
         let (werk, _tmp) = test_werk();
         werk.add_condition(
-            Condition::new("event.name = run_finished")
+            crate::Condition("event.name = run_finished")
                 .task(crate::Task("work").label("after-run")),
         );
         assert!(werk.find_tasks("after-run").is_empty());
@@ -2748,8 +2768,7 @@ mod tests {
     #[test]
     fn a_named_event_round_trips_through_the_log_and_aql() {
         let dir = crate::test_util::TempDir::new().unwrap();
-        let werk = Werk::new();
-        werk.set_dir(dir.path().to_path_buf());
+        let werk = Werk(dir.path().to_path_buf()).unwrap();
         werk.emit_event(
             Event::new("Document Indexed").data(serde_json::json!({ "documents": 42 })),
         );
@@ -2764,7 +2783,7 @@ mod tests {
 
         drop(werk);
 
-        let resumed = Werk::load(dir.path()).unwrap();
+        let resumed = Werk(dir.path()).unwrap();
         let found = resumed
             .find_event(r#"event.name = "Document Indexed""#)
             .unwrap();
@@ -2914,9 +2933,51 @@ mod tests {
     }
 
     #[test]
-    fn get_dir_reads_back_the_configured_directory() {
+    fn callable_constructor_opens_an_empty_directory() {
         let (werk, tmp) = test_werk();
         assert_eq!(werk.get_dir(), tmp.path());
+        assert!(tmp.path().join("tasks").is_dir());
+        assert!(werk.get_tasks().is_empty());
+    }
+
+    #[test]
+    fn callable_constructor_creates_a_missing_directory() {
+        let root = crate::test_util::TempDir::new().unwrap();
+        let session = root.path().join("missing");
+
+        let werk = Werk(&session).unwrap();
+
+        assert_eq!(werk.get_dir(), session);
+        assert!(werk.get_dir().join("tasks").is_dir());
+    }
+
+    #[test]
+    fn callable_constructor_rejects_a_malformed_persisted_task() {
+        let root = crate::test_util::TempDir::new().unwrap();
+        let task_dir = root.path().join("tasks").join("t-1");
+        std::fs::create_dir_all(&task_dir).unwrap();
+        std::fs::write(task_dir.join("task.json"), "not json").unwrap();
+
+        let error = Werk(root.path()).err().expect("malformed task must fail");
+
+        assert!(error.to_string().contains("task t-1 could not be read"));
+    }
+
+    #[test]
+    fn callable_constructor_reports_directory_creation_failures() {
+        let root = crate::test_util::TempDir::new().unwrap();
+        let file = root.path().join("not-a-directory");
+        std::fs::write(&file, "occupied").unwrap();
+
+        assert!(Werk(&file).is_err());
+    }
+
+    #[test]
+    fn new_keeps_the_fresh_default_directory() {
+        let werk = Werk::new();
+
+        assert_eq!(werk.get_dir(), std::path::Path::new(".agentwerk"));
+        assert!(werk.get_tasks().is_empty());
     }
 
     #[test]
@@ -3163,8 +3224,7 @@ mod tests {
     #[test]
     fn the_terminal_task_failed_is_not_recorded_as_an_error() {
         let dir = crate::test_util::TempDir::new().unwrap();
-        let werk = Werk::new();
-        werk.set_dir(dir.path().to_path_buf());
+        let werk = Werk(dir.path().to_path_buf()).unwrap();
         let id = werk.add_task("work");
         werk.set_task_failed(&id).unwrap();
         assert!(werk.get_task(&id).unwrap().errors.is_empty());
@@ -3172,35 +3232,33 @@ mod tests {
         // The log carries `task_failed` either way, so a resumed session that
         // read it back as a failure would disagree with the run that wrote it.
         drop(werk);
-        let resumed = Werk::load(dir.path()).unwrap();
+        let resumed = Werk(dir.path()).unwrap();
         assert!(resumed.get_task(&id).unwrap().errors.is_empty());
     }
 
     #[test]
     fn a_failure_naming_a_task_the_directory_lost_is_skipped() {
         let dir = crate::test_util::TempDir::new().unwrap();
-        let original = Werk::new();
-        original.set_dir(dir.path().to_path_buf());
+        let original = Werk(dir.path().to_path_buf()).unwrap();
         let id = original.add_task("work");
         emit_event(&original, &id, "agent", tool_call_failed("boom"));
         drop(original);
         std::fs::remove_dir_all(dir.path().join("tasks").join(&id)).unwrap();
 
-        let resumed = Werk::load(dir.path()).unwrap();
+        let resumed = Werk(dir.path()).unwrap();
         assert!(resumed.get_task(&id).is_none());
         assert_eq!(resumed.get_input_tokens(), 0);
     }
 
     #[test]
-    fn failures_round_trip_through_load() {
+    fn failures_round_trip_through_reopening() {
         let dir = crate::test_util::TempDir::new().unwrap();
-        let original = Werk::new();
-        original.set_dir(dir.path().to_path_buf());
+        let original = Werk(dir.path().to_path_buf()).unwrap();
         let id = original.add_task("work");
         emit_event(&original, &id, "agent", tool_call_failed("boom"));
         drop(original);
 
-        let resumed = Werk::load(dir.path()).unwrap();
+        let resumed = Werk(dir.path()).unwrap();
         let task = resumed.get_task(&id).unwrap();
         assert_eq!(task.errors.len(), 1);
         assert_eq!(task.errors[0].get_name(), "tool_call_failed");

@@ -217,7 +217,7 @@ APIs: [Tasks](API.md#tasks), [Templates](API.md#templates), [Schemas](API.md#sch
 Assign both agents a shared `Knowledge` base. The researcher records sourced findings there, and the writer uses that evidence to produce the report.
 
 ```python
-knowledge = Knowledge.load("./research")
+knowledge = Knowledge("./research")
 
 researcher.knowledge(knowledge)
 writer.knowledge(knowledge)
@@ -419,8 +419,7 @@ A condition starts the coder with the saved plan as soon as the planner finishes
 Store the session in `./session` so you can stop the program and continue the same plan and coder conversation later.
 
 ```python
-werk = Werk()
-werk.set_dir("./session")
+werk = Werk("./session")
 
 coder_task = Task(
     "Implement this plan:\n\n{{ result: plan }}",

@@ -167,7 +167,7 @@ impl Werk {
     /// ```no_run
     /// # use agentwerk::Werk;
     /// # fn run() -> Result<(), Box<dyn std::error::Error>> {
-    /// let werk = Werk();
+    /// let werk = Werk(".agentwerk")?;
     /// let id = werk.add_task("Look up the cached answer.");
     /// werk.set_task_finished(&id, "42")?;
     /// # Ok(())
@@ -310,7 +310,8 @@ impl Werk {
     /// use agentwerk::Event;
     /// use agentwerk::agents::tasks::{Reply, ReplyContent};
     ///
-    /// let werk = Werk();
+    /// # fn run() -> Result<(), Box<dyn std::error::Error>> {
+    /// let werk = Werk(".agentwerk")?;
     /// werk.on_event(|werk, event| {
     ///     if event.get_name() != Event::TOOL_CALL_FAILED {
     ///         return;
@@ -330,6 +331,8 @@ impl Werk {
     ///         replies.push(Reply::user_text("That approach failed. Re-read the file first."));
     ///     });
     /// });
+    /// # Ok(())
+    /// # }
     /// ```
     pub fn edit_replies(&self, id: &str, editor: impl FnOnce(&mut Vec<Reply>)) -> &Self {
         let task_copy = {
@@ -536,8 +539,7 @@ mod tests {
     #[test]
     fn load_replays_the_token_totals_a_run_already_spent() {
         let dir = crate::test_util::TempDir::new().unwrap();
-        let original = Werk::new();
-        original.set_dir(dir.path().to_path_buf());
+        let original = Werk(dir.path().to_path_buf()).unwrap();
         original.add_task("seed");
         emit_event(
             &original,
@@ -555,7 +557,7 @@ mod tests {
 
         // The token limits divide against these, so a resumed run that read
         // them back as zero would silently start its budget over.
-        let resumed = Werk::load(dir.path()).unwrap();
+        let resumed = Werk(dir.path()).unwrap();
         assert_eq!(resumed.stats.input_tokens(), 900);
         assert_eq!(resumed.stats.output_tokens(), 120);
     }
@@ -707,14 +709,13 @@ mod tests {
     #[test]
     fn task_finished_result_round_trips_through_the_event_log() {
         let dir = crate::test_util::TempDir::new().unwrap();
-        let werk = Werk::new();
-        werk.set_dir(dir.path().to_path_buf());
+        let werk = Werk(dir.path().to_path_buf()).unwrap();
         let id = werk.add_task("hello");
         werk.set_task_finished(&id, serde_json::json!({"answer": "done"}))
             .unwrap();
         drop(werk);
 
-        let resumed = Werk::load(dir.path()).unwrap();
+        let resumed = Werk(dir.path()).unwrap();
         let event = resumed.find_event("event.name = task_finished").unwrap();
         assert_eq!(event.get_data()["answer"], "done");
         assert_eq!(
@@ -898,12 +899,12 @@ mod tests {
         assert_eq!(lines[1]["agent_id"], "user");
     }
 
-    // Resumption: Werk::load
+    // Resumption through Werk(path)
 
     #[test]
     fn load_creates_tasks_dir_when_missing() {
         let dir = crate::test_util::TempDir::new().unwrap();
-        let werk = Werk::load(dir.path()).unwrap();
+        let werk = Werk(dir.path()).unwrap();
         assert!(werk.get_tasks().is_empty());
         assert!(dir.path().join("tasks").is_dir());
     }
@@ -914,8 +915,7 @@ mod tests {
     #[test]
     fn load_reports_a_task_whose_replies_cannot_be_read() {
         let dir = crate::test_util::TempDir::new().unwrap();
-        let original = Werk::new();
-        original.set_dir(dir.path().to_path_buf());
+        let original = Werk(dir.path().to_path_buf()).unwrap();
         original.add_task("seed work");
         original.append_reply("t-1", Reply::user_text("hello"));
         original.set_finished_by("t-1", "agent").unwrap();
@@ -928,7 +928,7 @@ mod tests {
         )
         .unwrap();
 
-        let Err(error) = Werk::load(dir.path()) else {
+        let Err(error) = Werk(dir.path()) else {
             panic!("load must fail when a task's replies cannot be read");
         };
         assert!(
@@ -940,8 +940,7 @@ mod tests {
     #[test]
     fn load_restores_done_task_with_result_and_replies() {
         let dir = crate::test_util::TempDir::new().unwrap();
-        let original = Werk::new();
-        original.set_dir(dir.path().to_path_buf());
+        let original = Werk(dir.path().to_path_buf()).unwrap();
         original.add_task("seed work");
         original
             .set_result("t-1", serde_json::json!({"ok": true}))
@@ -949,7 +948,7 @@ mod tests {
         original.set_finished_by("t-1", "agent").unwrap();
         drop(original);
 
-        let resumed = Werk::load(dir.path()).unwrap();
+        let resumed = Werk(dir.path()).unwrap();
         let t = resumed.get_task("t-1").unwrap();
         assert_eq!(t.status, Status::Finished);
         assert_eq!(t.result.as_ref(), Some(&serde_json::json!({"ok": true})));
@@ -959,8 +958,7 @@ mod tests {
     #[test]
     fn load_keeps_a_scalar_result_file_written_by_an_older_session() {
         let dir = crate::test_util::TempDir::new().unwrap();
-        let original = Werk::new();
-        original.set_dir(dir.path().to_path_buf());
+        let original = Werk(dir.path().to_path_buf()).unwrap();
         original.add_task("legacy work");
         std::fs::write(
             dir.path().join("tasks/t-1/result.json"),
@@ -969,7 +967,7 @@ mod tests {
         .unwrap();
         drop(original);
 
-        let resumed = Werk::load(dir.path()).unwrap();
+        let resumed = Werk(dir.path()).unwrap();
         assert_eq!(
             resumed.get_task("t-1").unwrap().result,
             Some(serde_json::json!("legacy answer"))
@@ -979,12 +977,11 @@ mod tests {
     #[test]
     fn insert_after_load_never_reuses_an_existing_id() {
         let dir = crate::test_util::TempDir::new().unwrap();
-        let original = Werk::new();
-        original.set_dir(dir.path().to_path_buf());
+        let original = Werk(dir.path().to_path_buf()).unwrap();
         original.add_task("seed work");
         drop(original);
 
-        let resumed = Werk::load(dir.path()).unwrap();
+        let resumed = Werk(dir.path()).unwrap();
         assert_eq!(resumed.add_task("more work"), "t-2");
     }
 
@@ -993,25 +990,22 @@ mod tests {
         // The pattern a fresh process actually uses against a directory a
         // prior run already wrote into: `new()` (not `load()`) plus `.dir(..)`.
         let dir = crate::test_util::TempDir::new().unwrap();
-        let first = Werk::new();
-        first.set_dir(dir.path().to_path_buf());
+        let first = Werk(dir.path().to_path_buf()).unwrap();
         first.add_task("seed work");
         drop(first);
 
-        let second = Werk::new();
-        second.set_dir(dir.path().to_path_buf());
+        let second = Werk(dir.path().to_path_buf()).unwrap();
         assert_eq!(second.add_task("more work"), "t-2");
     }
 
     #[test]
     fn load_seeds_next_task_id_without_rescanning_tasks_dir() {
         let dir = crate::test_util::TempDir::new().unwrap();
-        let original = Werk::new();
-        original.set_dir(dir.path().to_path_buf());
+        let original = Werk(dir.path().to_path_buf()).unwrap();
         original.add_task("seed work");
         drop(original);
 
-        let resumed = Werk::load(dir.path()).unwrap();
+        let resumed = Werk(dir.path()).unwrap();
         // `load()` already knows the highest ID from what it just read
         // into memory; removing the directory here proves `insert()` does
         // not rescan it, since a rescan would find nothing and wrongly
@@ -1023,15 +1017,14 @@ mod tests {
     #[test]
     fn load_restores_in_progress_replies() {
         let dir = crate::test_util::TempDir::new().unwrap();
-        let original = Werk::new();
-        original.set_dir(dir.path().to_path_buf());
+        let original = Werk(dir.path().to_path_buf()).unwrap();
         original.add_task("mid flight");
         original
             .claim(&Query::from("task.status = todo"), "alice")
             .unwrap();
         drop(original);
 
-        let resumed = Werk::load(dir.path()).unwrap();
+        let resumed = Werk(dir.path()).unwrap();
         let t = resumed.get_task("t-1").unwrap();
         assert_eq!(t.status, Status::InProgress);
         assert_eq!(t.assignee.as_deref(), Some("alice"));
@@ -1040,8 +1033,7 @@ mod tests {
     #[test]
     fn load_replays_the_event_log_into_the_counters() {
         let dir = crate::test_util::TempDir::new().unwrap();
-        let original = Werk::new();
-        original.set_dir(dir.path().to_path_buf());
+        let original = Werk(dir.path().to_path_buf()).unwrap();
         original.add_task("a");
         original.add_task("b");
         original.set_result("t-1", serde_json::json!({})).unwrap();
@@ -1049,7 +1041,7 @@ mod tests {
         original.set_task_failed("t-2").unwrap();
         drop(original);
 
-        let resumed = Werk::load(dir.path()).unwrap();
+        let resumed = Werk(dir.path()).unwrap();
         assert_eq!(resumed.stats.event_count(Event::TASK_CREATED), 2);
         assert_eq!(resumed.stats.event_count(Event::TASK_FINISHED), 1);
         assert_eq!(resumed.stats.event_count(Event::TASK_FAILED), 1);
@@ -1057,8 +1049,7 @@ mod tests {
     #[test]
     fn load_skips_dir_without_task_json() {
         let dir = crate::test_util::TempDir::new().unwrap();
-        let original = Werk::new();
-        original.set_dir(dir.path().to_path_buf());
+        let original = Werk(dir.path().to_path_buf()).unwrap();
         original.add_task("valid");
         drop(original);
 
@@ -1068,7 +1059,7 @@ mod tests {
         std::fs::create_dir_all(&stray_dir).unwrap();
         std::fs::write(stray_dir.join("anything.json"), "not json").unwrap();
 
-        let resumed = Werk::load(dir.path()).unwrap();
+        let resumed = Werk(dir.path()).unwrap();
         assert!(resumed.get_task("t-1").is_some());
         assert!(resumed.get_task("t-99").is_none());
     }
@@ -1099,7 +1090,7 @@ mod tests {
         )
         .unwrap();
 
-        let resumed = Werk::load(dir.path()).unwrap();
+        let resumed = Werk(dir.path()).unwrap();
         let task = resumed.get_task("t-1").expect("the task loads");
         assert_eq!(task.label, None);
     }
@@ -1113,7 +1104,7 @@ mod tests {
             "not json",
         )
         .unwrap();
-        let Err(error) = Werk::load(dir.path()) else {
+        let Err(error) = Werk(dir.path()) else {
             panic!("load must fail on a malformed task.json");
         };
         assert!(
@@ -1143,14 +1134,13 @@ mod tests {
         )
         .unwrap();
 
-        assert!(Werk::load(dir.path()).is_err());
+        assert!(Werk(dir.path()).is_err());
     }
 
     #[test]
     fn task_json_uses_id_without_a_key_alias() {
         let dir = crate::test_util::TempDir::new().unwrap();
-        let werk = Werk::new();
-        werk.set_dir(dir.path().to_path_buf());
+        let werk = Werk(dir.path().to_path_buf()).unwrap();
         werk.add_task("hello");
         let stored =
             std::fs::read_to_string(dir.path().join("tasks").join("t-1").join("task.json"))
@@ -1165,8 +1155,7 @@ mod tests {
     #[test]
     fn load_ignores_the_removed_parent_field() {
         let dir = crate::test_util::TempDir::new().unwrap();
-        let original = Werk::new();
-        original.set_dir(dir.path().to_path_buf());
+        let original = Werk(dir.path().to_path_buf()).unwrap();
         original.add_task("hello");
         drop(original);
 
@@ -1176,15 +1165,14 @@ mod tests {
         record["parent"] = serde_json::json!("t-0");
         std::fs::write(&task_file, serde_json::to_vec(&record).unwrap()).unwrap();
 
-        let resumed = Werk::load(dir.path()).unwrap();
+        let resumed = Werk(dir.path()).unwrap();
         assert_eq!(resumed.get_task("t-1").unwrap().get_task(), "hello");
     }
 
     #[test]
     fn task_json_does_not_carry_replies_field() {
         let dir = crate::test_util::TempDir::new().unwrap();
-        let werk = Werk::new();
-        werk.set_dir(dir.path().to_path_buf());
+        let werk = Werk(dir.path().to_path_buf()).unwrap();
         werk.add_task("hello");
         let stored =
             std::fs::read_to_string(dir.path().join("tasks").join("t-1").join("task.json"))
@@ -1199,8 +1187,7 @@ mod tests {
     #[test]
     fn task_json_does_not_persist_cancellation() {
         let dir = crate::test_util::TempDir::new().unwrap();
-        let werk = Werk::new();
-        werk.set_dir(dir.path().to_path_buf());
+        let werk = Werk(dir.path().to_path_buf()).unwrap();
         let id = werk.add_task(Task::new("hello").label("scan"));
         werk.cancel_tasks("task.label = scan");
         werk.set_task_failed(&id).unwrap();
@@ -1210,7 +1197,7 @@ mod tests {
         let record: serde_json::Value = serde_json::from_str(&stored).unwrap();
         assert!(record.get("cancelled").is_none());
 
-        let resumed = Werk::load(dir.path()).unwrap();
+        let resumed = Werk(dir.path()).unwrap();
         assert!(resumed.find_tasks("task.cancelled = true").is_empty());
         assert_eq!(resumed.find_tasks("task.cancelled = false").len(), 1);
     }
@@ -1235,13 +1222,12 @@ mod tests {
         use super::super::reply::ReplyContent;
         let dir = crate::test_util::TempDir::new().unwrap();
         {
-            let werk = Werk::new();
-            werk.set_dir(dir.path().to_path_buf());
+            let werk = Werk(dir.path().to_path_buf()).unwrap();
             werk.add_task("hello");
             werk.add_reply("t-1", "first");
             werk.add_reply("t-1", "second");
         }
-        let resumed = Werk::load(dir.path()).unwrap();
+        let resumed = Werk(dir.path()).unwrap();
         let t = resumed.get_task("t-1").unwrap();
         let texts: Vec<_> = t
             .replies
@@ -1300,8 +1286,7 @@ mod tests {
     #[test]
     fn task_with_json_schema_round_trips_through_load() {
         let dir = crate::test_util::TempDir::new().unwrap();
-        let original = Werk::new();
-        original.set_dir(dir.path().to_path_buf());
+        let original = Werk(dir.path().to_path_buf()).unwrap();
         let schema_doc = serde_json::json!({
             "type": "object",
             "properties": { "n": { "type": "integer" } },
@@ -1311,7 +1296,7 @@ mod tests {
         original.add_task(Task::new("counted").schema(schema));
         drop(original);
 
-        let resumed = Werk::load(dir.path()).unwrap();
+        let resumed = Werk(dir.path()).unwrap();
         let t = resumed.get_task("t-1").unwrap();
         let restored = t.schema.expect("JSON schema must restore");
         assert!(restored.validate(serde_json::json!({"n": 3})).is_ok());
@@ -1335,7 +1320,7 @@ mod tests {
         let task = werk.get_task(&id).unwrap();
         assert_eq!(task.task, serde_json::Value::String("original task".into()));
 
-        let reloaded = Werk::load(werk.get_dir()).unwrap();
+        let reloaded = Werk(werk.get_dir()).unwrap();
         let replies = reloaded.get_task(&id).unwrap().replies;
         assert!(replies.iter().any(
             |r| matches!(r.content.first(), Some(ReplyContent::Text { text: t }) if t == "keep me")

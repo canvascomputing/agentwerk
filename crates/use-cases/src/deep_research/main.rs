@@ -23,7 +23,7 @@ const REPORT: &str = "report";
 async fn main() {
     let question = question_from_args();
     let brave_key = brave_key_from_env().unwrap_or_else(|message| exit(&message));
-    let stored_knowledge = Knowledge::load(".agentwerk/research");
+    let stored_knowledge = Knowledge(".agentwerk/research");
     let knowledge = stored_knowledge.unwrap_or_else(|error| exit(&error.to_string()));
 
     let researcher = Agent::from_env()
@@ -43,7 +43,7 @@ async fn main() {
     let finished_research = "task.label = research AND task.status = finished";
     let write_report = Condition(finished_research).task(report_task);
 
-    let werk = Werk();
+    let werk = Werk(".agentwerk").unwrap_or_else(|error| exit(&error.to_string()));
     werk.set_policy(Policy {
         max_time: Some(Duration::from_secs(300)),
         ..Default::default()

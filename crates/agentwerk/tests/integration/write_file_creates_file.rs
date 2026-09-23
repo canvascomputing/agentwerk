@@ -22,7 +22,7 @@ async fn creates_file_with_token() -> std::result::Result<(), Box<dyn std::error
         max_turns: Some(10),
         ..Default::default()
     });
-    let agent = Agent::new()
+    let agent = Agent()
         .provider(provider)
         .model(&model)
         .dir(root)

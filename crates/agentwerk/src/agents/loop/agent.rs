@@ -298,7 +298,6 @@ mod tests {
     use crate::event::Event;
     use crate::prompts::directives::{DirectiveStore, REPLY_REJECTED};
 
-    use crate::agents::agent::Agent;
     use crate::agents::r#loop::test_util::*;
     use crate::agents::tasks::{Author, FinishReason, Status, Task, Werk};
     use crate::agents::{Condition, Knowledge};
@@ -313,15 +312,14 @@ mod tests {
             Ok(write_result_response("a-done")),
             Ok(write_result_response("b-done")),
         ]);
-        let werk = Werk::new();
-        werk.set_dir(results_dir.path().to_path_buf())
-            .set_policy(Policy {
-                max_request_retries: 0,
-                request_retry_delay: Duration::from_millis(1),
-                ..Default::default()
-            });
+        let werk = Werk(results_dir.path().to_path_buf()).unwrap();
+        werk.set_policy(Policy {
+            max_request_retries: 0,
+            request_retry_delay: Duration::from_millis(1),
+            ..Default::default()
+        });
         werk.add_agent(
-            Agent::new()
+            crate::Agent()
                 .provider(provider)
                 .model("mock")
                 .role("test")
@@ -348,8 +346,7 @@ mod tests {
     async fn schema_less_plain_text_is_the_exact_result_everywhere() {
         let results_dir = crate::test_util::TempDir::new().unwrap();
         let provider = MockProvider::with_results(vec![Ok(text_response("  true\n"))]);
-        let werk = Werk::new();
-        werk.set_dir(results_dir.path().to_path_buf());
+        let werk = Werk(results_dir.path().to_path_buf()).unwrap();
         let events = collect_events(&werk);
         let hook_results = Arc::new(Mutex::new(Vec::new()));
         let seen = Arc::clone(&hook_results);
@@ -382,7 +379,7 @@ mod tests {
         assert_eq!(stored, expected);
 
         drop(werk);
-        let loaded = Werk::load(results_dir.path()).unwrap();
+        let loaded = Werk(results_dir.path()).unwrap();
         assert_eq!(loaded.get_task(&id).unwrap().result, Some(expected));
     }
 
@@ -474,16 +471,15 @@ mod tests {
             Ok(text_response("just thinking, no tool call")),
             Ok(write_result_response("done")),
         ]);
-        let werk = Werk::new();
-        werk.set_dir(results_dir.path().to_path_buf())
-            .set_policy(Policy {
-                max_request_retries: 0,
-                request_retry_delay: Duration::from_millis(1),
-                max_schema_retries: Some(3),
-                ..Default::default()
-            });
+        let werk = Werk(results_dir.path().to_path_buf()).unwrap();
+        werk.set_policy(Policy {
+            max_request_retries: 0,
+            request_retry_delay: Duration::from_millis(1),
+            max_schema_retries: Some(3),
+            ..Default::default()
+        });
         werk.add_agent(
-            Agent::new()
+            crate::Agent()
                 .provider(provider.clone())
                 .model("mock")
                 .role("test")
@@ -514,16 +510,15 @@ mod tests {
             Ok(text_response("just thinking, no tool call")),
             Ok(write_result_response("done")),
         ]);
-        let werk = Werk::new();
-        werk.set_dir(results_dir.path().to_path_buf())
-            .set_policy(Policy {
-                max_request_retries: 0,
-                request_retry_delay: Duration::from_millis(1),
-                max_schema_retries: Some(3),
-                ..Default::default()
-            });
+        let werk = Werk(results_dir.path().to_path_buf()).unwrap();
+        werk.set_policy(Policy {
+            max_request_retries: 0,
+            request_retry_delay: Duration::from_millis(1),
+            max_schema_retries: Some(3),
+            ..Default::default()
+        });
         werk.add_agent(
-            Agent::new()
+            crate::Agent()
                 .provider(provider.clone())
                 .model("mock")
                 .role("test")
@@ -557,17 +552,16 @@ mod tests {
             Ok(text_response("just thinking, no tool call")),
             Ok(write_result_response("worker-done")),
         ]);
-        let werk = Werk::new();
-        werk.set_dir(results_dir.path().to_path_buf())
-            .set_policy(Policy {
-                max_request_retries: 0,
-                request_retry_delay: Duration::from_millis(1),
-                max_schema_retries: Some(3),
-                ..Default::default()
-            });
+        let werk = Werk(results_dir.path().to_path_buf()).unwrap();
+        werk.set_policy(Policy {
+            max_request_retries: 0,
+            request_retry_delay: Duration::from_millis(1),
+            max_schema_retries: Some(3),
+            ..Default::default()
+        });
         // An id is `<label>-<n>`, so the two agents read their own name back.
         werk.add_agent(
-            Agent::new()
+            crate::Agent()
                 .label("scout")
                 .provider(scout.clone())
                 .model("mock")
@@ -575,7 +569,7 @@ mod tests {
                 .directive(REPLY_REJECTED, "{{ agent }}, CALL A TOOL"),
         );
         werk.add_agent(
-            Agent::new()
+            crate::Agent()
                 .label("worker")
                 .provider(worker.clone())
                 .model("mock")
@@ -609,16 +603,15 @@ mod tests {
             Ok(text_response("just thinking, no tool call")),
             Ok(write_result_response("done")),
         ]);
-        let werk = Werk::new();
-        werk.set_dir(results_dir.path().to_path_buf())
-            .set_policy(Policy {
-                max_request_retries: 0,
-                request_retry_delay: Duration::from_millis(1),
-                max_schema_retries: Some(3),
-                ..Default::default()
-            });
+        let werk = Werk(results_dir.path().to_path_buf()).unwrap();
+        werk.set_policy(Policy {
+            max_request_retries: 0,
+            request_retry_delay: Duration::from_millis(1),
+            max_schema_retries: Some(3),
+            ..Default::default()
+        });
         werk.add_agent(
-            Agent::new()
+            crate::Agent()
                 .provider(provider.clone())
                 .model("mock")
                 .role("test"),
@@ -647,20 +640,19 @@ mod tests {
             Ok(write_result_response("first-done")),
             Ok(write_result_response("follow-up-done")),
         ]);
-        let werk = Werk::new();
-        werk.set_dir(results_dir.path().to_path_buf())
-            .set_policy(Policy {
-                max_request_retries: 0,
-                request_retry_delay: Duration::from_millis(1),
-                ..Default::default()
-            });
+        let werk = Werk(results_dir.path().to_path_buf()).unwrap();
+        werk.set_policy(Policy {
+            max_request_retries: 0,
+            request_retry_delay: Duration::from_millis(1),
+            ..Default::default()
+        });
         werk.on_result(|werk, done, _| {
             if done.id == "t-1" {
                 werk.add_task(Task::new("follow up").label("alice"));
             }
         });
         werk.add_agent(
-            Agent::new()
+            crate::Agent()
                 .label("alice")
                 .provider(provider.clone())
                 .model("mock")
@@ -685,15 +677,14 @@ mod tests {
             Ok(write_result_response("draft-done")),
             Ok(write_result_response("edit-done")),
         ]);
-        let werk = Werk::new();
-        werk.set_dir(results_dir.path().to_path_buf())
-            .set_policy(Policy {
-                max_request_retries: 0,
-                request_retry_delay: Duration::from_millis(1),
-                ..Default::default()
-            });
+        let werk = Werk(results_dir.path().to_path_buf()).unwrap();
+        werk.set_policy(Policy {
+            max_request_retries: 0,
+            request_retry_delay: Duration::from_millis(1),
+            ..Default::default()
+        });
         werk.add_agent(
-            Agent::new()
+            crate::Agent()
                 .label("draft")
                 .provider(provider.clone())
                 .model("mock")
@@ -702,7 +693,7 @@ mod tests {
         werk.add_condition(
             Condition::new("task.label = draft AND task.status = finished")
                 .agent(
-                    Agent::new()
+                    crate::Agent()
                         .label("edit")
                         .provider(provider)
                         .model("mock")
@@ -733,13 +724,12 @@ mod tests {
             Ok(write_result_response("clean")),
             Ok(write_result_response("report-done")),
         ]);
-        let werk = Werk::new();
-        werk.set_dir(results_dir.path().to_path_buf())
-            .set_policy(Policy {
-                max_request_retries: 0,
-                request_retry_delay: Duration::from_millis(1),
-                ..Default::default()
-            });
+        let werk = Werk(results_dir.path().to_path_buf()).unwrap();
+        werk.set_policy(Policy {
+            max_request_retries: 0,
+            request_retry_delay: Duration::from_millis(1),
+            ..Default::default()
+        });
 
         // Both scans can finish at once, so the first handler to see the pair
         // takes the flag and the other returns: without it the report is filed
@@ -765,7 +755,7 @@ mod tests {
 
         for label in ["scan", "scan", "report"] {
             werk.add_agent(
-                Agent::new()
+                crate::Agent()
                     .label(label)
                     .provider(provider.clone())
                     .model("mock")
@@ -799,13 +789,12 @@ mod tests {
 
         let results_dir = crate::test_util::TempDir::new().unwrap();
         let provider = MockProvider::with_results(vec![Ok(write_result_response("done"))]);
-        let werk = Werk::new();
-        werk.set_dir(results_dir.path().to_path_buf())
-            .set_policy(Policy {
-                max_request_retries: 0,
-                request_retry_delay: Duration::from_millis(1),
-                ..Default::default()
-            });
+        let werk = Werk(results_dir.path().to_path_buf()).unwrap();
+        werk.set_policy(Policy {
+            max_request_retries: 0,
+            request_retry_delay: Duration::from_millis(1),
+            ..Default::default()
+        });
         let finished_events = Arc::new(AtomicUsize::new(0));
         let counter = Arc::clone(&finished_events);
         werk.on_event(move |_, e| {
@@ -814,7 +803,7 @@ mod tests {
             }
         });
         werk.add_agent(
-            Agent::new()
+            crate::Agent()
                 .label("alice")
                 .provider(provider.clone())
                 .model("mock")
@@ -847,17 +836,16 @@ mod tests {
             usage: crate::providers::TokenUsage::default(),
             model: "mock".into(),
         })]);
-        let werk = Werk::new();
-        werk.set_dir(results_dir.path().to_path_buf())
-            .set_policy(Policy {
-                max_request_retries: 0,
-                request_retry_delay: Duration::from_millis(1),
-                max_schema_retries: Some(2),
-                ..Default::default()
-            });
+        let werk = Werk(results_dir.path().to_path_buf()).unwrap();
+        werk.set_policy(Policy {
+            max_request_retries: 0,
+            request_retry_delay: Duration::from_millis(1),
+            max_schema_retries: Some(2),
+            ..Default::default()
+        });
         let events = collect_events(&werk);
         werk.add_agent(
-            Agent::new()
+            crate::Agent()
                 .label("alice")
                 .provider(provider.clone())
                 .model("mock")
@@ -903,13 +891,12 @@ mod tests {
         // task, so `requests == 1` and `in_progress` prove the gate held.
         let results_dir = crate::test_util::TempDir::new().unwrap();
         let provider = MockProvider::with_results(vec![Ok(text_response("hi"))]);
-        let werk = Werk::new();
-        werk.set_dir(results_dir.path().to_path_buf())
-            .set_policy(Policy {
-                max_request_retries: 0,
-                request_retry_delay: Duration::from_millis(1),
-                ..Default::default()
-            });
+        let werk = Werk(results_dir.path().to_path_buf()).unwrap();
+        werk.set_policy(Policy {
+            max_request_retries: 0,
+            request_retry_delay: Duration::from_millis(1),
+            ..Default::default()
+        });
         // Unfiltered on purpose: it also fires for the run-level events, whose
         // empty ID names no task.
         werk.on_event(|werk, event| {
@@ -955,13 +942,12 @@ mod tests {
         let results_dir = crate::test_util::TempDir::new().unwrap();
         let provider =
             MockProvider::with_results(vec![Ok(text_response("hi")), Ok(text_response("and now"))]);
-        let werk = Werk::new();
-        werk.set_dir(results_dir.path().to_path_buf())
-            .set_policy(Policy {
-                max_request_retries: 0,
-                request_retry_delay: Duration::from_millis(1),
-                ..Default::default()
-            });
+        let werk = Werk(results_dir.path().to_path_buf()).unwrap();
+        werk.set_policy(Policy {
+            max_request_retries: 0,
+            request_retry_delay: Duration::from_millis(1),
+            ..Default::default()
+        });
         werk.add_agent(interactive_chatbot(&provider));
         let id = werk.add_task("hello");
 
@@ -1022,13 +1008,12 @@ mod tests {
     async fn finish_returns_when_an_interactive_agent_pauses_for_input() {
         let results_dir = crate::test_util::TempDir::new().unwrap();
         let provider = MockProvider::with_results(vec![Ok(text_response("hi"))]);
-        let werk = Werk::new();
-        werk.set_dir(results_dir.path().to_path_buf())
-            .set_policy(Policy {
-                max_request_retries: 0,
-                max_time: Some(Duration::from_millis(500)),
-                ..Default::default()
-            });
+        let werk = Werk(results_dir.path().to_path_buf()).unwrap();
+        werk.set_policy(Policy {
+            max_request_retries: 0,
+            max_time: Some(Duration::from_millis(500)),
+            ..Default::default()
+        });
         werk.add_agent(interactive_chatbot(&provider));
         let id = werk.add_task("hello");
         werk.start();
@@ -1056,14 +1041,13 @@ mod tests {
     async fn paused_interactive_task_emits_turn_started_exactly_once() {
         let results_dir = crate::test_util::TempDir::new().unwrap();
         let provider = MockProvider::with_results(vec![Ok(text_response("hi"))]);
-        let werk = Werk::new();
-        werk.set_dir(results_dir.path().to_path_buf())
-            .set_policy(Policy {
-                max_request_retries: 0,
-                request_retry_delay: Duration::from_millis(1),
-                max_time: Some(Duration::from_millis(500)),
-                ..Default::default()
-            });
+        let werk = Werk(results_dir.path().to_path_buf()).unwrap();
+        werk.set_policy(Policy {
+            max_request_retries: 0,
+            request_retry_delay: Duration::from_millis(1),
+            max_time: Some(Duration::from_millis(500)),
+            ..Default::default()
+        });
         let collected = collect_events(&werk);
         werk.add_agent(interactive_chatbot(&provider));
         werk.add_task("hello");
@@ -1090,14 +1074,13 @@ mod tests {
             Ok(text_response("hi")),
             Ok(text_response("hi again")),
         ]);
-        let werk = Werk::new();
-        werk.set_dir(results_dir.path().to_path_buf())
-            .set_policy(Policy {
-                max_request_retries: 0,
-                request_retry_delay: Duration::from_millis(1),
-                max_time: Some(Duration::from_millis(500)),
-                ..Default::default()
-            });
+        let werk = Werk(results_dir.path().to_path_buf()).unwrap();
+        werk.set_policy(Policy {
+            max_request_retries: 0,
+            request_retry_delay: Duration::from_millis(1),
+            max_time: Some(Duration::from_millis(500)),
+            ..Default::default()
+        });
         werk.add_agent(interactive_chatbot(&provider));
         let first_key = werk.add_task("first chat");
         werk.start();
@@ -1155,14 +1138,13 @@ mod tests {
     async fn loop_fails_task_when_silence_exceeds_schema_retry_budget() {
         let results_dir = crate::test_util::TempDir::new().unwrap();
         let provider = MockProvider::with_results(vec![Ok(text_response("hi"))]);
-        let werk = Werk::new();
-        werk.set_dir(results_dir.path().to_path_buf())
-            .set_policy(Policy {
-                max_request_retries: 0,
-                request_retry_delay: Duration::from_millis(1),
-                max_schema_retries: Some(1),
-                ..Default::default()
-            });
+        let werk = Werk(results_dir.path().to_path_buf()).unwrap();
+        werk.set_policy(Policy {
+            max_request_retries: 0,
+            request_retry_delay: Duration::from_millis(1),
+            max_schema_retries: Some(1),
+            ..Default::default()
+        });
         let collected = collect_events(&werk);
         werk.add_agent(task_agent(&provider));
         werk.add_task(Task::new("go").schema(string_schema()));
@@ -1198,14 +1180,13 @@ mod tests {
             Ok(text_response("hi")),
             Ok(write_result_response("done")),
         ]);
-        let werk = Werk::new();
-        werk.set_dir(results_dir.path().to_path_buf())
-            .set_policy(Policy {
-                max_request_retries: 0,
-                request_retry_delay: Duration::from_millis(1),
-                max_schema_retries: Some(3),
-                ..Default::default()
-            });
+        let werk = Werk(results_dir.path().to_path_buf()).unwrap();
+        werk.set_policy(Policy {
+            max_request_retries: 0,
+            request_retry_delay: Duration::from_millis(1),
+            max_schema_retries: Some(3),
+            ..Default::default()
+        });
         werk.add_agent(task_agent(&provider));
         werk.add_task(Task::new("go").schema(string_schema()));
 
@@ -1232,14 +1213,13 @@ mod tests {
             Ok(text_response("hi")),
             Ok(write_result_response("done")),
         ]);
-        let werk = Werk::new();
-        werk.set_dir(results_dir.path().to_path_buf())
-            .set_policy(Policy {
-                max_request_retries: 0,
-                request_retry_delay: Duration::from_millis(1),
-                max_schema_retries: Some(3),
-                ..Default::default()
-            });
+        let werk = Werk(results_dir.path().to_path_buf()).unwrap();
+        werk.set_policy(Policy {
+            max_request_retries: 0,
+            request_retry_delay: Duration::from_millis(1),
+            max_schema_retries: Some(3),
+            ..Default::default()
+        });
         let collected = collect_events(&werk);
         werk.add_agent(task_agent(&provider));
         werk.add_task(Task::new("go").schema(string_schema()));
@@ -1272,13 +1252,12 @@ mod tests {
     #[tokio::test]
     async fn cancel_stops_a_running_werk() {
         let results_dir = crate::test_util::TempDir::new().unwrap();
-        let werk = Werk::new();
-        werk.set_dir(results_dir.path().to_path_buf())
-            .set_policy(Policy {
-                max_request_retries: 0,
-                request_retry_delay: Duration::from_millis(1),
-                ..Default::default()
-            });
+        let werk = Werk(results_dir.path().to_path_buf()).unwrap();
+        werk.set_policy(Policy {
+            max_request_retries: 0,
+            request_retry_delay: Duration::from_millis(1),
+            ..Default::default()
+        });
 
         werk.start();
         werk.cancel();
@@ -1291,25 +1270,24 @@ mod tests {
     #[tokio::test]
     async fn cancel_keeps_the_matching_pool_off_the_queue_while_others_run() {
         let results_dir = crate::test_util::TempDir::new().unwrap();
-        let werk = Werk::new();
-        werk.set_dir(results_dir.path().to_path_buf())
-            .set_policy(Policy {
-                max_request_retries: 0,
-                request_retry_delay: Duration::from_millis(1),
-                ..Default::default()
-            });
+        let werk = Werk(results_dir.path().to_path_buf()).unwrap();
+        werk.set_policy(Policy {
+            max_request_retries: 0,
+            request_retry_delay: Duration::from_millis(1),
+            ..Default::default()
+        });
 
         let analyst = MockProvider::with_results(vec![Ok(write_result_response("analyzed"))]);
         let researcher = MockProvider::with_results(vec![Ok(write_result_response("hunted"))]);
         werk.add_agent(
-            Agent::new()
+            crate::Agent()
                 .label("analysis")
                 .provider(analyst)
                 .model("mock")
                 .role("test"),
         );
         werk.add_agent(
-            Agent::new()
+            crate::Agent()
                 .label("research")
                 .provider(researcher.clone())
                 .model("mock")
@@ -1363,15 +1341,14 @@ mod tests {
             Ok(write_result_response("first")),
             Ok(write_result_response("second")),
         ]);
-        let werk = Werk::new();
-        werk.set_dir(results_dir.path().to_path_buf())
-            .set_policy(Policy {
-                max_request_retries: 0,
-                request_retry_delay: Duration::from_millis(1),
-                ..Default::default()
-            });
+        let werk = Werk(results_dir.path().to_path_buf()).unwrap();
+        werk.set_policy(Policy {
+            max_request_retries: 0,
+            request_retry_delay: Duration::from_millis(1),
+            ..Default::default()
+        });
         werk.add_agent(
-            Agent::new()
+            crate::Agent()
                 .provider(provider)
                 .model("mock")
                 .role("test")
@@ -1399,15 +1376,14 @@ mod tests {
     async fn agent_finish_forwards_to_bound_werk() {
         let results_dir = crate::test_util::TempDir::new().unwrap();
         let provider = MockProvider::with_results(vec![Ok(write_result_response("forwarded"))]);
-        let werk = Werk::new();
-        werk.set_dir(results_dir.path().to_path_buf())
-            .set_policy(Policy {
-                max_request_retries: 0,
-                request_retry_delay: Duration::from_millis(1),
-                ..Default::default()
-            });
+        let werk = Werk(results_dir.path().to_path_buf()).unwrap();
+        werk.set_policy(Policy {
+            max_request_retries: 0,
+            request_retry_delay: Duration::from_millis(1),
+            ..Default::default()
+        });
         let agent = werk.add_agent(
-            Agent::new()
+            crate::Agent()
                 .provider(provider)
                 .model("mock")
                 .role("test")
@@ -1449,17 +1425,16 @@ mod tests {
             Ok(write_result_response("ok")),
         ]);
         let results_dir = crate::test_util::TempDir::new().unwrap();
-        let werk = Werk::new();
-        werk.set_dir(results_dir.path().to_path_buf())
-            .set_policy(Policy {
-                max_request_retries: 0,
-                request_retry_delay: Duration::from_millis(1),
-                max_schema_retries: Some(10),
-                max_time: Some(Duration::from_millis(500)),
-                ..Default::default()
-            });
+        let werk = Werk(results_dir.path().to_path_buf()).unwrap();
+        werk.set_policy(Policy {
+            max_request_retries: 0,
+            request_retry_delay: Duration::from_millis(1),
+            max_schema_retries: Some(10),
+            max_time: Some(Duration::from_millis(500)),
+            ..Default::default()
+        });
         werk.add_agent(
-            Agent::new()
+            crate::Agent()
                 .provider(provider.clone())
                 .model("mock")
                 .role("test")
@@ -1488,17 +1463,16 @@ mod tests {
         ]);
         let results_dir = crate::test_util::TempDir::new().unwrap();
         let knowledge_dir = crate::test_util::TempDir::new().unwrap();
-        let store = Knowledge::load(knowledge_dir.path()).unwrap();
+        let store = Knowledge(knowledge_dir.path()).unwrap();
 
-        let werk = Werk::new();
-        werk.set_dir(results_dir.path().to_path_buf())
-            .set_policy(Policy {
-                max_request_retries: 0,
-                request_retry_delay: Duration::from_millis(1),
-                ..Default::default()
-            });
+        let werk = Werk(results_dir.path().to_path_buf()).unwrap();
+        werk.set_policy(Policy {
+            max_request_retries: 0,
+            request_retry_delay: Duration::from_millis(1),
+            ..Default::default()
+        });
         werk.add_agent(
-            Agent::new()
+            crate::Agent()
                 .provider(provider.clone())
                 .model("mock")
                 .role("test")
@@ -1542,18 +1516,17 @@ mod tests {
         ]);
         let results_dir = crate::test_util::TempDir::new().unwrap();
         let knowledge_dir = crate::test_util::TempDir::new().unwrap();
-        let store = Knowledge::load(knowledge_dir.path()).unwrap();
+        let store = Knowledge(knowledge_dir.path()).unwrap();
 
-        let werk = Werk::new();
-        werk.set_dir(results_dir.path().to_path_buf())
-            .set_policy(Policy {
-                max_request_retries: 0,
-                request_retry_delay: Duration::from_millis(1),
-                max_time: Some(Duration::from_millis(500)),
-                ..Default::default()
-            });
+        let werk = Werk(results_dir.path().to_path_buf()).unwrap();
+        werk.set_policy(Policy {
+            max_request_retries: 0,
+            request_retry_delay: Duration::from_millis(1),
+            max_time: Some(Duration::from_millis(500)),
+            ..Default::default()
+        });
         werk.add_agent(
-            Agent::new()
+            crate::Agent()
                 .provider(provider.clone())
                 .model("mock")
                 .role("test")
@@ -1585,19 +1558,18 @@ mod tests {
 
         let results_dir = crate::test_util::TempDir::new().unwrap();
         let knowledge_dir = crate::test_util::TempDir::new().unwrap();
-        let store = Knowledge::load(knowledge_dir.path()).unwrap();
+        let store = Knowledge(knowledge_dir.path()).unwrap();
 
-        let werk = Werk::new();
-        werk.set_dir(results_dir.path().to_path_buf())
-            .set_policy(Policy {
-                max_request_retries: 0,
-                request_retry_delay: Duration::from_millis(1),
-                max_time: Some(Duration::from_millis(500)),
-                ..Default::default()
-            });
+        let werk = Werk(results_dir.path().to_path_buf()).unwrap();
+        werk.set_policy(Policy {
+            max_request_retries: 0,
+            request_retry_delay: Duration::from_millis(1),
+            max_time: Some(Duration::from_millis(500)),
+            ..Default::default()
+        });
 
         werk.add_agent(
-            Agent::new()
+            crate::Agent()
                 .label("a")
                 .provider(p_a.clone())
                 .model("mock")
@@ -1605,7 +1577,7 @@ mod tests {
                 .knowledge(&store),
         );
         werk.add_agent(
-            Agent::new()
+            crate::Agent()
                 .label("b")
                 .provider(p_b.clone())
                 .model("mock")
@@ -1643,16 +1615,15 @@ mod tests {
         }))
         .unwrap();
 
-        let werk = Werk::new();
-        werk.set_dir(results_dir.path().to_path_buf())
-            .set_policy(Policy {
-                max_request_retries: 0,
-                request_retry_delay: Duration::from_millis(1),
-                max_time: Some(Duration::from_millis(500)),
-                ..Default::default()
-            });
+        let werk = Werk(results_dir.path().to_path_buf()).unwrap();
+        werk.set_policy(Policy {
+            max_request_retries: 0,
+            request_retry_delay: Duration::from_millis(1),
+            max_time: Some(Duration::from_millis(500)),
+            ..Default::default()
+        });
         werk.add_agent(
-            Agent::new()
+            crate::Agent()
                 .provider(provider.clone())
                 .model("mock")
                 .role("test")
@@ -1672,11 +1643,10 @@ mod tests {
     #[tokio::test]
     async fn a_claimed_task_binds_its_schema_to_the_finish_tool() {
         let results_dir = crate::test_util::TempDir::new().unwrap();
-        let werk = Werk::new();
-        werk.set_dir(results_dir.path().to_path_buf());
+        let werk = Werk(results_dir.path().to_path_buf()).unwrap();
         // Bound rather than cloned into the Werk: `finish` is registered on
         // the agent that joins one, and this claims through that agent.
-        let mut agent = Agent::new()
+        let mut agent = crate::Agent()
             .provider(MockProvider::with_results(vec![]))
             .model("mock")
             .role("test");
@@ -1704,9 +1674,8 @@ mod tests {
     #[tokio::test]
     async fn a_claimed_task_binds_its_schema_inside_the_event_tool() {
         let results_dir = crate::test_util::TempDir::new().unwrap();
-        let werk = Werk::new();
-        werk.set_dir(results_dir.path().to_path_buf());
-        let mut agent = Agent::new()
+        let werk = Werk(results_dir.path().to_path_buf()).unwrap();
+        let mut agent = crate::Agent()
             .provider(MockProvider::with_results(vec![]))
             .model("mock")
             .role("test")
@@ -1736,8 +1705,7 @@ mod tests {
     #[tokio::test]
     async fn a_claimed_task_offers_an_interactive_agent_no_finish_tool() {
         let results_dir = crate::test_util::TempDir::new().unwrap();
-        let werk = Werk::new();
-        werk.set_dir(results_dir.path().to_path_buf());
+        let werk = Werk(results_dir.path().to_path_buf()).unwrap();
         let agent = interactive_chatbot(&MockProvider::with_results(vec![]));
         werk.add_agent(agent.clone());
         werk.add_task("hello");
@@ -1750,14 +1718,13 @@ mod tests {
     #[tokio::test]
     async fn an_agent_leaves_a_task_its_label_mate_started_alone() {
         let results_dir = crate::test_util::TempDir::new().unwrap();
-        let werk = Werk::new();
-        werk.set_dir(results_dir.path().to_path_buf());
-        let mut first = Agent::new()
+        let werk = Werk(results_dir.path().to_path_buf()).unwrap();
+        let mut first = crate::Agent()
             .label("resume_pool")
             .provider(MockProvider::with_results(vec![]))
             .model("mock")
             .role("test");
-        let mut second = Agent::new()
+        let mut second = crate::Agent()
             .label("resume_pool")
             .provider(MockProvider::with_results(vec![]))
             .model("mock")
@@ -1795,18 +1762,17 @@ mod tests {
 
         let results_dir = crate::test_util::TempDir::new().unwrap();
         let knowledge_dir = crate::test_util::TempDir::new().unwrap();
-        let store = Knowledge::load(knowledge_dir.path()).unwrap();
+        let store = Knowledge(knowledge_dir.path()).unwrap();
 
-        let werk = Werk::new();
-        werk.set_dir(results_dir.path().to_path_buf())
-            .set_policy(Policy {
-                max_request_retries: 0,
-                request_retry_delay: Duration::from_millis(1),
-                max_time: Some(Duration::from_millis(500)),
-                ..Default::default()
-            });
+        let werk = Werk(results_dir.path().to_path_buf()).unwrap();
+        werk.set_policy(Policy {
+            max_request_retries: 0,
+            request_retry_delay: Duration::from_millis(1),
+            max_time: Some(Duration::from_millis(500)),
+            ..Default::default()
+        });
         werk.add_agent(
-            Agent::new()
+            crate::Agent()
                 .provider(provider.clone())
                 .model("mock")
                 .role("test")

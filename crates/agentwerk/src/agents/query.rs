@@ -18,7 +18,7 @@ use crate::event::Event;
 /// use agentwerk::{Event, Query, Task, Werk};
 ///
 /// # fn run() -> Result<(), Box<dyn std::error::Error>> {
-/// let werk = Werk();
+/// let werk = Werk(".agentwerk")?;
 /// werk.find_tasks("research");
 /// werk.find_tasks(Query("task.label = research AND task.assignee = research-1")?);
 /// werk.find_tasks(|t: &Task| t.get_label() == Some("research"));

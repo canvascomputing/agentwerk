@@ -32,8 +32,8 @@
 //! use agentwerk::{Agent, Task, Werk};
 //! use agentwerk::tools::FetchTool;
 //!
-//! # async fn run() {
-//! let werk = Werk();
+//! # async fn run() -> Result<(), Box<dyn std::error::Error>> {
+//! let werk = Werk(".agentwerk")?;
 //!
 //! for _ in 0..4 {
 //!     werk.add_agent(
@@ -59,6 +59,7 @@
 //!         println!("{}: {}", task.get_id(), result);
 //!     }
 //! }
+//! # Ok(())
 //! # }
 //! ```
 //!
@@ -69,7 +70,7 @@
 //! - [`struct@Werk`]: stores tasks and runs agents.
 //! - [`struct@Task`]: defines work with an optional label and schema.
 //! - [`struct@Query`]: a reusable AQL selection over tasks, events, or joined task-event pairs.
-//! - [`Knowledge`]: durable memory the agent shares across tasks and other agents.
+//! - [`struct@Knowledge`]: durable memory the agent shares across tasks and other agents.
 //! - [`struct@Event`]: records requests, tool usage, failures, and other activity.
 //! - [`tools`]: the built-in tools agents call, for files, search, commands, web, knowledge, and tasks.
 //!
@@ -77,14 +78,17 @@
 //!
 //! A type and its callable constructor share one import.
 //!
-//! ```
+//! ```no_run
 //! use std::sync::Arc;
-//! use agentwerk::{Agent, Condition, Event, Query, Schema, Task, Werk};
+//! use agentwerk::{Agent, Condition, Event, Knowledge, Query, Schema, Task, Werk};
 //! use agentwerk::providers::{Anthropic, LiteLlm, Mistral, Model, OpenAi, Provider};
+//! use agentwerk::tools::Tool;
 //! use serde_json::json;
 //!
 //! let _: Agent = Agent();
-//! let _: Arc<Werk> = Werk();
+//! let _: Arc<Werk> = Werk("./session")?;
+//! let _: Arc<Knowledge> = Knowledge("./notes")?;
+//! let _: Tool = Tool("search");
 //! let _: Task = Task("inspect");
 //! let _: Condition = Condition("event.name = ready");
 //! let _: Query = Query("research")?;
@@ -130,19 +134,28 @@ pub use event::Event;
 
 #[cfg(test)]
 mod callable_constructor_tests {
-    use super::{Agent, Condition, Event, Query, Schema, Task, Werk};
+    use super::{Agent, Condition, Event, Knowledge, Query, Schema, Task, Werk};
     use crate::providers::Model;
+    use crate::tools::Tool;
     use serde_json::json;
 
     #[test]
     fn callable_and_associated_constructors_match_public_state() {
         let callable_agent = Agent();
-        let associated_agent = Agent::new();
-        assert_eq!(callable_agent.label, associated_agent.label);
-        assert_eq!(callable_agent.interactive, associated_agent.interactive);
+        assert!(callable_agent.label.is_none());
+        assert!(!callable_agent.interactive);
 
-        assert_eq!(Werk().get_dir(), Werk::new().get_dir());
-        assert_eq!(Werk().get_tasks().len(), Werk::new().get_tasks().len());
+        let dir = crate::test_util::TempDir::new().unwrap();
+        let werk = Werk(dir.path()).unwrap();
+        assert_eq!(werk.get_dir(), dir.path());
+        assert!(werk.get_tasks().is_empty());
+
+        let knowledge = Knowledge(dir.path().join("knowledge")).unwrap();
+        assert!(knowledge.get_index().is_empty());
+
+        let tool = Tool("search").description("Search indexed documents");
+        assert_eq!(tool.get_name(), "search");
+        assert_eq!(tool.get_description(), "Search indexed documents");
 
         let callable_task = Task(json!({ "work": "inspect" }));
         let associated_task = Task::new(json!({ "work": "inspect" }));
@@ -185,9 +198,11 @@ mod callable_constructor_tests {
             associated_condition.tasks.len()
         );
 
+        let callable_werk = Werk(dir.path().join("callable")).unwrap();
+        let associated_werk = Werk(dir.path().join("associated")).unwrap();
         assert_eq!(
-            Werk().add_condition(callable_condition),
-            Werk::new().add_condition(associated_condition)
+            callable_werk.add_condition(callable_condition),
+            associated_werk.add_condition(associated_condition)
         );
     }
 

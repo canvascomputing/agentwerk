@@ -83,7 +83,7 @@ async fn finds_every_lib_rs_in_nested_tree() -> std::result::Result<(), Box<dyn 
     });
     werk.on_event(move |_, e| event_handler(e));
     werk.add_agent(
-        Agent::new()
+        Agent()
             .provider(provider)
             .model(&model)
             .dir(root)

@@ -89,12 +89,8 @@ fn open_werk(session: &Path, mode: &RunMode) -> io::Result<Arc<Werk>> {
             ErrorKind::NotFound,
             format!("no session exists at {}", session.display()),
         )),
-        RunMode::Resume => Werk::load(session),
-        RunMode::New(_) => {
-            let werk = Werk();
-            werk.set_dir(session);
-            Ok(werk)
-        }
+        RunMode::Resume => Werk(session),
+        RunMode::New(_) => Werk(session),
     }
 }
 

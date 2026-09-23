@@ -94,7 +94,7 @@ async def test_compaction_summarizes_the_replies_against_the_live_model(tmp_path
     # turn one and skip compaction. The follow-up reply starts the request that
     # a threshold of zero compacts before.
     task = "Name one colour and say why you picked it."
-    werk = aw.Werk().set_dir(str(tmp_path))
+    werk = aw.Werk(str(tmp_path))
     werk.set_policy(aw.Policy(compaction_threshold=0.0))
     kinds = []
     werk.on_event(

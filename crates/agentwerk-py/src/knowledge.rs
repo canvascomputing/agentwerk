@@ -19,9 +19,9 @@ pub struct PyKnowledge {
 impl PyKnowledge {
     /// Open a knowledge store at `knowledge_dir`, or seed one from the pages
     /// already there.
-    #[staticmethod]
-    fn load(knowledge_dir: &str) -> PyResult<Self> {
-        let inner = Knowledge::load(knowledge_dir).map_err(runtime_error)?;
+    #[new]
+    fn new(knowledge_dir: &str) -> PyResult<Self> {
+        let inner = agentwerk::Knowledge(knowledge_dir).map_err(runtime_error)?;
         Ok(PyKnowledge { inner })
     }
 

@@ -53,12 +53,7 @@ def open_werk(session: Path, request: Optional[str]) -> Werk:
         )
     if request is None and not session.exists():
         raise RuntimeError(f"no session exists at {session}")
-    if request is None:
-        return Werk.load(str(session))
-
-    werk = Werk()
-    werk.set_dir(str(session))
-    return werk
+    return Werk(str(session))
 
 
 def read_tools():

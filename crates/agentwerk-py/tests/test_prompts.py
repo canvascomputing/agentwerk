@@ -290,7 +290,7 @@ async def test_reload_uses_only_templates_restored_by_the_caller(
 ):
     werk.set_template("company", "Old")
     werk.add_task("{{ company }}")
-    loaded = aw.Werk.load(str(tmp_path))
+    loaded = aw.Werk(str(tmp_path))
     loaded.set_template("company", "New")
     loaded.add_agent(aw.Agent().provider(scripted_openai.provider()).model("mock"))
     scripted_openai.respond_with_tool("finish", {"answer": "done"})

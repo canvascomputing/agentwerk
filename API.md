@@ -487,7 +487,7 @@ Describe the tool, then hand it the code it runs:
 use agentwerk::{Event, tools::Tool};
 use serde_json::Value;
 
-let greet = Tool::new("greet")
+let greet = Tool("greet")
     .description("Say hello")
     .schema(json!({
         "type": "object",
@@ -519,7 +519,7 @@ let analyst = Agent::from_env()
 let writer = Agent::from_env()
     .label("report");
 
-let werk = Werk();
+let werk = Werk(".agentwerk")?;
 werk.add_agent(analyst).add_agent(writer);
 
 werk.add_task(Task("Rank all products by value.").label("analysis"));
@@ -541,10 +541,10 @@ if let Some(answer) = werk.finish_task(task).await {
 
 | Area | Method | Description |
 |------|--------|-------------|
-| **Construct** | `Werk()` | Create an empty Werk. |
+| **Construct** | `Werk(path)` | Open or create a persisted Werk at `path`. |
+| | `Werk::new()` | Create an empty Werk using `.agentwerk`. |
 | **Configure** | `set_policy(policy)` | Set execution limits and retry settings. |
 | | `get_policy()` | Get the active policy. |
-| | `set_dir(dir)` | Set the session directory. |
 | | `get_dir()` | Get the session directory. |
 | | `add_agent(agent)` | Add an agent to the Werk. |
 | | `add_condition(condition)` | Add a runtime AQL condition and return its ID. |
@@ -690,7 +690,7 @@ Give agents the same knowledge store so either can write pages that the other re
 ```rust
 use agentwerk::Knowledge;
 
-let store = Knowledge::load("./notes")?;
+let store = Knowledge("./notes")?;
 
 let researcher = Agent::from_env()
     .label("research")
@@ -805,7 +805,7 @@ Use a session directory to save tasks, replies, and recorded events, then resume
 The session directory is `./.agentwerk` by default.
 
 ```rust
-let werk = Werk::load(".agentwerk")?;
+let werk = Werk(".agentwerk")?;
 werk.add_agent(my_agent);
 werk.start();
 ```
@@ -934,7 +934,7 @@ Use `Knowledge` to store pages on disk and share them between agents and tasks.
 ```rust
 use agentwerk::Knowledge;
 
-let store = Knowledge::load("./notes")?;
+let store = Knowledge("./notes")?;
 let alice = Agent().knowledge(&store);
 let bob = Agent().knowledge(&store);
 ```

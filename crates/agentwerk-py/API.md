@@ -550,9 +550,10 @@ if answer is not None:
 
 | Area | Method | Description |
 |------|--------|-------------|
+| **Construct** | `Werk()` | Create a fresh Werk using `.agentwerk`. |
+| | `Werk(path)` | Open or create a persisted Werk at `path`. |
 | **Configure** | `set_policy(policy)` | Set execution limits and retry settings. |
 | | `get_policy()` | Get the active policy. |
-| | `set_dir(dir)` | Set the session directory. |
 | | `get_dir()` | Get the session directory. |
 | | `add_agent(agent)` | Add an agent to the Werk. |
 | | `add_condition(condition)` | Add a runtime AQL condition and return its ID. |
@@ -707,7 +708,7 @@ Give agents the same knowledge store so either can write pages that the other re
 ```python
 from agentwerk import Knowledge
 
-store = Knowledge.load("./notes")
+store = Knowledge("./notes")
 
 researcher = Agent.from_env().label("research").knowledge(store)
 writer = Agent.from_env().label("report").knowledge(store)
@@ -813,7 +814,7 @@ Use a session directory to save tasks, replies, and recorded events, then resume
 The session directory is `./.agentwerk` by default.
 
 ```python
-werk = Werk.load(".agentwerk")
+werk = Werk(".agentwerk")
 werk.add_agent(my_agent)
 werk.start()
 ```
@@ -940,7 +941,7 @@ Use `Knowledge` to store pages on disk and share them between agents and tasks.
 ```python
 from agentwerk import Agent, Knowledge
 
-store = Knowledge.load("./notes")
+store = Knowledge("./notes")
 alice = Agent().knowledge(store)
 bob = Agent().knowledge(store)
 ```

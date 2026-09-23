@@ -59,7 +59,7 @@ async fn walks_every_task_action() -> std::result::Result<(), Box<dyn std::error
     });
 
     werk.add_agent(
-        Agent::new()
+        Agent()
             .provider(provider.clone())
             .model(&model)
             .label("archive")
@@ -70,7 +70,7 @@ async fn walks_every_task_action() -> std::result::Result<(), Box<dyn std::error
             ),
     );
     werk.add_agent(
-        Agent::new()
+        Agent()
             .provider(provider)
             .model(&model)
             .label("auditor")

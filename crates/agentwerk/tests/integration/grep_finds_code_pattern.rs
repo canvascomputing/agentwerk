@@ -91,7 +91,7 @@ async fn finds_code_pattern_with_special_chars(
     });
     werk.on_event(move |_, e| event_handler(e));
     werk.add_agent(
-        Agent::new()
+        Agent()
             .provider(provider)
             .model(&model)
             .dir(root)

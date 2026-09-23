@@ -106,7 +106,7 @@ async fn seeker_pool_finds_planted_indicators(
     // A real Seeker always has one bound (see main.rs); a couple of
     // representative pages are enough to exercise `knowledge` here
     // without duplicating the full attack-pattern catalogue.
-    let knowledge = Knowledge::load(root.join(".knowledge"))?;
+    let knowledge = Knowledge(root.join(".knowledge"))?;
     knowledge
         .get_pages()
         .save(
@@ -157,7 +157,7 @@ async fn seeker_pool_finds_planted_indicators(
     // observed construct per planted language, the way a Tracer would hand it off.
     for _ in 0..2 {
         werk.add_agent(
-            Agent::new()
+            Agent()
                 .provider(provider.clone())
                 .model(&model)
                 .role(SEEKER_AGENT)
@@ -171,7 +171,7 @@ async fn seeker_pool_finds_planted_indicators(
 
     // Trivial consumer so handed-off `security_analysis` tasks resolve.
     werk.add_agent(
-        Agent::new()
+        Agent()
             .provider(provider.clone())
             .model(&model)
             .role(

@@ -15,7 +15,7 @@ use crate::prompts::directives::DirectiveStore;
 /// One counter per label, behind the ids [`Agent::get_id`] hands out.
 /// Numbering restarts at 1 for each label, so a host that creates the same
 /// agents in the same order gets the same ids after a restart, which is what
-/// [`Werk::load`] needs to resume an unfinished task.
+/// [`Werk`](crate::Werk()) needs to resume an unfinished task.
 static AGENT_IDS: Mutex<BTreeMap<String, u64>> = Mutex::new(BTreeMap::new());
 
 fn next_id(label: Option<&str>) -> String {
@@ -35,7 +35,7 @@ enum WerkTarget {
 }
 
 impl WerkRef {
-    fn private(werk: Arc<Werk>) -> Self {
+    pub(crate) fn private(werk: Arc<Werk>) -> Self {
         Self(Arc::new(Mutex::new(WerkTarget::Private(werk))))
     }
 
@@ -122,7 +122,8 @@ impl Agent {
     /// Give it a provider and a model before it starts work. It begins with no
     /// tools; joining a Werk registers [`FinishTool`] unless it is interactive.
     pub fn new() -> Self {
-        let knowledge = Knowledge::load(".agentwerk/knowledge").expect("open knowledge store");
+        let knowledge =
+            super::knowledge::Knowledge(".agentwerk/knowledge").expect("open knowledge store");
         Self {
             id: OnceLock::new(),
             provider: None,
@@ -491,7 +492,7 @@ mod tests {
         use crate::event::Event;
         use crate::tools::{CommandTool, ReadFileTool, Tool};
 
-        let agent = Agent::new().tools(vec![
+        let agent = crate::Agent().tools(vec![
             Tool::from(ReadFileTool),
             CommandTool("git").allow("git *").into(),
             Tool::new("greet")
@@ -530,14 +531,14 @@ mod tests {
 
     #[test]
     fn handles_default_scope_only_picks_unlabeled_tasks() {
-        let agent = Agent::new();
+        let agent = crate::Agent();
         assert!(handles(&agent, None));
         assert!(!handles(&agent, Some("research")));
     }
 
     #[test]
     fn handles_only_the_task_carrying_its_own_label() {
-        let agent = Agent::new().label("research");
+        let agent = crate::Agent().label("research");
         assert!(handles(&agent, Some("research")));
         assert!(!handles(&agent, Some("report")));
         assert!(!handles(&agent, None));
@@ -545,32 +546,32 @@ mod tests {
 
     #[test]
     fn label_replaces_the_previous_one() {
-        let agent = Agent::new().label("research").label("math");
+        let agent = crate::Agent().label("research").label("math");
         assert!(handles(&agent, Some("math")));
         assert!(!handles(&agent, Some("research")));
     }
 
     #[test]
     fn interactive_defaults_to_false() {
-        assert!(!Agent::new().is_interactive());
+        assert!(!crate::Agent().is_interactive());
     }
 
     #[test]
     fn interactive_sets_the_flag() {
-        assert!(Agent::new().interactive().is_interactive());
+        assert!(crate::Agent().interactive().is_interactive());
     }
 
     #[test]
     fn ids_are_numbered_per_label() {
-        let first = Agent::new().label("ids_per_label");
-        let second = Agent::new().label("ids_per_label");
+        let first = crate::Agent().label("ids_per_label");
+        let second = crate::Agent().label("ids_per_label");
         assert_eq!(first.get_id(), "ids_per_label-1");
         assert_eq!(second.get_id(), "ids_per_label-2");
     }
 
     #[test]
     fn an_unlabeled_agent_is_numbered_under_agent() {
-        let agent = Agent::new();
+        let agent = crate::Agent();
         assert!(
             agent.get_id().starts_with("agent-"),
             "unexpected id: {}",
@@ -580,13 +581,13 @@ mod tests {
 
     #[test]
     fn a_clone_keeps_the_id_of_the_agent_it_came_from() {
-        let agent = Agent::new().label("cloned_id");
+        let agent = crate::Agent().label("cloned_id");
         assert_eq!(agent.clone().get_id(), agent.get_id());
     }
 
     #[test]
     fn directive_and_directives_apply_overrides_in_order() {
-        let agent = Agent::new()
+        let agent = crate::Agent()
             .directive("cache_miss", "one")
             .directives([("cache_miss", "two"), ("cache_hit", "three")]);
         let directives = agent.get_directives();
@@ -603,7 +604,7 @@ mod tests {
 
     #[test]
     fn adding_an_override_to_a_clone_does_not_change_the_original() {
-        let original = Agent::new().directive("cache_miss", "original");
+        let original = crate::Agent().directive("cache_miss", "original");
         let changed = original.clone().directive("cache_miss", "changed");
 
         assert_eq!(
@@ -624,7 +625,7 @@ mod tests {
 
     #[test]
     fn agent_template_values_do_not_bind_directive_placeholders() {
-        let agent = Agent::new()
+        let agent = crate::Agent()
             .template("path", "src/lib.rs")
             .directive("cache_miss", "Missing {{ path }}");
 
@@ -659,7 +660,7 @@ mod tests {
 
     #[test]
     fn a_role_without_the_placeholder_gets_no_context_block() {
-        let agent = Agent::new().role("ROLE");
+        let agent = crate::Agent().role("ROLE");
         assert_eq!(
             create_system_prompt(&agent, None, &Policy::default(), &Stats::new(), "T-1"),
             "ROLE"
@@ -672,7 +673,7 @@ mod tests {
         let file = dir.path().join("reviewer.md");
         std::fs::write(&file, "ROLE\n").unwrap();
         let role = std::fs::read_to_string(file).unwrap();
-        let agent = Agent::new().role(role);
+        let agent = crate::Agent().role(role);
         assert_eq!(
             create_system_prompt(&agent, None, &Policy::default(), &Stats::new(), "T-1"),
             "ROLE"
@@ -685,7 +686,7 @@ mod tests {
         let file = dir.path().join("reviewer.md");
         std::fs::write(&file, "ROLE\n\n{{ context }}\n").unwrap();
         let role = std::fs::read_to_string(file).unwrap();
-        let agent = Agent::new().role(role).dir("/tmp/check");
+        let agent = crate::Agent().role(role).dir("/tmp/check");
         assert!(
             create_system_prompt(&agent, None, &Policy::default(), &Stats::new(), "T-1")
                 .contains("- Working directory: /tmp/check")
@@ -694,7 +695,9 @@ mod tests {
 
     #[test]
     fn system_prompt_expands_the_context_placeholder() {
-        let agent = Agent::new().role("ROLE\n\n{{ context }}").dir("/tmp/check");
+        let agent = crate::Agent()
+            .role("ROLE\n\n{{ context }}")
+            .dir("/tmp/check");
         let prompt = create_system_prompt(&agent, None, &Policy::default(), &Stats::new(), "T-1");
         assert!(prompt.starts_with("ROLE\n\n"));
         assert!(prompt.contains("- Task: T-1"));
@@ -705,7 +708,7 @@ mod tests {
 
     #[test]
     fn the_context_block_lists_the_remaining_budgets() {
-        let agent = Agent::new().role("{{ context }}").dir("/tmp/check");
+        let agent = crate::Agent().role("{{ context }}").dir("/tmp/check");
         let policy = Policy {
             max_turns: Some(3),
             max_input_tokens: Some(1_000),
@@ -732,7 +735,7 @@ mod tests {
 
     #[test]
     fn built_in_context_shadows_a_shared_template() {
-        let agent = Agent::new()
+        let agent = crate::Agent()
             .role("{{ context }}")
             .template("context", "- Note: mine");
         assert!(
@@ -743,7 +746,7 @@ mod tests {
 
     #[test]
     fn a_single_context_value_expands_without_the_block() {
-        let agent = Agent::new()
+        let agent = crate::Agent()
             .role("Task {{ task_id }} in {{ dir }}, {{ turns_remaining }} turns left.")
             .dir("/tmp/check");
         let policy = Policy {
@@ -759,7 +762,7 @@ mod tests {
 
     #[test]
     fn task_is_not_an_alias_for_task_id() {
-        let agent = Agent::new().role("{{ task }}");
+        let agent = crate::Agent().role("{{ task }}");
 
         assert_eq!(
             create_system_prompt(&agent, None, &Policy::default(), &Stats::new(), "T-1"),
@@ -769,7 +772,7 @@ mod tests {
 
     #[test]
     fn a_single_budget_value_expands_to_nothing_when_unconfigured() {
-        let agent = Agent::new().role("Turns left: {{ turns_remaining }}.");
+        let agent = crate::Agent().role("Turns left: {{ turns_remaining }}.");
         assert_eq!(
             create_system_prompt(&agent, None, &Policy::default(), &Stats::new(), "T-1"),
             "Turns left: ."
@@ -778,7 +781,7 @@ mod tests {
 
     #[test]
     fn built_in_value_shadows_a_shared_template() {
-        let agent = Agent::new()
+        let agent = crate::Agent()
             .role("{{ task_id }}")
             .template("task_id", "mine");
         assert_eq!(
@@ -789,7 +792,7 @@ mod tests {
 
     #[test]
     fn system_prompt_empty_when_role_unset() {
-        let agent = Agent::new();
+        let agent = crate::Agent();
         assert!(
             create_system_prompt(&agent, None, &Policy::default(), &Stats::new(), "T-1").is_empty()
         );
@@ -812,7 +815,7 @@ mod tests {
 
     #[test]
     fn an_agent_that_joined_a_werk_has_finish_registered() {
-        let names = tool_names_in_a_werk(Agent::new());
+        let names = tool_names_in_a_werk(crate::Agent());
         assert!(names.iter().any(|n| n == "finish"), "{names:?}");
         assert!(
             !names.iter().any(|n| n == "event"),
@@ -822,14 +825,14 @@ mod tests {
 
     #[test]
     fn an_agent_keeps_an_event_tool_it_registered_explicitly() {
-        let names = tool_names_in_a_werk(Agent::new().tool(crate::tools::EventTool));
+        let names = tool_names_in_a_werk(crate::Agent().tool(crate::tools::EventTool));
         assert!(names.iter().any(|n| n == "event"), "{names:?}");
         assert!(names.iter().any(|n| n == "finish"), "{names:?}");
     }
 
     #[test]
     fn an_interactive_agent_has_no_finish_tool() {
-        let names = tool_names_in_a_werk(Agent::new().interactive());
+        let names = tool_names_in_a_werk(crate::Agent().interactive());
         assert!(
             !names.iter().any(|n| n == "finish"),
             "an interactive agent ends its task through the host: {names:?}",
@@ -838,20 +841,21 @@ mod tests {
 
     #[test]
     fn an_interactive_agent_keeps_a_finish_tool_it_registered_itself() {
-        let names = tool_names_in_a_werk(Agent::new().interactive().tool(FinishTool));
+        let names = tool_names_in_a_werk(crate::Agent().interactive().tool(FinishTool));
         assert!(names.iter().any(|n| n == "finish"), "{names:?}");
     }
 
     #[test]
     fn an_interactive_agent_keeps_an_event_tool_it_registered_itself() {
-        let names = tool_names_in_a_werk(Agent::new().interactive().tool(crate::tools::EventTool));
+        let names =
+            tool_names_in_a_werk(crate::Agent().interactive().tool(crate::tools::EventTool));
         assert!(names.iter().any(|n| n == "event"), "{names:?}");
         assert!(!names.iter().any(|n| n == "finish"), "{names:?}");
     }
 
     #[test]
     fn system_prompt_interpolates_role_placeholders() {
-        let agent = Agent::new()
+        let agent = crate::Agent()
             .role("You are {{ persona }}.")
             .template("persona", "a senior reviewer");
         assert_eq!(
@@ -862,7 +866,7 @@ mod tests {
 
     #[test]
     fn unresolved_placeholders_pass_through() {
-        let agent = Agent::new().role("Hi {{ missing }}.");
+        let agent = crate::Agent().role("Hi {{ missing }}.");
         assert_eq!(
             create_system_prompt(&agent, None, &Policy::default(), &Stats::new(), "T-1"),
             "Hi {{ missing }}."
@@ -871,7 +875,7 @@ mod tests {
 
     #[test]
     fn multiple_variables_substitute_independently() {
-        let agent = Agent::new()
+        let agent = crate::Agent()
             .role("{{ greeting }}, {{ name }}.")
             .templates([("greeting", "Hello"), ("name", "Alice")]);
         assert_eq!(
@@ -882,7 +886,7 @@ mod tests {
 
     #[test]
     fn no_variables_renders_role_unchanged() {
-        let agent = Agent::new().role("You are a senior reviewer.");
+        let agent = crate::Agent().role("You are a senior reviewer.");
         assert_eq!(
             create_system_prompt(&agent, None, &Policy::default(), &Stats::new(), "T-1"),
             "You are a senior reviewer."
@@ -892,9 +896,8 @@ mod tests {
     #[tokio::test]
     async fn add_task_keeps_source_for_initial_rendering() {
         let dir = crate::test_util::TempDir::new().unwrap();
-        let werk = crate::agents::Werk::new();
-        werk.set_dir(dir.path().to_path_buf());
-        let mut agent = callable(Agent::new().template("topic", "rust"));
+        let werk = crate::agents::Werk(dir.path()).unwrap();
+        let mut agent = callable(crate::Agent().template("topic", "rust"));
         werk.bind_agent(&mut agent);
         agent.add_task("Search {{ topic }} forums.");
         let stored = werk
@@ -911,11 +914,10 @@ mod tests {
     #[tokio::test]
     async fn a_task_body_keeps_the_context_placeholder_verbatim() {
         let dir = crate::test_util::TempDir::new().unwrap();
-        let werk = crate::agents::Werk::new();
-        werk.set_dir(dir.path().to_path_buf());
+        let werk = crate::agents::Werk(dir.path()).unwrap();
         // The block needs a task ID and live budgets, neither of which
         // exists yet at dispatch. Only the role expands it.
-        let mut agent = callable(Agent::new());
+        let mut agent = callable(crate::Agent());
         werk.bind_agent(&mut agent);
         agent.add_task("Work on {{ context }}.");
         let stored = werk
@@ -932,9 +934,8 @@ mod tests {
     #[tokio::test]
     async fn add_task_leaves_object_task_unchanged() {
         let dir = crate::test_util::TempDir::new().unwrap();
-        let werk = crate::agents::Werk::new();
-        werk.set_dir(dir.path().to_path_buf());
-        let mut agent = callable(Agent::new().template("topic", "rust"));
+        let werk = crate::agents::Werk(dir.path()).unwrap();
+        let mut agent = callable(crate::Agent().template("topic", "rust"));
         werk.bind_agent(&mut agent);
         let value = serde_json::json!({"q": "Find {{ topic }}"});
         agent.add_task(Task::new(value.clone()));
@@ -948,7 +949,7 @@ mod tests {
 
     #[test]
     fn add_task_returns_an_id_on_the_private_werk() {
-        let agent = Agent::new();
+        let agent = crate::Agent();
         let id = agent.add_task(Task::new("inspect"));
         let private = agent.werk.upgrade().expect("private Werk exists");
 
@@ -959,7 +960,7 @@ mod tests {
     #[test]
     fn add_task_uses_the_shared_werk_after_registration() {
         let werk = Werk::new();
-        let agent = callable(Agent::new().template("target", "src"));
+        let agent = callable(crate::Agent().template("target", "src"));
         werk.add_agent(agent.clone());
 
         let id = agent.add_task("Inspect {target}.");
@@ -970,8 +971,8 @@ mod tests {
     #[test]
     fn knowledge_registers_the_knowledge_tool_on_the_agent() {
         let dir = crate::test_util::TempDir::new().unwrap();
-        let store = Knowledge::load(dir.path()).unwrap();
-        let agent = Agent::new().knowledge(&store);
+        let store = Knowledge(dir.path()).unwrap();
+        let agent = crate::Agent().knowledge(&store);
         let registry = agent.tool_list();
         let names: Vec<String> = registry
             .iter()
@@ -986,8 +987,8 @@ mod tests {
     #[test]
     fn knowledge_binds_the_passed_store() {
         let dir = crate::test_util::TempDir::new().unwrap();
-        let store = Knowledge::load(dir.path()).unwrap();
-        let agent = Agent::new().knowledge(&store);
+        let store = Knowledge(dir.path()).unwrap();
+        let agent = crate::Agent().knowledge(&store);
         agent
             .knowledge
             .get_pages()
@@ -1005,8 +1006,8 @@ mod tests {
     #[test]
     fn cloned_agent_observes_writes_through_original_handle() {
         let dir = crate::test_util::TempDir::new().unwrap();
-        let store = Knowledge::load(dir.path()).unwrap();
-        let agent = Agent::new().knowledge(&store);
+        let store = Knowledge(dir.path()).unwrap();
+        let agent = crate::Agent().knowledge(&store);
         let cloned = agent.clone();
         agent
             .knowledge
@@ -1025,9 +1026,9 @@ mod tests {
     #[test]
     fn two_agents_bound_to_one_store_see_each_others_writes() {
         let dir = crate::test_util::TempDir::new().unwrap();
-        let store = Knowledge::load(dir.path()).unwrap();
-        let alice = Agent::new().knowledge(&store);
-        let bob = Agent::new().knowledge(&store);
+        let store = Knowledge(dir.path()).unwrap();
+        let alice = crate::Agent().knowledge(&store);
+        let bob = crate::Agent().knowledge(&store);
         alice
             .knowledge
             .get_pages()
@@ -1044,7 +1045,7 @@ mod tests {
 
     #[test]
     fn system_prompt_renders_knowledge_section_when_body_present() {
-        let agent = Agent::new().role("R");
+        let agent = crate::Agent().role("R");
         let prompt = create_system_prompt(
             &agent,
             Some("- **config**: Port 8080"),
@@ -1057,7 +1058,7 @@ mod tests {
 
     #[test]
     fn system_prompt_formats_knowledge_without_rendering_its_contents() {
-        let agent = Agent::new().template("company", "Acme");
+        let agent = crate::Agent().template("company", "Acme");
         assert_eq!(
             create_system_prompt(
                 &agent,
@@ -1083,7 +1084,7 @@ mod tests {
 
     #[test]
     fn system_prompt_omits_knowledge_when_body_empty() {
-        let agent = Agent::new().role("R");
+        let agent = crate::Agent().role("R");
         assert_eq!(
             create_system_prompt(&agent, Some(""), &Policy::default(), &Stats::new(), "T-1",),
             "R"
@@ -1092,7 +1093,7 @@ mod tests {
 
     #[test]
     fn new_agent_does_not_have_the_knowledge_tool_registered() {
-        let agent = Agent::new();
+        let agent = crate::Agent();
         let registry = agent.tool_list();
         let names: Vec<String> = registry
             .iter()
@@ -1107,19 +1108,19 @@ mod tests {
     #[test]
     #[should_panic(expected = "provider required")]
     fn joining_a_werk_without_a_provider_panics() {
-        let mut agent = Agent::new().model("test");
+        let mut agent = crate::Agent().model("test");
         crate::agents::Werk::new().bind_agent(&mut agent);
     }
 
     #[test]
     fn the_label_set_before_the_id_is_read_names_it() {
-        let agent = Agent::new().label("named_before_read");
+        let agent = crate::Agent().label("named_before_read");
         assert_eq!(agent.get_id(), "named_before_read-1");
     }
 
     #[test]
     fn a_label_set_after_the_id_was_read_leaves_it_alone() {
-        let agent = Agent::new();
+        let agent = crate::Agent();
         let before = agent.get_id().to_string();
         let agent = agent.label("named_after_read");
         assert_eq!(agent.get_id(), before);
@@ -1127,7 +1128,7 @@ mod tests {
 
     #[tokio::test]
     async fn starting_twice_registers_the_agent_once() {
-        let agent = callable(Agent::new());
+        let agent = callable(crate::Agent());
         let werk = agent.start();
         agent.start();
         assert_eq!(werk.clone_agents().len(), 1);
@@ -1136,9 +1137,9 @@ mod tests {
     #[tokio::test]
     async fn binding_agent_with_explicit_knowledge_keeps_explicit_store() {
         let dir = crate::test_util::TempDir::new().unwrap();
-        let store = Knowledge::load(dir.path()).unwrap();
+        let store = Knowledge(dir.path()).unwrap();
         let werk = crate::agents::Werk::new();
-        let mut agent = callable(Agent::new().knowledge(&store));
+        let mut agent = callable(crate::Agent().knowledge(&store));
         werk.bind_agent(&mut agent);
         assert!(Arc::ptr_eq(&store, &agent.knowledge));
     }
@@ -1147,14 +1148,14 @@ mod tests {
     async fn finish_task_starts_and_restarts_for_new_tasks_without_registering_twice() {
         use crate::agents::r#loop::test_util::{write_result_response, MockProvider};
         let dir = crate::test_util::TempDir::new().unwrap();
-        let agent = Agent::new()
+        let agent = crate::Agent()
             .provider(MockProvider::with_results(vec![
                 Ok(write_result_response("first")),
                 Ok(write_result_response("second")),
             ]))
             .model("test");
-        let werk = agent.werk.upgrade().unwrap();
-        werk.set_dir(dir.path().to_path_buf());
+        let werk = crate::agents::Werk(dir.path()).unwrap();
+        werk.add_agent(agent.clone());
 
         for answer in ["first", "second"] {
             let task = agent.add_task(answer);
@@ -1172,15 +1173,15 @@ mod tests {
     async fn finish_tasks_starts_execution_and_returns_selected_results_in_query_order() {
         use crate::agents::r#loop::test_util::{write_result_response, MockProvider};
         let dir = crate::test_util::TempDir::new().unwrap();
-        let agent = Agent::new()
+        let agent = crate::Agent()
             .provider(MockProvider::with_results(vec![
                 Ok(write_result_response("first")),
                 Ok(write_result_response("second")),
                 Ok(write_result_response("third")),
             ]))
             .model("test");
-        let werk = agent.werk.upgrade().unwrap();
-        werk.set_dir(dir.path().to_path_buf());
+        let werk = crate::agents::Werk(dir.path()).unwrap();
+        werk.add_agent(agent.clone());
         let first = agent.add_task("first");
         agent.add_task("second");
         agent.add_task("third");
@@ -1205,16 +1206,15 @@ mod tests {
     async fn finish_starts_and_waits_for_every_agent_in_the_shared_werk() {
         use crate::agents::r#loop::test_util::{write_result_response, MockProvider};
         let dir = crate::test_util::TempDir::new().unwrap();
-        let werk = Werk::new();
-        werk.set_dir(dir.path().to_path_buf());
-        let agent = Agent::new()
+        let werk = Werk(dir.path().to_path_buf()).unwrap();
+        let agent = crate::Agent()
             .label("scan")
             .provider(MockProvider::with_results(vec![Ok(write_result_response(
                 "clean",
             ))]))
             .model("test");
         werk.add_agent(agent.clone()).add_agent(
-            Agent::new()
+            crate::Agent()
                 .label("report")
                 .provider(MockProvider::with_results(vec![Ok(write_result_response(
                     "report",
@@ -1245,9 +1245,9 @@ mod tests {
     #[tokio::test]
     async fn finish_methods_return_no_results_for_empty_or_failed_tasks() {
         let dir = crate::test_util::TempDir::new().unwrap();
-        let agent = callable(Agent::new());
-        let werk = agent.werk.upgrade().unwrap();
-        werk.set_dir(dir.path().to_path_buf());
+        let agent = callable(crate::Agent());
+        let werk = crate::agents::Werk(dir.path()).unwrap();
+        werk.add_agent(agent.clone());
         assert_eq!(agent.finish_task("missing").await, None);
         assert!(agent.finish_tasks("missing").await.is_empty());
         assert!(agent.finish().await.is_empty());
@@ -1264,9 +1264,9 @@ mod tests {
         use crate::agents::r#loop::test_util::MockProvider;
         let dir = crate::test_util::TempDir::new().unwrap();
         let provider = MockProvider::with_results(vec![]);
-        let agent = Agent::new().provider(provider.clone()).model("test");
-        let werk = agent.werk.upgrade().unwrap();
-        werk.set_dir(dir.path().to_path_buf());
+        let agent = crate::Agent().provider(provider.clone()).model("test");
+        let werk = crate::agents::Werk(dir.path()).unwrap();
+        werk.add_agent(agent.clone());
         let task = agent.add_task("cancel before the provider is called");
         agent.start().cancel();
 
@@ -1284,14 +1284,14 @@ mod tests {
         use std::time::Duration;
 
         let dir = crate::test_util::TempDir::new().unwrap();
-        let agent = Agent::new()
+        let agent = crate::Agent()
             .provider(MockProvider::with_results(vec![
                 Ok(write_result_response("first")),
                 Ok(write_result_response("second")),
             ]))
             .model("test");
-        let werk = agent.werk.upgrade().unwrap();
-        werk.set_dir(dir.path().to_path_buf());
+        let werk = crate::agents::Werk(dir.path()).unwrap();
+        werk.add_agent(agent.clone());
         agent.start();
 
         for answer in ["first", "second"] {
