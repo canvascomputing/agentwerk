@@ -138,32 +138,15 @@ fn resolve_expression_value(
     expression: &str,
     named_value: &mut impl FnMut(&str) -> Option<String>,
 ) -> Result<Option<String>, String> {
-    if let Some(selection) = selection_expression(expression) {
+    if let Some(selection) = selection_expression(expression)? {
         let value = resolve_selection(werk, selection, named_value)?;
         return Ok(Some(value.map(result_text).unwrap_or_default()));
     }
 
-    resolve_named_value(expression, named_value)
-}
-
-fn resolve_named_value(
-    expression: &str,
-    named_value: &mut impl FnMut(&str) -> Option<String>,
-) -> Result<Option<String>, String> {
-    let (name, json_path) = split_json_path(expression);
-    let (expanded, had_nested_value) = expand_nested(name, named_value)?;
-    if had_nested_value {
+    if expression.contains(EXPRESSION_OPEN) {
         return Err("nested values are only supported inside selection expressions".into());
     }
-    let Some(text) = named_value(expanded.trim()) else {
-        return Ok(None);
-    };
-    let Some(json_path) = json_path else {
-        return Ok(Some(text));
-    };
-    let json_path = JsonPath::parse(json_path.trim()).map_err(|error| error.to_string())?;
-    let value = serde_json::from_str(&text).unwrap_or(Value::Null);
-    Ok(Some(result_text(json_path.evaluate(&value))))
+    Ok(named_value(expression))
 }
 
 fn resolve_selection(
@@ -200,7 +183,9 @@ fn expand_nested(
             return Err("unclosed nested expression".into());
         };
         let name = body[..close].trim();
-        if name.is_empty() || name.contains(EXPRESSION_OPEN) || selection_expression(name).is_some()
+        if name.is_empty()
+            || name.contains(EXPRESSION_OPEN)
+            || selection_expression(name)?.is_some()
         {
             return Err("nested expressions must name a template value".into());
         }
@@ -228,12 +213,12 @@ enum SelectionKind {
 impl SelectionKind {
     fn parse(source: &str) -> Option<Self> {
         Some(match source {
-            "result" => Self::Result,
-            "results" => Self::Results,
-            "task" => Self::Task,
-            "tasks" => Self::Tasks,
-            "event" => Self::Event,
-            "events" => Self::Events,
+            "find_result" => Self::Result,
+            "find_results" => Self::Results,
+            "find_task" => Self::Task,
+            "find_tasks" => Self::Tasks,
+            "find_event" => Self::Event,
+            "find_events" => Self::Events,
             _ => return None,
         })
     }
@@ -250,18 +235,40 @@ struct SelectionExpression<'a> {
     json_path: Option<&'a str>,
 }
 
-fn selection_expression(expression: &str) -> Option<SelectionExpression<'_>> {
-    let (kind, query) = expression.split_once(':')?;
-    let kind = SelectionKind::parse(kind.trim())?;
-    let (query, json_path) = split_json_path(query);
-    Some(SelectionExpression {
+fn selection_expression(expression: &str) -> Result<Option<SelectionExpression<'_>>, String> {
+    let Some((name, body)) = expression.split_once('(') else {
+        return Ok(None);
+    };
+    let Some(kind) = SelectionKind::parse(name) else {
+        return Ok(None);
+    };
+    let Some((query, suffix)) = split_selection_call(body) else {
+        return Err("unclosed selection call".into());
+    };
+    let suffix = suffix.trim();
+    let json_path = if suffix.is_empty() {
+        None
+    } else if let Some(path) = suffix.strip_prefix('.') {
+        let path = path.trim();
+        if path.starts_with('[') {
+            return Err("expected a JSON path field after `.`".into());
+        }
+        Some(path)
+    } else if suffix.starts_with('[') {
+        Some(suffix)
+    } else {
+        return Err(
+            "expected a JSON path beginning with `.` or `[` after the selection call".into(),
+        );
+    };
+    Ok(Some(SelectionExpression {
         kind,
         query: query.trim(),
-        json_path: json_path.map(str::trim),
-    })
+        json_path,
+    }))
 }
 
-fn split_json_path(source: &str) -> (&str, Option<&str>) {
+fn split_selection_call(source: &str) -> Option<(&str, &str)> {
     let mut quote = None;
     let mut escaped = false;
     let mut parenthesis_depth = 0usize;
@@ -300,26 +307,18 @@ fn split_json_path(source: &str) -> (&str, Option<&str>) {
         match character {
             '\'' | '"' => quote = Some(character),
             '(' => parenthesis_depth += 1,
-            ')' => parenthesis_depth = parenthesis_depth.saturating_sub(1),
-            '|' if parenthesis_depth == 0 && is_json_path_separator(source, byte_offset) => {
-                return (
+            ')' if parenthesis_depth == 0 => {
+                return Some((
                     &source[..byte_offset],
-                    Some(&source[byte_offset + character.len_utf8()..]),
-                );
+                    &source[byte_offset + character.len_utf8()..],
+                ));
             }
+            ')' => parenthesis_depth -= 1,
             _ => {}
         }
         byte_offset += character.len_utf8();
     }
-    (source, None)
-}
-
-fn is_json_path_separator(source: &str, byte_offset: usize) -> bool {
-    let before = &source[..byte_offset];
-    let after = &source[byte_offset + '|'.len_utf8()..];
-    let has_space_before = before.chars().next_back().is_some_and(char::is_whitespace);
-    let has_space_after = after.is_empty() || after.chars().next().is_some_and(char::is_whitespace);
-    has_space_before && has_space_after
+    None
 }
 
 /// Nested placeholders may appear in quoted AQL; ordinary braces remain data.
@@ -486,10 +485,10 @@ mod tests {
     fn shared_values_are_inserted_without_rendering_their_contents() {
         let (werk, _dir) = session();
         werk.set_template("company", "Acme");
-        werk.set_template("data", "{{ company }} {{ result: missing }}");
+        werk.set_template("data", "{{ company }} {{ find_result(missing) }}");
         assert_eq!(
             render(&werk, "{{ company }}: {{ data }}").unwrap(),
-            "Acme: {{ company }} {{ result: missing }}"
+            "Acme: {{ company }} {{ find_result(missing) }}"
         );
     }
 
@@ -534,7 +533,7 @@ mod tests {
 
     #[test]
     fn value_rendering_preserves_non_value_expressions() {
-        let template = "{{ readable(result: x) }} {{ result: x }} {{ outer {{ name }} }}";
+        let template = "{{ readable(result: x) }} {{ find_result(x) }} {{ outer {{ name }} }}";
 
         assert_eq!(render_values(template, |_| None), template);
     }
@@ -579,34 +578,18 @@ mod tests {
     }
 
     #[test]
-    fn template_variable_json_paths_select_json() {
-        let (werk, _dir) = session();
-        werk.set_template(
-            "profile",
-            r#"{"company":{"name":"Shared"},"findings":[{"summary":"one"}]}"#,
-        );
-
-        assert_eq!(
-            render(&werk, "{{ profile | findings[*].summary }}").unwrap(),
-            r#"["one"]"#
-        );
-    }
-
-    #[test]
-    fn runtime_variables_override_shared_variables_before_path_selection() {
+    fn removed_template_value_json_paths_stay_literal() {
         let (werk, _dir) = session();
         werk.set_template("profile", r#"{"company":{"name":"Shared"}}"#);
-        let runtime = [("profile", r#"{"company":{"name":"Runtime"}}"#.to_string())];
 
         assert_eq!(
-            werk.render_prompt("{{ profile | company.name }}", &runtime)
-                .unwrap(),
-            "Runtime"
+            render(&werk, "{{ profile | company.name }}").unwrap(),
+            "{{ profile | company.name }}"
         );
     }
 
     #[test]
-    fn template_variables_without_paths_stay_literal() {
+    fn template_values_remain_literal_json() {
         let (werk, _dir) = session();
         let profile = r#"{"company":{"name":"Acme"}}"#;
         werk.set_template("profile", profile);
@@ -615,50 +598,23 @@ mod tests {
     }
 
     #[test]
-    fn unknown_template_variables_with_paths_stay_literal() {
-        let werk = Werk::new();
-
-        assert_eq!(
-            render(&werk, "{{ missing | company.name }}").unwrap(),
-            "{{ missing | company.name }}"
-        );
-    }
-
-    #[test]
-    fn malformed_template_variable_json_renders_nothing() {
-        let (werk, _dir) = session();
-        werk.set_template("profile", "not json");
-
-        assert_eq!(render(&werk, "{{ profile | company.name }}").unwrap(), "");
-    }
-
-    #[test]
-    fn only_whitespace_delimited_pipes_start_json_paths() {
+    fn template_value_names_may_contain_pipes() {
         let (werk, _dir) = session();
         werk.set_templates([
             ("profile|company", "compact"),
             ("profile |company", "left only"),
             ("profile| company", "right only"),
+            ("profile | company", "spaced"),
         ]);
 
         for (expression, expected) in [
             ("{{ profile|company }}", "compact"),
             ("{{ profile |company }}", "left only"),
             ("{{ profile| company }}", "right only"),
+            ("{{ profile | company }}", "spaced"),
         ] {
             assert_eq!(render(&werk, expression).unwrap(), expected, "{expression}");
         }
-    }
-
-    #[test]
-    fn invalid_template_variable_json_paths_report_the_parse_failure() {
-        let (werk, _dir) = session();
-        werk.set_template("profile", r#"{"items":[]}"#);
-
-        let error = render(&werk, "{{ profile | items[?active] }}").unwrap_err();
-
-        assert_eq!(error.expression, "profile | items[?active]");
-        assert_eq!(error.message, "invalid JSON path array index");
     }
 
     #[test]
@@ -679,11 +635,11 @@ mod tests {
         werk.set_task_finished(&second, serde_json::json!({"answer": 42}))
             .unwrap();
         assert_eq!(
-            render(&werk, "{{ result: research }}").unwrap(),
+            render(&werk, "{{ find_result(research) }}").unwrap(),
             "first {{ company }}"
         );
         assert_eq!(
-            render(&werk, format!("{{{{ result: {second} }}}}")).unwrap(),
+            render(&werk, format!("{{{{ find_result({second}) }}}}")).unwrap(),
             r#"{"answer":42}"#
         );
     }
@@ -697,25 +653,30 @@ mod tests {
             serde_json::json!({
                 "company": {"name": "Acme"},
                 "findings": [{"summary": "one"}],
+                "unusual.name": "quoted",
                 "}}": "closed",
             }),
         )
         .unwrap();
 
         assert_eq!(
-            render(&werk, "{{ result: research | company.name }}").unwrap(),
+            render(&werk, "{{ find_result(research).company.name }}").unwrap(),
             "Acme"
         );
         assert_eq!(
-            render(&werk, "{{ result: research | findings[0] }}").unwrap(),
+            render(&werk, "{{ find_result(research).findings[0] }}").unwrap(),
             r#"{"summary":"one"}"#
         );
         assert_eq!(
-            render(&werk, "{{ result: research | company.missing }}").unwrap(),
+            render(&werk, "{{ find_result(research).company.missing }}").unwrap(),
             ""
         );
         assert_eq!(
-            render(&werk, r#"{{ result: research | "}}" }}"#).unwrap(),
+            render(&werk, r#"{{ find_result(research)."unusual.name" }}"#).unwrap(),
+            "quoted"
+        );
+        assert_eq!(
+            render(&werk, r#"{{ find_result(research)."}}" }}"#).unwrap(),
             "closed"
         );
     }
@@ -730,16 +691,41 @@ mod tests {
         }
 
         assert_eq!(
-            render(&werk, "{{ results: scan | [*].verdict }}").unwrap(),
+            render(&werk, "{{ find_results(scan)[*].verdict }}").unwrap(),
             r#"["safe","review"]"#
         );
         assert_eq!(
-            render(&werk, "{{ results: scan | [0].verdict }}").unwrap(),
+            render(&werk, "{{ find_results(scan)[0].verdict }}").unwrap(),
             "safe"
         );
         assert_eq!(
-            render(&werk, "{{ results: missing | [*].verdict }}").unwrap(),
+            render(&werk, "{{ find_results(scan)[0:1].verdict }}").unwrap(),
+            r#"["safe"]"#
+        );
+        assert_eq!(
+            render(&werk, "{{ find_results(missing)[*].verdict }}").unwrap(),
             ""
+        );
+    }
+
+    #[test]
+    fn selector_json_paths_support_flattening_and_object_wildcards() {
+        let (werk, _dir) = session();
+        let object = werk.add_task(Task("object").label("object"));
+        werk.set_task_finished(&object, serde_json::json!({"answer": "found"}))
+            .unwrap();
+        for values in [serde_json::json!([1, 2]), serde_json::json!([3])] {
+            let id = werk.add_task(Task("array").label("array"));
+            werk.set_task_finished(&id, values).unwrap();
+        }
+
+        assert_eq!(
+            render(&werk, "{{ find_result(object).* }}").unwrap(),
+            r#"["found"]"#
+        );
+        assert_eq!(
+            render(&werk, "{{ find_results(array)[] }}").unwrap(),
+            "[1,2,3]"
         );
     }
 
@@ -750,7 +736,11 @@ mod tests {
         werk.add_task(Task(serde_json::json!({"file": "two"})).label("scan"));
 
         assert_eq!(
-            render(&werk, "{{ task: scan ORDER BY task.id DESC | task.file }}",).unwrap(),
+            render(
+                &werk,
+                "{{ find_task(scan ORDER BY task.id DESC).task.file }}",
+            )
+            .unwrap(),
             "two"
         );
     }
@@ -762,7 +752,7 @@ mod tests {
         let second = werk.add_task(Task("two").label("scan"));
 
         assert_eq!(
-            render(&werk, "{{ tasks: scan | [*].id }}").unwrap(),
+            render(&werk, "{{ find_tasks(scan)[*].id }}").unwrap(),
             serde_json::json!([first, second]).to_string()
         );
     }
@@ -773,7 +763,7 @@ mod tests {
         werk.add_task(Task(serde_json::json!({"file": "one"})).label("scan"));
 
         let serialized: Value =
-            serde_json::from_str(&render(&werk, "{{ task: scan }}").unwrap()).unwrap();
+            serde_json::from_str(&render(&werk, "{{ find_task(scan) }}").unwrap()).unwrap();
 
         assert_eq!(serialized["task"]["file"], "one");
         assert!(serialized.get("result").is_none());
@@ -786,8 +776,8 @@ mod tests {
     fn unmatched_task_expressions_render_nothing() {
         let (werk, _dir) = session();
 
-        assert_eq!(render(&werk, "{{ task: missing }}").unwrap(), "");
-        assert_eq!(render(&werk, "{{ tasks: missing }}").unwrap(), "");
+        assert_eq!(render(&werk, "{{ find_task(missing) }}").unwrap(), "");
+        assert_eq!(render(&werk, "{{ find_tasks(missing) }}").unwrap(), "");
     }
 
     #[test]
@@ -797,7 +787,7 @@ mod tests {
         werk.emit_event(Event::new("inspection").data(serde_json::json!({"name": "two"})));
 
         assert_eq!(
-            render(&werk, "{{ event: event.name = inspection | data.name }}",).unwrap(),
+            render(&werk, "{{ find_event(event.name = inspection).data.name }}",).unwrap(),
             "one"
         );
     }
@@ -811,7 +801,7 @@ mod tests {
         assert_eq!(
             render(
                 &werk,
-                "{{ events: event.name = inspection | [*].data.name }}",
+                "{{ find_events(event.name = inspection)[*].data.name }}",
             )
             .unwrap(),
             r#"["one","two"]"#
@@ -823,9 +813,10 @@ mod tests {
         let (werk, _dir) = session();
         werk.emit_event(Event::new("inspection").data(serde_json::json!({"name": "one"})));
 
-        let serialized: Value =
-            serde_json::from_str(&render(&werk, "{{ event: event.name = inspection }}").unwrap())
-                .unwrap();
+        let serialized: Value = serde_json::from_str(
+            &render(&werk, "{{ find_event(event.name = inspection) }}").unwrap(),
+        )
+        .unwrap();
 
         assert_eq!(serialized["name"], "inspection");
         assert_eq!(serialized["data"]["name"], "one");
@@ -836,11 +827,11 @@ mod tests {
         let (werk, _dir) = session();
 
         assert_eq!(
-            render(&werk, "{{ event: event.name = absent }}").unwrap(),
+            render(&werk, "{{ find_event(event.name = absent) }}").unwrap(),
             ""
         );
         assert_eq!(
-            render(&werk, "{{ events: event.name = absent }}").unwrap(),
+            render(&werk, "{{ find_events(event.name = absent) }}").unwrap(),
             ""
         );
     }
@@ -853,22 +844,28 @@ mod tests {
             "{{ readable(result: research) }}",
             "{{ result_path: research }}",
             "{{ result_paths: research }}",
+            "{{ result: research }}",
+            "{{ results: research }}",
+            "{{ task: research }}",
+            "{{ tasks: research }}",
+            "{{ event: research }}",
+            "{{ events: research }}",
         ] {
             assert_eq!(render(&werk, template).unwrap(), template);
         }
     }
 
     #[test]
-    fn quoted_aql_pipes_do_not_start_json_paths() {
+    fn quoted_aql_parentheses_do_not_end_selection_calls() {
         let (werk, _dir) = session();
-        let id = werk.add_task(Task("go").label("research | notes"));
+        let id = werk.add_task(Task("go").label("research ) notes"));
         werk.set_task_finished(&id, serde_json::json!({"answer": "found"}))
             .unwrap();
 
         assert_eq!(
             render(
                 &werk,
-                r#"{{ result: task.label = "research | notes" | answer }}"#,
+                r#"{{ find_result(task.label = "research ) notes").answer }}"#,
             )
             .unwrap(),
             "found"
@@ -876,28 +873,42 @@ mod tests {
     }
 
     #[test]
-    fn compact_aql_pipes_do_not_start_json_paths() {
-        let (werk, _dir) = session();
-        let id = werk.add_task(Task("go").label("research|notes"));
-        werk.set_task_finished(&id, serde_json::json!("compact"))
-            .unwrap();
+    fn escaped_quotes_do_not_end_selection_calls() {
+        let expression = r#"find_result(task.label = "research \" ) notes").answer"#;
+        let selection = selection_expression(expression).unwrap().unwrap();
 
-        assert_eq!(
-            render(&werk, "{{ result: research|notes }}").unwrap(),
-            "compact"
-        );
+        assert_eq!(selection.kind, SelectionKind::Result);
+        assert_eq!(selection.query, r#"task.label = "research \" ) notes""#);
+        assert_eq!(selection.json_path, Some("answer"));
     }
 
     #[test]
-    fn pipes_inside_query_variable_names_do_not_start_json_paths() {
+    fn grouped_aql_parentheses_do_not_end_selection_calls() {
         let (werk, _dir) = session();
         let id = werk.add_task(Task("go").label("research"));
         werk.set_task_finished(&id, serde_json::json!({"answer": "found"}))
             .unwrap();
-        werk.set_template("selection | literal", "research");
 
         assert_eq!(
-            render(&werk, "{{ result: {{ selection | literal }} | answer }}",).unwrap(),
+            render(
+                &werk,
+                "{{ find_result((task.label = research OR task.label = notes)).answer }}",
+            )
+            .unwrap(),
+            "found"
+        );
+    }
+
+    #[test]
+    fn parentheses_inside_query_variable_names_do_not_end_selection_calls() {
+        let (werk, _dir) = session();
+        let id = werk.add_task(Task("go").label("research"));
+        werk.set_task_finished(&id, serde_json::json!({"answer": "found"}))
+            .unwrap();
+        werk.set_template("selection ) literal", "research");
+
+        assert_eq!(
+            render(&werk, "{{ find_result({{ selection ) literal }}).answer }}",).unwrap(),
             "found"
         );
     }
@@ -910,11 +921,32 @@ mod tests {
             .unwrap();
 
         for (prompt, message) in [
-            ("{{ result: research | }}", "JSON path cannot be empty"),
-            ("{{ result: missing | }}", "JSON path cannot be empty"),
+            ("{{ find_result(research). }}", "JSON path cannot be empty"),
+            ("{{ find_result(missing). }}", "JSON path cannot be empty"),
             (
-                "{{ result: research | answer || missing }}",
+                "{{ find_result(research).answer || missing }}",
                 "unsupported JSON path syntax at byte 6",
+            ),
+        ] {
+            let error = render(&werk, prompt).unwrap_err();
+            assert_eq!(error.expression, prompt[2..prompt.len() - 2].trim());
+            assert_eq!(error.message, message, "{prompt}");
+        }
+    }
+
+    #[test]
+    fn malformed_selection_calls_report_the_parse_failure() {
+        let werk = Werk::new();
+
+        for (prompt, message) in [
+            ("{{ find_result(research }}", "unclosed selection call"),
+            (
+                "{{ find_result(research) answer }}",
+                "expected a JSON path beginning with `.` or `[` after the selection call",
+            ),
+            (
+                "{{ find_result(research).[0] }}",
+                "expected a JSON path field after `.`",
             ),
         ] {
             let error = render(&werk, prompt).unwrap_err();
@@ -926,13 +958,12 @@ mod tests {
     #[test]
     fn template_variables_cannot_supply_json_paths() {
         let (werk, _dir) = session();
-        werk.set_templates([("path", "answer"), ("profile", r#"{"answer":"found"}"#)]);
+        werk.set_template("path", "answer");
 
         for prompt in [
-            "{{ result: research | {{ path }} }}",
-            "{{ profile | {{ path }} }}",
-            "{{ task: research | {{ path }} }}",
-            "{{ event: event.name = task_finished | {{ path }} }}",
+            "{{ find_result(research).{{ path }} }}",
+            "{{ find_task(research).{{ path }} }}",
+            "{{ find_event(event.name = task_finished).{{ path }} }}",
         ] {
             let error = render(&werk, prompt).unwrap_err();
             assert_eq!(error.expression, prompt[2..prompt.len() - 2].trim());
@@ -945,9 +976,9 @@ mod tests {
         let (werk, _dir) = session();
         werk.set_template("selection", "research | answer");
 
-        let error = render(&werk, "{{ result: {{ selection }} }}").unwrap_err();
+        let error = render(&werk, "{{ find_result({{ selection }}) }}").unwrap_err();
 
-        assert_eq!(error.expression, "result: {{ selection }}");
+        assert_eq!(error.expression, "find_result({{ selection }})");
         assert_eq!(error.message, "Unexpected `|` in the query.");
     }
 
@@ -960,7 +991,7 @@ mod tests {
         werk.set_template("company", "Acme");
 
         assert_eq!(
-            render(&werk, "{{ result: research | answer }}").unwrap(),
+            render(&werk, "{{ find_result(research).answer }}").unwrap(),
             "{{ company }}"
         );
     }
@@ -977,7 +1008,7 @@ mod tests {
             .unwrap();
 
         assert_eq!(
-            render(&werk, "{{ results: research ORDER BY task.id DESC }}").unwrap(),
+            render(&werk, "{{ find_results(research ORDER BY task.id DESC) }}",).unwrap(),
             r#"["second","first"]"#
         );
     }
@@ -994,7 +1025,7 @@ mod tests {
         assert_eq!(
             render(
                 &werk,
-                "{{ results: task.label = research AND event.name = selected }}",
+                "{{ find_results(task.label = research AND event.name = selected) }}",
             )
             .unwrap(),
             r#"[{"answer":42}]"#
@@ -1008,7 +1039,7 @@ mod tests {
         werk.set_task_finished(&id, serde_json::json!({"research": "found"}))
             .unwrap();
         assert_eq!(
-            render(&werk, r#"{{ result: task.label = "research}notes" }}"#).unwrap(),
+            render(&werk, r#"{{ find_result(task.label = "research}notes") }}"#,).unwrap(),
             r#"{"research":"found"}"#
         );
     }
@@ -1017,8 +1048,8 @@ mod tests {
     fn unmatched_result_expressions_render_nothing() {
         let (werk, _dir) = session();
 
-        assert_eq!(render(&werk, "{{ result: missing }}").unwrap(), "");
-        assert_eq!(render(&werk, "{{ results: missing }}").unwrap(), "");
+        assert_eq!(render(&werk, "{{ find_result(missing) }}").unwrap(), "");
+        assert_eq!(render(&werk, "{{ find_results(missing) }}").unwrap(), "");
     }
 
     #[test]
@@ -1026,12 +1057,12 @@ mod tests {
         let (werk, _dir) = session();
 
         for expression in [
-            "{{ result: missing | answer }}",
-            "{{ results: missing | [*].answer }}",
-            "{{ task: missing | task.answer }}",
-            "{{ tasks: missing | [*].task.answer }}",
-            "{{ event: event.name = missing | data.answer }}",
-            "{{ events: event.name = missing | [*].data.answer }}",
+            "{{ find_result(missing).answer }}",
+            "{{ find_results(missing)[*].answer }}",
+            "{{ find_task(missing).task.answer }}",
+            "{{ find_tasks(missing)[*].task.answer }}",
+            "{{ find_event(event.name = missing).data.answer }}",
+            "{{ find_events(event.name = missing)[*].data.answer }}",
         ] {
             assert_eq!(render(&werk, expression).unwrap(), "", "{expression}");
         }
@@ -1042,12 +1073,12 @@ mod tests {
         let (werk, _dir) = session();
 
         for expression in [
-            "{{ result: missing }}",
-            "{{ results: missing }}",
-            "{{ task: missing }}",
-            "{{ tasks: missing }}",
-            "{{ event: event.name = missing }}",
-            "{{ events: event.name = missing }}",
+            "{{ find_result(missing) }}",
+            "{{ find_results(missing) }}",
+            "{{ find_task(missing) }}",
+            "{{ find_tasks(missing) }}",
+            "{{ find_event(event.name = missing) }}",
+            "{{ find_events(event.name = missing) }}",
         ] {
             let prompt = format!("before {expression} after");
             assert_eq!(
@@ -1065,8 +1096,8 @@ mod tests {
         let empty = werk.add_task(Task("empty").label("empty"));
         let useful = werk.add_task(Task("useful").label("useful"));
 
-        assert_eq!(render(&werk, "{{ result: research }}").unwrap(), "");
-        assert_eq!(render(&werk, "{{ results: research }}").unwrap(), "");
+        assert_eq!(render(&werk, "{{ find_result(research) }}").unwrap(), "");
+        assert_eq!(render(&werk, "{{ find_results(research) }}").unwrap(), "");
 
         werk.set_task_finished(&pending, Value::Null).unwrap();
         werk.set_task_finished(&empty, serde_json::json!([]))
@@ -1074,16 +1105,16 @@ mod tests {
         werk.set_task_finished(&useful, serde_json::json!(["instruction"]))
             .unwrap();
 
-        assert_eq!(render(&werk, "{{ result: research }}").unwrap(), "");
-        assert_eq!(render(&werk, "{{ results: research }}").unwrap(), "");
-        assert_eq!(render(&werk, "{{ result: empty }}").unwrap(), "");
-        assert_eq!(render(&werk, "{{ results: empty }}").unwrap(), "");
+        assert_eq!(render(&werk, "{{ find_result(research) }}").unwrap(), "");
+        assert_eq!(render(&werk, "{{ find_results(research) }}").unwrap(), "");
+        assert_eq!(render(&werk, "{{ find_result(empty) }}").unwrap(), "");
+        assert_eq!(render(&werk, "{{ find_results(empty) }}").unwrap(), "");
         assert_eq!(
-            render(&werk, "{{ result: useful }}").unwrap(),
+            render(&werk, "{{ find_result(useful) }}").unwrap(),
             r#"["instruction"]"#
         );
         assert_eq!(
-            render(&werk, "{{ results: useful }}").unwrap(),
+            render(&werk, "{{ find_results(useful) }}").unwrap(),
             r#"[["instruction"]]"#
         );
     }
@@ -1093,23 +1124,23 @@ mod tests {
         let (werk, _dir) = session();
         for (prompt, expression, message) in [
             (
-                "{{ result: }}",
-                "result:",
+                "{{ find_result() }}",
+                "find_result()",
                 "A query cannot be blank. Name an origin-qualified field or a task ID.",
             ),
             (
-                "{{ results: task.label = }}",
-                "results: task.label =",
+                "{{ find_results(task.label =) }}",
+                "find_results(task.label =)",
                 "The query ends in the middle of a term.",
             ),
             (
-                "{{ task: task.label = }}",
-                "task: task.label =",
+                "{{ find_task(task.label =) }}",
+                "find_task(task.label =)",
                 "The query ends in the middle of a term.",
             ),
             (
-                "{{ events: event.name = }}",
-                "events: event.name =",
+                "{{ find_events(event.name =) }}",
+                "find_events(event.name =)",
                 "The query ends in the middle of a term.",
             ),
         ] {
@@ -1123,9 +1154,12 @@ mod tests {
     fn unclosed_expressions_report_the_unclosed_construct() {
         let werk = Werk::new();
         for (prompt, message) in [
-            ("{{ result: research", "unclosed expression or quoted value"),
             (
-                "{{ result: task.label = \"oops }}",
+                "{{ find_result(research)",
+                "unclosed expression or quoted value",
+            ),
+            (
+                "{{ find_result(task.label = \"oops) }}",
                 "unclosed expression or quoted value",
             ),
         ] {
@@ -1141,10 +1175,10 @@ mod tests {
         let id = werk.add_task(Task("go").label("research"));
         werk.set_task_finished(&id, serde_json::json!("Use {{ company }}"))
             .unwrap();
-        werk.set_template("research", "{{ result: research }}");
+        werk.set_template("research", "{{ find_result(research) }}");
         assert_eq!(
-            render(&werk, "{{ research }} | {{ result: research }}").unwrap(),
-            "{{ result: research }} | Use {{ company }}"
+            render(&werk, "{{ research }} | {{ find_result(research) }}").unwrap(),
+            "{{ find_result(research) }} | Use {{ company }}"
         );
     }
 
@@ -1157,7 +1191,7 @@ mod tests {
         werk.set_template("selection", "research");
 
         assert_eq!(
-            render(&werk, "{{ result: {{ selection }} }}").unwrap(),
+            render(&werk, "{{ find_result({{ selection }}) }}").unwrap(),
             "found"
         );
     }
@@ -1171,7 +1205,7 @@ mod tests {
         werk.set_templates([("field", "task.label"), ("label", "research")]);
 
         assert_eq!(
-            render(&werk, r#"{{ result: {{ field }} = "{{ label }}" }}"#,).unwrap(),
+            render(&werk, r#"{{ find_result({{ field }} = "{{ label }}") }}"#,).unwrap(),
             "found"
         );
     }
@@ -1188,7 +1222,7 @@ mod tests {
         ]);
 
         assert_eq!(
-            render(&werk, "{{ result: {{ literal_query }} }}").unwrap(),
+            render(&werk, "{{ find_result({{ literal_query }}) }}").unwrap(),
             "literal"
         );
     }
@@ -1199,15 +1233,15 @@ mod tests {
         werk.set_templates([("name", "research"), ("outer", "name")]);
         for (prompt, message) in [
             (
-                "{{ result: {{ missing }} }}",
+                "{{ find_result({{ missing }}) }}",
                 "unknown nested template value `missing`",
             ),
             (
-                "{{ result: {{ result: research }} }}",
+                "{{ find_result({{ find_result(research) }}) }}",
                 "nested expressions must name a template value",
             ),
             (
-                "{{ result: {{ outer {{ name }} }} }}",
+                "{{ find_result({{ outer {{ name }} }}) }}",
                 "nested expressions may only be one level deep",
             ),
             (
@@ -1228,9 +1262,9 @@ mod tests {
         let (werk, _dir) = session();
         werk.set_template("selection", "task.label =");
 
-        let error = render(&werk, "{{ result: {{ selection }} }}").unwrap_err();
+        let error = render(&werk, "{{ find_result({{ selection }}) }}").unwrap_err();
 
-        assert_eq!(error.expression, "result: {{ selection }}");
+        assert_eq!(error.expression, "find_result({{ selection }})");
         assert_eq!(error.message, "The query ends in the middle of a term.");
     }
 }

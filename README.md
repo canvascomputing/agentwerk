@@ -176,7 +176,7 @@ Store the session in `./session` so you can stop the program and continue the sa
 ```rust
 let werk = Werk("./session")?;
 
-let coder_task = Task("Implement this plan:\n\n{{ result: plan }}")
+let coder_task = Task("Implement this plan:\n\n{{ find_result(plan) }}")
     .label("coding");
 
 let start_coder = Condition("task.label = plan AND task.status = finished")

@@ -28,7 +28,7 @@ from agentwerk import (
 PLAN = "plan"
 CODING = "coding"
 SESSION_DIR = Path("./session")
-CODER_TASK = "Implement this plan:\n\n{{ result: plan }}"
+CODER_TASK = "Implement this plan:\n\n{{ find_result(plan) }}"
 PROMPTS = Path(__file__).parent / "prompts"
 PLANNER_ROLE = (PROMPTS / "planner.md").read_text()
 CODER_ROLE = (PROMPTS / "coder.md").read_text()

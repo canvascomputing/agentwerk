@@ -182,7 +182,7 @@ Store the session in `./session` so you can stop the program and continue the sa
 werk = Werk("./session")
 
 coder_task = Task(
-    "Implement this plan:\n\n{{ result: plan }}",
+    "Implement this plan:\n\n{{ find_result(plan) }}",
     label="coding",
 )
 

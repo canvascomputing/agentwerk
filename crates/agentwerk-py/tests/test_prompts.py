@@ -12,7 +12,7 @@ async def test_shared_template_values_are_inserted_literally(werk, scripted_open
     werk.set_templates(
         {
             "company": "Acme",
-            "brief": "For {{ company }}: {{ result: missing }}",
+            "brief": "For {{ company }}: {{ find_result(missing) }}",
         }
     )
     werk.add_agent(
@@ -24,8 +24,10 @@ async def test_shared_template_values_are_inserted_literally(werk, scripted_open
     werk.add_task("{{ brief }} {{ unknown }}")
     await asyncio.wait_for(werk.finish(), timeout=5)
     messages = scripted_openai.requests[0]["messages"]
-    assert messages[0]["content"] == "For {{ company }}: {{ result: missing }}"
-    assert messages[1]["content"] == "For {{ company }}: {{ result: missing }} {{ unknown }}"
+    assert messages[0]["content"] == "For {{ company }}: {{ find_result(missing) }}"
+    assert messages[1]["content"] == (
+        "For {{ company }}: {{ find_result(missing) }} {{ unknown }}"
+    )
 
 
 async def test_direct_aql_expressions_resolve_results(werk, scripted_openai):
@@ -38,9 +40,9 @@ async def test_direct_aql_expressions_resolve_results(werk, scripted_openai):
         aw.Agent()
         .provider(scripted_openai.provider())
         .model("mock")
-        .role("{{ result: research }}")
+        .role("{{ find_result(research) }}")
     )
-    werk.add_task("{{ results: research ORDER BY task.id DESC }}")
+    werk.add_task("{{ find_results(research ORDER BY task.id DESC) }}")
     await asyncio.wait_for(werk.finish(), timeout=5)
     messages = scripted_openai.requests[0]["messages"]
     assert messages[0]["content"] == '{"research":"one {{ company }}"}'
@@ -59,9 +61,9 @@ async def test_result_json_paths_navigate_selected_json(werk, scripted_openai):
         aw.Agent()
         .provider(scripted_openai.provider())
         .model("mock")
-        .role("{{ result: research | company.name }}")
+        .role("{{ find_result(research).company.name }}")
     )
-    werk.add_task("{{ results: research | [*].company.name }}")
+    werk.add_task("{{ find_results(research)[*].company.name }}")
 
     await asyncio.wait_for(werk.finish(), timeout=5)
 
@@ -70,7 +72,9 @@ async def test_result_json_paths_navigate_selected_json(werk, scripted_openai):
     assert messages[1]["content"] == '["Acme","Canvas"]'
 
 
-async def test_template_variable_json_paths(werk, scripted_openai):
+async def test_removed_template_variable_json_paths_stay_literal(
+    werk, scripted_openai
+):
     werk.set_template("profile", '{"company":{"name":"Acme"}}')
     scripted_openai.respond_with_tool("finish", {"answer": "done"})
     werk.add_agent(
@@ -84,7 +88,7 @@ async def test_template_variable_json_paths(werk, scripted_openai):
     await asyncio.wait_for(werk.finish(), timeout=5)
 
     messages = scripted_openai.requests[0]["messages"]
-    assert messages[0]["content"] == "Acme"
+    assert messages[0]["content"] == "{{ profile | company.name }}"
 
 
 async def test_task_expressions_select_json(werk, scripted_openai):
@@ -97,9 +101,9 @@ async def test_task_expressions_select_json(werk, scripted_openai):
         aw.Agent()
         .provider(scripted_openai.provider())
         .model("mock")
-        .role("{{ task: scan ORDER BY task.id DESC | task.file }}")
+        .role("{{ find_task(scan ORDER BY task.id DESC).task.file }}")
     )
-    werk.add_task("{{ tasks: scan | [*].id }}")
+    werk.add_task("{{ find_tasks(scan)[*].id }}")
 
     await asyncio.wait_for(werk.finish(), timeout=5)
 
@@ -116,9 +120,9 @@ async def test_event_expressions_select_json(werk, scripted_openai):
         aw.Agent()
         .provider(scripted_openai.provider())
         .model("mock")
-        .role("{{ event: event.name = inspection | data.name }}")
+        .role("{{ find_event(event.name = inspection).data.name }}")
     )
-    werk.add_task("{{ events: event.name = inspection | [*].data.name }}")
+    werk.add_task("{{ find_events(event.name = inspection)[*].data.name }}")
 
     await asyncio.wait_for(werk.finish(), timeout=5)
 
@@ -138,7 +142,7 @@ async def test_nested_query_values_select_results(werk, scripted_openai):
         aw.Agent()
         .provider(scripted_openai.provider())
         .model("mock")
-        .role("{{ results: {{ selection }} }}")
+        .role("{{ find_results({{ selection }}) }}")
     )
     werk.add_task("go")
     await asyncio.wait_for(werk.finish(), timeout=5)
@@ -184,12 +188,12 @@ async def test_unmatched_selectors_render_nothing_and_reach_provider(
     werk, scripted_openai
 ):
     expressions = [
-        "{{ result: missing }}",
-        "{{ results: missing | [*].answer }}",
-        "{{ task: missing }}",
-        "{{ tasks: missing | [*].task }}",
-        "{{ event: event.name = missing }}",
-        "{{ events: event.name = missing | [*].data }}",
+        "{{ find_result(missing) }}",
+        "{{ find_results(missing)[*].answer }}",
+        "{{ find_task(missing) }}",
+        "{{ find_tasks(missing)[*].task }}",
+        "{{ find_event(event.name = missing) }}",
+        "{{ find_events(event.name = missing)[*].data }}",
     ]
     scripted_openai.respond_with_tool("finish", {"answer": "done"})
     werk.add_agent(
@@ -222,7 +226,7 @@ async def test_null_and_empty_array_results_render_nothing(werk, scripted_openai
         aw.Agent()
         .provider(scripted_openai.provider())
         .model("mock")
-        .role("before {{ result: null }}{{ results: empty }} after")
+        .role("before {{ find_result(null) }}{{ find_results(empty) }} after")
     )
     werk.add_task("go")
 
@@ -255,7 +259,7 @@ async def test_malformed_result_selector_fails_before_provider_request(
         aw.Agent()
         .provider(scripted_openai.provider())
         .model("mock")
-        .role("{{ result: task.label = }}")
+        .role("{{ find_result(task.label =) }}")
     )
     task = werk.add_task("go")
     failures = []
@@ -269,7 +273,7 @@ async def test_malformed_result_selector_fails_before_provider_request(
     assert scripted_openai.requests == []
     assert failures == [aw.Event.PROMPT_RENDER_FAILED, aw.Event.TASK_FAILED]
     error = werk.get_task(task).get_errors()[0].get_data()
-    assert error["expression"] == "result: task.label ="
+    assert error["expression"] == "find_result(task.label =)"
     assert error["message"] == "The query ends in the middle of a term."
 
 
