@@ -31,7 +31,7 @@ async fn main() {
         .role(RESEARCHER_ROLE)
         .knowledge(&knowledge)
         .tool(brave_search_tool(brave_key))
-        .tool(FetchTool::new());
+        .tool(FetchTool);
 
     let writer = Agent::from_env()
         .label(REPORT)

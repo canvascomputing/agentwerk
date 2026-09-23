@@ -34,7 +34,7 @@ const SCHEMA: &str = include_str!("command.schema.json");
 /// use agentwerk::Agent;
 /// use agentwerk::tools::CommandTool;
 ///
-/// Agent::new().tool(CommandTool::new("git").allow("git *").deny("git push*"));
+/// Agent::new().tool(CommandTool("git").allow("git *").deny("git push*"));
 /// ```
 #[derive(Clone)]
 pub struct CommandTool {
@@ -48,6 +48,12 @@ pub struct CommandTool {
     concurrent: bool,
 }
 
+/// Create a tool the model calls by `name`.
+#[allow(non_snake_case)]
+pub fn CommandTool(name: impl Into<String>) -> CommandTool {
+    CommandTool::new(name)
+}
+
 impl CommandTool {
     /// Default per-command timeout when the model omits `timeout_ms`.
     pub const DEFAULT_TIMEOUT: Duration = Duration::from_millis(120_000);
@@ -55,8 +61,9 @@ impl CommandTool {
     /// Maximum per-command timeout the model is allowed to request.
     pub const MAX_TIMEOUT: Duration = Duration::from_millis(600_000);
 
-    /// Create a tool the model calls by `name`. With no [`CommandTool::allow`]
-    /// pattern it permits the bare `name` and nothing else.
+    /// Create a tool the model calls by `name`. `CommandTool(name)` is the
+    /// preferred spelling. With no [`CommandTool::allow`] pattern it permits
+    /// the bare `name` and nothing else.
     pub fn new(name: impl Into<String>) -> Self {
         let name = name.into();
         let mut tool = Self {
@@ -423,8 +430,22 @@ mod tests {
     use crate::prompts::directives::TOOL_TIMED_OUT;
 
     #[test]
+    fn function_and_associated_constructor_match() {
+        let function = CommandTool("git");
+        let associated = CommandTool::new("git");
+
+        assert_eq!(function.tool_name, associated.tool_name);
+        assert_eq!(function.allow, associated.allow);
+        assert_eq!(function.allow_flags, associated.allow_flags);
+        assert_eq!(function.deny, associated.deny);
+        assert_eq!(function.deny_flags.len(), associated.deny_flags.len());
+        assert_eq!(function.description, associated.description);
+        assert_eq!(function.concurrent, associated.concurrent);
+    }
+
+    #[test]
     fn every_example_the_schema_shows_deserializes_into_the_arguments() {
-        let document = Tool::from(CommandTool::new("echo"))
+        let document = Tool::from(CommandTool("echo"))
             .get_input_schema()
             .get_raw_schema()
             .clone();
@@ -440,17 +461,17 @@ mod tests {
 
     #[test]
     fn a_tool_is_not_concurrent_by_default() {
-        assert!(!Tool::from(CommandTool::new("echo")).is_concurrent());
+        assert!(!Tool::from(CommandTool("echo")).is_concurrent());
     }
 
     #[test]
     fn a_tool_takes_its_name_from_its_only_argument() {
-        assert_eq!(Tool::from(CommandTool::new("echo")).get_name(), "echo");
+        assert_eq!(Tool::from(CommandTool("echo")).get_name(), "echo");
     }
 
     #[test]
     fn every_string_builder_accepts_an_owned_string() {
-        let tool = CommandTool::new(String::from("git"))
+        let tool = CommandTool(String::from("git"))
             .allow(String::from("git *"))
             .allow_flag(String::from("--verbose"))
             .deny(String::from("git push*"))
@@ -465,15 +486,13 @@ mod tests {
 
     #[test]
     fn a_tool_can_be_marked_concurrent() {
-        let tool = CommandTool::new("echo").concurrent(true);
+        let tool = CommandTool("echo").concurrent(true);
         assert!(Tool::from(tool).is_concurrent());
     }
 
     #[test]
     fn a_description_lists_the_allowed_and_denied_patterns() {
-        let tool = CommandTool::new("git")
-            .allow("git status")
-            .deny("git push*");
+        let tool = CommandTool("git").allow("git status").deny("git push*");
         let description = Tool::from(tool).get_description().to_string();
         assert!(description.contains("Allowed: `git status`."));
         assert!(description.contains("Denied: `git push*`."));
@@ -481,7 +500,7 @@ mod tests {
 
     #[test]
     fn a_description_names_the_bare_command_without_an_allowed_pattern() {
-        let tool = CommandTool::new("git");
+        let tool = CommandTool("git");
         assert!(Tool::from(tool)
             .get_description()
             .contains("Allowed: only the bare command `git`."));
@@ -489,7 +508,7 @@ mod tests {
 
     #[test]
     fn a_custom_description_survives_a_later_allow() {
-        let tool = CommandTool::new("git")
+        let tool = CommandTool("git")
             .description("Run git commands.")
             .allow("git *");
         assert_eq!(Tool::from(tool).get_description(), "Run git commands.");
@@ -501,15 +520,13 @@ mod tests {
         let file = dir.path().join("git.tool.md");
         std::fs::write(&file, "Run git commands.\n").unwrap();
         let description = std::fs::read_to_string(file).unwrap();
-        let tool = CommandTool::new("git")
-            .description(description)
-            .allow("git *");
+        let tool = CommandTool("git").description(description).allow("git *");
         assert_eq!(Tool::from(tool).get_description(), "Run git commands.");
     }
 
     #[tokio::test]
     async fn a_command_returns_its_output() {
-        let tool = CommandTool::new("echo").allow("echo *");
+        let tool = CommandTool("echo").allow("echo *");
         let ctx = test_tool_context();
         let input = serde_json::json!({ "command": "echo hello" });
         let result = Tool::from(tool.clone()).invoke(input, &ctx).await;
@@ -520,7 +537,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_command_over_its_timeout_is_killed() {
-        let tool = CommandTool::new("sleep").allow("sleep *");
+        let tool = CommandTool("sleep").allow("sleep *");
         let ctx = test_tool_context();
         let input = serde_json::json!({ "command": "sleep 10", "timeout_ms": 100 });
         let result = Tool::from(tool.clone()).invoke(input, &ctx).await;
@@ -532,7 +549,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_zero_command_timeout_is_infinite() {
-        let tool = CommandTool::new("sleep").allow("sleep *");
+        let tool = CommandTool("sleep").allow("sleep *");
         let input = serde_json::json!({ "command": "sleep 0.02", "timeout_ms": 0 });
 
         let result = Tool::from(tool).invoke(input, &test_tool_context()).await;
@@ -542,8 +559,8 @@ mod tests {
 
     #[tokio::test]
     async fn a_host_timeout_replaces_the_command_input_timeout() {
-        let tool = Tool::from(CommandTool::new("sleep").allow("sleep *"))
-            .timeout(Duration::from_millis(10));
+        let tool =
+            Tool::from(CommandTool("sleep").allow("sleep *")).timeout(Duration::from_millis(10));
         let input = serde_json::json!({ "command": "sleep 1", "timeout_ms": 0 });
 
         let result = tool.invoke(input, &test_tool_context()).await;
@@ -557,7 +574,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_zero_host_timeout_ignores_the_command_input_timeout() {
-        let tool = Tool::from(CommandTool::new("sleep").allow("sleep *")).timeout(Duration::ZERO);
+        let tool = Tool::from(CommandTool("sleep").allow("sleep *")).timeout(Duration::ZERO);
         let input = serde_json::json!({ "command": "sleep 0.02", "timeout_ms": 1 });
 
         let result = tool.invoke(input, &test_tool_context()).await;
@@ -569,7 +586,7 @@ mod tests {
     async fn a_call_without_a_command_is_rejected() {
         // The schema requires `command`, so dispatch rejects the call before
         // the tool runs and names the property.
-        let result = Tool::from(CommandTool::new("echo"))
+        let result = Tool::from(CommandTool("echo"))
             .invoke(serde_json::json!({}), &test_tool_context())
             .await;
         assert_eq!(result.get_data()["kind"], "schema_failed");
@@ -582,7 +599,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_tool_without_an_allowed_pattern_runs_the_bare_command() {
-        let tool = CommandTool::new("echo");
+        let tool = CommandTool("echo");
         let ctx = test_tool_context();
         let result = Tool::from(tool)
             .call(serde_json::json!({ "command": "echo" }), &ctx)
@@ -592,7 +609,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_tool_without_an_allowed_pattern_rejects_a_command_with_arguments() {
-        let tool = CommandTool::new("echo");
+        let tool = CommandTool("echo");
         let ctx = test_tool_context();
         let result = Tool::from(tool)
             .call(serde_json::json!({ "command": "echo hello" }), &ctx)
@@ -604,7 +621,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_command_matching_no_allowed_pattern_is_rejected() {
-        let tool = CommandTool::new("echo").allow("echo *");
+        let tool = CommandTool("echo").allow("echo *");
         let ctx = test_tool_context();
         let result = Tool::from(tool)
             .call(serde_json::json!({ "command": "rm -rf /" }), &ctx)
@@ -616,9 +633,7 @@ mod tests {
 
     #[tokio::test]
     async fn every_allowed_pattern_is_accepted() {
-        let tool = CommandTool::new("echo")
-            .allow("echo one*")
-            .allow("echo two*");
+        let tool = CommandTool("echo").allow("echo one*").allow("echo two*");
         let ctx = test_tool_context();
         for command in ["echo one", "echo two"] {
             let result = Tool::from(tool.clone())
@@ -632,7 +647,7 @@ mod tests {
     async fn the_conversion_keeps_the_rules() {
         // The closure captures the whole configuration, so a converted tool
         // must refuse what the type refuses.
-        let tool: Tool = CommandTool::new("echo")
+        let tool: Tool = CommandTool("echo")
             .allow("echo *")
             .deny("echo secret*")
             .into();
@@ -661,9 +676,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_denied_pattern_overrules_an_allowed_one() {
-        let tool = CommandTool::new("echo")
-            .allow("echo *")
-            .deny("echo secret*");
+        let tool = CommandTool("echo").allow("echo *").deny("echo secret*");
         let ctx = test_tool_context();
         let result = Tool::from(tool)
             .call(serde_json::json!({ "command": "echo secret" }), &ctx)
@@ -675,7 +688,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_denied_pattern_overrules_the_bare_command() {
-        let tool = CommandTool::new("echo").deny("echo");
+        let tool = CommandTool("echo").deny("echo");
         let ctx = test_tool_context();
         let result = Tool::from(tool)
             .call(serde_json::json!({ "command": "echo" }), &ctx)
@@ -689,7 +702,7 @@ mod tests {
     async fn refuses_chaining(command: &str) {
         let dir = crate::test_util::TempDir::new().unwrap();
         let ctx = ToolContext::new(dir.path().to_path_buf());
-        let tool = CommandTool::new("touch").allow("touch *");
+        let tool = CommandTool("touch").allow("touch *");
 
         let result = Tool::from(tool)
             .call(serde_json::json!({ "command": command }), &ctx)
@@ -713,7 +726,7 @@ mod tests {
         let dir = crate::test_util::TempDir::new().unwrap();
         let ctx = ToolContext::new(dir.path().to_path_buf());
 
-        let result = Tool::from(CommandTool::new("touch").allow("touch *"))
+        let result = Tool::from(CommandTool("touch").allow("touch *"))
             .call(serde_json::json!({ "command": "touch chained.txt" }), &ctx)
             .await;
 
@@ -739,7 +752,7 @@ mod tests {
     #[tokio::test]
     async fn an_operator_inside_quotes_is_one_command() {
         let ctx = test_tool_context();
-        let result = Tool::from(CommandTool::new("echo").allow("echo *"))
+        let result = Tool::from(CommandTool("echo").allow("echo *"))
             .call(serde_json::json!({ "command": "echo \"a && b\"" }), &ctx)
             .await;
 
@@ -759,7 +772,7 @@ mod tests {
         std::fs::write(dir.path().join("two words.txt"), "x").unwrap();
         let ctx = ToolContext::new(dir.path().to_path_buf());
 
-        let result = Tool::from(CommandTool::new("ls").allow("ls *"))
+        let result = Tool::from(CommandTool("ls").allow("ls *"))
             .call(
                 serde_json::json!({ "command": "ls -1 \"two words.txt\"" }),
                 &ctx,
@@ -777,7 +790,7 @@ mod tests {
     #[tokio::test]
     async fn an_absolute_program_path_runs_when_a_pattern_allows_it() {
         let ctx = test_tool_context();
-        let result = Tool::from(CommandTool::new("echo").allow("/bin/echo *"))
+        let result = Tool::from(CommandTool("echo").allow("/bin/echo *"))
             .call(serde_json::json!({ "command": "/bin/echo hi" }), &ctx)
             .await;
 
@@ -793,7 +806,7 @@ mod tests {
     async fn extra_whitespace_does_not_escape_a_denied_pattern() {
         // Asserted against echo: a regression here on a real `git push` would
         // push from the checkout instead of failing the assertion.
-        let tool = CommandTool::new("echo").allow("echo *").deny("echo push*");
+        let tool = CommandTool("echo").allow("echo *").deny("echo push*");
         let ctx = test_tool_context();
         let result = Tool::from(tool)
             .call(serde_json::json!({ "command": "echo  push --force" }), &ctx)
@@ -807,7 +820,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_denied_flag_is_refused_wherever_it_sits() {
-        let tool = CommandTool::new("ls").allow("ls *").deny_flag("-l");
+        let tool = CommandTool("ls").allow("ls *").deny_flag("-l");
         let ctx = test_tool_context();
         let result = Tool::from(tool)
             .call(serde_json::json!({ "command": "ls -a -l" }), &ctx)
@@ -818,7 +831,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_denied_flag_catches_the_value_it_carries() {
-        let tool = CommandTool::new("git").allow("git *").deny_flag("--format");
+        let tool = CommandTool("git").allow("git *").deny_flag("--format");
         let ctx = test_tool_context();
         let result = Tool::from(tool)
             .call(
@@ -835,7 +848,7 @@ mod tests {
         // code, so the rule cannot depend on the value being letters. Asserted
         // against echo: a regression here on a real ssh would hang on the
         // network until the tool timeout instead of failing the assertion.
-        let tool = CommandTool::new("echo").allow("echo *").deny_flag("-o");
+        let tool = CommandTool("echo").allow("echo *").deny_flag("-o");
         let ctx = test_tool_context();
         let result = Tool::from(tool)
             .call(
@@ -854,7 +867,7 @@ mod tests {
     async fn a_denied_short_flag_leaves_the_long_spelling_alone() {
         // Guarding both spellings takes two calls, so the tool must not pretend
         // one covers the other.
-        let tool = CommandTool::new("echo").allow("echo *").deny_flag("-f");
+        let tool = CommandTool("echo").allow("echo *").deny_flag("-f");
         let ctx = test_tool_context();
         let result = Tool::from(tool)
             .call(serde_json::json!({ "command": "echo --force" }), &ctx)
@@ -864,9 +877,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_denied_long_flag_leaves_the_short_spelling_alone() {
-        let tool = CommandTool::new("echo")
-            .allow("echo *")
-            .deny_flag("--force");
+        let tool = CommandTool("echo").allow("echo *").deny_flag("--force");
         let ctx = test_tool_context();
         let result = Tool::from(tool)
             .call(serde_json::json!({ "command": "echo -f" }), &ctx)
@@ -876,7 +887,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_denied_letter_reaches_into_a_cluster() {
-        let tool = CommandTool::new("echo").allow("echo *").deny_flag("-f");
+        let tool = CommandTool("echo").allow("echo *").deny_flag("-f");
         let ctx = test_tool_context();
         let result = Tool::from(tool)
             .call(serde_json::json!({ "command": "echo -rf" }), &ctx)
@@ -888,7 +899,7 @@ mod tests {
     async fn a_denied_cluster_catches_only_that_spelling() {
         // Naming several letters reads as the cluster, not as a rule per
         // letter, so `-r` on its own is untouched by it.
-        let tool = CommandTool::new("echo").allow("echo *").deny_flag("-rf");
+        let tool = CommandTool("echo").allow("echo *").deny_flag("-rf");
         let ctx = test_tool_context();
 
         let refused = Tool::from(tool.clone())
@@ -904,7 +915,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_flag_runs_when_no_rule_narrows_the_tool() {
-        let tool = CommandTool::new("echo").allow("echo *");
+        let tool = CommandTool("echo").allow("echo *");
         let ctx = test_tool_context();
         let result = Tool::from(tool)
             .call(serde_json::json!({ "command": "echo -n hi" }), &ctx)
@@ -914,7 +925,7 @@ mod tests {
 
     #[tokio::test]
     async fn an_allowed_flag_runs_the_command_carrying_it() {
-        let tool = CommandTool::new("echo").allow("echo *").allow_flag("-n");
+        let tool = CommandTool("echo").allow("echo *").allow_flag("-n");
         let ctx = test_tool_context();
         let result = Tool::from(tool)
             .call(serde_json::json!({ "command": "echo -n hi" }), &ctx)
@@ -924,7 +935,7 @@ mod tests {
 
     #[tokio::test]
     async fn every_allowed_flag_is_accepted() {
-        let tool = CommandTool::new("echo")
+        let tool = CommandTool("echo")
             .allow("echo *")
             .allow_flag("-n")
             .allow_flag("-e");
@@ -941,7 +952,7 @@ mod tests {
     async fn an_allowed_flag_does_not_widen_the_bare_command_default() {
         // Naming a flag says which of the permitted commands may carry it, so
         // a tool with no allowed pattern still runs the bare command alone.
-        let tool = CommandTool::new("echo").allow_flag("-n");
+        let tool = CommandTool("echo").allow_flag("-n");
         let ctx = test_tool_context();
         let result = Tool::from(tool)
             .call(serde_json::json!({ "command": "echo -n hi" }), &ctx)
@@ -954,7 +965,7 @@ mod tests {
     async fn a_flag_after_a_double_dash_is_not_measured_against_the_allowed_set() {
         // The getopt convention: after `--` the token names a file, so the set
         // has no say over it.
-        let tool = CommandTool::new("echo").allow("echo *").allow_flag("-n");
+        let tool = CommandTool("echo").allow("echo *").allow_flag("-n");
         let ctx = test_tool_context();
         let result = Tool::from(tool)
             .call(serde_json::json!({ "command": "echo -- --force" }), &ctx)
@@ -964,7 +975,7 @@ mod tests {
 
     #[tokio::test]
     async fn an_allowed_flag_set_refuses_a_flag_it_does_not_name() {
-        let tool = CommandTool::new("echo").allow("echo *").allow_flag("-n");
+        let tool = CommandTool("echo").allow("echo *").allow_flag("-n");
         let ctx = test_tool_context();
         let result = Tool::from(tool)
             .call(serde_json::json!({ "command": "echo -e hi" }), &ctx)
@@ -976,9 +987,7 @@ mod tests {
 
     #[tokio::test]
     async fn an_allowed_flag_permits_the_value_written_against_it() {
-        let tool = CommandTool::new("echo")
-            .allow("echo *")
-            .allow_flag("--format");
+        let tool = CommandTool("echo").allow("echo *").allow_flag("--format");
         let ctx = test_tool_context();
         let result = Tool::from(tool)
             .call(serde_json::json!({ "command": "echo --format=%H" }), &ctx)
@@ -990,7 +999,7 @@ mod tests {
     async fn an_allowed_short_flag_leaves_a_cluster_holding_it_refused() {
         // The mirror of the denied letter reaching into a cluster: an allow
         // doing the same would hand over `-f` along with the `-r` it names.
-        let tool = CommandTool::new("echo").allow("echo *").allow_flag("-r");
+        let tool = CommandTool("echo").allow("echo *").allow_flag("-r");
         let ctx = test_tool_context();
         let result = Tool::from(tool)
             .call(serde_json::json!({ "command": "echo -rf" }), &ctx)
@@ -1003,7 +1012,7 @@ mod tests {
         // The deny answers first whatever the allowed set says, and it answers
         // on its own terms: a denied letter reaches into a cluster an allow
         // rule would have to name in full.
-        let tool = CommandTool::new("echo")
+        let tool = CommandTool("echo")
             .allow("echo *")
             .allow_flag("--force")
             .deny_flag("--force");
@@ -1019,7 +1028,7 @@ mod tests {
     async fn a_command_refused_by_both_rules_names_the_pattern() {
         // Both rules refuse it. Naming the flag would send the model back with
         // the same command and one flag fewer, which is still not allowed.
-        let tool = CommandTool::new("echo").allow("echo one*").allow_flag("-n");
+        let tool = CommandTool("echo").allow("echo one*").allow_flag("-n");
         let ctx = test_tool_context();
         let result = Tool::from(tool)
             .call(serde_json::json!({ "command": "echo two -e" }), &ctx)
@@ -1032,7 +1041,7 @@ mod tests {
     async fn an_absolute_path_is_refused_by_a_pattern_naming_the_program() {
         // Fail closed: the pattern matches what runs, so an operator wanting the
         // absolute path allows it.
-        let tool = CommandTool::new("echo").allow("echo *");
+        let tool = CommandTool("echo").allow("echo *");
         let ctx = test_tool_context();
         let result = Tool::from(tool)
             .call(serde_json::json!({ "command": "/bin/echo hi" }), &ctx)
@@ -1042,7 +1051,7 @@ mod tests {
 
     #[tokio::test]
     async fn an_environment_assignment_is_refused() {
-        let tool = CommandTool::new("echo").allow("echo *");
+        let tool = CommandTool("echo").allow("echo *");
         let ctx = test_tool_context();
         let result = Tool::from(tool)
             .call(
@@ -1057,7 +1066,7 @@ mod tests {
     #[tokio::test]
     async fn a_missing_program_names_itself_in_the_error() {
         let ctx = test_tool_context();
-        let result = Tool::from(CommandTool::new("nonexistent_command_xyz"))
+        let result = Tool::from(CommandTool("nonexistent_command_xyz"))
             .call(
                 serde_json::json!({ "command": "nonexistent_command_xyz" }),
                 &ctx,
@@ -1069,7 +1078,7 @@ mod tests {
 
     #[test]
     fn a_description_lists_the_denied_flags() {
-        let tool = CommandTool::new("git").allow("git *").deny_flag("--force");
+        let tool = CommandTool("git").allow("git *").deny_flag("--force");
         assert!(Tool::from(tool)
             .get_description()
             .contains("Denied flags: `--force`."));
@@ -1077,7 +1086,7 @@ mod tests {
 
     #[test]
     fn a_description_lists_the_allowed_flags() {
-        let tool = CommandTool::new("git").allow("git *").allow_flag("--all");
+        let tool = CommandTool("git").allow("git *").allow_flag("--all");
         assert!(Tool::from(tool)
             .get_description()
             .contains("Allowed flags: `--all`, and no other."));
@@ -1087,29 +1096,27 @@ mod tests {
     #[should_panic(expected = "is not a flag")]
     fn an_allow_flag_rule_that_is_not_a_flag_is_refused_at_construction() {
         // Silently accepted, the rule would sit inert and permit nothing.
-        let _ = CommandTool::new("git").allow_flag("all");
+        let _ = CommandTool("git").allow_flag("all");
     }
 
     #[test]
     #[should_panic(expected = "is not a flag")]
     fn a_deny_flag_rule_that_is_not_a_flag_is_refused_at_construction() {
         // Silently accepted, the rule would sit inert and deny nothing.
-        let _ = CommandTool::new("git").deny_flag("force");
+        let _ = CommandTool("git").deny_flag("force");
     }
 
     #[test]
     #[should_panic(expected = "is not a flag")]
     fn a_deny_flag_rule_naming_a_number_is_refused_at_construction() {
-        let _ = CommandTool::new("head").deny_flag("-5");
+        let _ = CommandTool("head").deny_flag("-5");
     }
 
     #[tokio::test]
     async fn a_denied_flag_after_a_double_dash_is_an_operand() {
         // The getopt convention: after `--` the token names a file, so the
         // rule must not refuse it.
-        let tool = CommandTool::new("echo")
-            .allow("echo *")
-            .deny_flag("--force");
+        let tool = CommandTool("echo").allow("echo *").deny_flag("--force");
         let ctx = test_tool_context();
         let result = Tool::from(tool)
             .call(serde_json::json!({ "command": "echo -- --force" }), &ctx)
@@ -1122,7 +1129,7 @@ mod tests {
         // The documented limit of allow patterns: quoting is gone by the time
         // the pattern is asked, so the program receives one argument the
         // pattern read as two.
-        let tool = CommandTool::new("echo").allow("echo a b");
+        let tool = CommandTool("echo").allow("echo a b");
         let ctx = test_tool_context();
         let result = Tool::from(tool)
             .call(serde_json::json!({ "command": "echo \"a b\"" }), &ctx)
@@ -1134,7 +1141,7 @@ mod tests {
     async fn a_program_differing_in_case_is_refused() {
         // A case-insensitive filesystem finds ECHO for echo, so the pattern
         // failing closed is what keeps it from widening the allow list.
-        let tool = CommandTool::new("echo").allow("echo *");
+        let tool = CommandTool("echo").allow("echo *");
         let ctx = test_tool_context();
         let result = Tool::from(tool)
             .call(serde_json::json!({ "command": "ECHO hi" }), &ctx)
@@ -1145,9 +1152,7 @@ mod tests {
     #[tokio::test]
     async fn a_denied_command_never_runs() {
         let dir = crate::test_util::TempDir::new().unwrap();
-        let tool = CommandTool::new("touch")
-            .allow("touch *")
-            .deny("touch marker*");
+        let tool = CommandTool("touch").allow("touch *").deny("touch marker*");
         let ctx = ToolContext::new(dir.path().to_path_buf());
 
         Tool::from(tool.clone())

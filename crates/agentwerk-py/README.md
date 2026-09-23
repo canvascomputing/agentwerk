@@ -402,14 +402,17 @@ Both agents can inspect the working tree, but only the coder can run Rust checks
 def git_tool():
     return CommandTool("git").allow("git status*").allow("git diff*")
 
+def cargo_tool():
+    return (
+        CommandTool("cargo")
+        .allow("cargo fmt*")
+        .allow("cargo check*")
+        .allow("cargo test*")
+    )
+
 planner.tool(git_tool())
 
-coder.tool(git_tool()).tool(
-    CommandTool("cargo")
-    .allow("cargo fmt*")
-    .allow("cargo check*")
-    .allow("cargo test*")
-)
+coder.tool(git_tool()).tool(cargo_tool())
 ```
 
 A condition starts the coder with the saved plan as soon as the planner finishes.

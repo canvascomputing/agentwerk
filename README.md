@@ -232,7 +232,7 @@ let web_search = brave_search_tool(brave_key);
 
 let researcher = researcher
     .tool(web_search)
-    .tool(FetchTool::new());
+    .tool(FetchTool);
 ```
 
 APIs: [Tools](API.md#tools), [FetchTool](API.md#fetchtool), and [Custom tools](API.md#custom-tools).
@@ -441,18 +441,18 @@ let coder = Agent::from_env()
 Both agents can inspect the working tree, but only the coder can run Rust checks.
 
 ```rust
-let git = || CommandTool::new("git")
+let git = || CommandTool("git")
     .allow("git status*")
     .allow("git diff*");
 
+let cargo = || CommandTool("cargo")
+    .allow("cargo fmt*")
+    .allow("cargo check*")
+    .allow("cargo test*");
+
 let planner = planner.tool(git());
 
-let coder = coder
-    .tool(git())
-    .tool(CommandTool::new("cargo")
-        .allow("cargo fmt*")
-        .allow("cargo check*")
-        .allow("cargo test*"));
+let coder = coder.tool(git()).tool(cargo());
 ```
 
 A condition starts the coder with the saved plan as soon as the planner finishes.

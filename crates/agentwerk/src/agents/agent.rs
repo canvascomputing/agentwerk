@@ -259,10 +259,10 @@ impl Agent {
     /// tasks and shares with other agents.
     ///
     /// It replaces the store opened by default for what the prompt shows and
-    /// registers a [`KnowledgeTool`] bound to it. Hand the same store to several
+    /// registers a [`struct@KnowledgeTool`] bound to it. Hand the same store to several
     /// agents to share it between them.
     pub fn knowledge(mut self, store: &Arc<Knowledge>) -> Self {
-        self.register_tool(KnowledgeTool::new(Arc::clone(store)));
+        self.register_tool(KnowledgeTool(Arc::clone(store)));
         self.knowledge = Arc::clone(store);
         self
     }
@@ -493,7 +493,7 @@ mod tests {
 
         let agent = Agent::new().tools(vec![
             Tool::from(ReadFileTool),
-            CommandTool::new("git").allow("git *").into(),
+            CommandTool("git").allow("git *").into(),
             Tool::new("greet")
                 .description("Say hello.")
                 .handler(|_: serde_json::Value| async { Event::success("hi") }),

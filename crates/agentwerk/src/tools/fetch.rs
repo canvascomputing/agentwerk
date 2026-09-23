@@ -44,19 +44,31 @@ const BROWSER_MAX_FRAME_SIZE: u32 = 16_384;
 /// use agentwerk::Agent;
 /// use agentwerk::tools::FetchTool;
 ///
-/// Agent::new().tool(FetchTool::new());
+/// Agent::new().tool(FetchTool);
 /// ```
-#[derive(Clone, Default)]
+#[derive(Clone)]
 pub struct FetchTool {
     impersonate: bool,
     timeout: Option<Duration>,
 }
 
+/// The default fetch tool.
+#[allow(non_upper_case_globals)]
+pub const FetchTool: FetchTool = FetchTool {
+    impersonate: false,
+    timeout: None,
+};
+
+impl Default for FetchTool {
+    fn default() -> Self {
+        FetchTool
+    }
+}
+
 impl FetchTool {
-    /// Create the tool. Requests carry agentwerk's own user agent until
-    /// [`FetchTool::impersonate`] changes that.
+    /// Create the default tool. The bare `FetchTool` value is equivalent.
     pub fn new() -> Self {
-        Self::default()
+        FetchTool
     }
 
     /// Send the headers and HTTP/2 settings a browser sends, reaching a site
@@ -73,7 +85,7 @@ impl FetchTool {
     /// use agentwerk::Agent;
     /// use agentwerk::tools::FetchTool;
     ///
-    /// Agent::new().tool(FetchTool::new().impersonate());
+    /// Agent::new().tool(FetchTool.impersonate());
     /// ```
     pub fn impersonate(mut self) -> Self {
         self.impersonate = true;
@@ -91,7 +103,7 @@ impl FetchTool {
     /// use agentwerk::Agent;
     /// use agentwerk::tools::FetchTool;
     ///
-    /// Agent::new().tool(FetchTool::new().timeout(Duration::from_secs(30)));
+    /// Agent::new().tool(FetchTool.timeout(Duration::from_secs(30)));
     /// ```
     pub fn timeout(mut self, duration: Duration) -> Self {
         self.timeout = Some(duration);
@@ -600,6 +612,25 @@ fn validate_url_for_test(url: &str) -> std::result::Result<String, String> {
 mod tests {
     use super::*;
 
+    #[test]
+    fn value_default_and_associated_constructor_match() {
+        for tool in [FetchTool, FetchTool::default(), FetchTool::new()] {
+            assert!(!tool.impersonate);
+            assert_eq!(tool.timeout, None);
+        }
+    }
+
+    #[test]
+    fn the_value_accepts_configuration_in_either_order() {
+        let before = FetchTool.timeout(Duration::from_secs(15)).impersonate();
+        let after = FetchTool.impersonate().timeout(Duration::from_secs(30));
+
+        assert!(before.impersonate);
+        assert_eq!(before.timeout, Some(Duration::from_secs(15)));
+        assert!(after.impersonate);
+        assert_eq!(after.timeout, Some(Duration::from_secs(30)));
+    }
+
     fn header<'a>(headers: &'a [(&'static str, &'static str)], name: &str) -> Option<&'a str> {
         headers
             .iter()
@@ -609,7 +640,7 @@ mod tests {
 
     #[test]
     fn every_example_the_schema_shows_deserializes_into_the_arguments() {
-        let document = Tool::from(FetchTool::new())
+        let document = Tool::from(FetchTool)
             .get_input_schema()
             .get_raw_schema()
             .clone();

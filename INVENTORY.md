@@ -1724,6 +1724,7 @@ Not bound: it is how `CommandTool` reads one command line.
 | Python | `CommandTool`: a class carrying the builder methods, where every other built-in tool is a function returning a handle | |
 | Rust | `.DEFAULT_TIMEOUT: number = 120000` | pub |
 | Rust | `.MAX_TIMEOUT: number = 600000` | pub |
+| Rust | `CommandTool(name: string): CommandTool` | pub |
 | Rust | `.new(name: string): this` | pub |
 | Python | `CommandTool(name)` | |
 | both | `.allow(pattern: string): this` | pub |
@@ -1812,6 +1813,7 @@ Not bound: it is how `CommandTool` reads one command line.
 |----------|------|------------|
 | Rust | `FetchTool { impersonate: boolean, timeout: duration? }` | pub |
 | Python | `FetchTool`: a class carrying the builder method, where every other built-in tool except `CommandTool` is a function returning a handle | |
+| Rust | `FetchTool: FetchTool` | pub |
 | Rust | `.new(): this` | pub |
 | Python | `FetchTool()` | |
 | both | `.impersonate(): this` | pub |
@@ -1935,6 +1937,7 @@ Not bound: it is how `CommandTool` reads one command line.
 | Language | Item | Visibility |
 |----------|------|------------|
 | both | `KnowledgeTool { store: Knowledge }` | pub |
+| Rust | `KnowledgeTool(store: Knowledge): KnowledgeTool` | pub |
 | Rust | `.new(store: Knowledge): this` | pub |
 | Python | `KnowledgeTool(store)` | |
 | Rust | `impl From<KnowledgeTool> for Tool` | pub |

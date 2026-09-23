@@ -27,11 +27,18 @@ pub struct KnowledgeTool {
     store: Arc<Knowledge>,
 }
 
+/// Bind the tool to `store` without making it the agent's own knowledge.
+#[allow(non_snake_case)]
+pub fn KnowledgeTool(store: Arc<Knowledge>) -> KnowledgeTool {
+    KnowledgeTool::new(store)
+}
+
 impl KnowledgeTool {
     /// Bind the tool to `store` without making it the agent's own knowledge.
     /// `Agent::knowledge` is the usual entry point: it does this and also
     /// renders the store's index into the system prompt. Reach for the
     /// constructor when an agent should write to a store it is not told about.
+    /// `KnowledgeTool(store)` is the preferred spelling.
     pub fn new(store: Arc<Knowledge>) -> Self {
         Self { store }
     }
@@ -192,6 +199,16 @@ mod tests {
     use super::*;
     use crate::agents::knowledge::{Knowledge, Page};
 
+    #[test]
+    fn function_and_associated_constructor_bind_the_same_store() {
+        let (store, _dir) = fresh_store();
+        let function = KnowledgeTool(Arc::clone(&store));
+        let associated = KnowledgeTool::new(Arc::clone(&store));
+
+        assert!(Arc::ptr_eq(&function.store, &store));
+        assert!(Arc::ptr_eq(&associated.store, &store));
+    }
+
     fn fresh_store() -> (Arc<Knowledge>, crate::test_util::TempDir) {
         let dir = crate::test_util::TempDir::new().unwrap();
         let store = Knowledge::load(dir.path()).unwrap();
@@ -344,7 +361,7 @@ mod tests {
     /// Run a call through the tool's schema before its handler sees it. The
     /// tests below read what the model would.
     async fn dispatch(store: &Arc<Knowledge>, input: serde_json::Value) -> String {
-        Tool::from(KnowledgeTool::new(Arc::clone(store)))
+        Tool::from(KnowledgeTool(Arc::clone(store)))
             .invoke(input, &ctx())
             .await
             .get_content()
