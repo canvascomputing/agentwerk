@@ -123,7 +123,6 @@ type Delivery = (Event, Option<Task>);
 #[derive(Default)]
 struct ConditionRegistry {
     entries: Vec<Condition>,
-    runtime_events: Vec<Event>,
     next_id: u64,
 }
 
@@ -762,33 +761,22 @@ impl Werk {
         event
     }
 
-    fn condition_matches(&self, query: &Query, event: &Event) -> bool {
-        match query.origin() {
-            Origin::Task => self
-                .get_task(&event.task_id)
-                .is_some_and(|task| query.matches_task(&task)),
-            Origin::Event => query.matches_event(event),
-            Origin::Joined => self
-                .get_task(&event.task_id)
-                .is_some_and(|task| query.matches_joined(&task, event)),
-        }
-    }
-
     fn apply_conditions(&self, event: &Event) {
         let task = self.get_task(&event.task_id);
         let triggered_conditions = {
             let mut registry = self.conditions.lock().unwrap();
-            if event.name != Event::TEXT_CHUNK_RECEIVED {
-                registry.runtime_events.push(event.clone());
-            }
             registry
                 .entries
                 .iter_mut()
                 .filter_map(|condition| {
-                    if condition.fired || !condition.matches(task.as_ref(), event) {
+                    if condition.remaining_triggers == Some(0)
+                        || !condition.matches(task.as_ref(), event)
+                    {
                         return None;
                     }
-                    condition.fired = true;
+                    if let Some(remaining) = &mut condition.remaining_triggers {
+                        *remaining -= 1;
+                    }
                     Some(condition.clone())
                 })
                 .collect::<Vec<_>>()
@@ -917,16 +905,15 @@ impl Werk {
 
     /// Register a runtime AQL condition and return its assigned ID.
     ///
-    /// Registration immediately tests retained events from the current process.
-    /// Later conditions are tested synchronously after each event's regular
-    /// handlers. Task events are emitted after their state transition, so a
-    /// condition sees the updated task.
+    /// Conditions are tested synchronously after each event's regular handlers.
+    /// One registered by a handler can therefore match the event being handled,
+    /// while events completed before registration are ignored. Task events are
+    /// emitted after their state transition, so a condition sees the updated task.
     ///
-    /// Starting a run clears retained events, rearms every condition, and then
-    /// emits `run_started`. Work released by that event joins the starting run.
-    /// `run_finished` is emitted after agents stop, so work it releases waits
-    /// for the next run. Loaded session history is excluded, conditions are not
-    /// persisted, and text chunks are tested live without being retained.
+    /// Starting a run restores every condition's configured trigger count and
+    /// then emits `run_started`. Work released by that event joins the starting
+    /// run. `run_finished` is emitted after agents stop, so work it releases
+    /// waits for the next run. Conditions are not persisted with a session.
     ///
     /// IDs use the next sequential `condition-<N>` value.
     pub fn add_condition(&self, condition: Condition) -> String {
@@ -937,30 +924,7 @@ impl Werk {
         let mut registry = self.conditions.lock().unwrap();
         registry.next_id += 1;
         let id = format!("condition-{}", registry.next_id);
-        let position = registry.entries.len();
-        let query = condition.query.clone();
         registry.entries.push(condition);
-        let runtime_events = registry.runtime_events.clone();
-        drop(registry);
-
-        if !runtime_events
-            .iter()
-            .any(|event| self.condition_matches(&query, event))
-        {
-            return id;
-        }
-
-        let triggered_condition = {
-            let mut registry = self.conditions.lock().unwrap();
-            let condition = &mut registry.entries[position];
-            if condition.fired {
-                None
-            } else {
-                condition.fired = true;
-                Some(condition.clone())
-            }
-        };
-        self.activate_conditions(triggered_condition);
         id
     }
 
@@ -1407,9 +1371,8 @@ impl Werk {
         }
         {
             let mut registry = self.conditions.lock().unwrap();
-            registry.runtime_events.clear();
             for condition in &mut registry.entries {
-                condition.fired = false;
+                condition.remaining_triggers = condition.max_triggers;
             }
         }
         self.run.reset();
@@ -1656,14 +1619,17 @@ mod tests {
     }
 
     #[test]
-    fn a_condition_registered_after_matching_activity_fires_immediately() {
+    fn a_condition_registered_after_matching_activity_waits_for_the_next_event() {
         let (werk, _tmp) = test_werk();
-        werk.add_task(Task::labeled("draft", "write"));
+        let draft = werk.add_task(Task::labeled("draft", "write"));
         assert!(werk.find_tasks("edit").is_empty());
 
         werk.add_condition(
             Condition::new("task.label = draft").task(Task::labeled("edit", "edit")),
         );
+        assert!(werk.find_tasks("edit").is_empty());
+
+        werk.emit_event(Event::new("draft_changed").task_id(draft));
 
         assert_eq!(werk.find_tasks("edit").len(), 1);
     }
@@ -1771,7 +1737,7 @@ mod tests {
     }
 
     #[test]
-    fn streamed_chunks_match_live_but_are_not_kept_for_late_conditions() {
+    fn streamed_chunks_emitted_before_registration_are_ignored() {
         let (werk, _tmp) = test_werk();
         werk.emit_event(Event::new(Event::TEXT_CHUNK_RECEIVED));
         werk.add_condition(
@@ -1805,10 +1771,12 @@ mod tests {
     }
 
     #[test]
-    fn concurrent_matching_events_release_one_action_set() {
+    fn concurrent_matching_events_respect_the_trigger_count() {
         let (werk, _tmp) = test_werk();
         werk.add_condition(
-            Condition::new("event.name = ready").task(Task::labeled("released", "work")),
+            Condition::new("event.name = ready")
+                .times(3)
+                .task(Task::labeled("released", "work")),
         );
         let threads = (0..8)
             .map(|_| {
@@ -1822,7 +1790,7 @@ mod tests {
             thread.join().unwrap();
         }
 
-        assert_eq!(werk.find_tasks("released").len(), 1);
+        assert_eq!(werk.find_tasks("released").len(), 3);
     }
 
     #[test]
@@ -1837,22 +1805,61 @@ mod tests {
         assert_eq!(werk.find_tasks("released").len(), 1);
     }
 
-    #[tokio::test]
-    async fn conditions_fire_once_per_run_and_rearm_for_the_next_run() {
+    #[test]
+    fn action_generated_events_consume_a_finite_trigger_count() {
         let (werk, _tmp) = test_werk();
         werk.add_condition(
-            Condition::new("event.name = ready").task(Task::labeled("unclaimed", "work")),
+            Condition::new("event.name = task_created")
+                .times(3)
+                .task(Task::labeled("released", "work")),
         );
 
+        werk.add_task("trigger");
+
+        assert_eq!(werk.find_tasks("released").len(), 3);
+    }
+
+    #[test]
+    fn none_and_zero_allow_every_matching_event() {
+        for condition in [
+            Condition::new("event.name = ready").times(None),
+            Condition::new("event.name = ready").times(0),
+        ] {
+            let (werk, _tmp) = test_werk();
+            werk.add_condition(condition.task(Task::labeled("released", "work")));
+
+            for _ in 0..3 {
+                werk.emit_event(Event::new("ready"));
+            }
+
+            assert_eq!(werk.find_tasks("released").len(), 3);
+        }
+    }
+
+    #[tokio::test]
+    async fn finite_trigger_counts_reset_for_the_next_run() {
+        let (werk, _tmp) = test_werk();
+        werk.add_condition(
+            Condition::new("event.name = ready")
+                .times(2)
+                .task(Task::labeled("unclaimed", "work")),
+        );
+
+        werk.start();
+        for _ in 0..3 {
+            werk.emit_event(Event::new("ready"));
+        }
+        assert_eq!(werk.find_tasks("unclaimed").len(), 2);
         werk.start().emit_event(Event::new("ready"));
-        assert_eq!(werk.find_tasks("unclaimed").len(), 1);
-        werk.start().emit_event(Event::new("ready"));
-        assert_eq!(werk.find_tasks("unclaimed").len(), 1);
+        assert_eq!(werk.find_tasks("unclaimed").len(), 2);
         werk.cancel();
         werk.finish().await;
 
-        werk.start().emit_event(Event::new("ready"));
-        assert_eq!(werk.find_tasks("unclaimed").len(), 2);
+        werk.start();
+        for _ in 0..3 {
+            werk.emit_event(Event::new("ready"));
+        }
+        assert_eq!(werk.find_tasks("unclaimed").len(), 4);
         werk.cancel();
         werk.finish().await;
     }

@@ -6,7 +6,8 @@ use super::{Agent, Query, Task};
 /// Release agents and tasks when an AQL query matches a task or event.
 ///
 /// A condition belongs to the [`Werk`](crate::Werk) it is added to. It fires
-/// at most once per run and is neither persisted nor restored with a session.
+/// at most once per run by default and is neither persisted nor restored with
+/// a session.
 ///
 /// ```no_run
 /// use agentwerk::{Agent, Condition, Task, Werk};
@@ -27,7 +28,8 @@ pub struct Condition {
     pub(crate) query: Query,
     pub(crate) agents: Vec<Agent>,
     pub(crate) tasks: Vec<Task>,
-    pub(crate) fired: bool,
+    pub(crate) max_triggers: Option<usize>,
+    pub(crate) remaining_triggers: Option<usize>,
 }
 
 impl Condition {
@@ -40,8 +42,21 @@ impl Condition {
             query: query.into(),
             agents: Vec::new(),
             tasks: Vec::new(),
-            fired: false,
+            max_triggers: Some(1),
+            remaining_triggers: Some(1),
         }
+    }
+
+    /// Set how many times this condition may activate per run.
+    ///
+    /// The default is one. `None` or zero allows every matching event. An
+    /// unlimited condition whose actions emit another matching event can
+    /// recurse without bound.
+    pub fn times(mut self, times: impl Into<Option<usize>>) -> Self {
+        let times = times.into().filter(|&times| times != 0);
+        self.max_triggers = times;
+        self.remaining_triggers = times;
+        self
     }
 
     /// Add an agent to activate when the condition matches.
@@ -119,5 +134,20 @@ mod tests {
 
         assert_eq!(condition.agents.len(), 3);
         assert_eq!(condition.tasks.len(), 3);
+    }
+
+    #[test]
+    fn times_sets_a_finite_or_unlimited_trigger_count() {
+        let finite = Condition::new("event.name = ready").times(3);
+        assert_eq!(finite.max_triggers, Some(3));
+        assert_eq!(finite.remaining_triggers, Some(3));
+
+        for unlimited in [
+            Condition::new("event.name = ready").times(None),
+            Condition::new("event.name = ready").times(0),
+        ] {
+            assert_eq!(unlimited.max_triggers, None);
+            assert_eq!(unlimited.remaining_triggers, None);
+        }
     }
 }

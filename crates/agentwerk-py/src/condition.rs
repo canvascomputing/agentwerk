@@ -5,7 +5,7 @@ use crate::agent::PyAgent;
 use crate::query::to_query;
 use crate::task::to_task;
 
-/// Release agents and tasks once per run when an AQL query matches.
+/// Release agents and tasks when an AQL query matches.
 #[pyclass(name = "Condition")]
 pub struct PyCondition {
     inner: Option<Condition>,
@@ -30,6 +30,14 @@ impl PyCondition {
         Ok(Self {
             inner: Some(Condition::new(to_query(query)?)),
         })
+    }
+
+    /// Set how many times this condition may activate per run.
+    ///
+    /// `None` or zero allows every matching event.
+    fn times<'py>(mut slf: PyRefMut<'py, Self>, times: Option<usize>) -> PyRefMut<'py, Self> {
+        slf.set(|condition| condition.times(times));
+        slf
     }
 
     /// Add an agent to activate when the condition matches.

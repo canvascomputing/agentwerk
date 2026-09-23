@@ -122,10 +122,12 @@ The rules the tables never repeat.
 
 | Language | Item | Visibility |
 |----------|------|------------|
-| both | `Condition { query: Query, agents: Agent[], tasks: Task[], fired: boolean }` | pub with private fields |
+| both | `Condition { query: Query, agents: Agent[], tasks: Task[], max_triggers: number?, remaining_triggers: number? }` | pub with private fields |
 | Rust | `impl Clone for Condition` | pub |
 | Rust | `.new(query: Query): this`; strings convert through `Query::from` | pub |
 | Python | `Condition(query: Query or string)`: invalid text raises `ValueError`; unsupported values raise `TypeError` | |
+| both | `.times(times: number?): this`; `None` or zero means unlimited | pub |
+| Python | `.times(times)`: a negative integer raises `OverflowError` | |
 | both | `.agent(agent: Agent): this` | pub |
 | Python | `.agent(agent)`: raises `RuntimeError` immediately when the agent has no provider or model | |
 | both | `.agents(agents: Agent[]): this` | pub |
@@ -733,7 +735,7 @@ The rules the tables never repeat.
 | Rust | `HandlerWork = Promise<void>` | private |
 | Rust | `AwaitedHandler { matches: (event: Event) => boolean, call: AsyncHandler }` | private |
 | Rust | `Delivery = [Event, Task?]` | private |
-| Rust | `ConditionRegistry { entries: Condition[], runtime_events: Event[], next_id: number }` | private |
+| Rust | `ConditionRegistry { entries: Condition[], next_id: number }` | private |
 | Rust | `impl Default for ConditionRegistry` | private |
 | Rust | `AwaitedEvents { handlers: AwaitedHandler[], queued: Delivery[], draining: void, queueing: void }` | super |
 | Rust | `Run { phase: Phase }` | crate |
@@ -754,7 +756,6 @@ The rules the tables never repeat.
 | Rust | `.on_awaited(matches: (event: Event) => boolean, call: AsyncHandler): this` | private |
 | Rust | `.queue_events(): void` | private |
 | Rust | `.await_handlers(): Promise<void>` | private |
-| Rust | `.condition_matches(query: Query, event: Event): boolean` | private |
 | Rust | `.apply_conditions(event: Event): void` | private |
 | Rust | `.activate_conditions(conditions: Condition[]): void` | private |
 | Rust | `.label_for(id: string): string?` | private |
@@ -2228,6 +2229,7 @@ Binds `agents/condition.rs`.
 |----------|------|------------|
 | Rust | `PyCondition { inner: Condition? }` | python with private field |
 | Rust | `.new(query: any): this throws PyErr` | python |
+| Rust | `.times(times: number?): this` | python |
 | Rust | `.agent(agent: PyAgent): this throws PyErr` | python |
 | Rust | `.agents(agents: any): this throws PyErr` | python |
 | Rust | `.task(task: any): this throws PyErr` | python |
