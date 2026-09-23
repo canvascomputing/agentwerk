@@ -13,7 +13,7 @@ use super::{Agent, Query, Task};
 /// use agentwerk::{Agent, Condition, Task, Werk};
 ///
 /// # fn run() -> Result<(), Box<dyn std::error::Error>> {
-/// let werk = Werk();
+/// let werk = Werk(".agentwerk")?;
 /// let id = werk.add_condition(
 ///     Condition("task.label = draft AND task.status = finished")
 ///         .agent(Agent::from_env().label("edit"))
@@ -127,8 +127,8 @@ mod tests {
     #[test]
     fn singular_and_plural_builders_collect_actions() {
         let condition = Condition::new("event.name = ready")
-            .agent(Agent::new())
-            .agents([Agent::new(), Agent::new()])
+            .agent(crate::Agent())
+            .agents([crate::Agent(), crate::Agent()])
             .task("one")
             .tasks(["two", "three"]);
 

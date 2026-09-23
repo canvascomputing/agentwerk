@@ -219,7 +219,7 @@ async def main(pruefer, meister, monteur):
     feed = Feed(FRAMES_FILE)
     server, url = await open_view(feed, PAGE, PORT)
 
-    book = Knowledge.load(BOOK_DIR)
+    book = Knowledge(BOOK_DIR)
     book.clear()
     started_at = time.monotonic()
     # Every request resends the context, so the input-token limit is what bounds

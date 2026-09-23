@@ -13,7 +13,7 @@ use crate::providers::TokenUsage;
 /// `Stats` counts a run as it happens, so the limit check that fires every
 /// 50ms, the remaining turns and tokens a system prompt reports, and the
 /// compaction estimate all read the current figures without touching the
-/// filesystem. `Werk::load` folds a session's log back into one, so a
+/// filesystem. `Werk(path)` folds a session's log back into one, so a
 /// resumed run keeps what it already spent.
 ///
 /// Crate-internal on purpose. A host reads the three totals off
@@ -228,7 +228,7 @@ mod tests {
         Event::new(Event::RUN_FINISHED).data(serde_json::json!({ "outcome": "drained" }))
     }
 
-    /// The fold `Werk::load` runs over a session log as it resumes.
+    /// The fold `Werk(path)` runs over a session log as it resumes.
     fn loaded(dir: &std::path::Path) -> Stats {
         let stats = Stats::new();
         Stats::for_each_event(dir, |event| stats.record(event)).unwrap();

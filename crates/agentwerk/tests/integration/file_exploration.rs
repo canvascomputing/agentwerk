@@ -16,7 +16,7 @@ async fn file_tools_explore_the_repository() -> std::result::Result<(), Box<dyn 
         max_turns: Some(10),
         ..Default::default()
     });
-    let agent = Agent::new()
+    let agent = Agent()
         .provider(provider)
         .model(&model)
         .role(

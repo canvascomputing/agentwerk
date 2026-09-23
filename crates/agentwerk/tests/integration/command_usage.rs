@@ -37,7 +37,7 @@ async fn command_tools_produce_the_schema_bound_result(
         max_turns: Some(10),
         ..Default::default()
     });
-    let agent = Agent::new()
+    let agent = Agent()
         .provider(provider)
         .model(&model)
         .role(

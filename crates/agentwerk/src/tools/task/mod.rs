@@ -288,8 +288,7 @@ mod tests {
     /// isolated temp directory so the default `.agentwerk` writes never
     /// leak into the source tree.
     fn shared_with_one_task(agent: &str) -> (Arc<Werk>, String) {
-        let werk = Werk::new();
-        werk.set_dir(isolated_test_dir());
+        let werk = Werk(isolated_test_dir()).unwrap();
         werk.insert(Task::new("body").label(agent), "tester".into());
         let id = werk
             .claim(&Query::from("task.status = todo"), agent)
@@ -370,8 +369,7 @@ mod tests {
 
     #[tokio::test]
     async fn key_is_not_an_alias_for_id() {
-        let werk = Werk::new();
-        werk.set_dir(isolated_test_dir());
+        let werk = Werk(isolated_test_dir()).unwrap();
         werk.add_task("body");
         let ctx = ToolContext::new(PathBuf::from("/tmp")).werk(werk);
 
@@ -388,8 +386,7 @@ mod tests {
 
     #[tokio::test]
     async fn task_not_found_directive_binds_the_id() {
-        let werk = Werk::new();
-        werk.set_dir(isolated_test_dir());
+        let werk = Werk(isolated_test_dir()).unwrap();
         let ctx = ToolContext::new(PathBuf::from("/tmp")).werk(werk);
 
         let result = call(
@@ -420,8 +417,7 @@ mod tests {
     /// Two tasks, the first claimed by `alice` and labelled `review`, the
     /// second still Todo and unlabelled.
     fn werk_with_two_tasks() -> Arc<Werk> {
-        let werk = Werk::new();
-        werk.set_dir(isolated_test_dir());
+        let werk = Werk(isolated_test_dir()).unwrap();
         werk.insert(Task::new("a").label("review"), "tester".into());
         werk.insert(Task::new("b"), "tester".into());
         werk.claim(&Query::from("t-1"), "alice");
@@ -440,8 +436,7 @@ mod tests {
 
     #[tokio::test]
     async fn list_stops_at_fifty_tasks() {
-        let werk = Werk::new();
-        werk.set_dir(isolated_test_dir());
+        let werk = Werk(isolated_test_dir()).unwrap();
         for i in 1..=51 {
             werk.insert(Task::new(format!("task {i}")), "tester".into());
         }
@@ -565,8 +560,7 @@ mod tests {
 
     #[tokio::test]
     async fn create_stamps_reporter_from_agent_id() {
-        let werk = Werk::new();
-        werk.set_dir(isolated_test_dir());
+        let werk = Werk(isolated_test_dir()).unwrap();
         let ctx = ctx_with(Arc::clone(&werk), "alice");
         let result = call(
             TaskTool,
@@ -582,8 +576,7 @@ mod tests {
 
     #[tokio::test]
     async fn create_with_a_label_attaches_it() {
-        let werk = Werk::new();
-        werk.set_dir(isolated_test_dir());
+        let werk = Werk(isolated_test_dir()).unwrap();
         let ctx = ctx_with(Arc::clone(&werk), "alice");
         let result = call(
             TaskTool,
@@ -603,8 +596,7 @@ mod tests {
 
     #[tokio::test]
     async fn create_with_named_label_routes_to_agent() {
-        let werk = Werk::new();
-        werk.set_dir(isolated_test_dir());
+        let werk = Werk(isolated_test_dir()).unwrap();
         let ctx = ctx_with(Arc::clone(&werk), "alice");
         let result = call(
             TaskTool,

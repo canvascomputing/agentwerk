@@ -68,9 +68,8 @@ mod tests {
         ToolContext::new(dir).werk(werk).agent_id(agent.to_string())
     }
 
-    fn one_task(agent: &str) -> (Arc<Werk>, String) {
-        let werk = Werk::new();
-        werk.set_dir(shared_test_dir().to_path_buf());
+    fn one_task(agent: &str, dir: &std::path::Path) -> (Arc<Werk>, String) {
+        let werk = Werk(dir).unwrap();
         werk.insert(Task::new("body").label(agent), "tester".into());
         let id = werk
             .claim(&Query::from("task.status = todo"), agent)
@@ -86,16 +85,6 @@ mod tests {
         serde_json::from_str(&body).ok()
     }
 
-    /// Process-lifetime tempdir used as the default `Werk` root
-    /// for tests in this module. Tests that need an isolated workspace
-    /// still call `werk.set_dir(...)` explicitly to override.
-    fn shared_test_dir() -> &'static std::path::Path {
-        use std::sync::OnceLock;
-        static DIR: OnceLock<crate::test_util::TempDir> = OnceLock::new();
-        DIR.get_or_init(|| crate::test_util::TempDir::new().unwrap())
-            .path()
-    }
-
     fn line_schema() -> Schema {
         Schema::new(serde_json::json!({
             "type": "object",
@@ -107,8 +96,7 @@ mod tests {
 
     /// Claim a task carrying an integer-typed `line`.
     fn line_task(dir: &std::path::Path) -> Arc<Werk> {
-        let werk = Werk::new();
-        werk.set_dir(dir.to_path_buf());
+        let werk = Werk(dir.to_path_buf()).unwrap();
         werk.insert(
             Task::new("body").schema(line_schema()).label("alice"),
             "tester".into(),
@@ -175,8 +163,7 @@ mod tests {
     #[tokio::test]
     async fn a_bare_object_is_stored_as_the_result() {
         let dir = crate::test_util::TempDir::new().unwrap();
-        let (werk, id) = one_task("alice");
-        werk.set_dir(dir.path().to_path_buf());
+        let (werk, id) = one_task("alice", dir.path());
         let ctx = ctx_with(Arc::clone(&werk), "alice", dir.path().to_path_buf());
 
         let outcome = Tool::from(FinishTool)
@@ -249,8 +236,7 @@ mod tests {
     #[tokio::test]
     async fn an_empty_call_stores_an_empty_object() {
         let dir = crate::test_util::TempDir::new().unwrap();
-        let (werk, id) = one_task("alice");
-        werk.set_dir(dir.path().to_path_buf());
+        let (werk, id) = one_task("alice", dir.path());
         let ctx = ctx_with(Arc::clone(&werk), "alice", dir.path().to_path_buf());
 
         let outcome = Tool::from(FinishTool)
@@ -287,8 +273,7 @@ mod tests {
     #[tokio::test]
     async fn fields_named_result_and_handover_remain_ordinary_data() {
         let dir = crate::test_util::TempDir::new().unwrap();
-        let werk = Werk::new();
-        werk.set_dir(dir.path().to_path_buf());
+        let werk = Werk(dir.path().to_path_buf()).unwrap();
         werk.insert(
             Task::new("body").schema(colliding_schema()).label("alice"),
             "tester".into(),
@@ -324,8 +309,7 @@ mod tests {
     #[tokio::test]
     async fn a_whole_object_encoded_as_text_is_rejected() {
         let dir = crate::test_util::TempDir::new().unwrap();
-        let (werk, id) = one_task("alice");
-        werk.set_dir(dir.path().to_path_buf());
+        let (werk, id) = one_task("alice", dir.path());
         let ctx = ctx_with(Arc::clone(&werk), "alice", dir.path().to_path_buf());
         let outcome = FinishTool::from_schema(Some(object_schema()))
             .invoke(serde_json::json!("{\"status\": \"malicious\"}"), &ctx)
@@ -353,8 +337,7 @@ mod tests {
     #[tokio::test]
     async fn writes_object_result_and_marks_finished() {
         let dir = crate::test_util::TempDir::new().unwrap();
-        let (werk, id) = one_task("alice");
-        werk.set_dir(dir.path().to_path_buf());
+        let (werk, id) = one_task("alice", dir.path());
         let ctx = ctx_with(Arc::clone(&werk), "alice", dir.path().to_path_buf());
         let outcome = Tool::from(FinishTool)
             .call(serde_json::json!({"answer": "the answer"}), &ctx)
@@ -375,8 +358,7 @@ mod tests {
     #[tokio::test]
     async fn a_result_is_written_to_the_task_folder() {
         let dir = crate::test_util::TempDir::new().unwrap();
-        let (werk, id) = one_task("alice");
-        werk.set_dir(dir.path().to_path_buf());
+        let (werk, id) = one_task("alice", dir.path());
         let ctx = ctx_with(Arc::clone(&werk), "alice", dir.path().to_path_buf());
         Tool::from(FinishTool)
             .call(serde_json::json!({"x": 1}), &ctx)
@@ -397,14 +379,13 @@ mod tests {
     #[tokio::test]
     async fn a_reloaded_werk_reads_the_result_back() {
         let dir = crate::test_util::TempDir::new().unwrap();
-        let (werk, id) = one_task("alice");
-        werk.set_dir(dir.path().to_path_buf());
+        let (werk, id) = one_task("alice", dir.path());
         let ctx = ctx_with(Arc::clone(&werk), "alice", dir.path().to_path_buf());
         Tool::from(FinishTool)
             .call(serde_json::json!({"answer": "the answer"}), &ctx)
             .await;
 
-        let reloaded = Werk::load(dir.path()).unwrap();
+        let reloaded = Werk(dir.path()).unwrap();
         let task = reloaded.get_task(&id).unwrap();
         assert_eq!(task.result.as_ref().unwrap()["answer"], "the answer");
         assert_eq!(task.status, Status::Finished);
@@ -420,8 +401,7 @@ mod tests {
             serde_json::json!([]),
         ] {
             let dir = crate::test_util::TempDir::new().unwrap();
-            let (werk, id) = one_task("alice");
-            werk.set_dir(dir.path().to_path_buf());
+            let (werk, id) = one_task("alice", dir.path());
             let ctx = ctx_with(Arc::clone(&werk), "alice", dir.path().to_path_buf());
             let outcome = Tool::from(FinishTool).invoke(value.clone(), &ctx).await;
             assert_eq!(outcome.get_name(), Event::TOOL_CALL_FAILED, "{value:?}");
@@ -433,8 +413,7 @@ mod tests {
     #[tokio::test]
     async fn accepts_structured_value_when_no_schema() {
         let dir = crate::test_util::TempDir::new().unwrap();
-        let (werk, id) = one_task("alice");
-        werk.set_dir(dir.path().to_path_buf());
+        let (werk, id) = one_task("alice", dir.path());
         let ctx = ctx_with(Arc::clone(&werk), "alice", dir.path().to_path_buf());
         let outcome = Tool::from(FinishTool)
             .call(serde_json::json!({"x": 1, "y": [2, 3]}), &ctx)
@@ -453,9 +432,7 @@ mod tests {
     #[tokio::test]
     async fn validates_against_schema() {
         let dir = crate::test_util::TempDir::new().unwrap();
-        let werk = Werk::new();
-        werk.set_dir(shared_test_dir().to_path_buf());
-        werk.set_dir(dir.path().to_path_buf());
+        let werk = Werk(dir.path()).unwrap();
         let schema = Schema::new(serde_json::json!({
             "type": "object",
             "properties": {"x": {"type": "string"}},
@@ -492,9 +469,7 @@ mod tests {
     #[tokio::test]
     async fn an_object_result_is_stored_as_the_object() {
         let dir = crate::test_util::TempDir::new().unwrap();
-        let werk = Werk::new();
-        werk.set_dir(shared_test_dir().to_path_buf());
-        werk.set_dir(dir.path().to_path_buf());
+        let werk = Werk(dir.path()).unwrap();
         let schema = Schema::new(serde_json::json!({
             "type": "object",
             "properties": {"x": {"type": "string"}},
@@ -522,9 +497,7 @@ mod tests {
     #[tokio::test]
     async fn rejects_a_string_encoded_result() {
         let dir = crate::test_util::TempDir::new().unwrap();
-        let werk = Werk::new();
-        werk.set_dir(shared_test_dir().to_path_buf());
-        werk.set_dir(dir.path().to_path_buf());
+        let werk = Werk(dir.path()).unwrap();
         let schema = Schema::new(serde_json::json!({
             "type": "object",
             "properties": {"x": {"type": "string"}},
@@ -553,8 +526,7 @@ mod tests {
     #[tokio::test]
     async fn errors_when_no_current_task() {
         let dir = crate::test_util::TempDir::new().unwrap();
-        let werk = Werk::new();
-        werk.set_dir(shared_test_dir().to_path_buf());
+        let werk = Werk(dir.path()).unwrap();
         let ctx = ctx_with(Arc::clone(&werk), "alice", dir.path().to_path_buf());
         let outcome = Tool::from(FinishTool)
             .call(serde_json::json!({"answer": "x"}), &ctx)
@@ -565,9 +537,7 @@ mod tests {
     #[tokio::test]
     async fn appends_one_line_per_completed_task() {
         let dir = crate::test_util::TempDir::new().unwrap();
-        let werk = Werk::new();
-        werk.set_dir(shared_test_dir().to_path_buf());
-        werk.set_dir(dir.path().to_path_buf());
+        let werk = Werk(dir.path()).unwrap();
 
         werk.insert(Task::new("a").label("alice"), "tester".into());
         let id1 = werk
@@ -601,9 +571,7 @@ mod tests {
     async fn concurrent_writes_produce_one_intact_line_per_task() {
         const N: usize = 32;
         let dir = crate::test_util::TempDir::new().unwrap();
-        let werk = Werk::new();
-        werk.set_dir(shared_test_dir().to_path_buf());
-        werk.set_dir(dir.path().to_path_buf());
+        let werk = Werk(dir.path()).unwrap();
 
         let mut expected = Vec::with_capacity(N);
         for i in 0..N {

@@ -80,7 +80,7 @@ async fn finds_string_buried_deep_in_line() -> std::result::Result<(), Box<dyn s
     });
     werk.on_event(move |_, e| event_handler(e));
     werk.add_agent(
-        Agent::new()
+        Agent()
             .provider(provider)
             .model(&model)
             .dir(root)
@@ -219,7 +219,7 @@ async fn reads_column_slice_after_grep_locates_needle(
     });
     werk.on_event(move |_, e| event_handler(e));
     werk.add_agent(
-        Agent::new()
+        Agent()
             .provider(provider)
             .model(&model)
             .dir(root)

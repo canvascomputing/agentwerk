@@ -42,6 +42,6 @@ agentwerk is a Rust library for composing LLM agents, tools, tasks, and shared e
 **Expose behavior through tasks, results, events, and optional durable state.**
 
 - Publish lifecycle and failure information as `Event` records without requiring a logger.
-- Persist sessions under the directory configured by `Werk::set_dir`.
+- Persist sessions under the directory passed to `Werk(path)`.
 - Share durable facts through `Knowledge` only when the caller opts in.
 - Report invalid configuration and exhausted retries explicitly; do not silently fall back.

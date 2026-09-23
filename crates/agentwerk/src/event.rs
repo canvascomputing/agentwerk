@@ -14,13 +14,16 @@ use serde_json::{Map, Value};
 /// use agentwerk::{Event, Werk};
 /// use serde_json::json;
 ///
-/// let werk = Werk();
+/// # fn run() -> Result<(), Box<dyn std::error::Error>> {
+/// let werk = Werk(".agentwerk")?;
 /// werk.emit_event(
 ///     Event("document_indexed")
 ///         .data(json!({ "documents": 42 }))
 ///         .task_id("t-1")
 ///         .agent_id("indexer-1"),
 /// );
+/// # Ok(())
+/// # }
 /// ```
 #[derive(Debug, Clone)]
 pub struct Event {

@@ -98,6 +98,12 @@ def test_removed_api_names_are_absent_from_runtime_exports_and_stub():
     assert "task" not in stub_class_members("Agent")
     assert "handover" not in stub_class_members("Agent")
     assert "get_parent" not in stub_class_members("Task")
+    assert "load" not in stub_class_members("Werk")
+    assert "set_dir" not in stub_class_members("Werk")
+    assert "load" not in stub_class_members("Knowledge")
+    assert not hasattr(aw.Werk, "load")
+    assert not hasattr(aw.Werk, "set_dir")
+    assert not hasattr(aw.Knowledge, "load")
     assert "id" not in stub_class_members("Condition")
     assert not hasattr(aw.Condition, "id")
     for name in ("add_agent", "add_task"):

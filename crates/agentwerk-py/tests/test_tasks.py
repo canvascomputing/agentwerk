@@ -10,6 +10,13 @@ import pytest
 import agentwerk as aw
 
 
+def test_werk_without_a_path_is_a_fresh_default_werk():
+    werk = aw.Werk()
+
+    assert werk.get_dir() == ".agentwerk"
+    assert werk.get_tasks() == []
+
+
 def test_condition_registered_after_matching_activity_waits_for_the_next_event(werk):
     draft = werk.add_task(aw.Task("write", label="draft"))
     werk.add_condition(
@@ -247,6 +254,8 @@ def test_removed_werk_method_names_are_not_compatibility_aliases(werk):
         "output_tokens",
         "execution_duration",
         "is_cancelled",
+        "load",
+        "set_dir",
     ):
         assert not hasattr(werk, name)
 
@@ -319,7 +328,7 @@ def test_schema_requires_an_object_root(document):
 
 
 def test_config_returns_the_werk_so_calls_chain(werk):
-    configured = werk.set_policy(aw.Policy(max_turns=5, max_time=30.0)).set_dir("/tmp")
+    configured = werk.set_policy(aw.Policy(max_turns=5, max_time=30.0))
     assert isinstance(configured, aw.Werk)
 
 
@@ -601,7 +610,7 @@ def test_task_json_does_not_persist_cancellation(werk, tmp_path):
     assert "key" not in record
     assert "cancelled" not in record
 
-    reopened = aw.Werk.load(str(tmp_path))
+    reopened = aw.Werk(str(tmp_path))
     assert reopened.find_tasks("task.cancelled = true") == []
     assert len(reopened.find_tasks("task.cancelled = false")) == 1
 
@@ -681,7 +690,6 @@ def test_event_data_does_not_include_the_event_name(werk):
 
 
 def test_emit_event_publishes_named_data_with_optional_context(werk, tmp_path):
-    werk.set_dir(str(tmp_path))
     id = werk.add_task(aw.Task("scan", label="scout"))
     seen = []
     werk.on_event(lambda _, event: seen.append(event))
@@ -709,7 +717,7 @@ def test_emit_event_publishes_named_data_with_optional_context(werk, tmp_path):
     assert record["task_id"] == id
     assert "task_key" not in record
 
-    reopened = aw.Werk.load(str(tmp_path))
+    reopened = aw.Werk(str(tmp_path))
     restored = reopened.find_event("event.name = document_indexed")
     assert restored.get_data() == {"documents": 42}
     assert restored.get_label() == "scout"
@@ -1132,10 +1140,9 @@ def test_assignee_is_unset_until_an_agent_claims_the_task(werk):
     assert werk.find_tasks(lambda t: t.get_assignee() == "scout") == []
 
 
-def test_load_reopens_a_session_directory(werk, tmp_path):
-    werk.set_dir(str(tmp_path))
+def test_constructor_reopens_a_session_directory(werk, tmp_path):
     id = werk.add_task(aw.Task("scan the corpus", label="scan"))
 
-    reopened = aw.Werk.load(str(tmp_path))
+    reopened = aw.Werk(str(tmp_path))
 
     assert reopened.get_task(id).get_task() == "scan the corpus"

@@ -468,8 +468,8 @@ mod tests {
 
     fn session() -> (std::sync::Arc<Werk>, crate::test_util::TempDir) {
         let dir = crate::test_util::TempDir::new().unwrap();
-        let werk = Werk::new();
-        werk.set_dir(dir.path().to_path_buf()).on_event(|_, _| {});
+        let werk = Werk(dir.path()).unwrap();
+        werk.on_event(|_, _| {});
         (werk, dir)
     }
 

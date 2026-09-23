@@ -29,7 +29,7 @@ pub(super) fn brave_search_tool(api_key: String) -> Tool {
         async move { search(&api_key, &input).await }
     };
 
-    Tool::new("brave_search")
+    Tool("brave_search")
         .description(DESCRIPTION)
         .schema(schema)
         .concurrent(true)

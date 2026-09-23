@@ -20,7 +20,7 @@ use super::tool::{Tool, ToolContext};
 /// ```no_run
 /// use agentwerk::{Agent, Knowledge};
 ///
-/// let store = Knowledge::load(".agentwerk/knowledge").expect("knowledge dir");
+/// let store = Knowledge(".agentwerk/knowledge").expect("knowledge dir");
 /// Agent().knowledge(&store);
 /// ```
 pub struct KnowledgeTool {
@@ -211,7 +211,7 @@ mod tests {
 
     fn fresh_store() -> (Arc<Knowledge>, crate::test_util::TempDir) {
         let dir = crate::test_util::TempDir::new().unwrap();
-        let store = Knowledge::load(dir.path()).unwrap();
+        let store = Knowledge(dir.path()).unwrap();
         (store, dir)
     }
 

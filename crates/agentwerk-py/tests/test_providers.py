@@ -85,17 +85,17 @@ def test_model_from_env_without_provider_env_is_rejected(monkeypatch):
 
 
 def test_knowledge_load_creates_an_empty_index(knowledge_dir):
-    store = aw.Knowledge.load(knowledge_dir)
+    store = aw.Knowledge(knowledge_dir)
     assert store.get_index() == ""
 
 
 def test_set_index_char_limit_chains(knowledge_dir):
-    store = aw.Knowledge.load(knowledge_dir).set_index_char_limit(24_000)
+    store = aw.Knowledge(knowledge_dir).set_index_char_limit(24_000)
     assert isinstance(store, aw.Knowledge)
 
 
 def test_saved_page_is_readable_and_indexed(knowledge_dir):
-    store = aw.Knowledge.load(knowledge_dir)
+    store = aw.Knowledge(knowledge_dir)
 
     store.get_pages().save(
         aw.Page(
@@ -115,7 +115,7 @@ def test_saved_page_is_readable_and_indexed(knowledge_dir):
 
 
 def test_page_kind_defaults_to_the_store_default(knowledge_dir):
-    store = aw.Knowledge.load(knowledge_dir)
+    store = aw.Knowledge(knowledge_dir)
     page = aw.Page("scratch", "A note.", "Some content.")
 
     store.get_pages().save(page)
@@ -125,7 +125,7 @@ def test_page_kind_defaults_to_the_store_default(knowledge_dir):
 
 
 def test_list_returns_every_saved_page_in_index_order(knowledge_dir):
-    store = aw.Knowledge.load(knowledge_dir)
+    store = aw.Knowledge(knowledge_dir)
     store.get_pages().save(aw.Page("build", "How to build.", "Run make."))
     store.get_pages().save(aw.Page("deploy", "How to deploy.", "Push the tag."))
 
@@ -136,14 +136,14 @@ def test_list_returns_every_saved_page_in_index_order(knowledge_dir):
 
 
 def test_get_index_char_limit_returns_the_default_until_it_is_set(knowledge_dir):
-    store = aw.Knowledge.load(knowledge_dir)
+    store = aw.Knowledge(knowledge_dir)
     assert store.get_index_char_limit() == 12_000
     store.set_index_char_limit(80)
     assert store.get_index_char_limit() == 80
 
 
 def test_removed_page_leaves_the_index_empty(knowledge_dir):
-    store = aw.Knowledge.load(knowledge_dir)
+    store = aw.Knowledge(knowledge_dir)
     store.get_pages().save(aw.Page("scratch", "A note.", "Some content."))
 
     store.get_pages().remove("scratch")
@@ -152,13 +152,13 @@ def test_removed_page_leaves_the_index_empty(knowledge_dir):
 
 
 def test_loading_an_unknown_page_is_rejected(knowledge_dir):
-    store = aw.Knowledge.load(knowledge_dir)
+    store = aw.Knowledge(knowledge_dir)
     with pytest.raises(RuntimeError):
         store.get_pages().get_page("does-not-exist")
 
 
 def test_clear_empties_the_store(knowledge_dir):
-    store = aw.Knowledge.load(knowledge_dir)
+    store = aw.Knowledge(knowledge_dir)
     store.get_pages().save(aw.Page("scratch", "A note.", "Some content."))
 
     store.clear()
@@ -167,6 +167,6 @@ def test_clear_empties_the_store(knowledge_dir):
 
 
 def test_agent_binds_a_knowledge_store(knowledge_dir):
-    store = aw.Knowledge.load(knowledge_dir)
+    store = aw.Knowledge(knowledge_dir)
     agent = aw.Agent()
     assert agent.knowledge(store) is agent

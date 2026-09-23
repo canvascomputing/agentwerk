@@ -378,7 +378,6 @@ mod tests {
 
     #[tokio::test(start_paused = true)]
     async fn request_retried_fires_after_backoff_sleep_not_before() {
-        use crate::agents::agent::Agent;
         use crate::agents::tasks::Werk;
         use crate::event::Event;
         use std::sync::{Arc, Mutex};
@@ -398,15 +397,14 @@ mod tests {
         };
 
         let results_dir = crate::test_util::TempDir::new().unwrap();
-        let werk = Werk::new();
-        werk.set_dir(results_dir.path().to_path_buf())
-            .set_policy(Policy {
-                max_request_retries: 3,
-                request_retry_delay: Duration::from_millis(1),
-                ..Default::default()
-            });
+        let werk = Werk(results_dir.path().to_path_buf()).unwrap();
+        werk.set_policy(Policy {
+            max_request_retries: 3,
+            request_retry_delay: Duration::from_millis(1),
+            ..Default::default()
+        });
         werk.on_event(move |_, e| handler(e));
-        werk.add_agent(Agent::new().provider(provider).model("mock").role("test"));
+        werk.add_agent(crate::Agent().provider(provider).model("mock").role("test"));
         werk.add_task("go");
 
         let run_fut = werk.finish();
@@ -442,7 +440,6 @@ mod tests {
 
     #[tokio::test(start_paused = true)]
     async fn cancel_during_backoff_sleep_aborts_immediately() {
-        use crate::agents::agent::Agent;
         use crate::agents::tasks::Werk;
         use std::sync::{Arc, Mutex};
 
@@ -458,15 +455,14 @@ mod tests {
             Arc::new(move |e: &crate::event::Event| c.lock().unwrap().push(e.clone()))
         };
         let results_dir = crate::test_util::TempDir::new().unwrap();
-        let werk = Werk::new();
-        werk.set_dir(results_dir.path().to_path_buf())
-            .set_policy(Policy {
-                max_request_retries: 3,
-                request_retry_delay: Duration::from_secs(60),
-                ..Default::default()
-            });
+        let werk = Werk(results_dir.path().to_path_buf()).unwrap();
+        werk.set_policy(Policy {
+            max_request_retries: 3,
+            request_retry_delay: Duration::from_secs(60),
+            ..Default::default()
+        });
         werk.on_event(move |_, e| handler(e));
-        werk.add_agent(Agent::new().provider(provider).model("mock").role("test"));
+        werk.add_agent(crate::Agent().provider(provider).model("mock").role("test"));
         werk.add_task("go");
 
         let run_fut = werk.finish();
@@ -494,7 +490,6 @@ mod tests {
 
     use serde_json::Value;
 
-    use crate::agents::agent::Agent;
     use crate::agents::tasks::{Reply, ReplyContent, Werk};
     use crate::event::Event;
     use crate::providers::{ContentBlock, Message};
@@ -516,20 +511,19 @@ mod tests {
             .description("Always fails")
             .handler(|_: Value| async move { Event::error("boom") });
         let results_dir = crate::test_util::TempDir::new().unwrap();
-        let werk = Werk::new();
-        werk.set_dir(results_dir.path().to_path_buf())
-            .set_policy(Policy {
-                max_request_retries: 0,
-                request_retry_delay: Duration::from_millis(1),
-                max_schema_retries: Some(10),
-                max_time: Some(Duration::from_millis(500)),
-                ..Default::default()
-            });
+        let werk = Werk(results_dir.path().to_path_buf()).unwrap();
+        werk.set_policy(Policy {
+            max_request_retries: 0,
+            request_retry_delay: Duration::from_millis(1),
+            max_schema_retries: Some(10),
+            max_time: Some(Duration::from_millis(500)),
+            ..Default::default()
+        });
         if let Some(handler) = handler {
             werk.on_event(handler);
         }
         werk.add_agent(
-            Agent::new()
+            crate::Agent()
                 .provider(provider.clone())
                 .model("mock")
                 .role("test")
@@ -637,7 +631,7 @@ mod tests {
     async fn edit_survives_reload() {
         let (_provider, _tasks, dir) = run_boom(Some(Box::new(drop_failed_exchange))).await;
 
-        let reloaded = Werk::load(dir.path()).unwrap();
+        let reloaded = Werk(dir.path()).unwrap();
         let task = reloaded.get_tasks().into_iter().next().unwrap();
         // The boom exchange is gone; the later finish_task call remains.
         let keeps_boom = task.replies.iter().any(|reply| {

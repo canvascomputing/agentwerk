@@ -54,7 +54,7 @@ async fn grep_lists_unknown_function_names() -> std::result::Result<(), Box<dyn 
     });
     werk.on_event(move |_, e| event_handler(e));
     werk.add_agent(
-        Agent::new()
+        Agent()
             .provider(provider)
             .model(&model)
             .dir(root)

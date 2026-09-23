@@ -29,7 +29,7 @@ pub(super) fn collect_finish_reasons(werk: &Werk) -> Arc<Mutex<Vec<FinishReason>
 
 pub(super) fn minimal_agent(label: &str) -> Agent {
     use crate::agents::r#loop::test_util::MockProvider;
-    Agent::new()
+    crate::Agent()
         .label(label)
         .provider(MockProvider::with_results(vec![]))
         .model("mock")
@@ -40,8 +40,7 @@ pub(super) fn minimal_agent(label: &str) -> Agent {
 /// Hold the returned `TempDir` for the test's lifetime.
 pub(super) fn test_werk() -> (Arc<Werk>, crate::test_util::TempDir) {
     let dir = crate::test_util::TempDir::new().unwrap();
-    let built = Werk::new();
-    built.set_dir(dir.path().to_path_buf());
+    let built = Werk(dir.path().to_path_buf()).unwrap();
     (built, dir)
 }
 

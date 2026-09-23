@@ -62,7 +62,7 @@ impl PyAgent {
     #[new]
     fn new() -> Self {
         PyAgent {
-            agent: Some(Agent::new()),
+            agent: Some(Agent()),
             has_provider: false,
             has_model: false,
         }
@@ -74,7 +74,7 @@ impl PyAgent {
         let provider = Provider::from_env().map_err(runtime_error)?;
         let model = Model::from_env().map_err(runtime_error)?;
         Ok(PyAgent {
-            agent: Some(Agent::new().provider(provider).model(model)),
+            agent: Some(Agent().provider(provider).model(model)),
             has_provider: true,
             has_model: true,
         })

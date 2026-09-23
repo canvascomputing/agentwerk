@@ -278,7 +278,7 @@ pub fn user_text(messages: &[Message]) -> String {
 // Agent / event builders
 
 pub fn interactive_chatbot(provider: &Arc<MockProvider>) -> Agent {
-    Agent::new()
+    crate::Agent()
         .interactive()
         .provider(provider.clone())
         .model("mock")
@@ -286,7 +286,7 @@ pub fn interactive_chatbot(provider: &Arc<MockProvider>) -> Agent {
 }
 
 pub fn task_agent(provider: &Arc<MockProvider>) -> Agent {
-    Agent::new()
+    crate::Agent()
         .provider(provider.clone())
         .model("mock")
         .role("test")
@@ -318,19 +318,18 @@ pub async fn run_one(
 
     let results_dir = crate::test_util::TempDir::new().unwrap();
     let knowledge_dir = crate::test_util::TempDir::new().unwrap();
-    let knowledge = Knowledge::load(knowledge_dir.path()).unwrap();
-    let werk = Werk::new();
-    werk.set_dir(results_dir.path().to_path_buf())
-        .set_policy(Policy {
-            max_request_retries,
-            request_retry_delay: Duration::from_millis(1),
-            max_schema_retries: Some(max_schema_retries),
-            ..Default::default()
-        });
+    let knowledge = Knowledge(knowledge_dir.path()).unwrap();
+    let werk = Werk(results_dir.path().to_path_buf()).unwrap();
+    werk.set_policy(Policy {
+        max_request_retries,
+        request_retry_delay: Duration::from_millis(1),
+        max_schema_retries: Some(max_schema_retries),
+        ..Default::default()
+    });
 
     werk.on_event(move |_, e| handler(e));
     werk.add_agent(
-        Agent::new()
+        crate::Agent()
             .provider(provider.clone())
             .model("mock")
             .role("test")
@@ -371,18 +370,17 @@ pub async fn run_with_context_window(
     };
 
     let results_dir = crate::test_util::TempDir::new().unwrap();
-    let werk = Werk::new();
-    werk.set_dir(results_dir.path().to_path_buf())
-        .set_policy(Policy {
-            max_request_retries: 0,
-            request_retry_delay: Duration::from_millis(1),
-            max_schema_retries: Some(10),
-            max_time: Some(Duration::from_secs(5)),
-            ..Default::default()
-        });
+    let werk = Werk(results_dir.path().to_path_buf()).unwrap();
+    werk.set_policy(Policy {
+        max_request_retries: 0,
+        request_retry_delay: Duration::from_millis(1),
+        max_schema_retries: Some(10),
+        max_time: Some(Duration::from_secs(5)),
+        ..Default::default()
+    });
     werk.on_event(move |_, e| handler(e));
     werk.add_agent(
-        Agent::new()
+        crate::Agent()
             .provider(provider.clone())
             .model(Model::new("mock").context_window(context_window_size))
             .role("test"),
@@ -413,19 +411,18 @@ pub async fn run_compaction(
     };
 
     let results_dir = crate::test_util::TempDir::new().unwrap();
-    let werk = Werk::new();
-    werk.set_dir(results_dir.path().to_path_buf())
-        .set_policy(Policy {
-            max_request_retries: 0,
-            request_retry_delay: Duration::from_millis(1),
-            max_schema_retries: Some(10),
-            max_time: Some(Duration::from_secs(30)),
-            ..Default::default()
-        });
+    let werk = Werk(results_dir.path().to_path_buf()).unwrap();
+    werk.set_policy(Policy {
+        max_request_retries: 0,
+        request_retry_delay: Duration::from_millis(1),
+        max_schema_retries: Some(10),
+        max_time: Some(Duration::from_secs(30)),
+        ..Default::default()
+    });
 
     werk.on_event(move |_, e| handler(e));
     werk.add_agent(
-        Agent::new()
+        crate::Agent()
             .provider(provider.clone())
             .model("claude-sonnet-4-20250514")
             .role("test")

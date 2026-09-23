@@ -24,12 +24,6 @@ pub fn Agent() -> Agent {
     Agent::new()
 }
 
-/// Create an empty Werk, shared through an [`std::sync::Arc`].
-#[allow(non_snake_case)]
-pub fn Werk() -> std::sync::Arc<Werk> {
-    Werk::new()
-}
-
 /// Create a task carrying `task`.
 #[allow(non_snake_case)]
 pub fn Task<T: serde::Serialize>(task: T) -> Task {

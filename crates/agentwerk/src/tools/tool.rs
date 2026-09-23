@@ -249,7 +249,7 @@ impl TimeoutPolicy {
 /// use agentwerk::{Event, tools::Tool};
 /// use serde_json::{json, Value};
 ///
-/// let greet = Tool::new("greet")
+/// let greet = Tool("greet")
 ///     .description("Say hello to a name.")
 ///     .schema(json!({
 ///         "type": "object",
@@ -271,7 +271,7 @@ impl TimeoutPolicy {
 /// use agentwerk::Agent;
 /// use agentwerk::tools::Tool;
 ///
-/// let _agent = Agent().tool(Tool::new("greet"));
+/// let _agent = Agent().tool(Tool("greet"));
 /// ```
 ///
 /// Path declarations are not part of a tool definition:
@@ -279,7 +279,7 @@ impl TimeoutPolicy {
 /// ```compile_fail
 /// use agentwerk::tools::Tool;
 ///
-/// let _tool = Tool::new("read").paths(["path"]);
+/// let _tool = Tool("read").paths(["path"]);
 /// ```
 #[derive(Clone)]
 pub struct Tool {
@@ -289,6 +289,12 @@ pub struct Tool {
     concurrent: bool,
     timeout: TimeoutPolicy,
     handler: Option<ToolHandler>,
+}
+
+/// Create the tool the model calls by `name`.
+#[allow(non_snake_case)]
+pub fn Tool(name: impl Into<String>) -> Tool {
+    Tool::new(name)
 }
 
 impl std::fmt::Debug for Tool {
@@ -802,13 +808,12 @@ fn utf8_boundary_floor(content: &str, mut index: usize) -> usize {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::agents::agent::Agent;
 
     /// Every tool agentwerk registers, for the checks that hold across all of
     /// them. The knowledge store is temporary; its tool is read, not used.
     fn built_in_tools() -> (Vec<Tool>, crate::test_util::TempDir) {
         let dir = crate::test_util::TempDir::new().unwrap();
-        let store = crate::agents::knowledge::Knowledge::load(dir.path()).unwrap();
+        let store = crate::agents::knowledge::Knowledge(dir.path()).unwrap();
         let tools: Vec<Tool> = vec![
             crate::tools::ReadFileTool.into(),
             crate::tools::WriteFileTool.into(),
@@ -1038,7 +1043,7 @@ mod tests {
 
     #[test]
     fn registering_a_name_twice_leaves_the_later_tool() {
-        let agent = Agent::new()
+        let agent = crate::Agent()
             .tool(mock_tool("echo", true, "first"))
             .tool(mock_tool("echo", true, "second"));
         let echoes: Vec<_> = agent
@@ -1052,13 +1057,13 @@ mod tests {
     #[test]
     #[should_panic(expected = "description required for tool `incomplete`")]
     fn registering_a_tool_without_a_description_panics() {
-        Agent::new().tool(Tool::new("incomplete").handler(|_: Value| async { Event::success("") }));
+        crate::Agent().tool(Tool("incomplete").handler(|_: Value| async { Event::success("") }));
     }
 
     #[test]
     #[should_panic(expected = "handler required for tool `incomplete`")]
     fn registering_a_tool_without_a_handler_panics() {
-        Agent::new().tool(Tool::new("incomplete").description("incomplete"));
+        crate::Agent().tool(Tool("incomplete").description("incomplete"));
     }
 
     #[tokio::test]
@@ -1097,14 +1102,14 @@ mod tests {
 
     #[test]
     fn registration_and_lookup() {
-        let agent = Agent::new().tool(mock_tool("read_file", true, "file contents"));
+        let agent = crate::Agent().tool(mock_tool("read_file", true, "file contents"));
         assert!(agent.get_tool(agent.tool_list(), "read_file").is_some());
         assert!(agent.get_tool(agent.tool_list(), "nonexistent").is_none());
     }
 
     #[test]
     fn contains_answers_on_the_exact_name_only() {
-        let agent = Agent::new().tool(mock_tool("grep", true, "matches"));
+        let agent = crate::Agent().tool(mock_tool("grep", true, "matches"));
         let exact = |name: &str| agent.tool_list().iter().any(|tool| tool.get_name() == name);
         assert!(exact("grep"));
         assert!(!exact("glob"));
@@ -1116,7 +1121,7 @@ mod tests {
 
     #[test]
     fn resolves_a_name_carrying_a_tool_suffix() {
-        let agent = Agent::new().tool(mock_tool("grep", true, "matches"));
+        let agent = crate::Agent().tool(mock_tool("grep", true, "matches"));
         let tool = agent
             .get_tool(agent.tool_list(), "grep_tool")
             .expect("suffix should fold away");
@@ -1125,7 +1130,7 @@ mod tests {
 
     #[test]
     fn resolves_a_name_the_model_hyphenated() {
-        let agent = Agent::new().tool(mock_tool("read_file", true, "file contents"));
+        let agent = crate::Agent().tool(mock_tool("read_file", true, "file contents"));
         let tool = agent
             .get_tool(agent.tool_list(), "Read-File")
             .expect("case and hyphen should fold");
@@ -1134,7 +1139,7 @@ mod tests {
 
     #[test]
     fn refuses_a_name_two_tools_share_a_key() {
-        let agent = Agent::new()
+        let agent = crate::Agent()
             .tool(mock_tool("grep", true, "builtin"))
             .tool(mock_tool("grep_tool", true, "host tool"));
         assert!(agent.get_tool(agent.tool_list(), "Grep").is_none());
@@ -1193,7 +1198,7 @@ mod tests {
 
     #[test]
     fn registration_keeps_every_distinct_tool() {
-        let agent = Agent::new()
+        let agent = crate::Agent()
             .tool(mock_tool("read", true, "ok"))
             .tool(mock_tool("write", false, "ok"));
         assert!(agent.get_tool(agent.tool_list(), "read").is_some());
@@ -1495,8 +1500,7 @@ mod tests {
 
     fn task_ctx() -> (ToolContext, Arc<Werk>, String, crate::test_util::TempDir) {
         let dir = crate::test_util::TempDir::new().unwrap();
-        let werk = Werk::new();
-        werk.set_dir(dir.path().to_path_buf());
+        let werk = Werk(dir.path().to_path_buf()).unwrap();
         werk.add_task("seed");
         let id = "t-1".to_string();
         let ctx = test_ctx().werk(Arc::clone(&werk)).task_id(id.clone());

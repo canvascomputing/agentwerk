@@ -45,7 +45,7 @@ async fn separates_files_and_directories() -> std::result::Result<(), Box<dyn st
         max_turns: Some(10),
         ..Default::default()
     });
-    let agent = Agent::new()
+    let agent = Agent()
         .provider(provider)
         .model(&model)
         .dir(root)

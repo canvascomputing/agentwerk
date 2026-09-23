@@ -216,7 +216,7 @@ fn brave_search_tool(api_key: String) -> Tool {
         }
     };
 
-    Tool::new("brave_search")
+    Tool("brave_search")
         .description(description)
         .schema(schema)
         .concurrent(true)
@@ -259,7 +259,7 @@ APIs: [Tasks](API.md#tasks), [Templates](API.md#templates), [Schemas](API.md#sch
 Assign both agents a shared `Knowledge` base. The researcher records sourced findings there, and the writer uses that evidence to produce the report.
 
 ```rust
-let knowledge = Knowledge::load("./research")?;
+let knowledge = Knowledge("./research")?;
 
 let researcher = researcher.knowledge(&knowledge);
 let writer = writer.knowledge(&knowledge);
@@ -272,7 +272,7 @@ APIs: [Knowledge](API.md#knowledge).
 A `Werk` coordinates the agents, tasks, and conditions for one run. Set the shared template values, then add the parts of the research harness.
 
 ```rust
-let werk = Werk();
+let werk = Werk(".agentwerk")?;
 
 werk.set_policy(Policy {
     max_time: Some(Duration::from_secs(300)),
@@ -455,8 +455,7 @@ A condition starts the coder with the saved plan as soon as the planner finishes
 Store the session in `./session` so you can stop the program and continue the same plan and coder conversation later.
 
 ```rust
-let werk = Werk();
-werk.set_dir("./session");
+let werk = Werk("./session")?;
 
 let coder_task = Task("Implement this plan:\n\n{{ result: plan }}")
     .label("coding");

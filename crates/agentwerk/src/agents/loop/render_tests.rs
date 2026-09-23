@@ -7,16 +7,17 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use super::test_util::*;
+use crate::agents::agent::WerkRef;
 use crate::agents::tasks::{Author, Reply};
 use crate::providers::{
     Model, ModelRequest, ModelResponse, ProviderLike, ProviderResult, StreamEvent,
 };
-use crate::{Agent, Event, Policy, Task, Werk};
+use crate::{Event, Policy, Task, Werk};
 
 fn session() -> (Arc<Werk>, crate::test_util::TempDir) {
     let dir = crate::test_util::TempDir::new().unwrap();
-    let werk = Werk::new();
-    werk.set_dir(dir.path().to_path_buf()).on_event(|_, _| {});
+    let werk = Werk(dir.path()).unwrap();
+    werk.on_event(|_, _| {});
     (werk, dir)
 }
 
@@ -149,7 +150,7 @@ async fn updates_during_an_in_flight_request_do_not_change_the_task_prompt() {
     });
     werk.set_template("company", "Old");
     werk.add_agent(
-        Agent::new()
+        crate::Agent()
             .provider(provider.clone())
             .model("mock")
             .role("{{ company }}"),
@@ -305,7 +306,7 @@ async fn reload_uses_only_shared_templates_restored_by_the_caller() {
     agent.add_task("{{ company }}");
     werk.set_template("data", "{{ company }} {{ result: absent }}");
     agent.add_task("{{ data }}");
-    let loaded = Werk::load(dir.path()).unwrap();
+    let loaded = Werk(dir.path()).unwrap();
     loaded
         .set_templates([
             ("company", "New"),
@@ -388,7 +389,7 @@ async fn prompt_render_failures_reach_hooks_and_survive_reload() {
         *failures.lock().unwrap(),
         [Event::PROMPT_RENDER_FAILED, Event::TASK_FAILED]
     );
-    let loaded = Werk::load(dir.path()).unwrap();
+    let loaded = Werk(dir.path()).unwrap();
     let task = loaded.get_task(&id).unwrap();
     let error = &task.get_errors()[0];
     assert_eq!(error.get_name(), Event::PROMPT_RENDER_FAILED);
@@ -469,7 +470,7 @@ async fn resumed_session_reuses_the_prompt_and_preserves_existing_messages() {
     werk.cancel();
     finish(&werk).await;
     drop(werk);
-    let loaded = Werk::load(dir.path()).unwrap();
+    let loaded = Werk(dir.path()).unwrap();
     loaded.set_template("company", "New").add_agent(agent);
     loaded.add_reply(&id, "continue");
     finish(&loaded).await;
@@ -493,7 +494,7 @@ async fn resumed_session_does_not_record_an_unchanged_system_prompt_twice() {
     finish(&werk).await;
     drop(werk);
 
-    let loaded = Werk::load(dir.path()).unwrap();
+    let loaded = Werk(dir.path()).unwrap();
     loaded.add_agent(agent).add_reply(&id, "continue");
     finish(&loaded).await;
 
@@ -523,7 +524,7 @@ async fn legacy_histories_reuse_the_earliest_system_prompt_without_rewriting_rep
     werk.append_reply(&id, Reply::system_text("Legacy refresh"));
     drop(werk);
 
-    let loaded = Werk::load(dir.path()).unwrap();
+    let loaded = Werk(dir.path()).unwrap();
     loaded.set_template("company", "New").add_agent(agent);
     loaded.add_reply(&id, "continue");
     finish(&loaded).await;
@@ -564,7 +565,7 @@ async fn compaction_reuses_the_frozen_system_prompt() {
     });
     werk.set_template("company", "Old");
     werk.add_agent(
-        Agent::new()
+        crate::Agent()
             .provider(provider.clone())
             .model(Model::new("mock").context_window(200_000))
             .role("{{ company }}"),
@@ -600,24 +601,20 @@ async fn standalone_and_shared_agents_use_the_same_templates_and_transfer_queued
     ]);
     let (shared, _dir) = session();
     shared.set_template("brief", "Destination");
-    let make_agent = || {
-        task_agent(&provider)
-            .template("brief", "Private")
-            .role("{{ brief }}")
-    };
-    let agent = make_agent();
-    let private = agent.werk.upgrade().unwrap();
+    let make_agent = || task_agent(&provider).role("{{ brief }}");
     let private_dir = crate::test_util::TempDir::new().unwrap();
-    private
-        .set_dir(private_dir.path().to_path_buf())
-        .on_event(|_, _| {});
+    let private = Werk(private_dir.path()).unwrap();
+    private.on_event(|_, _| {});
+    let mut agent = make_agent();
+    agent.werk = WerkRef::private(Arc::clone(&private));
+    let agent = agent.template("brief", "Private");
     agent.add_task("{{ brief }}");
     agent.finish().await;
     private.add_agent(agent.clone());
     assert_eq!(private.get_tasks().len(), 1);
     assert!(private.get_tasks()[0].is_finished());
     assert_eq!(provider.received_system_prompts(), ["Private"]);
-    let agent = make_agent();
+    let agent = make_agent().template("brief", "Private");
     agent.add_task("{{ brief }}");
     shared.add_agent(agent.clone());
     assert!(!serde_json::to_value(shared.get_tasks().last().unwrap())

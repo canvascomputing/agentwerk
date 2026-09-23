@@ -30,7 +30,7 @@ def log_research(_, event) -> None:
 
 
 async def main(question: str) -> None:
-    knowledge = Knowledge.load(".agentwerk/research")
+    knowledge = Knowledge(".agentwerk/research")
 
     researcher = Agent.from_env()
     researcher.label(RESEARCH)

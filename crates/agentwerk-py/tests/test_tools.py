@@ -36,8 +36,7 @@ async def run_scripted_agent(scripted_openai, tmp_path, tool):
         .tool(tool)
     )
     werk = (
-        aw.Werk()
-        .set_dir(str(tmp_path))
+        aw.Werk(str(tmp_path))
         .set_policy(aw.Policy(max_request_retries=0, max_time=2.0))
         .add_agent(agent)
     )
@@ -426,7 +425,7 @@ def test_tool_decorator_has_no_path_configuration():
 
 
 def test_knowledge_tool_binds_a_store(knowledge_dir):
-    store = aw.Knowledge.load(knowledge_dir)
+    store = aw.Knowledge(knowledge_dir)
     assert isinstance(aw.KnowledgeTool(store), aw.Tool)
 
 

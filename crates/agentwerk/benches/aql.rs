@@ -97,8 +97,7 @@ impl Fixture {
             task_count * EVENTS_PER_TASK
         );
         let dir = TempDir::new().expect("create AQL benchmark directory");
-        let werk = Werk::new();
-        werk.set_dir(dir.path());
+        let werk = Werk(dir.path()).unwrap();
         werk.on_event(|_, _| {});
 
         let task_body = "t".repeat(512);

@@ -192,7 +192,7 @@ The rules the tables never repeat.
 | Rust | `impl Display for KnowledgeError` | pub |
 | Rust | `impl Error for KnowledgeError` | pub |
 | both | `Knowledge { knowledge_dir: string, index: IndexEntry[], write_lock: void, index_char_limit: number }` | pub with private fields |
-| both | `.load(knowledge_dir: string): this throws io::Error` | pub |
+| both | `Knowledge(knowledge_dir: string): this throws io::Error` | pub |
 | both | `.set_index_char_limit(count: number): this` | pub |
 | both | `.get_index_char_limit(): number` | pub |
 | both | `.get_index(): string` | pub |
@@ -319,7 +319,6 @@ The rules the tables never repeat.
 | Rust | `mod agent`, `mod policy`, `mod knowledge`, `mod loop`, `mod tasks` | pub |
 | Rust | re-exports `Agent`, `Condition`, `Policy`, `PolicyViolation`, `Knowledge`, `Matcher`, `Query`, `QueryError`, `Reply`, `Status`, `Task`, `TaskError`, `Werk` | pub |
 | Rust | `Agent(): Agent` | pub |
-| Rust | `Werk(): Werk` | pub |
 | Rust | `Task(task: json): Task` | pub |
 | Rust | `Condition(query: Query): Condition` | pub |
 | Rust | `Query(query: string): Query throws QueryError` | pub |
@@ -670,9 +669,9 @@ The rules the tables never repeat.
 | Rust | `.Drained`, `.PolicyViolated(PolicyViolation)`, `.Cancelled` | pub |
 | Rust | `impl Display for FinishReason` | pub |
 | both | `Werk { weak_self: Weak<Werk>, tasks: Record<string, Task>, agents: Agent[], conditions: ConditionRegistry, policy: Policy, run: Run, cancel_filters: CancelFilter[], terminal_transitions: watch::Sender<number>, templates: Record<string, string>, stats: Stats, event_handlers: EventHandler[], awaited_events: AwaitedEvents, event_stream: Sender<Event>, dir: string, events_lock: void, join_handle: JoinHandle<void>?, next_task_id: number? }` | pub |
+| Rust | `Werk(werk_dir: string): this throws io::Error` | pub |
 | Rust | `.new(): this` | pub |
-| Python | `Werk()` | |
-| both | `.load(werk_dir: string): this throws io::Error` | pub |
+| Python | `Werk(werk_dir?: string)` | |
 | both | `.get_input_tokens(): number` | pub |
 | both | `.get_output_tokens(): number` | pub |
 | both | `.get_duration(): number?` | pub |
@@ -691,7 +690,6 @@ The rules the tables never repeat.
 | Python | `.set_templates(variables: Record<string, string>): this` | |
 | both | `.set_policy(policy: Policy): this` | pub |
 | both | `.get_policy(): Policy` | pub |
-| both | `.set_dir(dir: string): this` | pub |
 | both | `.get_dir(): string` | pub |
 | both | `.add_condition(condition: Condition): string` | pub |
 | both | `.add_task(task: Task): string` | pub |
@@ -2076,6 +2074,7 @@ Not bound: it is how `CommandTool` reads one command line.
 | Rust | `Tool { name: string, description: string?, schema: Schema, concurrent: boolean, timeout: TimeoutPolicy, handler: ToolHandler? }` | pub with private fields |
 | Python | `Tool`: an opaque handle the built-in tool functions return. An ad-hoc tool is a decorated function, not a `Tool` | |
 | Rust | `impl Debug for Tool` | pub |
+| Rust | `Tool(name: string): Tool` | pub |
 | Rust | `.new(name: string): Tool` | pub |
 | Python | the `@tool` decorator: a decorated function carries the name, description, signature-derived or explicit schema, and optional timeout | |
 | Rust | `.get_name(): string` | pub |
@@ -2308,7 +2307,7 @@ Binds `agents/knowledge.rs`.
 | Language | Item | Visibility |
 |----------|------|------------|
 | Rust | `PyKnowledge { inner: Knowledge }` | python |
-| Rust | `.load(knowledge_dir: string): this throws PyErr` | python |
+| Rust | `.new(knowledge_dir: string): this throws PyErr` | python |
 | Rust | `.set_index_char_limit(count: number): this` | python |
 | Rust | `.get_index_char_limit(): number` | python |
 | Rust | `.get_index(): string` | python |
@@ -2497,8 +2496,7 @@ Binds `agents/tasks/werk.rs` and `store.rs`.
 | Language | Item | Visibility |
 |----------|------|------------|
 | Rust | `PyWerk { inner: Werk }` | python |
-| Rust | `.new(): this` | python |
-| Rust | `.load(werk_dir: string): this throws PyErr` | python |
+| Rust | `.new(werk_dir?: string): this throws PyErr` | python |
 | Rust | `.add_agent(agent: PyAgent): this throws PyErr` | python |
 | Rust | `.add_condition(condition: PyCondition): string` | python |
 | Rust | `.add_task(task: PyTask): string throws PyErr` | python |
@@ -2510,7 +2508,6 @@ Binds `agents/tasks/werk.rs` and `store.rs`.
 | Rust | `.set_templates(variables: dict): this throws PyErr` | python |
 | Rust | `.set_policy(policy: PyPolicy): this` | python |
 | Rust | `.get_policy(): PyPolicy` | python |
-| Rust | `.set_dir(dir: string): this` | python |
 | Rust | `.get_dir(): string` | python |
 | Rust | `.on_event(handler: any): this` | python |
 | Rust | `.on_event_async(handler: any): this` | python |

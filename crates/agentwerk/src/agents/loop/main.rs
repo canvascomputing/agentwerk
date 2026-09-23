@@ -40,7 +40,6 @@ mod tests {
     use std::sync::{Arc, Mutex};
     use std::time::Duration;
 
-    use crate::agents::agent::Agent;
     use crate::agents::policy::Policy;
     use crate::agents::r#loop::test_util::*;
     use crate::agents::tasks::{Status, Task, Werk};
@@ -50,8 +49,7 @@ mod tests {
     #[tokio::test]
     async fn completion_waits_for_event_handlers_and_wakes_when_they_finish() {
         let results_dir = crate::test_util::TempDir::new().unwrap();
-        let werk = Werk::new();
-        werk.set_dir(results_dir.path().to_path_buf());
+        let werk = Werk(results_dir.path().to_path_buf()).unwrap();
         let id = werk.add_task("go");
         let (entered, started) = tokio::sync::oneshot::channel();
         let entered = Mutex::new(Some(entered));
@@ -85,13 +83,12 @@ mod tests {
     #[tokio::test]
     async fn add_after_run_spawns_new_agent() {
         let results_dir = crate::test_util::TempDir::new().unwrap();
-        let werk = Werk::new();
-        werk.set_dir(results_dir.path().to_path_buf())
-            .set_policy(Policy {
-                max_request_retries: 0,
-                request_retry_delay: Duration::from_millis(1),
-                ..Default::default()
-            });
+        let werk = Werk(results_dir.path().to_path_buf()).unwrap();
+        werk.set_policy(Policy {
+            max_request_retries: 0,
+            request_retry_delay: Duration::from_millis(1),
+            ..Default::default()
+        });
 
         let run_handle = werk.start();
 
@@ -99,7 +96,7 @@ mod tests {
 
         let provider = MockProvider::with_results(vec![Ok(write_result_response("ok"))]);
         werk.add_agent(
-            Agent::new()
+            crate::Agent()
                 .label("late")
                 .provider(provider.clone())
                 .model("mock")
@@ -132,19 +129,18 @@ mod tests {
     #[tokio::test]
     async fn host_finish_mid_run_walks_the_agent_off_and_still_drains() {
         let results_dir = crate::test_util::TempDir::new().unwrap();
-        let werk = Werk::new();
-        werk.set_dir(results_dir.path().to_path_buf())
-            .set_policy(Policy {
-                max_request_retries: 0,
-                request_retry_delay: Duration::from_millis(1),
-                ..Default::default()
-            });
+        let werk = Werk(results_dir.path().to_path_buf()).unwrap();
+        werk.set_policy(Policy {
+            max_request_retries: 0,
+            request_retry_delay: Duration::from_millis(1),
+            ..Default::default()
+        });
 
         // The agent replies without calling its finish tool, so the task is
         // still in progress when the host resolves it out of band.
         let provider = MockProvider::with_results(vec![Ok(text_response("still working"))]);
         werk.add_agent(
-            Agent::new()
+            crate::Agent()
                 .label("slow")
                 .provider(provider.clone())
                 .model("mock")
@@ -180,13 +176,12 @@ mod tests {
     #[tokio::test]
     async fn late_added_agent_joined_on_shutdown() {
         let results_dir = crate::test_util::TempDir::new().unwrap();
-        let werk = Werk::new();
-        werk.set_dir(results_dir.path().to_path_buf())
-            .set_policy(Policy {
-                max_request_retries: 0,
-                request_retry_delay: Duration::from_millis(1),
-                ..Default::default()
-            });
+        let werk = Werk(results_dir.path().to_path_buf()).unwrap();
+        werk.set_policy(Policy {
+            max_request_retries: 0,
+            request_retry_delay: Duration::from_millis(1),
+            ..Default::default()
+        });
 
         let run_handle = werk.start();
 
@@ -194,7 +189,7 @@ mod tests {
 
         let provider = MockProvider::with_results(vec![Ok(write_result_response("ok"))]);
         werk.add_agent(
-            Agent::new()
+            crate::Agent()
                 .label("late")
                 .provider(provider)
                 .model("mock")

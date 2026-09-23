@@ -91,7 +91,7 @@ fn io_failed(message: impl Into<String>) -> impl FnOnce(io::Error) -> KnowledgeE
 /// use agentwerk::{Agent, Knowledge};
 ///
 /// # fn run() -> Result<(), Box<dyn std::error::Error>> {
-/// let store = Knowledge::load("./.agentwerk/knowledge")?;
+/// let store = Knowledge("./.agentwerk/knowledge")?;
 /// let alice = Agent().knowledge(&store);
 /// let bob = Agent().knowledge(&store);
 /// # let _ = (alice, bob);
@@ -106,7 +106,7 @@ fn io_failed(message: impl Into<String>) -> impl FnOnce(io::Error) -> KnowledgeE
 /// use agentwerk::{Agent, Knowledge};
 ///
 /// # fn run() -> Result<(), Box<dyn std::error::Error>> {
-/// let seeded = Knowledge::load("./known-signatures")?;
+/// let seeded = Knowledge("./known-signatures")?;
 /// let scanner = Agent().knowledge(&seeded);
 /// # let _ = scanner;
 /// # Ok(())
@@ -119,13 +119,19 @@ pub struct Knowledge {
     index_char_limit: AtomicUsize,
 }
 
+/// Open the knowledge store at `knowledge_dir`, or create one there.
+#[allow(non_snake_case)]
+pub fn Knowledge(knowledge_dir: impl Into<PathBuf>) -> io::Result<Arc<Knowledge>> {
+    Knowledge::open(knowledge_dir)
+}
+
 impl Knowledge {
     /// Open the knowledge store at `knowledge_dir`, or create one there.
     ///
     /// The index is rebuilt from the pages themselves, so dropping an existing
     /// OKF bundle at `knowledge_dir` seeds the store from it. A `memory.jsonl`
     /// left by an older version is moved once into `pages/legacy-notes.md`.
-    pub fn load(knowledge_dir: impl Into<PathBuf>) -> io::Result<Arc<Self>> {
+    fn open(knowledge_dir: impl Into<PathBuf>) -> io::Result<Arc<Self>> {
         let knowledge_dir = knowledge_dir.into();
         fs::create_dir_all(knowledge_dir.join(PAGES_DIR))?;
 
@@ -841,7 +847,7 @@ mod tests {
 
     fn fresh_store() -> (Arc<Knowledge>, crate::test_util::TempDir) {
         let dir = crate::test_util::TempDir::new().unwrap();
-        let store = Knowledge::load(dir.path()).unwrap();
+        let store = Knowledge(dir.path()).unwrap();
         (store, dir)
     }
 
@@ -873,10 +879,10 @@ mod tests {
     }
 
     #[test]
-    fn load_creates_pages_directory_at_the_bundle_root() {
+    fn construction_creates_pages_directory_at_the_bundle_root() {
         let dir = crate::test_util::TempDir::new().unwrap();
         let nested = dir.path().join("not-yet-there");
-        let _ = Knowledge::load(&nested).unwrap();
+        let _ = Knowledge(&nested).unwrap();
         assert!(nested.join(PAGES_DIR).exists());
         assert!(!nested.join("knowledge").exists());
     }
@@ -890,14 +896,23 @@ mod tests {
             "---\ndescription: Beside the bundle.\n---\n# Stray\n\nBody.",
         )
         .unwrap();
-        let store = Knowledge::load(dir.path()).unwrap();
+        let store = Knowledge(dir.path()).unwrap();
         assert!(store.get_index().contains("stray"));
     }
 
     #[test]
-    fn load_with_no_existing_files_starts_empty() {
+    fn construction_with_no_existing_files_starts_empty() {
         let (store, _dir) = fresh_store();
         assert!(store.get_index().is_empty());
+    }
+
+    #[test]
+    fn construction_reports_directory_creation_failures() {
+        let root = crate::test_util::TempDir::new().unwrap();
+        let file = root.path().join("not-a-directory");
+        fs::write(&file, "occupied").unwrap();
+
+        assert!(Knowledge(&file).is_err());
     }
 
     #[test]
@@ -1179,7 +1194,7 @@ mod tests {
     #[test]
     fn entries_survive_drop_and_reopen() {
         let dir = crate::test_util::TempDir::new().unwrap();
-        let s1 = Knowledge::load(dir.path()).unwrap();
+        let s1 = Knowledge(dir.path()).unwrap();
         save_page(
             &s1,
             "durable",
@@ -1188,7 +1203,7 @@ mod tests {
             &[],
         );
         drop(s1);
-        let s2 = Knowledge::load(dir.path()).unwrap();
+        let s2 = Knowledge(dir.path()).unwrap();
         assert!(s2.get_index().contains("durable"));
         assert!(s2.get_index().contains("Survives restart"));
     }
@@ -1203,7 +1218,7 @@ mod tests {
             "---\nupdated: 2026-01-01T00:00:00Z\n---\n# My Page\n\nContent here.",
         )
         .unwrap();
-        let store = Knowledge::load(dir.path()).unwrap();
+        let store = Knowledge(dir.path()).unwrap();
         let idx = store.get_index();
         assert!(idx.contains("my-page"));
         assert!(idx.contains("My Page"));
@@ -1219,7 +1234,7 @@ mod tests {
              {\"content\":\"fact two\",\"added_at\":2}\n",
         )
         .unwrap();
-        let store = Knowledge::load(dir.path()).unwrap();
+        let store = Knowledge(dir.path()).unwrap();
         let idx = store.get_index();
         assert!(idx.contains("legacy-notes"));
         assert!(idx.contains("2 entries"));
@@ -1348,7 +1363,7 @@ mod tests {
             "---\ntype: Table\ndescription: One row per order.\n---\n# Orders\n\nBody.",
         )
         .unwrap();
-        let store = Knowledge::load(dir.path()).unwrap();
+        let store = Knowledge(dir.path()).unwrap();
         let idx = store.get_index();
         assert!(idx.contains("tables-orders"));
         assert!(idx.contains("One row per order."));
@@ -1368,7 +1383,7 @@ mod tests {
             "---\ndescription: No type here.\n---\n# Bare\n\nBody.",
         )
         .unwrap();
-        let store = Knowledge::load(dir.path()).unwrap();
+        let store = Knowledge(dir.path()).unwrap();
         assert_eq!(
             store.get_pages().get_page("bare").unwrap().kind,
             "Knowledge"

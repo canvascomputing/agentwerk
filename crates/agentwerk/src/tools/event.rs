@@ -198,8 +198,7 @@ mod tests {
     fn claimed_task() -> (crate::test_util::TempDir, Arc<Werk>, String, ToolContext) {
         let dir = crate::test_util::TempDir::new().unwrap();
         let path = dir.path().to_path_buf();
-        let werk = Werk::new();
-        werk.set_dir(path.clone());
+        let werk = Werk(path.clone()).unwrap();
         werk.insert(Task::new("work").label("alice"), "tester".into());
         let id = werk
             .claim(&Query::from("task.status = todo"), "alice")
@@ -389,8 +388,7 @@ mod tests {
     #[tokio::test]
     async fn task_finished_repairs_its_bound_result_schema() {
         let dir = crate::test_util::TempDir::new().unwrap();
-        let werk = Werk::new();
-        werk.set_dir(dir.path().to_path_buf());
+        let werk = Werk(dir.path().to_path_buf()).unwrap();
         let schema = Schema::new(serde_json::json!({
             "type": "object",
             "properties": { "line": { "type": "integer" } },

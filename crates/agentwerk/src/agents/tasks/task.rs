@@ -78,7 +78,7 @@ pub struct Task {
     /// Failures recorded against the task, appended as they happen. A tool
     /// call or request that failed does not fail the task, so this can carry
     /// entries on a task that finished. Read back out of the session log by
-    /// `Werk::load`, so it is not part of the task record.
+    /// `Werk(path)`, so it is not part of the task record.
     #[serde(skip)]
     pub(crate) errors: Vec<Event>,
     /// Messages exchanged with the model.
@@ -319,7 +319,7 @@ impl crate::persistence::Persist for Task {
     }
 
     /// `errors` stays empty: the failures live in the session log, and
-    /// `Werk::load` fills them in the pass it makes over it.
+    /// `Werk(path)` fills them in the pass it makes over it.
     fn load(dir: &Path, id: &Self::Key) -> io::Result<Self> {
         let bytes = std::fs::read(task_record_path(dir, id))?;
         let mut task: Task = serde_json::from_slice(&bytes).map_err(io::Error::other)?;

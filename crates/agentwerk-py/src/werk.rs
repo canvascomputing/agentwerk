@@ -28,14 +28,12 @@ pub struct PyWerk {
 #[pymethods]
 impl PyWerk {
     #[new]
-    fn new() -> Self {
-        PyWerk { inner: Werk::new() }
-    }
-
-    /// Continue a session from a directory written earlier.
-    #[staticmethod]
-    fn load(werk_dir: &str) -> PyResult<Self> {
-        let inner = Werk::load(werk_dir).map_err(runtime_error)?;
+    #[pyo3(signature = (werk_dir=None))]
+    fn new(werk_dir: Option<&str>) -> PyResult<Self> {
+        let inner = match werk_dir {
+            Some(werk_dir) => agentwerk::Werk(werk_dir).map_err(runtime_error)?,
+            None => Werk::new(),
+        };
         Ok(PyWerk { inner })
     }
 
@@ -115,13 +113,7 @@ impl PyWerk {
         }
     }
 
-    /// Define where a session is stored.
-    fn set_dir<'py>(slf: PyRef<'py, Self>, dir: &str) -> PyRef<'py, Self> {
-        slf.inner.set_dir(dir);
-        slf
-    }
-
-    /// Get the session directory, `./.agentwerk` until `dir` changes it.
+    /// Get the session directory.
     fn get_dir(&self) -> String {
         self.inner.get_dir().display().to_string()
     }
