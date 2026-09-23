@@ -27,7 +27,7 @@ const DEFAULT_BASE_URL: &str = "http://localhost:4000";
 /// ```no_run
 /// use agentwerk::providers::LiteLlm;
 ///
-/// let _provider = LiteLlm::new("").base_url("http://localhost:4000");
+/// let _provider = LiteLlm("").base_url("http://localhost:4000");
 /// ```
 ///
 /// Read configuration from the environment:

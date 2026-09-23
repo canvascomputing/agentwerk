@@ -50,7 +50,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
     werk.on_event(|_, event| stream_coder_text(event));
 
     if let RunMode::New(request) = mode {
-        werk.add_task(Task::new(request).label(PLAN));
+        werk.add_task(Task(request).label(PLAN));
     }
 
     println!("coding harness: /finish accepts the change, /quit leaves it resumable");
@@ -91,7 +91,7 @@ fn open_werk(session: &Path, mode: &RunMode) -> io::Result<Arc<Werk>> {
         )),
         RunMode::Resume => Werk::load(session),
         RunMode::New(_) => {
-            let werk = Werk::new();
+            let werk = Werk();
             werk.set_dir(session);
             Ok(werk)
         }
@@ -110,7 +110,7 @@ async fn run_harness(werk: &Arc<Werk>) -> Result<Option<Value>, Box<dyn Error>> 
                 let plan = serde_json::to_string_pretty(&plan)?;
                 let task =
                     format!("Complete this request:\n\n{request}\n\nFollow this plan:\n\n{plan}");
-                werk.add_task(Task::new(task).label(CODING));
+                werk.add_task(Task(task).label(CODING));
             }
             Stage::Coder(id) => {
                 print!("coder> ");
@@ -248,7 +248,7 @@ fn git_tool() -> CommandTool {
 }
 
 fn coder_condition() -> Condition {
-    Condition::new("task.label = plan AND task.status = finished")
+    Condition("task.label = plan AND task.status = finished")
         .task(Task::labeled(CODING, CODER_TASK))
 }
 

@@ -167,7 +167,7 @@ impl Werk {
     /// ```no_run
     /// # use agentwerk::Werk;
     /// # fn run() -> Result<(), Box<dyn std::error::Error>> {
-    /// let werk = Werk::new();
+    /// let werk = Werk();
     /// let id = werk.add_task("Look up the cached answer.");
     /// werk.set_task_finished(&id, "42")?;
     /// # Ok(())
@@ -310,7 +310,7 @@ impl Werk {
     /// use agentwerk::Event;
     /// use agentwerk::agents::tasks::{Reply, ReplyContent};
     ///
-    /// let werk = Werk::new();
+    /// let werk = Werk();
     /// werk.on_event(|werk, event| {
     ///     if event.get_name() != Event::TOOL_CALL_FAILED {
     ///         return;

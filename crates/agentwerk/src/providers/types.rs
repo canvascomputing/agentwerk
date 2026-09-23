@@ -61,7 +61,7 @@ pub struct ModelRequest {
     /// Limit on this request's output tokens, or `None` for the LLM provider's
     /// own default.
     pub max_request_tokens: Option<u32>,
-    /// How much reasoning to ask for, taken from the [`Model`](super::Model).
+    /// How much reasoning to ask for, taken from the [`Model`](struct@super::Model).
     pub reasoning_effort: ReasoningEffort,
 }
 

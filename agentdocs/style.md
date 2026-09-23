@@ -38,10 +38,11 @@ Naming, API, comment, binding, and README conventions for this workspace.
 - Use bare nouns for builders: `model`, `tool`, `label`, `concurrent`; do not add `with_`.
 - Pair singular and bulk builders such as `directive` / `directives`, `template` / `templates`, and `tool` / `tools`.
 - Use `get_` for public readers, `set_` for mutation, and `is_` or `has_` for boolean questions.
-- Use `new` for the primary constructor and a semantic name such as `load`, `from_env`, `success`, or `error` for another path.
+- Use a public builder's same-named function for primary construction, such as `Agent()`, `Task(value)`, or `Schema(document)`.
+- Keep semantic constructors such as `load`, `from_env`, `success`, and `error` associated with their type.
 - Use a built-in tool's bare value when it needs no input and its same-named function when it does; reserve `Tool::new` for custom tools.
 - Use `save` and `load` for whole values, and `append` for append-only logs.
-- Keep free functions for built-in tool construction, module entry points, foreign-type construction, shared algorithms, or ambient state; otherwise use a method.
+- Keep free functions for primary construction, module entry points, foreign-type construction, shared algorithms, or ambient state; otherwise use a method.
 
 ## Werk Operations
 

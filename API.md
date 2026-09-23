@@ -25,6 +25,7 @@ let results = agent.finish().await;
 
 | Area | Method | Description |
 |------|--------|-------------|
+| **Construct** | `Agent()` | Create an unconfigured agent. |
 | **Configure** | `role(role)` | Define who the agent is and how it should work. |
 | | `tool(tool)` | Register a tool the agent may call. |
 | | `tools(tools)` | Register several tools together. |
@@ -52,8 +53,8 @@ Send an agent's model requests to Anthropic, OpenAI, Mistral, or a LiteLLM proxy
 ```rust
 use agentwerk::providers::Anthropic;
 
-let agent = Agent::new()
-    .provider(Anthropic::new(key))
+let agent = Agent()
+    .provider(Anthropic(key))
     .model("claude-sonnet-4-20250514");
 ```
 
@@ -66,8 +67,8 @@ Configure a custom model:
 ```rust
 use agentwerk::providers::{Model, ReasoningEffort};
 
-let agent = Agent::new().model(
-    Model::new("my-local-model")
+let agent = Agent().model(
+    Model("my-local-model")
         .context_window(128_000)
         .reasoning_effort(ReasoningEffort::High),
 );
@@ -82,9 +83,11 @@ Provider methods:
 |--------|-------------|
 | `provider(provider)` | Set the LLM provider. |
 | `model(model)` | Set the model. |
+| `Provider(provider)` | Wrap a provider for sharing. |
+| `Model(name)` | Configure a model by name. |
 | `Agent::from_env()` | Read the provider and model from environment variables. |
 | `verify(model)` | Verify that the provider can answer with a model. |
-| `Anthropic::new(key).base_url(url).timeout(duration)` | Configure an Anthropic endpoint. OpenAI, Mistral, and LiteLLM expose the same methods. |
+| `Anthropic(key).base_url(url).timeout(duration)` | Configure an Anthropic endpoint. OpenAI, Mistral, and LiteLLM expose the same methods. |
 
 Provider environment variables:
 
@@ -154,6 +157,7 @@ werk.add_task(task);
 
 | Area | Member | Description |
 |------|--------|-------------|
+| **Construct** | `Task(value)` | Create a task. |
 | **Identity** | `get_id()` | Get the task ID in the form `t-N`. |
 | | `get_task()` | Get the work assigned to the task. |
 | | `get_label()` | Get the task's label. |
@@ -295,13 +299,13 @@ Attach a `Schema` when a task must return a specific JSON object structure.
 ```rust
 use agentwerk::schemas::Schema;
 
-let schema = Schema::new(json!({
+let schema = Schema(json!({
     "type": "object",
     "properties": { "title": { "type": "string" } },
     "required": ["title"]
 }))?;
 
-werk.add_task(Task::new("Write a report.").schema(schema));
+werk.add_task(Task("Write a report.").schema(schema));
 ```
 
 <details>
@@ -313,7 +317,7 @@ Use shallow, focused schemas for small models. Split complex work into tasks wit
 
 | Area | Method | Description |
 |------|--------|-------------|
-| **Schema** | `Schema::new(document)` | Create a schema. |
+| **Schema** | `Schema(document)` | Create a schema. |
 | | `validate(value)` | Return the validated value and JSON pointers to repaired values, or report violations. |
 | | `get_raw_schema()` | Read the JSON Schema document the schema was built from. |
 
@@ -348,7 +352,7 @@ Add tools to let an agent read and write files, run commands, fetch URLs, manage
 ```rust
 use agentwerk::tools::{CommandTool, GrepTool, ReadFileTool};
 
-let agent = Agent::new()
+let agent = Agent()
     .tool(ReadFileTool)
     .tool(GrepTool)
     .tool(CommandTool("git").allow("git *"));
@@ -420,7 +424,7 @@ Add `EventTool` when an agent needs to publish custom events:
 ```rust
 use agentwerk::tools::EventTool;
 
-let agent = Agent::new().tool(EventTool);
+let agent = Agent().tool(EventTool);
 ```
 
 The model supplies a name and optional JSON data:
@@ -515,7 +519,7 @@ let analyst = Agent::from_env()
 let writer = Agent::from_env()
     .label("report");
 
-let werk = Werk::new();
+let werk = Werk();
 werk.add_agent(analyst).add_agent(writer);
 
 werk.add_task(Task::labeled("analysis", "Rank all products by value."));
@@ -537,6 +541,7 @@ if let Some(answer) = werk.finish_task(task).await {
 
 | Area | Method | Description |
 |------|--------|-------------|
+| **Construct** | `Werk()` | Create an empty Werk. |
 | **Configure** | `set_policy(policy)` | Set execution limits and retry settings. |
 | | `get_policy()` | Get the active policy. |
 | | `set_dir(dir)` | Set the session directory. |
@@ -580,7 +585,7 @@ if let Some(answer) = werk.finish_task(task).await {
 ### AQL
 
 Use Agent Query Language (AQL) to find tasks and events. Pass an AQL string
-directly, or compile it with `Query::new` to reuse it.
+directly, or compile it with `Query(text)` to reuse it.
 
 ```rust
 // Find tasks labeled `scan`.
@@ -657,7 +662,7 @@ Use a condition to create follow-up tasks or add agents when an AQL query matche
 use agentwerk::Condition;
 
 werk.add_condition(
-    Condition::new("task.label = research AND task.status = finished")
+    Condition("task.label = research AND task.status = finished")
         .agent(Agent::from_env().label("report"))
         .task(Task::labeled(
             "report",
@@ -839,13 +844,13 @@ use agentwerk::Event;
 use serde_json::json;
 
 werk.emit_event(
-    Event::new("document_indexed")
+    Event("document_indexed")
         .data(json!({ "documents": 42 }))
         .task_id("t-1")
         .agent_id("indexer-1"),
 );
 
-werk.emit_event(Event::new("index_refreshed"));
+werk.emit_event(Event("index_refreshed"));
 ```
 
 `Werk::emit_event` does not change task status. Use [EventTool](#eventtool) for model-driven completion through `task_finished`.
@@ -896,6 +901,7 @@ Event methods:
 
 | Event method | Description |
 |--------------|-------------|
+| `Event(name)` | Create a custom event. |
 | `get_name()` | Read the event name. |
 | `get_data()` | Read the event payload. |
 | `get_task_id()` | Read the associated task ID. |
@@ -933,8 +939,8 @@ Use `Knowledge` to store pages on disk and share them between agents and tasks.
 use agentwerk::Knowledge;
 
 let store = Knowledge::load("./notes")?;
-let alice = Agent::new().knowledge(&store);
-let bob = Agent::new().knowledge(&store);
+let alice = Agent().knowledge(&store);
+let bob = Agent().knowledge(&store);
 ```
 
 Calling `.knowledge(&store)` registers a `KnowledgeTool` bound to that store, so the agent can read and update its shared pages.

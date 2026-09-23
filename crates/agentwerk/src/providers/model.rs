@@ -5,7 +5,7 @@ use super::ReasoningEffort;
 
 /// Model metadata: the name plus anything we know about its capabilities.
 ///
-/// Built by [`Model::new`] (registry-backed) or
+/// Built by [`fn@super::Model`] (registry-backed) or
 /// [`Model::context_window`] (explicit override). The agent loop reads
 /// `Model::context_window` to decide when a conversation needs to be
 /// shrunk before the next request.

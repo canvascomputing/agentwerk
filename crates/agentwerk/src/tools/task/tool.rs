@@ -11,7 +11,7 @@ use super::dispatch;
 /// use agentwerk::Agent;
 /// use agentwerk::tools::TaskTool;
 ///
-/// Agent::new().tool(TaskTool);
+/// Agent().tool(TaskTool);
 /// ```
 pub struct TaskTool;
 

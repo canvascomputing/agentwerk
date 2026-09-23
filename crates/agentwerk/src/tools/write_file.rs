@@ -12,7 +12,7 @@ use crate::prompts::directives::{WRITE_FILE_FAILED, WRITE_FILE_PARENT_NOT_CREATE
 /// use agentwerk::Agent;
 /// use agentwerk::tools::WriteFileTool;
 ///
-/// Agent::new().tool(WriteFileTool);
+/// Agent().tool(WriteFileTool);
 /// ```
 pub struct WriteFileTool;
 

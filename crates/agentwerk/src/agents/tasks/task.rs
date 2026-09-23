@@ -15,7 +15,7 @@ use super::reply::{Author, Reply, ReplyContent};
 
 /// Define work with an optional assignment label and result schema.
 ///
-/// You set the task with [`Task::new`] and optionally use the `label` and
+/// You set the task with [`fn@crate::Task`] and optionally use the `label` and
 /// `schema` builders. The rest is set for you at insertion time and as the
 /// agent works.
 ///
@@ -25,8 +25,8 @@ use super::reply::{Author, Reply, ReplyContent};
 /// use serde_json::json;
 ///
 /// # fn run() -> Result<(), Box<dyn std::error::Error>> {
-/// let schema = Schema::new(json!({"type": "object"}))?;
-/// let task = Task::new("Summarize this URL.")
+/// let schema = Schema(json!({"type": "object"}))?;
+/// let task = Task("Summarize this URL.")
 ///     .label("research")
 ///     .schema(schema);
 /// # let _ = task;

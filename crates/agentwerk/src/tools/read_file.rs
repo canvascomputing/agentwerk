@@ -16,7 +16,7 @@ use crate::prompts::directives::{
 /// use agentwerk::Agent;
 /// use agentwerk::tools::ReadFileTool;
 ///
-/// Agent::new().tool(ReadFileTool);
+/// Agent().tool(ReadFileTool);
 /// ```
 pub struct ReadFileTool;
 

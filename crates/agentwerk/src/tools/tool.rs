@@ -262,7 +262,7 @@ impl TimeoutPolicy {
 ///         Event::tool_call_finished(format!("Hello, {name}!"))
 ///     });
 ///
-/// Agent::new().tool(greet);
+/// Agent().tool(greet);
 /// ```
 ///
 /// An incomplete tool is rejected when it is registered:
@@ -271,7 +271,7 @@ impl TimeoutPolicy {
 /// use agentwerk::Agent;
 /// use agentwerk::tools::Tool;
 ///
-/// let _agent = Agent::new().tool(Tool::new("greet"));
+/// let _agent = Agent().tool(Tool::new("greet"));
 /// ```
 ///
 /// Path declarations are not part of a tool definition:

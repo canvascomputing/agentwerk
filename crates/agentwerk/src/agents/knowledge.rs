@@ -92,8 +92,8 @@ fn io_failed(message: impl Into<String>) -> impl FnOnce(io::Error) -> KnowledgeE
 ///
 /// # fn run() -> Result<(), Box<dyn std::error::Error>> {
 /// let store = Knowledge::load("./.agentwerk/knowledge")?;
-/// let alice = Agent::new().knowledge(&store);
-/// let bob = Agent::new().knowledge(&store);
+/// let alice = Agent().knowledge(&store);
+/// let bob = Agent().knowledge(&store);
 /// # let _ = (alice, bob);
 /// # Ok(())
 /// # }
@@ -107,7 +107,7 @@ fn io_failed(message: impl Into<String>) -> impl FnOnce(io::Error) -> KnowledgeE
 ///
 /// # fn run() -> Result<(), Box<dyn std::error::Error>> {
 /// let seeded = Knowledge::load("./known-signatures")?;
-/// let scanner = Agent::new().knowledge(&seeded);
+/// let scanner = Agent().knowledge(&seeded);
 /// # let _ = scanner;
 /// # Ok(())
 /// # }

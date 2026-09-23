@@ -41,9 +41,9 @@ async fn main() {
     let research_task = Task::labeled(RESEARCH, RESEARCH_TASK);
     let report_task = Task::labeled(REPORT, REPORT_TASK);
     let finished_research = "task.label = research AND task.status = finished";
-    let write_report = Condition::new(finished_research).task(report_task);
+    let write_report = Condition(finished_research).task(report_task);
 
-    let werk = Werk::new();
+    let werk = Werk();
     werk.set_policy(Policy {
         max_time: Some(Duration::from_secs(300)),
         ..Default::default()
