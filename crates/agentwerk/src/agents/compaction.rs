@@ -5,8 +5,6 @@ use std::sync::Arc;
 
 use crate::agents::policy::Policy;
 use crate::agents::tasks::{Author, Reply};
-use crate::prompts::compaction_directive;
-use crate::prompts::directives::DirectiveStore;
 use crate::providers::types::StreamEvent;
 use crate::providers::{
     ContentBlock, Message, ModelRequest, Provider, ProviderError, ProviderResult, TokenUsage,
@@ -112,7 +110,7 @@ pub(crate) struct Compaction {
     model: String,
     window: Option<u64>,
     on_progress: Arc<dyn Fn(u32, u32) + Send + Sync>,
-    directives: Arc<DirectiveStore>,
+    system_prompt: String,
 }
 
 impl Compaction {
@@ -121,14 +119,14 @@ impl Compaction {
         model: String,
         window: Option<u64>,
         on_progress: Arc<dyn Fn(u32, u32) + Send + Sync>,
-        directives: Arc<DirectiveStore>,
+        system_prompt: String,
     ) -> Self {
         Self {
             provider,
             model,
             window,
             on_progress,
-            directives,
+            system_prompt,
         }
     }
 
@@ -155,7 +153,7 @@ impl Compaction {
         for (index, chunk) in chunks.iter().enumerate() {
             let request = ModelRequest {
                 model: self.model.clone(),
-                system_prompt: compaction_directive(&self.directives),
+                system_prompt: self.system_prompt.clone(),
                 messages: chunk.clone(),
                 tools: Vec::new(),
                 max_request_tokens: None,
@@ -575,7 +573,7 @@ mod tests {
             "mock".into(),
             window,
             on_progress,
-            Arc::new(DirectiveStore::default()),
+            crate::prompts::templates::built_in(crate::prompts::templates::SUMMARY_REQUESTED, &[]),
         )
     }
 
@@ -794,7 +792,7 @@ mod tests {
         assert_eq!(request.messages.len(), replies.len() - 1);
         assert_eq!(
             request.system_prompt,
-            compaction_directive(&DirectiveStore::default())
+            crate::prompts::templates::built_in(crate::prompts::templates::SUMMARY_REQUESTED, &[],)
         );
     }
 

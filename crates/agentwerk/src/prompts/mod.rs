@@ -1,21 +1,21 @@
-//! Assembles what an agent is told: the role, the directives, and the facts
+//! Assembles what an agent is told: the role, corrective templates, and the facts
 //! `{{ context }}` expands to.
 
-pub(crate) mod directives;
 mod json_path;
 mod prompt;
+pub(crate) mod templates;
 
 use std::path::Path;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde_json::Value;
 
-use directives::{
-    built_in, DirectiveStore, ARGUMENTS_EXPECTED, ARGUMENTS_REJECTED, RESULT_SCHEMA_REQUIRED,
-    SUMMARY_REQUESTED,
-};
 use prompt::render_values;
 pub(crate) use prompt::RenderError;
+use templates::{
+    built_in, TemplateRenderer, ARGUMENTS_EXPECTED, ARGUMENTS_REJECTED, RESULT_SCHEMA_REQUIRED,
+    SUMMARY_REQUESTED,
+};
 
 use crate::agents::policy::Policy;
 use crate::agents::stats::Stats;
@@ -26,14 +26,14 @@ const CONTEXT_TEMPLATE: &str = include_str!("context.md");
 
 /// The system prompt for collapsing an over-budget conversation into one
 /// summary. No placeholders: the messages themselves are what it summarizes.
-pub(crate) fn compaction_directive(directives: &DirectiveStore) -> String {
-    directives.render(SUMMARY_REQUESTED, &[])
+pub(crate) fn compaction_template(werk: &crate::Werk) -> Result<String, RenderError> {
+    werk.render_template(SUMMARY_REQUESTED, &[])
 }
 
 /// Render the block telling the agent how to return a result matching
 /// `schema`. Leads with a blank line so callers append it directly after
 /// preceding text.
-pub(crate) fn schema_directive(schema: &Schema) -> String {
+pub(crate) fn result_schema_template(schema: &Schema) -> String {
     let pretty = serde_json::to_string_pretty(schema.get_raw_schema()).unwrap_or_default();
     let body = built_in(RESULT_SCHEMA_REQUIRED, &[("schema", &pretty)]);
     format!("\n\n{body}")
@@ -47,9 +47,9 @@ pub(crate) fn arguments_retry_detail(
     tool_name: &str,
     violations: &str,
     schema: Option<&Value>,
-    directives: &DirectiveStore,
+    templates: &TemplateRenderer,
 ) -> String {
-    let rejected = directives.render(
+    let rejected = templates.render(
         ARGUMENTS_REJECTED,
         &[("tool", tool_name), ("violations", violations)],
     );
@@ -57,7 +57,7 @@ pub(crate) fn arguments_retry_detail(
         return rejected;
     };
     let pretty = serde_json::to_string_pretty(schema).unwrap_or_default();
-    let expected = directives.render(
+    let expected = templates.render(
         ARGUMENTS_EXPECTED,
         &[("tool", tool_name), ("schema", &pretty)],
     );
@@ -199,21 +199,21 @@ mod tests {
         ];
 
         for shape in shapes {
-            let directive = schema_directive(&Schema::new(shape).expect("valid schema"));
-            assert!(directive.contains("JSON object"), "{directive}");
-            assert!(directive.contains("matching this schema"), "{directive}");
+            let template = result_schema_template(&Schema::new(shape).expect("valid schema"));
+            assert!(template.contains("JSON object"), "{template}");
+            assert!(template.contains("matching this schema"), "{template}");
         }
     }
 
     #[test]
-    fn schema_directive_renders_the_schema_itself() {
+    fn result_schema_template_renders_the_schema_itself() {
         let schema = Schema::new(serde_json::json!({
             "type": "object",
             "properties": {"summary": {"type": "string"}},
         }))
         .expect("valid schema");
 
-        assert!(schema_directive(&schema).contains("summary"));
+        assert!(result_schema_template(&schema).contains("summary"));
     }
 
     #[test]
@@ -226,7 +226,7 @@ mod tests {
             "read_file",
             "/offset: expected type integer",
             Some(&schema),
-            &DirectiveStore::default(),
+            &TemplateRenderer::default(),
         );
         assert!(rendered.contains("read_file"));
         assert!(rendered.contains("/offset: expected type integer"));
@@ -241,7 +241,7 @@ mod tests {
             "read_file",
             "/offset: expected type integer",
             None,
-            &DirectiveStore::default(),
+            &TemplateRenderer::default(),
         );
         assert!(rendered.contains("read_file"));
         assert!(!rendered.contains("accepts:"));

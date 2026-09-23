@@ -37,21 +37,58 @@ impl Werk {
         prompt: &str,
         values: &[(&str, String)],
     ) -> Result<String, RenderError> {
-        let values: Values<'_> = values
-            .iter()
-            .map(|(key, value)| (*key, value.as_str()))
-            .collect();
-        let shared = self.template_values();
-        let mut named_value = |name: &str| {
-            values
-                .get(name)
-                .map(|value| (*value).to_string())
-                .or_else(|| shared.get(name).cloned())
-        };
-        render_template(prompt.trim(), |expression| {
-            resolve_expression(self, expression, &mut named_value)
-        })
+        let templates = self.template_values();
+        render_text(self, prompt, values, &templates)
     }
+
+    /// Render a configured template by key, falling back to its bundled text.
+    pub(crate) fn render_template(
+        &self,
+        key: &str,
+        values: &[(&str, &str)],
+    ) -> Result<String, RenderError> {
+        let templates = self.template_values();
+        let template = templates
+            .get(key)
+            .map(String::as_str)
+            .or_else(|| super::templates::templates().get(key).copied())
+            .unwrap_or(key);
+        render_text(self, template, values, &templates)
+    }
+
+    /// Render a custom event's template when one is configured.
+    pub(crate) fn render_event_template(
+        &self,
+        name: &str,
+        values: &[(&str, &str)],
+    ) -> Result<Option<String>, RenderError> {
+        let templates = self.template_values();
+        let Some(template) = templates.get(name) else {
+            return Ok(None);
+        };
+        render_text(self, template, values, &templates).map(Some)
+    }
+}
+
+fn render_text<V: AsRef<str>>(
+    werk: &Werk,
+    text: &str,
+    runtime_values: &[(&str, V)],
+    templates: &HashMap<String, String>,
+) -> Result<String, RenderError> {
+    let mut values: Values<'_> = HashMap::new();
+    for (key, value) in runtime_values {
+        values.entry(*key).or_insert(value.as_ref());
+    }
+    let mut value = |name: &str| {
+        values
+            .get(name)
+            .map(|value| (*value).to_string())
+            .or_else(|| templates.get(name).cloned())
+    };
+    render_template(text.trim(), |expression| {
+        resolve_expression(werk, expression, &mut value)
+    })
 }
 
 type Values<'a> = HashMap<&'a str, &'a str>;
@@ -479,6 +516,66 @@ mod tests {
         werk.set_template("company", "Acme");
 
         assert_eq!(render(&werk, "{{ company }}").unwrap(), "Acme");
+    }
+
+    #[test]
+    fn bundled_corrective_templates_are_not_implicit_prompt_values() {
+        let werk = Werk::new();
+
+        assert_eq!(
+            render(&werk, "{{ tool_timed_out }}").unwrap(),
+            "{{ tool_timed_out }}",
+        );
+    }
+
+    #[test]
+    fn templates_use_runtime_values_shared_values_and_results() {
+        let (werk, _dir) = session();
+        let research = werk.add_task(Task::new("research").label("research"));
+        werk.set_task_finished(&research, serde_json::json!({"answer": 42}))
+            .unwrap();
+        werk.set_templates([
+            ("company", "Acme"),
+            (
+                "retry",
+                "{{ path }} for {{ company }}: {{ find_result(research).answer }}",
+            ),
+        ]);
+
+        assert_eq!(
+            werk.render_template("retry", &[("path", "src/lib.rs")])
+                .unwrap(),
+            "src/lib.rs for Acme: 42",
+        );
+        werk.set_template("path", "shared/path");
+        assert_eq!(
+            werk.render_template("retry", &[("path", "runtime/path")])
+                .unwrap(),
+            "runtime/path for Acme: 42",
+        );
+    }
+
+    #[test]
+    fn template_values_remain_single_pass() {
+        let werk = Werk::new();
+        werk.set_templates([
+            ("retry", "{{ detail }}"),
+            ("detail", "{{ find_result(missing) }}"),
+        ]);
+
+        assert_eq!(
+            werk.render_template("retry", &[]).unwrap(),
+            "{{ find_result(missing) }}",
+        );
+    }
+
+    #[test]
+    fn invalid_template_expressions_are_reported() {
+        let werk = Werk::new();
+        werk.set_template("retry", "{{ find_result(task.label =) }}");
+
+        let error = werk.render_template("retry", &[]).unwrap_err();
+        assert_eq!(error.expression, "find_result(task.label =)");
     }
 
     #[test]

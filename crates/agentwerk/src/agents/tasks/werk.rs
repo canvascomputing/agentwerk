@@ -854,7 +854,10 @@ impl Werk {
         self.policy.lock().unwrap().clone()
     }
 
-    /// Insert or replace a shared template value. New tasks use it before their first request.
+    /// Insert or replace a shared template value.
+    ///
+    /// New tasks use it before their first request. A key matching a bundled
+    /// corrective or custom event template customizes that template.
     pub fn set_template(&self, key: impl Into<String>, value: impl Into<String>) -> &Self {
         self.templates
             .lock()
@@ -863,7 +866,7 @@ impl Werk {
         self
     }
 
-    /// Insert or replace several shared values together.
+    /// Insert or replace several shared template values together.
     pub fn set_templates<I, K, V>(&self, variables: I) -> &Self
     where
         I: IntoIterator<Item = (K, V)>,

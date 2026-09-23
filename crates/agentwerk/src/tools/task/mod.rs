@@ -6,8 +6,8 @@ use serde_json::Value;
 
 use crate::agents::tasks::{Status, Task, TaskError, Werk};
 use crate::agents::Query;
-use crate::prompts::directives::{
-    DirectiveStore, TASK_EDIT_INCOMPLETE, TASK_ID_MISSING, TASK_NOT_ASSIGNED, TASK_NOT_FOUND,
+use crate::prompts::templates::{
+    TemplateRenderer, TASK_EDIT_INCOMPLETE, TASK_ID_MISSING, TASK_NOT_ASSIGNED, TASK_NOT_FOUND,
     TASK_QUERY_INVALID, TASK_RESULT_MISSING, TASK_TRANSITION_REJECTED, WERK_UNAVAILABLE,
 };
 
@@ -47,14 +47,14 @@ pub enum TaskArgs {
 
 pub(super) fn dispatch(args: TaskArgs, ctx: &ToolContext) -> Event {
     let Some(werk) = ctx.werk.clone() else {
-        return Event::error(ctx.directives.render(WERK_UNAVAILABLE, &[]))
-            .directive(WERK_UNAVAILABLE);
+        return Event::error(ctx.templates.render(WERK_UNAVAILABLE, &[]))
+            .template(WERK_UNAVAILABLE);
     };
 
     match args {
         TaskArgs::Task { id } => action_task(&werk, id, ctx),
         TaskArgs::Result { id } => action_result(&werk, id, ctx),
-        TaskArgs::List { aql } => action_list(&werk, aql, &ctx.directives),
+        TaskArgs::List { aql } => action_list(&werk, aql, &ctx.templates),
         TaskArgs::Create { task, label } => action_create(&werk, task, label, ctx),
         TaskArgs::Edit { id, task, label } => action_edit(&werk, id, task, label, ctx),
     }
@@ -75,18 +75,18 @@ pub(super) fn resolve_current_id(werk: &Werk, ctx: &ToolContext) -> Result<Strin
     // A closure, never `task.assignee = {id}`: an id derives from a host-supplied label,
     // and AQL binds no values, so one carrying `=` or a quote rewrites the query.
     let agent_id = ctx.agent_id.clone().ok_or_else(|| {
-        Event::error(ctx.directives.render(TASK_ID_MISSING, &[])).directive(TASK_ID_MISSING)
+        Event::error(ctx.templates.render(TASK_ID_MISSING, &[])).template(TASK_ID_MISSING)
     })?;
     match werk.find_task(move |t: &Task| {
         t.status == Status::InProgress && t.assignee.as_deref() == Some(agent_id.as_str())
     }) {
         Some(t) => Ok(t.id.clone()),
-        None => Err(Event::error(ctx.directives.render(TASK_NOT_ASSIGNED, &[])).into()),
+        None => Err(Event::error(ctx.templates.render(TASK_NOT_ASSIGNED, &[])).into()),
     }
 }
 
-pub(super) fn task_error_message(err: TaskError, directives: &DirectiveStore) -> String {
-    directives.render(TASK_TRANSITION_REJECTED, &[("error", &err.to_string())])
+pub(super) fn task_error_message(err: TaskError, templates: &TemplateRenderer) -> String {
+    templates.render(TASK_TRANSITION_REJECTED, &[("error", &err.to_string())])
 }
 
 fn render_task(t: &Task) -> String {
@@ -180,8 +180,8 @@ fn action_task(werk: &Werk, id: Option<String>, ctx: &ToolContext) -> Event {
     };
     match werk.get_task(&id) {
         Some(t) => Event::success(render_task(&t)),
-        None => Event::error(ctx.directives.render(TASK_NOT_FOUND, &[("id", &id)]))
-            .directive(TASK_NOT_FOUND),
+        None => Event::error(ctx.templates.render(TASK_NOT_FOUND, &[("id", &id)]))
+            .template(TASK_NOT_FOUND),
     }
 }
 
@@ -191,24 +191,24 @@ fn action_result(werk: &Werk, id: Option<String>, ctx: &ToolContext) -> Event {
         Err(event) => return *event,
     };
     let Some(task) = werk.get_task(&id) else {
-        return Event::error(ctx.directives.render(TASK_NOT_FOUND, &[("id", &id)]))
-            .directive(TASK_NOT_FOUND);
+        return Event::error(ctx.templates.render(TASK_NOT_FOUND, &[("id", &id)]))
+            .template(TASK_NOT_FOUND);
     };
     match task.result.as_ref() {
         Some(result) => Event::success(render_result(&id, &werk.result_path(&id), result)),
-        None => Event::error(ctx.directives.render(
+        None => Event::error(ctx.templates.render(
             TASK_RESULT_MISSING,
             &[("id", &id), ("status", status_label(task.status))],
         )),
     }
 }
 
-fn action_list(werk: &Werk, aql: Option<String>, directives: &DirectiveStore) -> Event {
+fn action_list(werk: &Werk, aql: Option<String>, templates: &TemplateRenderer) -> Event {
     let pool: Vec<Task> = match aql.as_deref().map(Query::new) {
         Some(Ok(query)) => werk.find_tasks(query),
         Some(Err(error)) => {
             return Event::error(
-                directives.render(TASK_QUERY_INVALID, &[("error", &error.to_string())]),
+                templates.render(TASK_QUERY_INVALID, &[("error", &error.to_string())]),
             )
         }
         None => werk.get_tasks(),
@@ -257,13 +257,13 @@ fn action_edit(
         Err(event) => return *event,
     };
     if new_task.is_none() && new_label.is_none() {
-        return Event::error(ctx.directives.render(TASK_EDIT_INCOMPLETE, &[]))
-            .directive(TASK_EDIT_INCOMPLETE);
+        return Event::error(ctx.templates.render(TASK_EDIT_INCOMPLETE, &[]))
+            .template(TASK_EDIT_INCOMPLETE);
     }
 
     match werk.edit(&id, new_task, new_label) {
         Ok(()) => Event::success(format!("Edited task {id}")),
-        Err(e) => Event::error(task_error_message(e, &ctx.directives)),
+        Err(e) => Event::error(task_error_message(e, &ctx.templates)),
     }
 }
 
@@ -385,7 +385,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn task_not_found_directive_binds_the_id() {
+    async fn task_not_found_template_binds_the_id() {
         let werk = Werk(isolated_test_dir()).unwrap();
         let ctx = ToolContext::new(PathBuf::from("/tmp")).werk(werk);
 

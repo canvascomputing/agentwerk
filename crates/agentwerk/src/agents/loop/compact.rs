@@ -51,13 +51,20 @@ impl Agent {
             })
         };
 
+        let system_prompt = match crate::prompts::compaction_template(werk) {
+            Ok(prompt) => prompt,
+            Err(error) => {
+                self.fail_render(werk, task_id, error);
+                return false;
+            }
+        };
         let replies = std::mem::take(&mut task.replies);
         let compaction = Compaction::new(
             self.get_provider(),
             model.name.clone(),
             window,
             on_progress,
-            self.get_directives(),
+            system_prompt,
         );
         let edited = match algo::summarize_replies(compaction, replies.clone()).await {
             Ok(edited) => edited,
@@ -403,6 +410,31 @@ mod tests {
         assert!(request_started.len() >= 2);
         assert!(started_idx > request_started[0] && started_idx < request_started[1]);
         assert!(finished_idx > started_idx && finished_idx < request_started[1]);
+    }
+
+    #[tokio::test]
+    async fn an_invalid_compaction_template_fails_the_task_before_summarizing() {
+        let provider = MockProvider::with_results(vec![Ok(tool_call_response_with_usage(
+            "primer",
+            crate::providers::types::TokenUsage {
+                input_tokens: 180_000,
+                output_tokens: 0,
+            },
+        ))]);
+        let (events, provider, task) = run_compaction(provider, |werk| {
+            werk.set_template(
+                crate::prompts::templates::SUMMARY_REQUESTED,
+                "{{ find_result(task.label =) }}",
+            );
+        })
+        .await;
+
+        assert_eq!(provider.requests(), 1);
+        assert_eq!(task.status, Status::Failed);
+        assert!(events
+            .iter()
+            .any(|event| event.get_name() == crate::event::Event::PROMPT_RENDER_FAILED));
+        assert_eq!(compaction_finishes(&events, CompactReason::Proactive), 0);
     }
 
     #[tokio::test]

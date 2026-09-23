@@ -1,8 +1,8 @@
 //! Fetches a URL and returns its extracted text. Gives an agent access to external documentation the prompt cannot enumerate up front.
 
 use super::tool::{Event, Tool, ToolContext};
-use crate::prompts::directives::{
-    DirectiveStore, FETCH_BODY_NOT_READ, FETCH_CREDENTIALS_PRESENT, FETCH_HOST_MISSING,
+use crate::prompts::templates::{
+    TemplateRenderer, FETCH_BODY_NOT_READ, FETCH_CREDENTIALS_PRESENT, FETCH_HOST_MISSING,
     FETCH_HOST_NOT_RESOLVABLE, FETCH_REDIRECT_LOCATION_MISSING, FETCH_REQUEST_FAILED,
     FETCH_RESPONSE_TOO_LARGE, FETCH_SCHEME_MISSING, FETCH_SCHEME_UNSUPPORTED, FETCH_TOO_LONG,
     FETCH_TOO_MANY_REDIRECTS,
@@ -144,12 +144,12 @@ impl From<FetchTool> for Tool {
 async fn run(args: FetchArgs, ctx: ToolContext, impersonate: bool) -> Event {
     let FetchArgs { url, max_length } = args;
 
-    let validated_url = match validate_url(&url, &ctx.directives) {
+    let validated_url = match validate_url(&url, &ctx.templates) {
         Ok(u) => u,
         Err(msg) => return Event::error(msg),
     };
 
-    let text = match fetch(&validated_url, impersonate, &ctx.directives).await {
+    let text = match fetch(&validated_url, impersonate, &ctx.templates).await {
         Ok(text) => text,
         Err(msg) => return Event::error(msg),
     };
@@ -201,7 +201,7 @@ enum FetchedContent {
 async fn fetch(
     url: &str,
     impersonate: bool,
-    directives: &DirectiveStore,
+    templates: &TemplateRenderer,
 ) -> std::result::Result<FetchedContent, String> {
     // Manual redirect handling prevents open-redirect exploitation across domains.
     let mut builder = reqwest::Client::builder().redirect(reqwest::redirect::Policy::none());
@@ -213,7 +213,7 @@ async fn fetch(
     }
     let client = builder.build().map_err(|e| e.to_string())?;
 
-    let response = follow_safe_redirects(&client, url, impersonate, directives).await?;
+    let response = follow_safe_redirects(&client, url, impersonate, templates).await?;
     if let FollowResult::CrossDomain {
         original_url,
         redirect_url,
@@ -241,9 +241,9 @@ async fn fetch(
     let bytes = response
         .bytes()
         .await
-        .map_err(|e| directives.render(FETCH_BODY_NOT_READ, &[("error", &e.to_string())]))?;
+        .map_err(|e| templates.render(FETCH_BODY_NOT_READ, &[("error", &e.to_string())]))?;
     if bytes.len() > MAX_RESPONSE_BYTES {
-        return Err(directives.render(
+        return Err(templates.render(
             FETCH_RESPONSE_TOO_LARGE,
             &[
                 ("bytes", &bytes.len().to_string()),
@@ -349,7 +349,7 @@ async fn follow_safe_redirects(
     client: &reqwest::Client,
     url: &str,
     impersonate: bool,
-    directives: &DirectiveStore,
+    templates: &TemplateRenderer,
 ) -> std::result::Result<FollowResult, String> {
     let mut current_url = url.to_string();
 
@@ -361,7 +361,7 @@ async fn follow_safe_redirects(
         let response = request
             .send()
             .await
-            .map_err(|e| directives.render(FETCH_REQUEST_FAILED, &[("error", &e.to_string())]))?;
+            .map_err(|e| templates.render(FETCH_REQUEST_FAILED, &[("error", &e.to_string())]))?;
 
         let status = response.status().as_u16();
         if !is_redirect(status) {
@@ -372,7 +372,7 @@ async fn follow_safe_redirects(
             .headers()
             .get("location")
             .and_then(|v| v.to_str().ok())
-            .ok_or_else(|| directives.render(FETCH_REDIRECT_LOCATION_MISSING, &[]))?;
+            .ok_or_else(|| templates.render(FETCH_REDIRECT_LOCATION_MISSING, &[]))?;
 
         let redirect_url = resolve_redirect_location(&current_url, location);
 
@@ -387,7 +387,7 @@ async fn follow_safe_redirects(
         }
     }
 
-    Err(directives.render(
+    Err(templates.render(
         FETCH_TOO_MANY_REDIRECTS,
         &[("limit", &MAX_REDIRECT_HOPS.to_string())],
     ))
@@ -465,9 +465,9 @@ fn resolve_redirect_location(base_url: &str, location: &str) -> String {
 
 // URL validation
 
-fn validate_url(url: &str, directives: &DirectiveStore) -> std::result::Result<String, String> {
+fn validate_url(url: &str, templates: &TemplateRenderer) -> std::result::Result<String, String> {
     if url.len() > MAX_URL_LENGTH {
-        return Err(directives.render(
+        return Err(templates.render(
             FETCH_TOO_LONG,
             &[
                 ("length", &url.len().to_string()),
@@ -478,22 +478,22 @@ fn validate_url(url: &str, directives: &DirectiveStore) -> std::result::Result<S
 
     let (scheme, rest) = url
         .split_once("://")
-        .ok_or_else(|| directives.render(FETCH_SCHEME_MISSING, &[]))?;
+        .ok_or_else(|| templates.render(FETCH_SCHEME_MISSING, &[]))?;
     if !matches!(scheme, "http" | "https") {
-        return Err(directives.render(FETCH_SCHEME_UNSUPPORTED, &[("scheme", scheme)]));
+        return Err(templates.render(FETCH_SCHEME_UNSUPPORTED, &[("scheme", scheme)]));
     }
 
     let authority = rest.split('/').next().unwrap_or(rest);
     if authority.contains('@') {
-        return Err(directives.render(FETCH_CREDENTIALS_PRESENT, &[]));
+        return Err(templates.render(FETCH_CREDENTIALS_PRESENT, &[]));
     }
 
     let host = authority.split(':').next().unwrap_or(authority);
     if host.is_empty() {
-        return Err(directives.render(FETCH_HOST_MISSING, &[]));
+        return Err(templates.render(FETCH_HOST_MISSING, &[]));
     }
     if host.split('.').count() < 2 {
-        return Err(directives.render(FETCH_HOST_NOT_RESOLVABLE, &[("host", host)]));
+        return Err(templates.render(FETCH_HOST_NOT_RESOLVABLE, &[("host", host)]));
     }
 
     if scheme == "http" {
@@ -605,7 +605,7 @@ fn collapse_whitespace(text: &str) -> String {
 
 #[cfg(test)]
 fn validate_url_for_test(url: &str) -> std::result::Result<String, String> {
-    validate_url(url, &DirectiveStore::default())
+    validate_url(url, &TemplateRenderer::default())
 }
 
 #[cfg(test)]

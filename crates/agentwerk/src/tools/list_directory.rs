@@ -3,7 +3,7 @@
 use std::path::PathBuf;
 
 use super::tool::{Event, Tool, ToolContext};
-use crate::prompts::directives::{
+use crate::prompts::templates::{
     LIST_DIRECTORY_FAILED, LIST_DIRECTORY_NOT_FOUND, LIST_DIRECTORY_PATH_IS_FILE,
 };
 
@@ -51,7 +51,7 @@ async fn run(args: ListDirectoryArgs, ctx: ToolContext) -> Event {
 
     if base.exists() && !base.is_dir() {
         return Event::error(
-            ctx.directives
+            ctx.templates
                 .render(LIST_DIRECTORY_PATH_IS_FILE, &[("path", &path_str)]),
         );
     }
@@ -72,17 +72,17 @@ async fn run(args: ListDirectoryArgs, ctx: ToolContext) -> Event {
                 .collect();
             Event::success(lines.join("\n"))
         }
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Event::error(ctx.directives.render(
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Event::error(ctx.templates.render(
             LIST_DIRECTORY_NOT_FOUND,
             &[
                 ("path", &path_str),
                 (
                     "hint",
-                    &super::util::not_found_hint(&ctx.dir, &base, &ctx.directives),
+                    &super::util::not_found_hint(&ctx.dir, &base, &ctx.templates),
                 ),
             ],
         )),
-        Err(e) => Event::error(ctx.directives.render(
+        Err(e) => Event::error(ctx.templates.render(
             LIST_DIRECTORY_FAILED,
             &[("path", &path_str), ("error", &e.to_string())],
         )),

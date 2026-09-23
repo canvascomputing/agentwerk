@@ -3,10 +3,6 @@ import asyncio
 import agentwerk as aw
 
 
-def test_directive_is_not_a_public_namespace():
-    assert not hasattr(aw, "Directive")
-
-
 async def test_override_values_are_rendered_into_retry_requests(
     werk, scripted_openai
 ):
@@ -16,7 +12,7 @@ async def test_override_values_are_rendered_into_retry_requests(
         aw.Agent()
         .provider(scripted_openai.provider())
         .model("mock")
-        .directive(
+        .template(
             "reply_rejected",
             "Attempt {{ attempt }} of {{ max_attempts }} must call a tool.",
         )
@@ -43,9 +39,9 @@ async def test_override_values_are_rendered_into_retry_requests(
     assert werk.get_task(task).get_result() == {"answer": "done"}
 
 
-def test_bulk_overrides_bind_to_an_agent():
+def test_bulk_corrective_templates_bind_to_an_agent():
     agent = aw.Agent()
-    configured = agent.directives(
+    configured = agent.templates(
         {
             "tool_timed_out": "Reduce the command scope.",
             "cache_miss": "No cache entry exists for {{ path }}.",

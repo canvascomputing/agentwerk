@@ -10,8 +10,8 @@ use super::grep::{
 };
 use super::tool::Event;
 use crate::codegrep::{self, Conf, Pattern};
-use crate::prompts::directives::{
-    DirectiveStore, CODE_CONSTRAINT_INCOMPLETE, CODE_CONSTRAINT_METAVARIABLE_UNKNOWN,
+use crate::prompts::templates::{
+    TemplateRenderer, CODE_CONSTRAINT_INCOMPLETE, CODE_CONSTRAINT_METAVARIABLE_UNKNOWN,
     CODE_CONSTRAINT_REGEX_REJECTED, CODE_PATTERN_REJECTED,
 };
 
@@ -22,7 +22,7 @@ pub(super) fn run(
     files: &[(PathBuf, String)],
     query: &Query,
     interrupt: &AtomicBool,
-    directives: &DirectiveStore,
+    templates: &TemplateRenderer,
 ) -> Event {
     let mut conf = Conf::default_multiline();
     conf.caseless = query.case_insensitive;
@@ -30,11 +30,11 @@ pub(super) fn run(
         Ok(pattern) => pattern,
         Err(error) => {
             return Event::error(
-                directives.render(CODE_PATTERN_REJECTED, &[("error", &error.to_string())]),
+                templates.render(CODE_PATTERN_REJECTED, &[("error", &error.to_string())]),
             )
         }
     };
-    let constraints = match parse_constraints(&query.constraints, &pattern, directives) {
+    let constraints = match parse_constraints(&query.constraints, &pattern, templates) {
         Ok(constraints) => constraints,
         Err(message) => return Event::error(message),
     };
@@ -168,7 +168,7 @@ fn truncate_to_chars(text: &str, max_chars: usize) -> String {
 fn parse_constraints(
     constraints: &Value,
     pattern: &Pattern,
-    directives: &DirectiveStore,
+    templates: &TemplateRenderer,
 ) -> std::result::Result<Vec<(String, regex::Regex)>, String> {
     let Some(items) = constraints.as_array() else {
         return Ok(Vec::new());
@@ -182,13 +182,13 @@ fn parse_constraints(
             .trim_start_matches('$');
         let source = item["regex"].as_str().unwrap_or("");
         if name.is_empty() || source.is_empty() {
-            return Err(directives.render(CODE_CONSTRAINT_INCOMPLETE, &[]));
+            return Err(templates.render(CODE_CONSTRAINT_INCOMPLETE, &[]));
         }
         if !names.contains(name) {
-            return Err(directives.render(CODE_CONSTRAINT_METAVARIABLE_UNKNOWN, &[("name", name)]));
+            return Err(templates.render(CODE_CONSTRAINT_METAVARIABLE_UNKNOWN, &[("name", name)]));
         }
         let regex = regex::Regex::new(source).map_err(|error| {
-            directives.render(
+            templates.render(
                 CODE_CONSTRAINT_REGEX_REJECTED,
                 &[("name", name), ("error", &error.to_string())],
             )

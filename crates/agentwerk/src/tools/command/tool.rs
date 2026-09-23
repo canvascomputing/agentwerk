@@ -6,10 +6,10 @@ use std::time::Duration;
 use super::super::tool::{Event, Tool, ToolContext};
 use super::super::util::{glob_match, run_command};
 use super::parse::{Argument, Command, Refusal};
-use crate::prompts::directives::{
-    DirectiveStore, COMMAND_ASSIGNMENT_FOUND, COMMAND_CONTROL_CHARACTER_FOUND, COMMAND_FLAG_DENIED,
-    COMMAND_FLAG_NOT_ALLOWED, COMMAND_MISSING, COMMAND_NOT_ALLOWED, COMMAND_PATTERN_DENIED,
-    COMMAND_QUOTE_UNTERMINATED, COMMAND_SHELL_OPERATOR_FOUND,
+use crate::prompts::templates::{
+    TemplateRenderer, COMMAND_ASSIGNMENT_FOUND, COMMAND_CONTROL_CHARACTER_FOUND,
+    COMMAND_FLAG_DENIED, COMMAND_FLAG_NOT_ALLOWED, COMMAND_MISSING, COMMAND_NOT_ALLOWED,
+    COMMAND_PATTERN_DENIED, COMMAND_QUOTE_UNTERMINATED, COMMAND_SHELL_OPERATOR_FOUND,
 };
 
 /// The shared part of every tool's description, with the per-instance patterns
@@ -211,19 +211,19 @@ impl CommandTool {
     fn check(
         &self,
         line: &str,
-        directives: &DirectiveStore,
+        templates: &TemplateRenderer,
     ) -> std::result::Result<Command, String> {
         let line = line.trim();
         let command =
-            Command::split(line).map_err(|refusal| self.unreadable(line, refusal, directives))?;
+            Command::split(line).map_err(|refusal| self.unreadable(line, refusal, templates))?;
         let normalized = command.normalized();
 
         if is_assignment(&command.program) {
-            return Err(directives.render(COMMAND_ASSIGNMENT_FOUND, &[("command", &normalized)]));
+            return Err(templates.render(COMMAND_ASSIGNMENT_FOUND, &[("command", &normalized)]));
         }
 
         if let Some((flag, _)) = command.flags().find(|(_, found)| self.denies_flag(*found)) {
-            return Err(directives.render(
+            return Err(templates.render(
                 COMMAND_FLAG_DENIED,
                 &[("command", &normalized), ("flag", flag)],
             ));
@@ -234,7 +234,7 @@ impl CommandTool {
             .iter()
             .find(|pattern| glob_match(pattern, &normalized))
         {
-            return Err(directives.render(
+            return Err(templates.render(
                 COMMAND_PATTERN_DENIED,
                 &[("command", &normalized), ("pattern", pattern)],
             ));
@@ -249,7 +249,7 @@ impl CommandTool {
         };
 
         if !permitted {
-            return Err(directives.render(
+            return Err(templates.render(
                 COMMAND_NOT_ALLOWED,
                 &[
                     ("command", &normalized),
@@ -260,7 +260,7 @@ impl CommandTool {
         }
 
         if let Some((flag, _)) = command.flags().find(|(_, found)| !self.allows_flag(*found)) {
-            return Err(directives.render(
+            return Err(templates.render(
                 COMMAND_FLAG_NOT_ALLOWED,
                 &[
                     ("command", &normalized),
@@ -276,19 +276,19 @@ impl CommandTool {
 
     /// The message for a line that is not one command, naming what stopped it
     /// so the model can fix the call rather than guess at it.
-    fn unreadable(&self, line: &str, refusal: Refusal, directives: &DirectiveStore) -> String {
+    fn unreadable(&self, line: &str, refusal: Refusal, templates: &TemplateRenderer) -> String {
         match refusal {
-            Refusal::OperatorFound(operator) => directives.render(
+            Refusal::OperatorFound(operator) => templates.render(
                 COMMAND_SHELL_OPERATOR_FOUND,
                 &[("command", line), ("operator", &operator.to_string())],
             ),
             Refusal::Unterminated => {
-                directives.render(COMMAND_QUOTE_UNTERMINATED, &[("command", line)])
+                templates.render(COMMAND_QUOTE_UNTERMINATED, &[("command", line)])
             }
             Refusal::ControlCharacterFound => {
-                directives.render(COMMAND_CONTROL_CHARACTER_FOUND, &[("command", line)])
+                templates.render(COMMAND_CONTROL_CHARACTER_FOUND, &[("command", line)])
             }
-            Refusal::Empty => directives.render(COMMAND_MISSING, &[]),
+            Refusal::Empty => templates.render(COMMAND_MISSING, &[]),
         }
     }
 
@@ -393,7 +393,7 @@ impl CommandTool {
     async fn run(&self, args: CommandArgs, ctx: ToolContext) -> Event {
         let CommandArgs { command } = args;
 
-        let command = match self.check(&command, &ctx.directives) {
+        let command = match self.check(&command, &ctx.templates) {
             Ok(command) => command,
             Err(refusal) => return Event::error(refusal),
         };
@@ -427,7 +427,7 @@ impl From<CommandTool> for Tool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::prompts::directives::TOOL_TIMED_OUT;
+    use crate::prompts::templates::TOOL_TIMED_OUT;
 
     #[test]
     fn function_and_associated_constructor_match() {
@@ -543,7 +543,7 @@ mod tests {
         let result = Tool::from(tool.clone()).invoke(input, &ctx).await;
         let content = result.get_content();
         assert!(result.get_name() == Event::TOOL_CALL_FAILED);
-        assert_eq!(result.get_directive(), Some(TOOL_TIMED_OUT));
+        assert_eq!(result.get_template(), Some(TOOL_TIMED_OUT));
         assert!(content.contains("Tool `sleep` timed out after 100ms"));
     }
 
@@ -566,7 +566,7 @@ mod tests {
         let result = tool.invoke(input, &test_tool_context()).await;
 
         assert_eq!(result.get_name(), Event::TOOL_CALL_FAILED);
-        assert_eq!(result.get_directive(), Some(TOOL_TIMED_OUT));
+        assert_eq!(result.get_template(), Some(TOOL_TIMED_OUT));
         assert!(result
             .get_content()
             .contains("Tool `sleep` timed out after 10ms"));

@@ -4,7 +4,6 @@
 //! why the agent sits in an `Option` here: a setter takes it out and puts the
 //! returned one back.
 
-use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use agentwerk::providers::{Model, Provider};
@@ -136,7 +135,8 @@ impl PyAgent {
 
     /// Insert or replace a shared template through this agent's Werk.
     ///
-    /// New tasks use the value before their first request; inserted values stay literal.
+    /// New tasks use the value before their first request. Corrective templates,
+    /// including custom event responses, use the same shared values.
     fn template(mut slf: PyRefMut<'_, Self>, key: String, value: String) -> PyRefMut<'_, Self> {
         slf.set(|agent| agent.template(key, value));
         slf
@@ -165,21 +165,6 @@ impl PyAgent {
     ) -> PyRefMut<'py, Self> {
         let store: Arc<Knowledge> = Arc::clone(&store.inner);
         slf.set(|agent| agent.knowledge(&store));
-        slf
-    }
-
-    /// Override one model-facing directive or application-event acknowledgement.
-    fn directive(mut slf: PyRefMut<'_, Self>, key: String, template: String) -> PyRefMut<'_, Self> {
-        slf.set(|agent| agent.directive(key, template));
-        slf
-    }
-
-    /// Override several model-facing directives.
-    fn directives(
-        mut slf: PyRefMut<'_, Self>,
-        overrides: BTreeMap<String, String>,
-    ) -> PyRefMut<'_, Self> {
-        slf.set(|agent| agent.directives(overrides));
         slf
     }
 

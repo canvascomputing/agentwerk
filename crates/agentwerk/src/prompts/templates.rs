@@ -1,30 +1,31 @@
-//! Defines corrective model instructions and lets the host override their text.
+//! Defines the bundled corrective templates.
 
 use std::collections::HashMap;
-use std::fmt;
-use std::sync::OnceLock;
+use std::sync::{Arc, Mutex, OnceLock};
 
 use super::prompt::render_values;
+use super::RenderError;
+use crate::Werk;
 
-/// The directives, one file per area, each holding its entries under `## key`
+/// The templates, one file per area, each holding its entries under `## key`
 /// headings. Named values are bound by the call site; names without values
 /// render as written.
-const DIRECTIVES: &[&str] = &[
-    include_str!("directives/loop.md"),
-    include_str!("directives/registry.md"),
-    include_str!("directives/files.md"),
-    include_str!("directives/command.md"),
-    include_str!("directives/search.md"),
-    include_str!("directives/fetch.md"),
-    include_str!("directives/knowledge.md"),
-    include_str!("directives/task.md"),
-    include_str!("directives/schemas.md"),
+const TEMPLATES: &[&str] = &[
+    include_str!("templates/loop.md"),
+    include_str!("templates/registry.md"),
+    include_str!("templates/files.md"),
+    include_str!("templates/command.md"),
+    include_str!("templates/search.md"),
+    include_str!("templates/fetch.md"),
+    include_str!("templates/knowledge.md"),
+    include_str!("templates/task.md"),
+    include_str!("templates/schemas.md"),
 ];
 
-/// Declare every directive once: the constant a render site writes and its
-/// directive key. A key with no `## ` heading behind it is caught by the tests
+/// Declare every template once: the constant a render site writes and its
+/// template key. A key with no `## ` heading behind it is caught by the tests
 /// below.
-macro_rules! directives {
+macro_rules! templates {
     ($($name:ident = $key:literal),* $(,)?) => {
         $(
             pub(crate) const $name: &str = $key;
@@ -35,7 +36,7 @@ macro_rules! directives {
     };
 }
 
-directives! {
+templates! {
     REPLY_REJECTED = "reply_rejected",
     NO_TOOL_CALLED = "no_tool_called",
     ARGUMENTS_REJECTED = "arguments_rejected",
@@ -129,56 +130,86 @@ directives! {
     SCHEMA_HINT_QUOTE = "schema_hint_quote",
 }
 
-/// Holds one agent's explicit directive overrides.
+/// Renders bundled or explicitly configured templates against one Werk.
+///
+/// Clones share the first rendering error so concurrent tool calls can finish
+/// before the agent loop fails the task without appending malformed output.
 #[derive(Clone, Default)]
-pub(crate) struct DirectiveStore {
-    overrides: HashMap<String, String>,
+pub(crate) struct TemplateRenderer {
+    werk: Option<Arc<Werk>>,
+    error: Arc<Mutex<Option<RenderError>>>,
 }
 
-impl DirectiveStore {
-    pub(crate) fn insert(&mut self, key: impl Into<String>, template: impl Into<String>) {
-        self.overrides.insert(key.into(), template.into());
+impl TemplateRenderer {
+    pub(crate) fn new(werk: Arc<Werk>) -> Self {
+        Self {
+            werk: Some(werk),
+            error: Arc::new(Mutex::new(None)),
+        }
     }
 
-    /// Render the directive `key`, binding its named values. A key the
-    /// built-in directives do not carry renders as itself.
+    /// Render a configured template or its bundled default.
     pub(crate) fn render(&self, key: &str, values: &[(&str, &str)]) -> String {
-        self.render_override(key, values)
-            .unwrap_or_else(|| built_in(key, values))
+        let rendered = match &self.werk {
+            Some(werk) => werk.render_template(key, values),
+            None => Ok(built_in(key, values)),
+        };
+        self.record(rendered)
     }
 
-    /// Render only an explicit override, without falling back to the built-in
-    /// directives. Custom event names use this path.
-    pub(crate) fn render_override(&self, key: &str, values: &[(&str, &str)]) -> Option<String> {
-        self.overrides.get(key).map(|template| {
-            render_values(template, |name| {
-                values
-                    .iter()
-                    .find_map(|(key, value)| (*key == name).then(|| (*value).to_string()))
-            })
-        })
+    /// Render a custom event's template, leaving an unconfigured event alone.
+    pub(crate) fn render_event_template(
+        &self,
+        name: &str,
+        values: &[(&str, &str)],
+    ) -> Result<Option<String>, RenderError> {
+        let Some(werk) = self.werk.as_ref() else {
+            return Ok(None);
+        };
+        match werk.render_event_template(name, values) {
+            Ok(rendered) => Ok(rendered),
+            Err(error) => {
+                self.store_error(error.clone());
+                Err(error)
+            }
+        }
+    }
+
+    pub(crate) fn take_error(&self) -> Option<RenderError> {
+        self.error.lock().unwrap().take()
+    }
+
+    fn record(&self, rendered: Result<String, RenderError>) -> String {
+        match rendered {
+            Ok(rendered) => rendered,
+            Err(error) => {
+                self.store_error(error);
+                String::new()
+            }
+        }
+    }
+
+    fn store_error(&self, error: RenderError) {
+        let mut stored = self.error.lock().unwrap();
+        if stored.is_none() {
+            *stored = Some(error);
+        }
     }
 }
 
-/// The built-in directive for `key`, with `values` bound and no store consulted.
+/// The bundled template for `key`, with `values` bound and no Werk consulted.
 /// Three groups render through this, each composed where no agent is in reach:
 /// the schema violations, the knowledge index, and the result-schema block a
 /// task appends to its own task.
 pub(crate) fn built_in(key: &str, values: &[(&str, &str)]) -> String {
-    render_values(directives().get(key).copied().unwrap_or(key), |name| {
+    render_values(templates().get(key).copied().unwrap_or(key), |name| {
         values
             .iter()
             .find_map(|(key, value)| (*key == name).then(|| (*value).to_string()))
     })
 }
 
-impl fmt::Debug for DirectiveStore {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("DirectiveStore").finish_non_exhaustive()
-    }
-}
-
-/// Walk the `## key` headings of one directive file. Whatever precedes the
+/// Walk the `## key` headings of one template file. Whatever precedes the
 /// first heading is the file's own comment, which is not an entry.
 fn entries(markdown: &str) -> impl Iterator<Item = (&str, &str)> {
     markdown
@@ -188,11 +219,11 @@ fn entries(markdown: &str) -> impl Iterator<Item = (&str, &str)> {
         .map(|(key, body)| (key.trim(), body.trim_matches('\n')))
 }
 
-/// The built-in directives, parsed once from the `##` headings in every
+/// The bundled templates, parsed once from the `##` headings in every
 /// file.
-fn directives() -> &'static HashMap<&'static str, &'static str> {
+pub(super) fn templates() -> &'static HashMap<&'static str, &'static str> {
     static PARSED: OnceLock<HashMap<&'static str, &'static str>> = OnceLock::new();
-    PARSED.get_or_init(|| DIRECTIVES.iter().flat_map(|file| entries(file)).collect())
+    PARSED.get_or_init(|| TEMPLATES.iter().flat_map(|file| entries(file)).collect())
 }
 
 #[cfg(test)]
@@ -203,18 +234,18 @@ mod tests {
     fn every_key_has_a_heading() {
         for key in ALL {
             assert!(
-                directives().contains_key(key),
-                "no `## {key}` heading in the directives",
+                templates().contains_key(key),
+                "no `## {key}` heading in the templates",
             );
         }
     }
 
     #[test]
     fn every_heading_has_a_key() {
-        for key in directives().keys() {
+        for key in templates().keys() {
             assert!(
                 ALL.contains(key),
-                "`## {key}` in the directives names no key"
+                "`## {key}` in the templates names no key"
             );
         }
     }
@@ -228,75 +259,36 @@ mod tests {
     }
 
     #[test]
-    fn no_directive_body_is_empty() {
+    fn no_template_body_is_empty() {
         for key in ALL {
-            assert!(
-                !DirectiveStore::default().render(key, &[]).is_empty(),
-                "{key} renders empty"
-            );
+            assert!(!built_in(key, &[]).is_empty(), "{key} renders empty");
         }
     }
 
     #[test]
-    fn built_in_directives_render_named_values() {
-        let rendered = DirectiveStore::default()
-            .render(EDIT_FILE_OLD_STRING_NOT_FOUND, &[("path", "src/lib.rs")]);
+    fn every_bundled_template_passes_strict_rendering() {
+        let werk = Werk::new();
+        for key in ALL {
+            werk.render_template(key, &[])
+                .unwrap_or_else(|error| panic!("{key} does not render: {error}"));
+        }
+    }
+
+    #[test]
+    fn built_in_templates_render_named_values() {
+        let rendered = built_in(EDIT_FILE_OLD_STRING_NOT_FOUND, &[("path", "src/lib.rs")]);
         assert!(rendered.contains("src/lib.rs"));
         assert!(!rendered.contains("{{ path }}"));
     }
 
     #[test]
-    fn override_values_are_rendered_when_read() {
-        let mut store = DirectiveStore::default();
-        store.insert(GREP_CANCELLED, "Stop searching in {{ dir }}.");
+    fn renderer_reads_current_werk_values_at_each_use() {
+        let werk = Werk::new();
+        werk.set_template(TOOL_TIMED_OUT, "first");
+        let renderer = TemplateRenderer::new(Arc::clone(&werk));
+        assert_eq!(renderer.render(TOOL_TIMED_OUT, &[]), "first");
 
-        assert_eq!(
-            store.render(GREP_CANCELLED, &[("dir", "src")]),
-            "Stop searching in src.",
-        );
-    }
-
-    #[test]
-    fn a_key_the_store_does_not_name_keeps_its_built_in_text() {
-        let mut store = DirectiveStore::default();
-        store.insert(GREP_CANCELLED, "Stop searching.");
-
-        assert_eq!(store.render(GREP_CANCELLED, &[]), "Stop searching.");
-        assert_eq!(
-            store.render(GREP_FAILED, &[]),
-            DirectiveStore::default().render(GREP_FAILED, &[]),
-        );
-    }
-
-    #[test]
-    fn two_stores_render_the_same_key_differently() {
-        let mut one = DirectiveStore::default();
-        one.insert(GREP_CANCELLED, "one");
-        let mut other = DirectiveStore::default();
-        other.insert(GREP_CANCELLED, "other");
-
-        assert_eq!(one.render(GREP_CANCELLED, &[]), "one");
-        assert_eq!(other.render(GREP_CANCELLED, &[]), "other");
-    }
-
-    #[test]
-    fn a_later_override_replaces_an_earlier_one() {
-        let mut store = DirectiveStore::default();
-        store.insert(GREP_FAILED, "one");
-        store.insert(GREP_FAILED, "two");
-
-        assert_eq!(store.render(GREP_FAILED, &[]), "two");
-    }
-
-    #[test]
-    fn an_explicit_custom_key_has_no_built_in_fallback() {
-        let mut store = DirectiveStore::default();
-        store.insert("cache_miss", "No cache entry for {{ path }}.");
-
-        assert_eq!(
-            store.render_override("cache_miss", &[("path", "index")]),
-            Some("No cache entry for index.".to_string()),
-        );
-        assert_eq!(store.render_override("another_event", &[]), None);
+        werk.set_template(TOOL_TIMED_OUT, "second");
+        assert_eq!(renderer.render(TOOL_TIMED_OUT, &[]), "second");
     }
 }

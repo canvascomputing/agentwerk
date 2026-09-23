@@ -5,7 +5,7 @@ use std::sync::Arc;
 
 use crate::agents::knowledge::{Knowledge, KnowledgeError};
 use crate::event::Event;
-use crate::prompts::directives::{
+use crate::prompts::templates::{
     KNOWLEDGE_PAGE_NOT_FOUND, KNOWLEDGE_REMOVE_FAILED, KNOWLEDGE_WRITE_FAILED,
 };
 
@@ -132,7 +132,7 @@ fn run(store: &Knowledge, args: KnowledgeArgs, ctx: &ToolContext) -> Event {
                         "message": why.to_string(),
                     })));
                     Event::error(
-                        ctx.directives
+                        ctx.templates
                             .render(KNOWLEDGE_WRITE_FAILED, &[("error", &why.to_string())]),
                     )
                 }
@@ -152,7 +152,7 @@ fn run(store: &Knowledge, args: KnowledgeArgs, ctx: &ToolContext) -> Event {
                     "message": why.to_string(),
                 })));
                 Event::success(
-                    ctx.directives
+                    ctx.templates
                         .render(KNOWLEDGE_PAGE_NOT_FOUND, &[("slug", &slug)]),
                 )
             }
@@ -173,7 +173,7 @@ fn run(store: &Knowledge, args: KnowledgeArgs, ctx: &ToolContext) -> Event {
                     "message": why.to_string(),
                 })));
                 Event::error(
-                    ctx.directives
+                    ctx.templates
                         .render(KNOWLEDGE_REMOVE_FAILED, &[("error", &why.to_string())]),
                 )
             }

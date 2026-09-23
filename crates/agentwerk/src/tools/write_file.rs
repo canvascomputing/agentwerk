@@ -1,7 +1,7 @@
 //! Lets an agent create or overwrite files.
 
 use super::tool::{Event, Tool, ToolContext};
-use crate::prompts::directives::{WRITE_FILE_FAILED, WRITE_FILE_PARENT_NOT_CREATED};
+use crate::prompts::templates::{WRITE_FILE_FAILED, WRITE_FILE_PARENT_NOT_CREATED};
 
 /// Create or overwrite a file. Destructive: existing content is replaced.
 /// Not concurrent, so agentwerk runs it one call at a time.
@@ -38,21 +38,21 @@ async fn run(args: WriteFileArgs, ctx: ToolContext) -> Event {
 
     if let Some(parent) = resolved.parent() {
         if let Err(e) = std::fs::create_dir_all(parent) {
-            return Event::error(ctx.directives.render(
+            return Event::error(ctx.templates.render(
                 WRITE_FILE_PARENT_NOT_CREATED,
                 &[("path", &path), ("error", &e.to_string())],
             ))
-            .directive(WRITE_FILE_PARENT_NOT_CREATED);
+            .template(WRITE_FILE_PARENT_NOT_CREATED);
         }
     }
 
     match std::fs::write(&resolved, content) {
         Ok(()) => Event::success(format!("File written: {path}")),
-        Err(e) => Event::error(ctx.directives.render(
+        Err(e) => Event::error(ctx.templates.render(
             WRITE_FILE_FAILED,
             &[("path", &path), ("error", &e.to_string())],
         ))
-        .directive(WRITE_FILE_FAILED),
+        .template(WRITE_FILE_FAILED),
     }
 }
 

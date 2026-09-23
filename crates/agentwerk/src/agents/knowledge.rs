@@ -176,8 +176,8 @@ impl Knowledge {
     /// store holds no pages.
     ///
     /// Past [`Self::set_index_char_limit`] the listing stops at the last page that
-    /// fits and a directive names `index.md` for the agent to read. That
-    /// directive is a floor: a limit too small to hold it still gets it.
+    /// fits and a template names `index.md` for the agent to read. That template
+    /// is a floor: a limit too small to hold it still gets it.
     pub fn get_index(&self) -> String {
         let index = self.index.lock().unwrap();
         let listing = render_index(&index);
@@ -604,12 +604,12 @@ fn render_index(entries: &[IndexEntry]) -> String {
         .join("\n")
 }
 
-/// The pages that fit, closed by the directive naming the file that lists
+/// The pages that fit, closed by the template naming the file that lists
 /// them all.
 fn render_limited_index(entries: &[IndexEntry], limit: usize, path: &Path) -> String {
     // Charged at the whole store's count, which only shrinks as pages are
     // listed, so the reservation cannot fall short.
-    let mut used = index_directive(entries.len(), path).len() + 1;
+    let mut used = index_truncated_template(entries.len(), path).len() + 1;
 
     let mut listed = Vec::new();
     for entry in entries {
@@ -623,22 +623,22 @@ fn render_limited_index(entries: &[IndexEntry], limit: usize, path: &Path) -> St
         listed.push(line);
     }
 
-    let directive = index_directive(entries.len() - listed.len(), path);
+    let template = index_truncated_template(entries.len() - listed.len(), path);
     if listed.is_empty() {
-        return directive;
+        return template;
     }
-    format!("{}\n\n{directive}", listed.join("\n"))
+    format!("{}\n\n{template}", listed.join("\n"))
 }
 
 /// Sends the agent to the file that does list every page.
-fn index_directive(remaining: usize, path: &Path) -> String {
+fn index_truncated_template(remaining: usize, path: &Path) -> String {
     let pages = if remaining == 1 {
         "page is"
     } else {
         "pages are"
     };
-    crate::prompts::directives::built_in(
-        crate::prompts::directives::KNOWLEDGE_INDEX_TRUNCATED,
+    crate::prompts::templates::built_in(
+        crate::prompts::templates::KNOWLEDGE_INDEX_TRUNCATED,
         &[
             ("remaining", &remaining.to_string()),
             ("pages", pages),
@@ -1112,7 +1112,7 @@ mod tests {
     #[test]
     fn index_past_the_limit_lists_the_pages_that_fit_then_names_the_file() {
         let (store, dir) = fresh_store();
-        // Room for the directive, which names an absolute path, plus a few pages.
+        // Room for the template, which names an absolute path, plus a few pages.
         let store = store.set_index_char_limit(500);
         for i in 0..40 {
             save_page(store, &format!("page-{i:02}"), "A note", "# Note", &[]);

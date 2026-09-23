@@ -7,8 +7,8 @@ use std::path::{Path, PathBuf};
 
 use super::command::Command;
 use super::tool::{Event, ToolContext};
-use crate::prompts::directives::{
-    DirectiveStore, COMMAND_CANCELLED, COMMAND_NOT_STARTED, PATH_HINT_DIRECTORY_LISTED,
+use crate::prompts::templates::{
+    TemplateRenderer, COMMAND_CANCELLED, COMMAND_NOT_STARTED, PATH_HINT_DIRECTORY_LISTED,
     PATH_HINT_SUGGESTION, PATH_HINT_WORKING_DIRECTORY,
 };
 
@@ -28,16 +28,16 @@ pub(crate) async fn run_command(command: &Command, ctx: &ToolContext) -> Event {
 
     let result = tokio::select! {
         biased;
-        _ = ctx.cancelled() => return Event::error(ctx.directives.render(COMMAND_CANCELLED, &[])).directive(COMMAND_CANCELLED),
+        _ = ctx.cancelled() => return Event::error(ctx.templates.render(COMMAND_CANCELLED, &[])).template(COMMAND_CANCELLED),
         r = output_fut => r,
     };
 
     match result {
-        Err(e) => Event::error(ctx.directives.render(
+        Err(e) => Event::error(ctx.templates.render(
             COMMAND_NOT_STARTED,
             &[("program", &command.program), ("error", &e.to_string())],
         ))
-        .directive(COMMAND_NOT_STARTED),
+        .template(COMMAND_NOT_STARTED),
         Ok(output) => {
             let mut content = String::from_utf8_lossy(&output.stdout).into_owned();
             let stderr = String::from_utf8_lossy(&output.stderr);
@@ -120,12 +120,12 @@ fn nearest_existing_dir(path: &Path) -> Option<&Path> {
 pub(crate) fn not_found_hint(
     ctx_dir: &Path,
     resolved: &Path,
-    directives: &DirectiveStore,
+    templates: &TemplateRenderer,
 ) -> String {
     if let Some(dir) = nearest_existing_dir(resolved) {
         if dir.starts_with(ctx_dir) {
             if let Some(entries) = directory_entries(dir) {
-                return directives.render(
+                return templates.render(
                     PATH_HINT_DIRECTORY_LISTED,
                     &[("dir", &dir.display().to_string()), ("entries", &entries)],
                 );
@@ -134,14 +134,14 @@ pub(crate) fn not_found_hint(
     }
     let cwd = ctx_dir.display().to_string();
     match suggest_path(ctx_dir, resolved) {
-        Some(suggestion) => directives.render(
+        Some(suggestion) => templates.render(
             PATH_HINT_SUGGESTION,
             &[
                 ("dir", &cwd),
                 ("suggestion", &suggestion.display().to_string()),
             ],
         ),
-        None => directives.render(PATH_HINT_WORKING_DIRECTORY, &[("dir", &cwd)]),
+        None => templates.render(PATH_HINT_WORKING_DIRECTORY, &[("dir", &cwd)]),
     }
 }
 
@@ -196,7 +196,7 @@ mod tests {
             "expected cancelled result"
         );
         assert!(content.contains("cancelled"));
-        assert_eq!(result.get_directive(), Some(COMMAND_CANCELLED));
+        assert_eq!(result.get_template(), Some(COMMAND_CANCELLED));
         assert!(
             elapsed < Duration::from_millis(500),
             "cancel should return within 500ms, took {elapsed:?}",
@@ -269,7 +269,7 @@ mod tests {
 
         // Model guessed pkg/pkg (package-name-as-file); pkg exists.
         let resolved = pkg.join("pkg");
-        let hint = not_found_hint(tmp.path(), &resolved, &DirectiveStore::default());
+        let hint = not_found_hint(tmp.path(), &resolved, &TemplateRenderer::default());
         assert!(
             hint.contains(&format!("'{}' contains", pkg.display())),
             "got {hint}"
@@ -289,7 +289,7 @@ mod tests {
 
         // Escaped path (whole prefix dropped); the suffix exists under cwd.
         let resolved = Path::new("/data83/pkg/setup.py");
-        let hint = not_found_hint(&cwd, resolved, &DirectiveStore::default());
+        let hint = not_found_hint(&cwd, resolved, &TemplateRenderer::default());
         assert!(
             hint.contains("your current working directory"),
             "got {hint}"

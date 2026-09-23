@@ -10,8 +10,8 @@ use grep::searcher::sinks::UTF8;
 use serde_json::{Map, Value};
 
 use super::tool::{Event, Tool, ToolContext};
-use crate::prompts::directives::{
-    DirectiveStore, GREP_CANCELLED, GREP_FAILED, GREP_FILE_TYPE_UNKNOWN, GREP_GLOB_REJECTED,
+use crate::prompts::templates::{
+    TemplateRenderer, GREP_CANCELLED, GREP_FAILED, GREP_FILE_TYPE_UNKNOWN, GREP_GLOB_REJECTED,
     GREP_PATTERN_REJECTED,
 };
 
@@ -65,16 +65,16 @@ async fn run(args: GrepArgs, ctx: ToolContext) -> Event {
     let interrupt = Arc::new(AtomicBool::new(false));
     let _interrupt_on_drop = InterruptOnDrop(Arc::clone(&interrupt));
     let searching = Arc::clone(&interrupt);
-    let searching_directives = Arc::clone(&ctx.directives);
+    let searching_templates = ctx.templates.clone();
     let handle = tokio::task::spawn_blocking(move || {
-        search_corpus(&dir, &query, &searching, &searching_directives)
+        search_corpus(&dir, &query, &searching, &searching_templates)
     });
 
     tokio::select! {
         biased;
-        _ = ctx.cancelled() => Event::error(ctx.directives.render(GREP_CANCELLED, &[])).directive(GREP_CANCELLED),
+        _ = ctx.cancelled() => Event::error(ctx.templates.render(GREP_CANCELLED, &[])).template(GREP_CANCELLED),
         r = handle => match r {
-            Err(_) => Event::error(ctx.directives.render(GREP_FAILED, &[])).directive(GREP_FAILED),
+            Err(_) => Event::error(ctx.templates.render(GREP_FAILED, &[])).template(GREP_FAILED),
             Ok(result) => result,
         },
     }
@@ -214,7 +214,7 @@ fn search_corpus(
     dir: &Path,
     query: &Query,
     interrupt: &AtomicBool,
-    directives: &DirectiveStore,
+    templates: &TemplateRenderer,
 ) -> Event {
     let root = match &query.path {
         Some(path) => dir.join(path),
@@ -231,7 +231,7 @@ fn search_corpus(
             }
             Err(error) => {
                 return Event::error(
-                    directives.render(GREP_GLOB_REJECTED, &[("error", &error.to_string())]),
+                    templates.render(GREP_GLOB_REJECTED, &[("error", &error.to_string())]),
                 )
             }
         }
@@ -245,7 +245,7 @@ fn search_corpus(
                 walk.types(types);
             }
             Err(error) => {
-                return Event::error(directives.render(
+                return Event::error(templates.render(
                     GREP_FILE_TYPE_UNKNOWN,
                     &[("file_type", file_type), ("error", &error.to_string())],
                 ))
@@ -256,8 +256,8 @@ fn search_corpus(
     let files = collect_files(walk.build(), dir, interrupt);
 
     match query.syntax {
-        Syntax::Regex => run_regex(&files, query, interrupt, directives),
-        Syntax::Code => super::code::run(&files, query, interrupt, directives),
+        Syntax::Regex => run_regex(&files, query, interrupt, templates),
+        Syntax::Code => super::code::run(&files, query, interrupt, templates),
     }
 }
 
@@ -268,7 +268,7 @@ fn run_regex(
     files: &[(PathBuf, String)],
     query: &Query,
     interrupt: &AtomicBool,
-    directives: &DirectiveStore,
+    templates: &TemplateRenderer,
 ) -> Event {
     // Ripgrep's Rust-regex matcher, line-oriented. `dot_matches_new_line` and the
     // searcher's multi-line mode are tied to `multiline` so `.` spans newlines only
@@ -286,7 +286,7 @@ fn run_regex(
         // re-sending the same doomed pattern.
         Err(error) => {
             return Event::error(
-                directives.render(GREP_PATTERN_REJECTED, &[("error", &error.to_string())]),
+                templates.render(GREP_PATTERN_REJECTED, &[("error", &error.to_string())]),
             )
         }
     };
@@ -487,7 +487,7 @@ pub(super) fn render_count(rows: &[(String, u64)], query: &Query) -> Event {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::prompts::directives::TOOL_TIMED_OUT;
+    use crate::prompts::templates::TOOL_TIMED_OUT;
 
     #[test]
     fn every_example_the_schema_shows_deserializes_into_the_arguments() {
@@ -519,7 +519,7 @@ mod tests {
             .await;
 
         assert_eq!(result.get_name(), Event::TOOL_CALL_FAILED);
-        assert_eq!(result.get_directive(), Some(TOOL_TIMED_OUT));
+        assert_eq!(result.get_template(), Some(TOOL_TIMED_OUT));
         assert!(result
             .get_content()
             .contains("Tool `grep` timed out after 10ms"));

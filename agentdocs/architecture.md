@@ -17,10 +17,11 @@ The invariants that govern orchestration, tools, providers, events, and durable 
 **Prompt rendering is a private Werk implementation detail; callers provide strings and shared template values.**
 
 - Delegate Agent setters to Werk. Import missing templates when binding; destination values win.
-- Parse double-brace syntax once in `prompts/prompt.rs`; use strict expression resolution for prompts and infallible named resolution for directives and runtime context. Never scan inserted values.
+- Parse double-brace syntax once in `prompts/prompt.rs`; use strict expression resolution for prompts and configurable corrective templates, and infallible named resolution only for bundled text rendered without a Werk. Never scan inserted values.
 - Name prompt selectors after Werk's `find_*` methods and allow one layer of template variables inside their AQL arguments as raw source.
 - Parse a field or bracket JSON path after the selector call before expanding query variables. Evaluate it through `prompts/json_path.rs` before plain formatting; named template values do not support paths.
 - Let Werk snapshot shared templates once when it prepares a role and initial string task, and report failures through `prompt_render_failed` before the first request.
+- Read corrective templates, including custom event responses, from the current Werk values at use time. Bind call-specific fields before shared values and keep inserted values literal.
 - Freeze the complete rendered system prompt at the task's first request. Reuse its earliest persisted system reply through later turns, retries, continuation, compaction, and reload.
 - Record the prepared task message and one frozen system prompt in replies. Keep shared templates as runtime configuration rather than persisted session data; ignore legacy captured template fields when loading tasks.
 - Keep later messages literal. AQL selects available results without waiting or creating dependencies.
@@ -73,7 +74,7 @@ The invariants that govern orchestration, tools, providers, events, and durable 
 - Resolve the model's exact tool name first, then its lowercase hyphen-to-underscore form with one trailing `_tool` removed.
 - Reject an ambiguous folded name instead of choosing one registered tool.
 - Compile input rules through `Tool::schema` and validate arguments through `Schema::validate`; do not repeat schema checks inside each tool.
-- Keep model-facing recovery text in `prompts/directives/*.md`; the crate-private `DirectiveStore` applies exact per-agent overrides before rendering it.
+- Keep corrective templates in `prompts/templates/*.md`. Resolve configured keys from Werk's shared templates, fall back to the bundled text, and fail the task through `prompt_render_failed` when a configured expression is invalid.
 - Emit `tool_call_repaired` when a name or value is corrected and `tool_call_failed` when the model must recover.
 
 ## Events and Hooks
@@ -85,7 +86,8 @@ The invariants that govern orchestration, tools, providers, events, and durable 
 - Append events to `events.jsonl` before handlers run, excluding `text_chunk_received`, and fold policy statistics from the same records.
 - Keep synchronous handlers cheap; async hook variants are queued and drained by the completion call.
 - Build `on_result` and `on_task` on the ordered `on_event` chain so handlers coexist.
-- Let an explicit directive keyed by a non-terminal `EventTool` event name replace its model-facing acknowledgement, binding the event's JSON data.
+- Let an explicit shared template keyed by a non-terminal `EventTool` event name replace the text returned to the model, binding the event's JSON data before publishing the event.
+- Record the configured custom event template key in `Event.template`. Accept persisted `directive` metadata only as a legacy input and serialize `template` exclusively.
 
 ## Providers and Retries
 

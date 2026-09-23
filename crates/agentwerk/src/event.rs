@@ -29,8 +29,8 @@ use serde_json::{Map, Value};
 pub struct Event {
     /// The event name.
     pub(crate) name: String,
-    /// The model-facing directive that explains this event, when one applies.
-    pub(crate) directive: Option<String>,
+    /// The template used for this event's model-facing message, when one applies.
+    pub(crate) template: Option<String>,
     /// The JSON value carried by the event.
     pub(crate) data: Value,
     /// ID of the task this event concerns, or empty when it has no task
@@ -71,7 +71,7 @@ impl Event {
     pub const REQUEST_STARTED: &'static str = "request_started";
     /// Event name emitted after a provider request succeeds.
     pub const REQUEST_FINISHED: &'static str = "request_finished";
-    /// A role or task expression could not be rendered before a request.
+    /// A prompt or template could not render.
     pub const PROMPT_RENDER_FAILED: &'static str = "prompt_render_failed";
     /// Event name emitted after a provider request fails.
     pub const REQUEST_FAILED: &'static str = "request_failed";
@@ -148,7 +148,7 @@ impl Event {
     pub fn new(name: impl Into<String>) -> Self {
         Self {
             name: name.into(),
-            directive: None,
+            template: None,
             data: Value::Object(Map::new()),
             task_id: String::new(),
             agent_id: String::new(),
@@ -206,7 +206,7 @@ impl Event {
             .data(serde_json::json!({ "model": model.into(), "usage": usage }))
     }
 
-    /// Record a rendering failure before a provider request is sent.
+    /// Record a rendering failure that prevents the current task from continuing.
     pub fn prompt_render_failed(expression: &str, message: &str) -> Self {
         Self::new(Self::PROMPT_RENDER_FAILED).data(serde_json::json!({
             "expression": expression,
@@ -388,9 +388,9 @@ impl Event {
         }))
     }
 
-    /// Associate the event with the directive used to explain it to the model.
-    pub fn directive(mut self, directive: impl Into<String>) -> Self {
-        self.directive = Some(directive.into());
+    /// Associate the event with the template used to explain it to the model.
+    pub fn template(mut self, template: impl Into<String>) -> Self {
+        self.template = Some(template.into());
         self
     }
 
@@ -417,9 +417,9 @@ impl Event {
         &self.name
     }
 
-    /// The directive used to explain this event to the model, if any.
-    pub fn get_directive(&self) -> Option<&str> {
-        self.directive.as_deref()
+    /// The template used to explain this event to the model, if any.
+    pub fn get_template(&self) -> Option<&str> {
+        self.template.as_deref()
     }
 
     /// The JSON value carried by this event.
@@ -455,8 +455,8 @@ impl Serialize for Event {
     {
         let mut object = Map::new();
         object.insert("name".into(), self.name.clone().into());
-        if let Some(directive) = &self.directive {
-            object.insert("directive".into(), directive.clone().into());
+        if let Some(template) = &self.template {
+            object.insert("template".into(), template.clone().into());
         }
         object.insert("data".into(), self.data.clone());
         object.insert("task_id".into(), self.task_id.clone().into());
@@ -476,7 +476,10 @@ impl<'de> Deserialize<'de> for Event {
     {
         let mut object = Map::<String, Value>::deserialize(deserializer)?;
         let created_at = take_or(&mut object, "created_at", 0)?;
-        let directive = match object.remove("directive") {
+        let template = match object
+            .remove("template")
+            .or_else(|| object.remove("directive"))
+        {
             Some(value) => serde_json::from_value(value).map_err(D::Error::custom)?,
             None => None,
         };
@@ -509,7 +512,7 @@ impl<'de> Deserialize<'de> for Event {
         };
         Ok(Self {
             name,
-            directive,
+            template,
             data,
             task_id,
             agent_id,
@@ -1320,19 +1323,19 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn directive_is_optional_and_round_trips_at_the_top_level() {
+    fn template_is_optional_and_round_trips_at_the_top_level() {
         let plain = Event::new(Event::TOOL_CALL_FAILED);
-        assert_eq!(plain.get_directive(), None);
+        assert_eq!(plain.get_template(), None);
         assert!(serde_json::to_value(&plain)
             .unwrap()
-            .get("directive")
+            .get("template")
             .is_none());
 
-        let event = plain.directive("tool_timed_out");
+        let event = plain.template("tool_timed_out");
         let value = serde_json::to_value(&event).unwrap();
-        assert_eq!(value["directive"], "tool_timed_out");
+        assert_eq!(value["template"], "tool_timed_out");
         let restored: Event = serde_json::from_value(value).unwrap();
-        assert_eq!(restored.get_directive(), Some("tool_timed_out"));
+        assert_eq!(restored.get_template(), Some("tool_timed_out"));
     }
 
     #[test]

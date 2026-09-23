@@ -1,7 +1,7 @@
 //! Lets an agent read files that were not included in its prompt.
 
 use super::tool::{Event, Tool, ToolContext};
-use crate::prompts::directives::{
+use crate::prompts::templates::{
     READ_FILE_FAILED, READ_FILE_IS_BINARY, READ_FILE_NOT_FOUND, READ_FILE_PATH_IS_DIRECTORY,
     READ_FILE_PATH_IS_DIRECTORY_WITH_ENTRIES,
 };
@@ -59,12 +59,12 @@ async fn run(args: ReadFileArgs, ctx: ToolContext) -> Event {
 
     if resolved.is_dir() {
         let message = match super::util::directory_entries(&resolved) {
-            Some(entries) => ctx.directives.render(
+            Some(entries) => ctx.templates.render(
                 READ_FILE_PATH_IS_DIRECTORY_WITH_ENTRIES,
                 &[("path", &path), ("entries", &entries)],
             ),
             None => ctx
-                .directives
+                .templates
                 .render(READ_FILE_PATH_IS_DIRECTORY, &[("path", &path)]),
         };
         return Event::error(message);
@@ -79,7 +79,7 @@ async fn run(args: ReadFileArgs, ctx: ToolContext) -> Event {
             // templates. Otherwise decode lossily so odd-encoded source
             // stays inspectable, the point of a scan.
             if bytes.contains(&0) {
-                return Event::success(ctx.directives.render(
+                return Event::success(ctx.templates.render(
                     READ_FILE_IS_BINARY,
                     &[("path", &path), ("bytes", &bytes.len().to_string())],
                 ));
@@ -87,19 +87,19 @@ async fn run(args: ReadFileArgs, ctx: ToolContext) -> Event {
             String::from_utf8_lossy(&bytes).into_owned()
         }
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-            return Event::error(ctx.directives.render(
+            return Event::error(ctx.templates.render(
                 READ_FILE_NOT_FOUND,
                 &[
                     ("path", &path),
                     (
                         "hint",
-                        &super::util::not_found_hint(&ctx.dir, &resolved, &ctx.directives),
+                        &super::util::not_found_hint(&ctx.dir, &resolved, &ctx.templates),
                     ),
                 ],
             ));
         }
         Err(e) => {
-            return Event::error(ctx.directives.render(
+            return Event::error(ctx.templates.render(
                 READ_FILE_FAILED,
                 &[("path", &path), ("error", &e.to_string())],
             ));
