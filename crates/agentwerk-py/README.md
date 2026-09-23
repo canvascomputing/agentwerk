@@ -42,249 +42,9 @@ pip install agentwerk
 
 ---
 
-## Let's Build a Research Harness
-
-We'll use the [Brave Search Tool](examples/web_search.py) to research a question and write a report with citations.
-
-### Agents
-
-Create a researcher and a writer. `Agent.from_env()` reads the provider and model from [environment variables](API.md#providers). The researcher gathers sources, while the writer turns those findings into a report.
-
-<details>
-<summary><code>researcher.md</code></summary>
-
-```markdown
-# Researcher
-
-You are a web researcher who gathers source material for the writer. You open
-relevant pages and save two to four findings with their source links in shared
-knowledge.
-
-Your strengths:
-- Finding relevant primary sources
-- Distinguishing source evidence from search result descriptions
-
-Guidelines:
-- Start with one `brave_search` call
-- Open two useful results with `fetch`, because result descriptions can miss context
-- Run one more search only when those pages cannot answer the question
-- Save each finding and its source link with `knowledge`
-- Call `finish` immediately after saving the findings
-- NEVER run more than two searches or open more than four pages, because
-  extra browsing delays the writer
-
-Output:
-- Call `finish` once with `summary`
-- `summary` (1 sentence): what you saved for the writer
-
-Example outputs:
-- `finish({"summary": "Saved three findings with source links."})`
-
-NOTE: Leave the final report to the writer.
-```
-
-</details>
-
-<details>
-<summary><code>writer.md</code></summary>
-
-```markdown
-# Writer
-
-You are a report writer who turns shared research into a concise answer for the
-reader. You explain the findings clearly and cite their sources.
-
-Your strengths:
-- Explaining evidence clearly
-- Citing sources and making uncertainty clear
-
-Guidelines:
-- Read the available findings with `knowledge`
-- Add an inline citation to every factual claim
-- Mention missing or conflicting evidence
-- NEVER write more than three paragraphs, because the caller expects a concise
-  report
-
-Output:
-- Call `finish` once with `report`
-- `report` (1-3 paragraphs): a concise answer with inline citations
-
-Example outputs:
-- `finish({"report": "Small tools reduce errors [Source](https://example.com)."})`
-
-NOTE: Keep the report focused on the assigned question.
-```
-
-</details>
-
-```python
-from pathlib import Path
-
-researcher_role = Path("researcher.md").read_text()
-writer_role = Path("writer.md").read_text()
-
-researcher = Agent.from_env()
-researcher.label("research")
-researcher.role(researcher_role)
-
-writer = Agent.from_env()
-writer.label("report")
-writer.role(writer_role)
-```
-
-APIs: [Agents](API.md#agents), [Providers](API.md#providers), and [Prompt Skill](../../skills/prompt/SKILL.md).
-
-### Tools
-
-The researcher uses a [custom Brave Search tool](examples/web_search.py) to find sources and the built-in `FetchTool` to open them.
-
-<details>
-<summary><code>web_search.py</code></summary>
-
-```python
-def brave_search_tool(api_key: str):
-    endpoint = "https://api.search.brave.com/res/v1/web/search"
-    description = "Search the web and return titles, URLs, and descriptions."
-
-    @tool(
-        name="brave_search",
-        description=description,
-        concurrent=True,
-        timeout=60,
-    )
-    def brave_search(query: str, count: int = 5) -> str:
-        query = query.strip()
-        if not query:
-            raise ValueError("query must not be empty")
-
-        result_count = max(1, min(count, 20))
-        parameters = {"q": query, "count": result_count}
-        url = f"{endpoint}?{urlencode(parameters)}"
-        headers = {
-            "Accept": "application/json",
-            "X-Subscription-Token": api_key,
-        }
-        request = Request(url, headers=headers)
-        with urlopen(request, timeout=60) as response:
-            body = json.load(response)
-
-        search_results = body.get("web", {}).get("results", [])
-        if not search_results:
-            return "No results found."
-
-        rendered_results = (
-            f"## {result.get('title', '')}\n"
-            f"{result.get('url', '')}\n"
-            f"{result.get('description', '')}"
-            for result in search_results
-        )
-        return "\n\n".join(rendered_results)
-
-    return brave_search
-```
-
-</details>
-
-```python
-brave_key = os.environ["BRAVE_API_KEY"]
-web_search = brave_search_tool(brave_key)
-
-researcher.tool(web_search).tool(FetchTool())
-```
-
-APIs: [Tools](API.md#tools), [FetchTool](API.md#fetchtool), and [Custom tools](API.md#custom-tools).
-
-### Tasks
-
-Create one task for research and another for writing. Each label routes the task to the matching agent. The `question` and `focus` templates insert shared values into the prompts.
-
-```python
-research_task = Task(
-    "Research {{ question }} with emphasis on {{ focus }}.",
-    label="research",
-)
-
-report_task = Task(
-    "Write a cited report answering:\n\n{{ question }}",
-    label="report",
-)
-```
-
-APIs: [Tasks](API.md#tasks), [Templates](API.md#templates), [Schemas](API.md#schemas), and [Directives](API.md#directives).
-
-### Knowledge
-
-Assign both agents a shared `Knowledge` base. The researcher records sourced findings there, and the writer uses that evidence to produce the report.
-
-```python
-knowledge = Knowledge("./research")
-
-researcher.knowledge(knowledge)
-writer.knowledge(knowledge)
-```
-
-APIs: [Knowledge](API.md#knowledge).
-
-### Werk
-
-A `Werk` coordinates the agents, tasks, and conditions for one run. Set the shared template values, then add the parts of the research harness.
-
-```python
-werk = Werk()
-
-werk.set_policy(Policy(max_time=300))
-
-werk.set_template("question", "What makes an agent harness efficient?")
-werk.set_template("focus", "latency and reliability")
-
-werk.add_agent(researcher)
-werk.add_agent(writer)
-
-write_report = Condition(
-    "task.label = research AND task.status = finished"
-).task(report_task)
-
-werk.add_condition(write_report)
-werk.add_task(research_task)
-```
-
-APIs: [Werk](API.md#werk), [Policy](API.md#configuration), [AQL](API.md#aql), [Collaboration](API.md#collaboration), and [Conditions](API.md#conditions).
-
-### Events
-
-Observe each knowledge page as it is saved and log every other event by name.
-
-```python
-def log_research(_, event):
-    if event.get_name() == Event.KNOWLEDGE_WRITTEN:
-        slug = event.get_data().get("slug", "")
-        print(f"Saved research: {slug}")
-    else:
-        print(f"Event: {event.get_name()}")
-
-werk.on_event(log_research)
-```
-
-APIs: [Events](API.md#events) and [Hooks](API.md#hooks).
-
-### Results
-
-Wait for the workflow to finish, then print the writer's report.
-
-```python
-await werk.finish()
-
-result = werk.find_result("report") or {}
-report = result.get("report", "")
-
-print(report)
-```
-
----
-
 ## Let's Build a Coding Harness
 
-We’ll use a [planner and coder agent](examples/coding_harness.py) to make changes to a repository. The coder is interactive, meaning its coding task remains active until you end it.
+We’ll use a [planner and coder agent](examples/coding_harness.py) to make changes to a repository.
 
 Give both agents read-only repository tools, then add editing tools only to the coder. The planner returns a grounded plan for the coder to implement.
 
@@ -448,7 +208,163 @@ await werk.finish()
 
 APIs: [CommandTool](API.md#commandtool), [Templates](API.md#templates), [Collaboration](API.md#collaboration), [Conditions](API.md#conditions), [Sessions](API.md#sessions), and [Interactive agents](API.md#interactive-agents).
 
-### More Use Cases
+---
+
+## Let's Build a Research Harness
+
+We'll research a question and write a report with citations. Start with a researcher and a writer, then give the researcher a [custom Brave Search tool](examples/web_search.py) and the built-in `FetchTool`.
+
+<details>
+<summary><code>researcher.md</code></summary>
+
+```markdown
+# Researcher
+
+You are a web researcher who gathers source material for the writer. You open
+relevant pages and save two to four findings with their source links in shared
+knowledge.
+
+Your strengths:
+- Finding relevant primary sources
+- Distinguishing source evidence from search result descriptions
+
+Guidelines:
+- Start with one `brave_search` call
+- Open two useful results with `fetch`, because result descriptions can miss context
+- Run one more search only when those pages cannot answer the question
+- Save each finding and its source link with `knowledge`
+- Call `finish` immediately after saving the findings
+- NEVER run more than two searches or open more than four pages, because
+  extra browsing delays the writer
+
+Output:
+- Call `finish` once with `summary`
+- `summary` (1 sentence): what you saved for the writer
+
+Example outputs:
+- `finish({"summary": "Saved three findings with source links."})`
+
+NOTE: Leave the final report to the writer.
+```
+
+</details>
+
+<details>
+<summary><code>writer.md</code></summary>
+
+```markdown
+# Writer
+
+You are a report writer who turns shared research into a concise answer for the
+reader. You explain the findings clearly and cite their sources.
+
+Your strengths:
+- Explaining evidence clearly
+- Citing sources and making uncertainty clear
+
+Guidelines:
+- Read the available findings with `knowledge`
+- Add an inline citation to every factual claim
+- Mention missing or conflicting evidence
+- NEVER write more than three paragraphs, because the caller expects a concise
+  report
+
+Output:
+- Call `finish` once with `report`
+- `report` (1-3 paragraphs): a concise answer with inline citations
+
+Example outputs:
+- `finish({"report": "Small tools reduce errors [Source](https://example.com)."})`
+
+NOTE: Keep the report focused on the assigned question.
+```
+
+</details>
+
+```python
+knowledge = Knowledge("./research")
+brave_key = os.environ["BRAVE_API_KEY"]
+web_search = brave_search_tool(brave_key)
+
+researcher = Agent.from_env()
+researcher.label("research")
+researcher.role(Path("researcher.md").read_text())
+researcher.knowledge(knowledge)
+researcher.tool(web_search).tool(FetchTool())
+
+writer = Agent.from_env()
+writer.label("report")
+writer.role(Path("writer.md").read_text())
+writer.knowledge(knowledge)
+```
+
+Create one task for research and another for writing. Each label routes the task to the matching agent. A condition queues the report after the research finishes.
+
+```python
+research_task = Task(
+    "Research {{ question }} with emphasis on {{ focus }}.",
+    label="research",
+)
+
+report_task = Task(
+    "Write a cited report answering:\n\n{{ question }}",
+    label="report",
+)
+
+write_report = Condition(
+    "task.label = research AND task.status = finished"
+).task(report_task)
+```
+
+Create the `Werk`, limit the run to five minutes, and set the question and research focus.
+
+```python
+werk = Werk()
+
+werk.set_policy(Policy(max_time=300))
+
+werk.set_template("question", "What makes an agent harness efficient?")
+werk.set_template("focus", "latency and reliability")
+```
+
+Observe each knowledge page as it is saved and log every other event by name.
+
+```python
+def log_research(_, event):
+    if event.get_name() == Event.KNOWLEDGE_WRITTEN:
+        slug = event.get_data().get("slug", "")
+        print(f"Saved research: {slug}")
+    else:
+        print(f"Event: {event.get_name()}")
+
+werk.on_event(log_research)
+```
+
+Add the two agents, the report condition, and the research task, then wait for the report.
+
+```python
+werk.add_agent(researcher)
+werk.add_agent(writer)
+werk.add_condition(write_report)
+werk.add_task(research_task)
+
+await werk.finish()
+```
+
+Read and print the writer's report.
+
+```python
+result = werk.find_result("report") or {}
+report = result.get("report", "")
+
+print(report)
+```
+
+APIs: [Agents](API.md#agents), [Tools](API.md#tools), [Tasks](API.md#tasks), [Knowledge](API.md#knowledge), [Werk](API.md#werk), [Events](API.md#events), [Conditions](API.md#conditions), and [Collaboration](API.md#collaboration).
+
+---
+
+## More Use Cases
 
 Example projects built with agentwerk:
 
