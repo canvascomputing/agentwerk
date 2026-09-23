@@ -89,32 +89,6 @@ async def test_runs_two_labeled_agents_with_events_and_chaining():
     assert "task_finished" in kinds
 
 
-async def test_saves_the_messages_of_a_finished_task(tmp_path):
-    werk = aw.Werk().set_policy(aw.Policy(max_turns=10))
-    werk.add_agent(
-        aw.Agent.from_env().role("Reply with one word: pong")
-    )
-
-    captured = []
-
-    def capture(_, event, task):
-        if event.get_name() == "task_finished":
-            model = werk.get_model_for_agent(event.get_agent_id())
-            trajectory = aw.Trajectory.from_task(event.get_agent_id(), model, task)
-            trajectory.save(str(tmp_path))
-            captured.append((event.get_agent_id(), len(trajectory.get_replies()), trajectory.get_model()))
-
-    werk.on_task(capture)
-    id = werk.add_task("Reply with exactly the word: pong")
-    await werk.finish()
-
-    (agent_id, replies, model), = captured
-    written = sorted(p.name for p in (tmp_path / "trajectories").iterdir())
-    assert written == [f"{agent_id}-{id}.html", f"{agent_id}-{id}.json"]
-    assert replies > 0
-    assert model
-
-
 async def test_compaction_summarizes_the_replies_against_the_live_model(tmp_path):
     # An interactive agent carries no finish tool, so the task cannot end on
     # turn one and skip compaction. The follow-up reply starts the request that

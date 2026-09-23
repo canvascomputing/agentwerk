@@ -806,11 +806,6 @@ impl Werk {
     }
 
     /// Get the model that agent runs, or `None` when no agent of that name is bound.
-    ///
-    /// Pairs with [`Self::on_task`]: the event names the agent, this names
-    /// its model, and [`Trajectory::from_task`] needs both.
-    ///
-    /// [`Trajectory::from_task`]: super::Trajectory::from_task
     pub fn get_model_for_agent(&self, agent_id: &str) -> Option<String> {
         self.agents
             .lock()

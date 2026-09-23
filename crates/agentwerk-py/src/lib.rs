@@ -14,7 +14,6 @@ mod reply;
 mod schema;
 mod task;
 mod tools;
-mod trajectory;
 mod werk;
 
 #[pymodule]
@@ -27,7 +26,6 @@ fn _agentwerk(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<query::PyQuery>()?;
     m.add_class::<reply::PyReply>()?;
     m.add_class::<reply::PyReplyContent>()?;
-    m.add_class::<trajectory::PyTrajectory>()?;
     m.add_class::<schema::PySchema>()?;
     m.add_class::<event::PyEvent>()?;
     m.add_class::<knowledge::PyKnowledge>()?;

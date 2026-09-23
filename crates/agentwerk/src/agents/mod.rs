@@ -16,4 +16,4 @@ pub use condition::Condition;
 pub use knowledge::Knowledge;
 pub use policy::{Policy, PolicyViolation};
 pub use query::{Matcher, Query, QueryError};
-pub use tasks::{Reply, Status, Task, TaskError, Trajectory, Werk};
+pub use tasks::{Reply, Status, Task, TaskError, Werk};

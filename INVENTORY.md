@@ -317,7 +317,7 @@ The rules the tables never repeat.
 | Language | Item | Visibility |
 |----------|------|------------|
 | Rust | `mod agent`, `mod policy`, `mod knowledge`, `mod loop`, `mod tasks` | pub |
-| Rust | re-exports `Agent`, `Condition`, `Policy`, `PolicyViolation`, `Knowledge`, `Matcher`, `Query`, `QueryError`, `Reply`, `Status`, `Task`, `TaskError`, `Werk`, `Trajectory` | pub |
+| Rust | re-exports `Agent`, `Condition`, `Policy`, `PolicyViolation`, `Knowledge`, `Matcher`, `Query`, `QueryError`, `Reply`, `Status`, `Task`, `TaskError`, `Werk` | pub |
 
 ### Internal
 
@@ -509,13 +509,13 @@ The rules the tables never repeat.
 
 | Language | Item | Visibility |
 |----------|------|------------|
-| Rust | re-exports `Author`, `Reply`, `ReplyContent`, `Status`, `Task`, `TaskError`, `FinishReason`, `Werk`, `Trajectory` | pub |
+| Rust | re-exports `Author`, `Reply`, `ReplyContent`, `Status`, `Task`, `TaskError`, `FinishReason`, `Werk` | pub |
 
 ### Internal
 
 | Language | Item | Visibility |
 |----------|------|------------|
-| Rust | `mod error`, `mod reply`, `mod store`, `mod task`, `mod werk`, `mod trajectory` | private |
+| Rust | `mod error`, `mod reply`, `mod store`, `mod task`, `mod werk` | private |
 | Rust | `policy_violated(policy: Policy, stats: Stats): [PolicyViolation, number]?` | crate |
 | Rust | `now_millis(): number` | crate |
 | Rust | `numeric_id(id: string): number` | crate |
@@ -786,29 +786,6 @@ The rules the tables never repeat.
 
 | Rust | `.template_values(): Record<string, string>` | crate |
 
-## `crates/agentwerk/src/agents/tasks/trajectory.rs`
-
-### Public
-
-| Language | Item | Visibility |
-|----------|------|------------|
-| Rust | `Trajectory { id: string, model: string?, replies: Reply[] }` | pub with crate-private fields |
-| Python | `Trajectory`: values are read through `get_id()`, `get_model()`, and `get_replies()` | |
-| both | `.from_task(agent_id: string, model: string?, task: Task): this` | pub |
-| both | `.save(dir: string): void throws io::Error` | pub |
-| both | `.get_id(): string` | pub |
-| both | `.get_model(): string?` | pub |
-| both | `.get_replies(): Reply[]` | pub |
-| Rust | `impl Persist for Trajectory` | pub |
-
-### Internal
-
-| Language | Item | Visibility |
-|----------|------|------------|
-| Rust | `Trajectory.to_html(): string` | private |
-| Rust | `HTML_HEAD: string` | private |
-| Rust | `trajectory_path(dir: string, id: string): string` | private |
-
 ## `crates/agentwerk/src/codegrep/ast.rs`
 
 Public Rust module used by `GrepTool`; Python reaches it through `GrepTool()` with `syntax="code"`.
@@ -1004,7 +981,7 @@ Not bound, like the rest of `codegrep`.
 | Language | Item | Visibility |
 |----------|------|------------|
 | Rust | `mod agents`, `mod event`, `mod providers`, `mod schemas`, `mod tools` | pub |
-| Rust | re-exports `Agent`, `Condition`, `Query`, `Reply`, `Status`, `Task`, `Werk`, `Policy`, `PolicyViolation`, `Knowledge`, `Trajectory`, `Schema`, `Event`, `FinishReason` | pub |
+| Rust | re-exports `Agent`, `Condition`, `Query`, `Reply`, `Status`, `Task`, `Werk`, `Policy`, `PolicyViolation`, `Knowledge`, `Schema`, `Event`, `FinishReason` | pub |
 | Python | `agentwerk` exports every bound class from one flat module | |
 
 ### Internal
@@ -2357,7 +2334,7 @@ Registers every bound class and function in the `_agentwerk` module.
 
 | Language | Item | Visibility |
 |----------|------|------------|
-| Rust | `mod agent`, `mod condition`, `mod policy`, `mod convert`, `mod directives`, `mod event`, `mod knowledge`, `mod providers`, `mod query`, `mod reply`, `mod schema`, `mod task`, `mod werk`, `mod tools`, `mod trajectory` | private |
+| Rust | `mod agent`, `mod condition`, `mod policy`, `mod convert`, `mod directives`, `mod event`, `mod knowledge`, `mod providers`, `mod query`, `mod reply`, `mod schema`, `mod task`, `mod werk`, `mod tools` | private |
 
 ## `crates/agentwerk-py/src/providers.rs`
 
@@ -2602,19 +2579,3 @@ Binds `tools/`.
 | Rust | `extract_tool(obj: any): Tool throws PyErr` | crate |
 | Rust | `handle(inner: Tool): PyTool` | private |
 | Rust | `register(m: PyModule): void throws PyErr` | crate |
-
-## `crates/agentwerk-py/src/trajectory.rs`
-
-Binds `agents/tasks/trajectory.rs`.
-
-### Public
-
-| Language | Item | Visibility |
-|----------|------|------------|
-| Rust | `PyTrajectory { inner: Trajectory }` | python |
-| Rust | `.from_task(agent_id: string, model: string?, task: PyTask): this` | python |
-| Rust | `.save(dir: string): void throws PyErr` | python |
-| Rust | `.get_id(): string` | python |
-| Rust | `.get_model(): string?` | python |
-| Rust | `.get_replies(): PyReply[]` | python |
-| Rust | `.__repr__(): string` | python |
