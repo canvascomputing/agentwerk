@@ -241,7 +241,7 @@ impl Run {
 /// use agentwerk::tools::FetchTool;
 ///
 /// # async fn run() {
-/// let werk = Werk::new();
+/// let werk = Werk();
 /// for _ in 0..4 {
 ///     werk.add_agent(
 ///         Agent::from_env()
@@ -466,7 +466,7 @@ impl Werk {
     ///
     /// ```no_run
     /// # use agentwerk::{Event, Task, Werk};
-    /// let werk = Werk::new();
+    /// let werk = Werk();
     /// werk.on_event(|werk, event| {
     ///     if event.get_name() == Event::TASK_FAILED {
     ///         werk.add_task(Task::labeled("triage", "Look into the failure."));
@@ -498,7 +498,7 @@ impl Werk {
     /// ```no_run
     /// # use agentwerk::Werk;
     /// # async fn run() {
-    /// let werk = Werk::new();
+    /// let werk = Werk();
     /// werk.on_event_async(|_, event| async move {
     ///     println!("{}", event.get_name());
     /// });
@@ -542,7 +542,7 @@ impl Werk {
     ///
     /// ```no_run
     /// # use agentwerk::{Task, Werk};
-    /// let werk = Werk::new();
+    /// let werk = Werk();
     /// werk.on_result(|werk, done, result| {
     ///     if result["needs_review"] == true {
     ///         werk.add_task(Task::labeled("review", done.get_task().clone()));
@@ -579,7 +579,7 @@ impl Werk {
     /// ```no_run
     /// # use agentwerk::Werk;
     /// # async fn run() {
-    /// let werk = Werk::new();
+    /// let werk = Werk();
     /// werk.on_result_async(|_, task, result| async move {
     ///     println!("{} produced {result}", task.get_id());
     /// });
@@ -1039,12 +1039,12 @@ impl Werk {
     /// Get every event selected directly, attached to matching tasks, or from
     /// matching joined task-event rows, in source-query order.
     ///
-    /// The condition is an AQL string, a [`Query`](crate::Query), or a
+    /// The condition is an AQL string, a [`Query`](struct@crate::Query), or a
     /// closure, the way [`Self::find_tasks`] takes any of the three.
     ///
     /// ```no_run
     /// # use agentwerk::Werk;
-    /// let werk = Werk::new();
+    /// let werk = Werk();
     /// werk.find_events("event.name = tool_call_failed AND event.created > -1h");
     /// ```
     ///
@@ -1135,7 +1135,7 @@ impl Werk {
     ///
     /// ```no_run
     /// # use agentwerk::Werk;
-    /// let werk = Werk::new();
+    /// let werk = Werk();
     /// werk.cancel_tasks("scan");
     /// ```
     pub fn cancel_tasks(&self, query: impl Matcher<Task>) -> &Self {
@@ -1405,7 +1405,7 @@ impl Werk {
     /// ```no_run
     /// # use agentwerk::Werk;
     /// # async fn run() {
-    /// let werk = Werk::new();
+    /// let werk = Werk();
     /// for finding in werk.finish_tasks("research").await {
     ///     println!("{finding}");
     /// }
@@ -1483,7 +1483,7 @@ impl Werk {
     /// ```no_run
     /// # use agentwerk::Werk;
     /// # async fn run() {
-    /// let werk = Werk::new();
+    /// let werk = Werk();
     /// for finding in werk.finish().await {
     ///     println!("{finding}");
     /// }
@@ -1502,7 +1502,7 @@ impl Werk {
     /// ```no_run
     /// # use agentwerk::Werk;
     /// # async fn run() {
-    /// let werk = Werk::new();
+    /// let werk = Werk();
     /// if let Some(answer) = werk.finish_task("ORDER BY task.created DESC").await {
     ///     println!("{answer}");
     /// }
@@ -1558,7 +1558,7 @@ impl Werk {
     ///
     /// ```no_run
     /// # use agentwerk::Werk;
-    /// let werk = Werk::new();
+    /// let werk = Werk();
     /// let scans = werk.find_results("scan");
     /// ```
     pub fn find_results(&self, query: impl Matcher<Task>) -> Vec<serde_json::Value> {

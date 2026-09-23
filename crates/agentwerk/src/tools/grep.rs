@@ -26,7 +26,7 @@ use crate::prompts::directives::{
 /// use agentwerk::Agent;
 /// use agentwerk::tools::GrepTool;
 ///
-/// Agent::new().tool(GrepTool);
+/// Agent().tool(GrepTool);
 /// ```
 pub struct GrepTool;
 

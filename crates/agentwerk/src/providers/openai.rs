@@ -33,7 +33,7 @@ const DEFAULT_BASE_URL: &str = "https://api.openai.com";
 /// ```no_run
 /// use agentwerk::providers::OpenAi;
 ///
-/// let _provider = OpenAi::new("sk-...");
+/// let _provider = OpenAi("sk-...");
 /// ```
 ///
 /// Read the API key from the environment:

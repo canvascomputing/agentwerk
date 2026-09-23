@@ -150,7 +150,7 @@ impl Agent {
     }
 
     /// Define the LLM provider. Takes a vendor provider directly, or a
-    /// [`Provider`] shared with other agents.
+    /// [`struct@Provider`] shared with other agents.
     pub fn provider(mut self, provider: impl Into<Provider>) -> Self {
         self.provider = Some(provider.into());
         self

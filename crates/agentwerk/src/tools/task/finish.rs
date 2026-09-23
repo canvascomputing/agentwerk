@@ -18,7 +18,7 @@ const DEFINITION: &str = include_str!("finish.tool.md");
 /// use agentwerk::Agent;
 /// use agentwerk::tools::FinishTool;
 ///
-/// Agent::new().tool(FinishTool);
+/// Agent().tool(FinishTool);
 /// ```
 pub struct FinishTool;
 

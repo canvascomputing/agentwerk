@@ -14,9 +14,9 @@ use serde_json::{Map, Value};
 /// use agentwerk::{Event, Werk};
 /// use serde_json::json;
 ///
-/// let werk = Werk::new();
+/// let werk = Werk();
 /// werk.emit_event(
-///     Event::new("document_indexed")
+///     Event("document_indexed")
 ///         .data(json!({ "documents": 42 }))
 ///         .task_id("t-1")
 ///         .agent_id("indexer-1"),
@@ -41,6 +41,12 @@ pub struct Event {
     pub(crate) label: Option<String>,
     /// When this event happened, in milliseconds since the epoch.
     pub(crate) created_at: u64,
+}
+
+/// Create an event with empty JSON-object data.
+#[allow(non_snake_case)]
+pub fn Event(name: impl Into<String>) -> Event {
+    Event::new(name)
 }
 
 impl Event {

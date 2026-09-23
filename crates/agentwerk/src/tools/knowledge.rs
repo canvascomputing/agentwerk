@@ -21,7 +21,7 @@ use super::tool::{Tool, ToolContext};
 /// use agentwerk::{Agent, Knowledge};
 ///
 /// let store = Knowledge::load(".agentwerk/knowledge").expect("knowledge dir");
-/// Agent::new().knowledge(&store);
+/// Agent().knowledge(&store);
 /// ```
 pub struct KnowledgeTool {
     store: Arc<Knowledge>,

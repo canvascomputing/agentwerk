@@ -14,7 +14,7 @@ use super::tool::{Event, Tool, ToolContext};
 /// use agentwerk::Agent;
 /// use agentwerk::tools::GlobTool;
 ///
-/// Agent::new().tool(GlobTool);
+/// Agent().tool(GlobTool);
 /// ```
 pub struct GlobTool;
 

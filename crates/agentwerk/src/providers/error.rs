@@ -234,7 +234,7 @@ impl fmt::Display for RequestErrorKind {
     }
 }
 
-/// Result alias for [`Provider`](super::Provider) calls.
+/// Result alias for [`Provider`](struct@super::Provider) calls.
 pub type ProviderResult<T> = std::result::Result<T, ProviderError>;
 
 // A proxy wraps another provider's error behind its own status and code, so the

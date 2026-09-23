@@ -18,9 +18,9 @@ use crate::event::Event;
 /// use agentwerk::{Event, Query, Task, Werk};
 ///
 /// # fn run() -> Result<(), Box<dyn std::error::Error>> {
-/// let werk = Werk::new();
+/// let werk = Werk();
 /// werk.find_tasks("research");
-/// werk.find_tasks(Query::new("task.label = research AND task.assignee = research-1")?);
+/// werk.find_tasks(Query("task.label = research AND task.assignee = research-1")?);
 /// werk.find_tasks(|t: &Task| t.get_label() == Some("research"));
 /// werk.find_events("event.name = tool_call_failed");
 /// werk.find_events("research AND event.name = tool_call_failed");
@@ -436,7 +436,7 @@ impl<F: Fn(&Event) -> bool + Send + Sync + 'static> Matcher<Event> for F {
     }
 }
 
-/// Panics on a string that does not parse. Use [`Query::new`] for one built at
+/// Panics on a string that does not parse. Use [`fn@crate::Query`] for one built at
 /// run time.
 impl<R> Matcher<R> for &str {
     fn into_query(self) -> Query {
@@ -473,15 +473,15 @@ impl Query {
     /// use agentwerk::Query;
     ///
     /// # fn run() -> Result<(), Box<dyn std::error::Error>> {
-    /// Query::new("research")?;
-    /// Query::new("\"needs review\"")?;
-    /// Query::new("task.status = finished AND task.label IN (scan, report)")?;
-    /// Query::new("task.input ~ \"retry budget\" AND task.assignee IS EMPTY")?;
-    /// Query::new("t-3")?;
-    /// Query::new("task.label = scan ORDER BY task.finished DESC")?;
-    /// Query::new("event.name = tool_call_failed")?;
-    /// Query::new("event.data ~ timeout AND event.created > -1h")?;
-    /// Query::new("scan AND event.name = task_finished")?;
+    /// Query("research")?;
+    /// Query("\"needs review\"")?;
+    /// Query("task.status = finished AND task.label IN (scan, report)")?;
+    /// Query("task.input ~ \"retry budget\" AND task.assignee IS EMPTY")?;
+    /// Query("t-3")?;
+    /// Query("task.label = scan ORDER BY task.finished DESC")?;
+    /// Query("event.name = tool_call_failed")?;
+    /// Query("event.data ~ timeout AND event.created > -1h")?;
+    /// Query("scan AND event.name = task_finished")?;
     /// # Ok(())
     /// # }
     /// # run().unwrap();
@@ -583,7 +583,7 @@ impl Query {
 
 /// Parses the string as AQL, and panics on one that does not parse: a query
 /// literal that does not compile is a mistake in the calling code, the way a
-/// tool schema document the compiler refuses is. Use [`Query::new`] for a
+/// tool schema document the compiler refuses is. Use [`fn@crate::Query`] for a
 /// string built at run time.
 impl From<&str> for Query {
     fn from(query: &str) -> Self {

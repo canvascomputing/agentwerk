@@ -30,7 +30,7 @@ const DEFAULT_BASE_URL: &str = "https://api.anthropic.com";
 /// ```no_run
 /// use agentwerk::providers::Anthropic;
 ///
-/// let _provider = Anthropic::new("sk-ant-...");
+/// let _provider = Anthropic("sk-ant-...");
 /// ```
 ///
 /// Read the API key from the environment:

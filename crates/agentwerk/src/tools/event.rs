@@ -24,7 +24,7 @@ const FINISH_SCHEMA: &str = include_str!("task/finish.schema.json");
 /// use agentwerk::Agent;
 /// use agentwerk::tools::EventTool;
 ///
-/// Agent::new().tool(EventTool);
+/// Agent().tool(EventTool);
 /// ```
 pub struct EventTool;
 

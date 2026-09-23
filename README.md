@@ -252,7 +252,7 @@ let report_task = Task::labeled(
     "Write a cited report answering:\n\n{{ question }}",
 );
 
-let write_report = Condition::new("task.label = research AND task.status = finished")
+let write_report = Condition("task.label = research AND task.status = finished")
     .task(report_task);
 ```
 
@@ -276,7 +276,7 @@ APIs: [Knowledge](API.md#knowledge).
 A `Werk` coordinates the agents, tasks, and conditions for one run. Set the shared template values, then add the parts of the research harness.
 
 ```rust
-let werk = Werk::new();
+let werk = Werk();
 
 werk.set_policy(Policy {
     max_time: Some(Duration::from_secs(300)),
@@ -459,7 +459,7 @@ A condition starts the coder with the saved plan as soon as the planner finishes
 Store the session in `./session` so you can stop the program and continue the same plan and coder conversation later.
 
 ```rust
-let werk = Werk::new();
+let werk = Werk();
 werk.set_dir("./session");
 
 let coder_task = Task::labeled(
@@ -467,7 +467,7 @@ let coder_task = Task::labeled(
     "Implement this plan:\n\n{{ result: plan }}",
 );
 
-let start_coder = Condition::new("task.label = plan AND task.status = finished")
+let start_coder = Condition("task.label = plan AND task.status = finished")
     .task(coder_task);
 ```
 

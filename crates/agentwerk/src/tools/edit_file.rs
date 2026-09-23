@@ -16,7 +16,7 @@ use crate::prompts::directives::{
 /// use agentwerk::Agent;
 /// use agentwerk::tools::EditFileTool;
 ///
-/// Agent::new().tool(EditFileTool);
+/// Agent().tool(EditFileTool);
 /// ```
 pub struct EditFileTool;
 

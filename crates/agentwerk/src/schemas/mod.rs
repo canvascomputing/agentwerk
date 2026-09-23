@@ -11,7 +11,7 @@
 //! use agentwerk::schemas::Schema;
 //! use serde_json::json;
 //!
-//! let schema = Schema::new(json!({
+//! let schema = Schema(json!({
 //!     "type": "object",
 //!     "properties": { "name": { "type": "string", "minLength": 1 } },
 //!     "required": ["name"],
@@ -45,11 +45,17 @@ use crate::prompts::directives::{
 /// A `Schema` constrains the result an agent produces for a task. A violation
 /// triggers a retry until `max_schema_retries` is exhausted.
 ///
-/// Build one with [`Schema::new`]. Copying it is cheap, and validating
+/// Build one with [`fn@crate::Schema`]. Copying it is cheap, and validating
 /// changes nothing.
 #[derive(Clone)]
 pub struct Schema {
     inner: Arc<SchemaBody>,
+}
+
+/// Create a schema.
+#[allow(non_snake_case)]
+pub fn Schema(document: Value) -> Result<Schema, SchemaParseError> {
+    Schema::new(document)
 }
 
 struct SchemaBody {
@@ -68,13 +74,13 @@ impl Schema {
     /// use agentwerk::schemas::Schema;
     /// use serde_json::json;
     ///
-    /// assert!(Schema::new(json!({
+    /// assert!(Schema(json!({
     ///     "type": "object",
     ///     "properties": { "name": { "type": "string", "pattern": "^[a-z]+$" } }
     /// })).is_ok());
     ///
     /// // A keyword outside the supported set is rejected up front.
-    /// let err = Schema::new(json!({ "type": "object", "uniqueItems": true })).unwrap_err();
+    /// let err = Schema(json!({ "type": "object", "uniqueItems": true })).unwrap_err();
     /// assert!(err.message.contains("unsupported keyword"));
     /// ```
     pub fn new(document: Value) -> Result<Self, SchemaParseError> {
@@ -107,7 +113,7 @@ impl Schema {
     /// use agentwerk::schemas::Schema;
     /// use serde_json::json;
     ///
-    /// let schema = Schema::new(json!({
+    /// let schema = Schema(json!({
     ///     "type": "object",
     ///     "properties": {
     ///         "line": { "type": "integer" },

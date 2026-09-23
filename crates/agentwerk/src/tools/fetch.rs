@@ -44,7 +44,7 @@ const BROWSER_MAX_FRAME_SIZE: u32 = 16_384;
 /// use agentwerk::Agent;
 /// use agentwerk::tools::FetchTool;
 ///
-/// Agent::new().tool(FetchTool);
+/// Agent().tool(FetchTool);
 /// ```
 #[derive(Clone)]
 pub struct FetchTool {
@@ -85,7 +85,7 @@ impl FetchTool {
     /// use agentwerk::Agent;
     /// use agentwerk::tools::FetchTool;
     ///
-    /// Agent::new().tool(FetchTool.impersonate());
+    /// Agent().tool(FetchTool.impersonate());
     /// ```
     pub fn impersonate(mut self) -> Self {
         self.impersonate = true;
@@ -103,7 +103,7 @@ impl FetchTool {
     /// use agentwerk::Agent;
     /// use agentwerk::tools::FetchTool;
     ///
-    /// Agent::new().tool(FetchTool.timeout(Duration::from_secs(30)));
+    /// Agent().tool(FetchTool.timeout(Duration::from_secs(30)));
     /// ```
     pub fn timeout(mut self, duration: Duration) -> Self {
         self.timeout = Some(duration);

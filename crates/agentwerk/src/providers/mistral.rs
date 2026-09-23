@@ -25,7 +25,7 @@ const DEFAULT_BASE_URL: &str = "https://api.mistral.ai";
 /// ```no_run
 /// use agentwerk::providers::Mistral;
 ///
-/// let _provider = Mistral::new("...");
+/// let _provider = Mistral("...");
 /// ```
 ///
 /// Read the API key from the environment:

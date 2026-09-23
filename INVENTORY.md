@@ -318,6 +318,11 @@ The rules the tables never repeat.
 |----------|------|------------|
 | Rust | `mod agent`, `mod policy`, `mod knowledge`, `mod loop`, `mod tasks` | pub |
 | Rust | re-exports `Agent`, `Condition`, `Policy`, `PolicyViolation`, `Knowledge`, `Matcher`, `Query`, `QueryError`, `Reply`, `Status`, `Task`, `TaskError`, `Werk` | pub |
+| Rust | `Agent(): Agent` | pub |
+| Rust | `Werk(): Werk` | pub |
+| Rust | `Task(task: json): Task` | pub |
+| Rust | `Condition(query: Query): Condition` | pub |
+| Rust | `Query(query: string): Query throws QueryError` | pub |
 
 ### Internal
 
@@ -938,6 +943,7 @@ Not bound, like the rest of `codegrep`.
 | Language | Item | Visibility |
 |----------|------|------------|
 | Rust | `Event { name: string, data: json, task_id: string, agent_id: string, label: string?, created_at: number }` | pub with crate-private fields |
+| Rust | `Event(name: string): Event` | pub |
 | both | `.RUN_STARTED`, `.RUN_FINISHED`, `.TASK_CREATED`, `.TASK_STARTED`, `.TASK_FINISHED`, `.TASK_FAILED`, `.TURN_STARTED`: string | pub |
 | both | `.PROMPT_RENDER_FAILED`, `.REQUEST_STARTED`, `.REQUEST_FINISHED`, `.REQUEST_FAILED`, `.REQUEST_RETRIED`, `.TEXT_CHUNK_RECEIVED`, `.TOOL_CALL_REPAIRED`: string | pub |
 | both | `.TOOL_CALL_DECLINED`, `.TOOL_CALL_STARTED`, `.TOOL_CALL_FINISHED`, `.TOOL_CALL_FAILED`: string | pub |
@@ -1355,6 +1361,12 @@ Not bound: it repairs a reply before the loop reads it.
 |----------|------|------------|
 | Rust | `mod types` | pub |
 | Rust | re-exports `Anthropic`, `ProviderError`, `ProviderResult`, `RequestErrorKind`, `LiteLlm`, `Mistral`, `Model`, `OpenAi`, `Provider`, `ProviderLike`, and the `types` values | pub |
+| Rust | `Model(name: string): Model` | pub |
+| Rust | `Provider(provider: ProviderLike): Provider` | pub |
+| Rust | `Anthropic(api_key: string): Anthropic` | pub |
+| Rust | `OpenAi(api_key: string): OpenAi` | pub |
+| Rust | `Mistral(api_key: string): Mistral` | pub |
+| Rust | `LiteLlm(api_key: string): LiteLlm` | pub |
 | Python | the four providers are bound; the request and response types are not | |
 
 ### Internal
@@ -1557,6 +1569,7 @@ Not bound, apart from `ReasoningEffort` and `ToolDeclineKind`: Python binds the 
 | Language | Item | Visibility |
 |----------|------|------------|
 | both | `Schema { inner: SchemaBody }` | pub |
+| Rust | `Schema(document: json): Schema throws SchemaParseError` | pub |
 | Rust | `.new(document: json): this throws SchemaParseError` | pub |
 | Python | `Schema(document)` | |
 | both | `.validate(value: json): [json, string[]] throws SchemaViolations` | pub |

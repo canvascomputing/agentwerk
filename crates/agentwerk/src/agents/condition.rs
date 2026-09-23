@@ -5,7 +5,7 @@ use super::{Agent, Query, Task};
 
 /// Release agents and tasks when an AQL query matches a task or event.
 ///
-/// A condition belongs to the [`Werk`](crate::Werk) it is added to. It fires
+/// A condition belongs to the [`Werk`](struct@crate::Werk) it is added to. It fires
 /// at most once per run by default and is neither persisted nor restored with
 /// a session.
 ///
@@ -13,9 +13,9 @@ use super::{Agent, Query, Task};
 /// use agentwerk::{Agent, Condition, Task, Werk};
 ///
 /// # fn run() -> Result<(), Box<dyn std::error::Error>> {
-/// let werk = Werk::new();
+/// let werk = Werk();
 /// let id = werk.add_condition(
-///     Condition::new("task.label = draft AND task.status = finished")
+///     Condition("task.label = draft AND task.status = finished")
 ///         .agent(Agent::from_env().label("edit"))
 ///         .task(Task::labeled("edit", "Edit the completed draft.")),
 /// );
@@ -36,7 +36,7 @@ impl Condition {
     /// Create a condition released by `query`.
     ///
     /// A string literal that does not compile as AQL panics. Build a
-    /// [`Query`] first when the string is only known at run time.
+    /// [`struct@Query`] first when the string is only known at run time.
     pub fn new(query: impl Into<Query>) -> Self {
         Self {
             query: query.into(),

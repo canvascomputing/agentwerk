@@ -16,7 +16,7 @@ use crate::prompts::directives::{
 /// use agentwerk::Agent;
 /// use agentwerk::tools::ListDirectoryTool;
 ///
-/// Agent::new().tool(ListDirectoryTool);
+/// Agent().tool(ListDirectoryTool);
 /// ```
 pub struct ListDirectoryTool;
 

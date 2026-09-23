@@ -17,3 +17,33 @@ pub use knowledge::Knowledge;
 pub use policy::{Policy, PolicyViolation};
 pub use query::{Matcher, Query, QueryError};
 pub use tasks::{Reply, Status, Task, TaskError, Werk};
+
+/// Create an agent with no provider, model, or tools.
+#[allow(non_snake_case)]
+pub fn Agent() -> Agent {
+    Agent::new()
+}
+
+/// Create an empty Werk, shared through an [`std::sync::Arc`].
+#[allow(non_snake_case)]
+pub fn Werk() -> std::sync::Arc<Werk> {
+    Werk::new()
+}
+
+/// Create a task carrying `task`.
+#[allow(non_snake_case)]
+pub fn Task<T: serde::Serialize>(task: T) -> Task {
+    Task::new(task)
+}
+
+/// Create a condition released by `query`.
+#[allow(non_snake_case)]
+pub fn Condition(query: impl Into<Query>) -> Condition {
+    Condition::new(query)
+}
+
+/// Compile an AQL string.
+#[allow(non_snake_case)]
+pub fn Query(query: &str) -> Result<Query, QueryError> {
+    Query::new(query)
+}

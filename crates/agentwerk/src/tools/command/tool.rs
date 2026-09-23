@@ -34,7 +34,7 @@ const SCHEMA: &str = include_str!("command.schema.json");
 /// use agentwerk::Agent;
 /// use agentwerk::tools::CommandTool;
 ///
-/// Agent::new().tool(CommandTool("git").allow("git *").deny("git push*"));
+/// Agent().tool(CommandTool("git").allow("git *").deny("git push*"));
 /// ```
 #[derive(Clone)]
 pub struct CommandTool {
