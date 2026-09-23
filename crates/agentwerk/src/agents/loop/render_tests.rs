@@ -38,11 +38,11 @@ fn research(werk: &Werk, result: &str) -> String {
 async fn first_request_sees_values_and_results_supplied_after_the_task_is_added() {
     let (werk, _dir) = session();
     let provider = MockProvider::with_results(vec![Ok(write_result_response("done"))]);
-    werk.add_agent(task_agent(&provider).role("{{ company }}: {{ result: research }}"));
-    let id = werk.add_task("Write for {{ company }}: {{ result: research }}");
+    werk.add_agent(task_agent(&provider).role("{{ company }}: {{ find_result(research) }}"));
+    let id = werk.add_task("Write for {{ company }}: {{ find_result(research) }}");
     assert_eq!(
         werk.get_task(&id).unwrap().get_task(),
-        "Write for {{ company }}: {{ result: research }}"
+        "Write for {{ company }}: {{ find_result(research) }}"
     );
     werk.set_template("company", "Acme");
     research(&werk, "findings");
@@ -79,9 +79,9 @@ async fn later_template_and_result_updates_do_not_change_the_task_prompts() {
     ]);
     research(&werk, "old research");
     werk.set_template("company", "Old");
-    let role = "{{ company }}: {{ result: research ORDER BY task.id DESC }}";
+    let role = "{{ company }}: {{ find_result(research ORDER BY task.id DESC) }}";
     werk.add_agent(task_agent(&provider).role(role));
-    let id = werk.add_task("{{ company }}: {{ result: research ORDER BY task.id DESC }}");
+    let id = werk.add_task("{{ company }}: {{ find_result(research ORDER BY task.id DESC) }}");
     werk.on_event(|werk, event| {
         if event.get_name() == Event::REQUEST_FINISHED && werk.find_results("research").len() == 1 {
             werk.set_template("company", "New");
@@ -211,7 +211,7 @@ async fn template_updates_after_the_first_request_cannot_change_or_fail_the_task
     let id = werk.add_task("go");
     werk.on_event(|werk, event| {
         if event.get_name() == Event::REQUEST_FINISHED {
-            werk.set_template("company", "{{ result: absent }}");
+            werk.set_template("company", "{{ find_result(absent) }}");
         }
     });
 
@@ -233,20 +233,20 @@ async fn shared_values_with_expressions_remain_literal_across_requests() {
         Ok(paused_text_response("continue")),
         Ok(write_result_response("done")),
     ]);
-    werk.set_template("data", "{{ company }} {{ result: absent }}");
+    werk.set_template("data", "{{ company }} {{ find_result(absent) }}");
     werk.add_agent(task_agent(&provider).role("Data: {{ data }}"));
     werk.add_task("Data: {{ data }}");
     finish(&werk).await;
     assert_eq!(
         provider.received_system_prompts(),
         [
-            "Data: {{ company }} {{ result: absent }}",
-            "Data: {{ company }} {{ result: absent }}"
+            "Data: {{ company }} {{ find_result(absent) }}",
+            "Data: {{ company }} {{ find_result(absent) }}"
         ]
     );
     assert_eq!(
         user_text(&provider.received()[0]),
-        "Data: {{ company }} {{ result: absent }}\n"
+        "Data: {{ company }} {{ find_result(absent) }}\n"
     );
 }
 
@@ -284,10 +284,10 @@ async fn interactive_continuation_reuses_the_prompt_without_rendering_caller_rep
     let id = werk.add_task("{{ company }}");
     finish(&werk).await;
     werk.set_template("company", "New");
-    werk.add_reply(&id, "{{ company }} {{ result: absent }}");
+    werk.add_reply(&id, "{{ company }} {{ find_result(absent) }}");
     finish(&werk).await;
     assert_eq!(provider.received_system_prompts(), ["Old", "Old"]);
-    assert!(user_text(&provider.received()[1]).contains("{{ company }} {{ result: absent }}"));
+    assert!(user_text(&provider.received()[1]).contains("{{ company }} {{ find_result(absent) }}"));
     assert_eq!(
         user_text(&provider.received()[0][..1]),
         user_text(&provider.received()[1][..1])
@@ -304,20 +304,20 @@ async fn reload_uses_only_shared_templates_restored_by_the_caller() {
     let agent = task_agent(&provider).template("company", "Captured");
     werk.add_agent(agent.clone());
     agent.add_task("{{ company }}");
-    werk.set_template("data", "{{ company }} {{ result: absent }}");
+    werk.set_template("data", "{{ company }} {{ find_result(absent) }}");
     agent.add_task("{{ data }}");
     let loaded = Werk(dir.path()).unwrap();
     loaded
         .set_templates([
             ("company", "New"),
-            ("data", "{{ company }} {{ result: absent }}"),
+            ("data", "{{ company }} {{ find_result(absent) }}"),
         ])
         .add_agent(task_agent(&provider));
     finish(&loaded).await;
     assert_eq!(user_text(&provider.received()[0]), "New\n");
     assert_eq!(
         user_text(&provider.received()[1]),
-        "{{ company }} {{ result: absent }}\n"
+        "{{ company }} {{ find_result(absent) }}\n"
     );
 }
 
@@ -352,7 +352,7 @@ async fn unmatched_result_selectors_render_nothing_and_reach_the_provider() {
     for in_role in [true, false] {
         let (werk, _dir) = session();
         let provider = MockProvider::with_results(vec![Ok(write_result_response("done"))]);
-        let prompt = "before {{ result: absent }} after";
+        let prompt = "before {{ find_result(absent) }} after";
         let role = if in_role { prompt } else { "role" };
         werk.add_agent(task_agent(&provider).role(role));
         let id = werk.add_task(if in_role { "go" } else { prompt });
@@ -383,7 +383,7 @@ async fn unmatched_result_selectors_render_nothing_and_reach_the_provider() {
 #[tokio::test]
 async fn prompt_render_failures_reach_hooks_and_survive_reload() {
     let (_werk, dir, _provider, id, failures) =
-        fail_to_render(true, "{{ result: task.label = }}").await;
+        fail_to_render(true, "{{ find_result(task.label =) }}").await;
 
     assert_eq!(
         *failures.lock().unwrap(),
@@ -393,7 +393,7 @@ async fn prompt_render_failures_reach_hooks_and_survive_reload() {
     let task = loaded.get_task(&id).unwrap();
     let error = &task.get_errors()[0];
     assert_eq!(error.get_name(), Event::PROMPT_RENDER_FAILED);
-    assert_eq!(error.get_data()["expression"], "result: task.label =");
+    assert_eq!(error.get_data()["expression"], "find_result(task.label =)");
     assert_eq!(
         error.get_data()["message"],
         "The query ends in the middle of a term."
@@ -403,28 +403,28 @@ async fn prompt_render_failures_reach_hooks_and_survive_reload() {
 #[tokio::test]
 async fn nested_render_failures_report_the_outer_expression() {
     let (werk, _dir, _provider, id, _failures) =
-        fail_to_render(true, "{{ result: {{ missing_selection }} }}").await;
+        fail_to_render(true, "{{ find_result({{ missing_selection }}) }}").await;
 
     let task = werk.get_task(&id).unwrap();
     let error = &task.get_errors()[0];
     assert_eq!(error.get_name(), Event::PROMPT_RENDER_FAILED);
     assert_eq!(
         error.get_data()["expression"],
-        "result: {{ missing_selection }}"
+        "find_result({{ missing_selection }})"
     );
 }
 
 #[tokio::test]
 async fn json_path_failures_report_the_complete_template_expression() {
     let (werk, _dir, _provider, id, _failures) =
-        fail_to_render(true, "{{ result: absent | items[?active] }}").await;
+        fail_to_render(true, "{{ find_result(absent).items[?active] }}").await;
 
     let task = werk.get_task(&id).unwrap();
     let error = &task.get_errors()[0];
     assert_eq!(error.get_name(), Event::PROMPT_RENDER_FAILED);
     assert_eq!(
         error.get_data()["expression"],
-        "result: absent | items[?active]"
+        "find_result(absent).items[?active]"
     );
 }
 
@@ -449,13 +449,13 @@ async fn structured_task_input_is_never_interpreted_as_a_template() {
     werk.set_template("company", "New")
         .add_agent(task_agent(&provider));
     werk.add_task(Task::new(
-        serde_json::json!({"company": "{{ company }}", "query": "{{ result: absent }}"}),
+        serde_json::json!({"company": "{{ company }}", "query": "{{ find_result(absent) }}"}),
     ));
     finish(&werk).await;
     let messages = provider.received();
     let input: serde_json::Value = serde_json::from_str(user_text(&messages[0]).trim()).unwrap();
     assert_eq!(input["company"], "{{ company }}");
-    assert_eq!(input["query"], "{{ result: absent }}");
+    assert_eq!(input["query"], "{{ find_result(absent) }}");
 }
 
 #[tokio::test]

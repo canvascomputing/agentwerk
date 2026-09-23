@@ -17,7 +17,7 @@ use serde_json::{json, Value};
 const PLAN: &str = "plan";
 const CODING: &str = "coding";
 const SESSION_DIR: &str = "./session";
-const CODER_TASK: &str = "Implement this plan:\n\n{{ result: plan }}";
+const CODER_TASK: &str = "Implement this plan:\n\n{{ find_result(plan) }}";
 const PLANNER_ROLE: &str = include_str!("planner.md");
 const CODER_ROLE: &str = include_str!("coder.md");
 

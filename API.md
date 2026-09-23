@@ -192,7 +192,7 @@ use agentwerk::{Agent, Task};
 
 let writer = Agent::from_env()
     .label("report")
-    .role("Write for {{ company }} using:\n{{ results: research }}");
+    .role("Write for {{ company }} using:\n{{ find_results(research) }}");
 
 werk.add_agent(writer);
 werk.set_template("company", "Canvas Computing");
@@ -223,19 +223,18 @@ Each context field is also available separately: `{{ task_id }}`, `{{ date }}`, 
 | Expression | Output |
 |---|---|
 | `{{ name }}` | The value assigned to `name`. |
-| `{{ name \| JSONPath }}` | A value selected from the template variable after parsing it as JSON. |
-| `{{ result: AQL }}` | The first matching result. Strings appear as text and other values as compact JSON. |
-| `{{ results: AQL }}` | Matching results as a compact JSON array. |
-| `{{ result: AQL \| JSONPath }}` | A value selected from the first result. |
-| `{{ results: AQL \| JSONPath }}` | A value selected from the array of matching results. |
-| `{{ task: AQL }}` | The first matching task as compact JSON. |
-| `{{ tasks: AQL }}` | Matching tasks as a compact JSON array. |
-| `{{ task: AQL \| JSONPath }}` | A value selected from the first matching task. |
-| `{{ tasks: AQL \| JSONPath }}` | A value selected from the array of matching tasks. |
-| `{{ event: AQL }}` | The first matching event as compact JSON. |
-| `{{ events: AQL }}` | Matching events as a compact JSON array. |
-| `{{ event: AQL \| JSONPath }}` | A value selected from the first matching event. |
-| `{{ events: AQL \| JSONPath }}` | A value selected from the array of matching events. |
+| `{{ find_result(AQL) }}` | The first matching result. Strings appear as text and other values as compact JSON. |
+| `{{ find_results(AQL) }}` | Matching results as a compact JSON array. |
+| `{{ find_result(AQL).JSONPath }}` | A value selected from the first result. |
+| `{{ find_results(AQL)[*].JSONPath }}` | Values selected from the array of matching results. |
+| `{{ find_task(AQL) }}` | The first matching task as compact JSON. |
+| `{{ find_tasks(AQL) }}` | Matching tasks as a compact JSON array. |
+| `{{ find_task(AQL).JSONPath }}` | A value selected from the first matching task. |
+| `{{ find_tasks(AQL)[*].JSONPath }}` | Values selected from the array of matching tasks. |
+| `{{ find_event(AQL) }}` | The first matching event as compact JSON. |
+| `{{ find_events(AQL) }}` | Matching events as a compact JSON array. |
+| `{{ find_event(AQL).JSONPath }}` | A value selected from the first matching event. |
+| `{{ find_events(AQL)[*].JSONPath }}` | Values selected from the array of matching events. |
 
 `null`, empty arrays, and unmatched selectors render to an empty string.
 
@@ -258,7 +257,7 @@ For example, given this `research` result:
 This template:
 
 ```text
-{{ result: research | company.name }}
+{{ find_result(research).company.name }}
 ```
 
 Renders as:
@@ -270,8 +269,8 @@ Canvas Computing
 Select each task input or event's data:
 
 ```text
-{{ tasks: research | [*].task }}
-{{ events: event.name = tool_call_failed | [*].data }}
+{{ find_tasks(research)[*].task }}
+{{ find_events(event.name = tool_call_failed)[*].data }}
 ```
 
 `research` is shorthand for `task.label = research`.
@@ -665,7 +664,7 @@ werk.add_condition(
     Condition("task.label = research AND task.status = finished")
         .agent(Agent::from_env().label("report"))
         .task(Task(
-            "Write {{ result: task.label = research AND task.status = finished }}",
+            "Write {{ find_result(task.label = research AND task.status = finished) }}",
         ).label("report")),
 );
 ```
@@ -679,7 +678,7 @@ werk.add_task(Task("Rank all products by value.").label("research"));
 werk.finish_task("research").await;
 
 werk.add_task(Task(
-    "Write the board report from:\n\n{{ result: research }}",
+    "Write the board report from:\n\n{{ find_result(research) }}",
 ).label("report"));
 ```
 
