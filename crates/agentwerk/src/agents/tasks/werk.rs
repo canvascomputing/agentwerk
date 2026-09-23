@@ -249,7 +249,7 @@ impl Run {
 ///             .tool(FetchTool),
 ///     );
 /// }
-/// werk.add_task(Task::labeled("research", "Summarize https://canvascomputing.org"));
+/// werk.add_task(Task("Summarize https://canvascomputing.org").label("research"));
 /// werk.finish().await;
 /// # }
 /// ```
@@ -469,7 +469,7 @@ impl Werk {
     /// let werk = Werk();
     /// werk.on_event(|werk, event| {
     ///     if event.get_name() == Event::TASK_FAILED {
-    ///         werk.add_task(Task::labeled("triage", "Look into the failure."));
+    ///         werk.add_task(Task("Look into the failure.").label("triage"));
     ///     }
     /// });
     /// ```
@@ -545,7 +545,7 @@ impl Werk {
     /// let werk = Werk();
     /// werk.on_result(|werk, done, result| {
     ///     if result["needs_review"] == true {
-    ///         werk.add_task(Task::labeled("review", done.get_task().clone()));
+    ///         werk.add_task(Task(done.get_task().clone()).label("review"));
     ///     }
     /// });
     /// ```
@@ -1616,11 +1616,11 @@ mod tests {
     #[test]
     fn a_condition_registered_after_matching_activity_waits_for_the_next_event() {
         let (werk, _tmp) = test_werk();
-        let draft = werk.add_task(Task::labeled("draft", "write"));
+        let draft = werk.add_task(crate::Task("write").label("draft"));
         assert!(werk.find_tasks("edit").is_empty());
 
         werk.add_condition(
-            Condition::new("task.label = draft").task(Task::labeled("edit", "edit")),
+            Condition::new("task.label = draft").task(crate::Task("edit").label("edit")),
         );
         assert!(werk.find_tasks("edit").is_empty());
 
@@ -1633,11 +1633,11 @@ mod tests {
     fn a_task_condition_is_checked_when_the_task_event_is_emitted() {
         let (werk, _tmp) = test_werk();
         werk.add_condition(
-            Condition::new("task.label = draft").task(Task::labeled("task-match", "matched")),
+            Condition::new("task.label = draft").task(crate::Task("matched").label("task-match")),
         );
         assert!(werk.find_tasks("task-match").is_empty());
 
-        werk.add_task(Task::labeled("draft", "write"));
+        werk.add_task(crate::Task("write").label("draft"));
 
         assert_eq!(werk.find_tasks("task-match").len(), 1);
     }
@@ -1646,7 +1646,7 @@ mod tests {
     fn an_event_condition_is_checked_when_the_event_is_emitted() {
         let (werk, _tmp) = test_werk();
         werk.add_condition(
-            Condition::new("event.name = ready").task(Task::labeled("event-match", "matched")),
+            Condition::new("event.name = ready").task(crate::Task("matched").label("event-match")),
         );
         assert!(werk.find_tasks("event-match").is_empty());
 
@@ -1658,10 +1658,10 @@ mod tests {
     #[test]
     fn a_joined_condition_matches_the_task_and_event_from_one_emission() {
         let (werk, _tmp) = test_werk();
-        let draft = werk.add_task(Task::labeled("draft", "write"));
+        let draft = werk.add_task(crate::Task("write").label("draft"));
         werk.add_condition(
             Condition::new("task.label = draft AND event.name = ready")
-                .task(Task::labeled("joined-match", "matched")),
+                .task(crate::Task("matched").label("joined-match")),
         );
         assert!(werk.find_tasks("joined-match").is_empty());
 
@@ -1676,7 +1676,8 @@ mod tests {
         werk.on_event(|werk, event| {
             if event.get_name() == "ready" {
                 werk.add_condition(
-                    Condition::new("event.name = ready").task(Task::labeled("released", "work")),
+                    Condition::new("event.name = ready")
+                        .task(crate::Task("work").label("released")),
                 );
             }
         });
@@ -1689,10 +1690,10 @@ mod tests {
     #[test]
     fn a_task_finished_condition_sees_the_finished_task_state() {
         let (werk, _tmp) = test_werk();
-        let draft = werk.add_task(Task::labeled("draft", "write"));
+        let draft = werk.add_task(crate::Task("write").label("draft"));
         werk.add_condition(
             Condition::new("task.status = finished AND event.name = task_finished")
-                .task(Task::labeled("edit", "edit")),
+                .task(crate::Task("edit").label("edit")),
         );
         assert!(werk.find_tasks("edit").is_empty());
 
@@ -1704,12 +1705,12 @@ mod tests {
     #[test]
     fn loaded_records_do_not_satisfy_a_runtime_condition() {
         let (werk, tmp) = test_werk();
-        let draft = werk.add_task(Task::labeled("draft", "write"));
+        let draft = werk.add_task(crate::Task("write").label("draft"));
         drop(werk);
 
         let loaded = Werk::load(tmp.path()).unwrap();
         loaded.add_condition(
-            Condition::new("task.label = draft").task(Task::labeled("edit", "edit")),
+            Condition::new("task.label = draft").task(crate::Task("edit").label("edit")),
         );
         assert!(loaded.find_tasks("edit").is_empty());
 
@@ -1721,7 +1722,7 @@ mod tests {
     fn registered_conditions_are_not_restored_with_a_session() {
         let (werk, tmp) = test_werk();
         werk.add_condition(
-            Condition::new("event.name = ready").task(Task::labeled("released", "work")),
+            Condition::new("event.name = ready").task(crate::Task("work").label("released")),
         );
         drop(werk);
 
@@ -1737,7 +1738,7 @@ mod tests {
         werk.emit_event(Event::new(Event::TEXT_CHUNK_RECEIVED));
         werk.add_condition(
             Condition::new("event.name = text_chunk_received")
-                .task(Task::labeled("stream", "seen")),
+                .task(crate::Task("seen").label("stream")),
         );
         assert!(werk.find_tasks("stream").is_empty());
 
@@ -1752,8 +1753,11 @@ mod tests {
             Condition::new("event.name = ready")
                 .agent(minimal_agent("first"))
                 .agents([minimal_agent("second"), minimal_agent("third")])
-                .task(Task::labeled("one", "one"))
-                .tasks([Task::labeled("two", "two"), Task::labeled("three", "three")]),
+                .task(crate::Task("one").label("one"))
+                .tasks([
+                    crate::Task("two").label("two"),
+                    crate::Task("three").label("three"),
+                ]),
         );
 
         werk.emit_event(Event::new("ready"));
@@ -1771,7 +1775,7 @@ mod tests {
         werk.add_condition(
             Condition::new("event.name = ready")
                 .times(3)
-                .task(Task::labeled("released", "work")),
+                .task(crate::Task("work").label("released")),
         );
         let threads = (0..8)
             .map(|_| {
@@ -1792,7 +1796,7 @@ mod tests {
     fn task_events_created_by_an_action_cannot_retrigger_the_condition() {
         let (werk, _tmp) = test_werk();
         werk.add_condition(
-            Condition::new("event.name = task_created").task(Task::labeled("released", "work")),
+            Condition::new("event.name = task_created").task(crate::Task("work").label("released")),
         );
 
         werk.add_task("trigger");
@@ -1806,7 +1810,7 @@ mod tests {
         werk.add_condition(
             Condition::new("event.name = task_created")
                 .times(3)
-                .task(Task::labeled("released", "work")),
+                .task(crate::Task("work").label("released")),
         );
 
         werk.add_task("trigger");
@@ -1821,7 +1825,7 @@ mod tests {
             Condition::new("event.name = ready").times(0),
         ] {
             let (werk, _tmp) = test_werk();
-            werk.add_condition(condition.task(Task::labeled("released", "work")));
+            werk.add_condition(condition.task(crate::Task("work").label("released")));
 
             for _ in 0..3 {
                 werk.emit_event(Event::new("ready"));
@@ -1837,7 +1841,7 @@ mod tests {
         werk.add_condition(
             Condition::new("event.name = ready")
                 .times(2)
-                .task(Task::labeled("unclaimed", "work")),
+                .task(crate::Task("work").label("unclaimed")),
         );
 
         werk.start();
@@ -1863,7 +1867,7 @@ mod tests {
     async fn a_run_started_condition_releases_work_into_the_starting_run() {
         let (werk, _tmp) = test_werk();
         werk.add_condition(
-            Condition::new("event.name = run_started").task(Task::labeled("startup", "work")),
+            Condition::new("event.name = run_started").task(crate::Task("work").label("startup")),
         );
         assert!(werk.find_tasks("startup").is_empty());
 
@@ -1878,7 +1882,8 @@ mod tests {
     async fn a_run_finished_condition_queues_work_for_the_next_run() {
         let (werk, _tmp) = test_werk();
         werk.add_condition(
-            Condition::new("event.name = run_finished").task(Task::labeled("after-run", "work")),
+            Condition::new("event.name = run_finished")
+                .task(crate::Task("work").label("after-run")),
         );
         assert!(werk.find_tasks("after-run").is_empty());
 
@@ -2035,9 +2040,9 @@ mod tests {
     #[test]
     fn one_task_query_can_select_tasks_and_their_results() {
         let (werk, _tmp) = test_werk();
-        werk.add_task(Task::labeled("scan", "a"));
-        werk.add_task(Task::labeled("scan", "b"));
-        werk.add_task(Task::labeled("report", "c"));
+        werk.add_task(crate::Task("a").label("scan"));
+        werk.add_task(crate::Task("b").label("scan"));
+        werk.add_task(crate::Task("c").label("report"));
         attach_done_result(&werk, "t-1", "clean one");
         attach_done_result(&werk, "t-2", "clean two");
         attach_done_result(&werk, "t-3", "reported");
@@ -2062,7 +2067,7 @@ mod tests {
     #[test]
     fn compiled_label_shorthand_works_with_all_finders() {
         let (werk, _tmp) = test_werk();
-        werk.add_task(Task::labeled("scan", "a"));
+        werk.add_task(crate::Task("a").label("scan"));
         attach_done_result(&werk, "t-1", "clean");
 
         let tasks = Query::new("scan").unwrap();
@@ -2156,8 +2161,8 @@ mod tests {
     #[test]
     fn find_results_selects_by_task_label() {
         let (werk, _tmp) = test_werk();
-        werk.add_task(Task::labeled("scan", "a"));
-        werk.add_task(Task::labeled("report", "b"));
+        werk.add_task(crate::Task("a").label("scan"));
+        werk.add_task(crate::Task("b").label("report"));
         attach_done_result(&werk, "t-1", "scanned");
         attach_done_result(&werk, "t-2", "reported");
         assert_eq!(
@@ -2169,8 +2174,8 @@ mod tests {
     #[test]
     fn find_results_defaults_to_finished_when_the_query_names_no_status() {
         let (werk, _tmp) = test_werk();
-        werk.add_task(Task::labeled("scan", "a"));
-        werk.add_task(Task::labeled("scan", "b"));
+        werk.add_task(crate::Task("a").label("scan"));
+        werk.add_task(crate::Task("b").label("scan"));
         attach_done_result(&werk, "t-1", "scanned");
         assert_eq!(
             werk.find_results("task.label = scan"),
@@ -2181,7 +2186,7 @@ mod tests {
     #[test]
     fn find_results_keeps_the_status_the_query_names() {
         let (werk, _tmp) = test_werk();
-        werk.add_task(Task::labeled("scan", "a"));
+        werk.add_task(crate::Task("a").label("scan"));
         werk.set_result("t-1", serde_json::json!({"answer": "mid-flight"}))
             .unwrap();
         assert_eq!(
@@ -2193,8 +2198,8 @@ mod tests {
     #[test]
     fn find_results_takes_a_closure_in_place_of_a_query() {
         let (werk, _tmp) = test_werk();
-        werk.add_task(Task::labeled("scan", "a"));
-        werk.add_task(Task::labeled("report", "b"));
+        werk.add_task(crate::Task("a").label("scan"));
+        werk.add_task(crate::Task("b").label("report"));
         attach_done_result(&werk, "t-1", "scanned");
         attach_done_result(&werk, "t-2", "reported");
         assert_eq!(
@@ -2206,7 +2211,7 @@ mod tests {
     #[test]
     fn find_results_defaults_a_closure_to_finished_tasks() {
         let (werk, _tmp) = test_werk();
-        werk.add_task(Task::labeled("scan", "a"));
+        werk.add_task(crate::Task("a").label("scan"));
         // A result attached without the finish transition, which the default
         // leaves out because a closure names no status of its own.
         werk.set_result("t-1", serde_json::json!({"answer": "mid-flight"}))
@@ -2253,9 +2258,9 @@ mod tests {
     #[test]
     fn task_queries_project_events_grouped_in_task_order() {
         let (werk, tmp) = test_werk();
-        werk.add_task(Task::labeled("scan", "first"));
-        werk.add_task(Task::labeled("scan", "second"));
-        werk.add_task(Task::labeled("report", "third"));
+        werk.add_task(crate::Task("first").label("scan"));
+        werk.add_task(crate::Task("second").label("scan"));
+        werk.add_task(crate::Task("third").label("report"));
         Stats::append(tmp.path(), &Event::new("noted").task_id("t-2")).unwrap();
         Stats::append(tmp.path(), &Event::new("noted").task_id("t-1")).unwrap();
         let query = Query::new("task.label = scan ORDER BY task.id DESC").unwrap();
@@ -2335,8 +2340,8 @@ mod tests {
     #[test]
     fn joined_lifecycle_queries_select_current_tasks() {
         let (werk, _tmp) = test_werk();
-        werk.add_task(Task::labeled("scan", "first"));
-        werk.add_task(Task::labeled("report", "second"));
+        werk.add_task(crate::Task("first").label("scan"));
+        werk.add_task(crate::Task("second").label("report"));
         let joined = Query::new("scan AND event.name = task_created").unwrap();
 
         assert!(werk.pending(&joined));
@@ -2360,8 +2365,8 @@ mod tests {
     #[tokio::test]
     async fn joined_finish_returns_results_in_join_order() {
         let (werk, tmp) = test_werk();
-        werk.add_task(Task::labeled("scan", "first"));
-        werk.add_task(Task::labeled("scan", "second"));
+        werk.add_task(crate::Task("first").label("scan"));
+        werk.add_task(crate::Task("second").label("scan"));
         attach_done_result(&werk, "t-1", "one");
         attach_done_result(&werk, "t-2", "two");
         Stats::append(
@@ -2396,9 +2401,9 @@ mod tests {
     #[test]
     fn mixed_queries_project_joined_rows_through_all_read_finders() {
         let (werk, tmp) = test_werk();
-        werk.add_task(Task::labeled("scan", "first"));
-        werk.add_task(Task::labeled("scan", "second"));
-        werk.add_task(Task::labeled("report", "third"));
+        werk.add_task(crate::Task("first").label("scan"));
+        werk.add_task(crate::Task("second").label("scan"));
+        werk.add_task(crate::Task("third").label("report"));
         attach_done_result(&werk, "t-1", "one");
         attach_done_result(&werk, "t-2", "two");
         attach_done_result(&werk, "t-3", "three");
@@ -2447,8 +2452,8 @@ mod tests {
     #[test]
     fn mixed_queries_use_pair_level_boolean_and_inner_join_semantics() {
         let (werk, tmp) = test_werk();
-        werk.add_task(Task::labeled("scan", "first"));
-        werk.add_task(Task::labeled("report", "second"));
+        werk.add_task(crate::Task("first").label("scan"));
+        werk.add_task(crate::Task("second").label("report"));
         for event in [
             Event::new("ordinary").task_id("t-1"),
             Event::new("selected").task_id("t-2"),
@@ -2499,7 +2504,7 @@ mod tests {
     #[test]
     fn joined_result_queries_honor_an_explicit_unfinished_status() {
         let (werk, _tmp) = test_werk();
-        werk.add_task(Task::labeled("scan", "work"));
+        werk.add_task(crate::Task("work").label("scan"));
         werk.set_result("t-1", serde_json::json!({"answer": "mid-flight"}))
             .unwrap();
 
@@ -2514,8 +2519,8 @@ mod tests {
     #[test]
     fn find_tasks_compiles_the_string_as_a_query() {
         let (werk, _tmp) = test_werk();
-        werk.add_task(Task::labeled("scan", "a"));
-        werk.add_task(Task::labeled("report", "b"));
+        werk.add_task(crate::Task("a").label("scan"));
+        werk.add_task(crate::Task("b").label("report"));
         let found = werk.find_tasks("task.label = report AND task.status = todo");
         assert_eq!(found.len(), 1);
         assert_eq!(found[0].task, serde_json::json!("b"));
@@ -2524,8 +2529,8 @@ mod tests {
     #[test]
     fn a_bare_event_name_selects_a_task_label() {
         let (werk, tmp) = test_werk();
-        werk.add_task(Task::labeled(Event::TOOL_CALL_FAILED, "label match"));
-        werk.add_task(Task::labeled("other", "event match"));
+        werk.add_task(crate::Task("label match").label(Event::TOOL_CALL_FAILED));
+        werk.add_task(crate::Task("event match").label("other"));
         Stats::append(
             tmp.path(),
             &Event::new(Event::TOOL_CALL_FAILED).task_id("t-2"),

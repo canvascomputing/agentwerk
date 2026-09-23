@@ -49,7 +49,7 @@
 //!     "https://canvascomputing.org/products",
 //!     "https://canvascomputing.org/blog",
 //! ] {
-//!     werk.add_task(Task::labeled("research", format!("Summarize {url}")));
+//!     werk.add_task(Task(format!("Summarize {url}")).label("research"));
 //! }
 //!
 //! werk.finish().await;

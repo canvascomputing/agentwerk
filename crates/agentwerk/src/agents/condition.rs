@@ -17,7 +17,7 @@ use super::{Agent, Query, Task};
 /// let id = werk.add_condition(
 ///     Condition("task.label = draft AND task.status = finished")
 ///         .agent(Agent::from_env().label("edit"))
-///         .task(Task::labeled("edit", "Edit the completed draft.")),
+///         .task(Task("Edit the completed draft.").label("edit")),
 /// );
 /// assert_eq!(id, "condition-1");
 /// # Ok(())

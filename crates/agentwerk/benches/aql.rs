@@ -109,14 +109,14 @@ impl Fixture {
             } else {
                 "haystack"
             };
-            let id = werk.add_task(Task::labeled(
-                task_label(task_index),
-                json!({
+            let id = werk.add_task(
+                Task(json!({
                     "index": task_index,
                     "marker": marker,
                     "body": task_body,
-                }),
-            ));
+                }))
+                .label(task_label(task_index)),
+            );
 
             for (event_index, event_name) in SYNTHETIC_EVENTS.iter().enumerate() {
                 let event_name =

@@ -112,11 +112,6 @@ impl Task {
         }
     }
 
-    /// Create a task carrying `task` under `label`, the pair most tasks set.
-    pub fn labeled<T: Serialize>(label: impl Into<String>, task: T) -> Self {
-        Self::new(task).label(label)
-    }
-
     /// Set the label, replacing any label already set.
     pub fn label(mut self, label: impl Into<String>) -> Self {
         self.label = Some(label.into());
@@ -536,8 +531,8 @@ mod tests {
     }
 
     #[test]
-    fn labeled_carries_both_the_label_and_the_task() {
-        let task = Task::labeled("analysis", "Audit src/db.");
+    fn callable_constructor_and_label_builder_carry_both_values() {
+        let task = crate::Task("Audit src/db.").label("analysis");
         assert_eq!(task.get_label(), Some("analysis"));
         assert_eq!(task.get_task(), &serde_json::json!("Audit src/db."));
     }

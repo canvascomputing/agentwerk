@@ -27,7 +27,7 @@ async fn finish(werk: &Werk) {
 }
 
 fn research(werk: &Werk, result: &str) -> String {
-    let id = werk.add_task(Task::labeled("research", "research"));
+    let id = werk.add_task(crate::Task("research").label("research"));
     werk.set_task_finished(&id, serde_json::json!({"research": result}))
         .unwrap();
     id
@@ -266,7 +266,7 @@ async fn agent_setters_update_shared_values_for_roles_and_previously_added_tasks
             .template("company", "old")
             .template("company", "Worker"),
     );
-    creator.add_task(Task::labeled("worker", "{{ company }}"));
+    creator.add_task(crate::Task("{{ company }}").label("worker"));
     creator.clone().template("company", "Updated");
     finish(&werk).await;
     assert_eq!(provider.received_system_prompts(), ["Updated"]);
@@ -434,8 +434,8 @@ async fn concurrent_tasks_receive_their_own_runtime_prompt_values() {
     let beta = MockProvider::with_results(vec![Ok(write_result_response("beta"))]);
     werk.add_agent(task_agent(&alpha).label("alpha").role("{{ task_id }}"));
     werk.add_agent(task_agent(&beta).label("beta").role("{{ task_id }}"));
-    let alpha_id = werk.add_task(Task::labeled("alpha", "go"));
-    let beta_id = werk.add_task(Task::labeled("beta", "go"));
+    let alpha_id = werk.add_task(crate::Task("go").label("alpha"));
+    let beta_id = werk.add_task(crate::Task("go").label("beta"));
     finish(&werk).await;
     assert_eq!(alpha.received_system_prompts(), [alpha_id]);
     assert_eq!(beta.received_system_prompts(), [beta_id]);
