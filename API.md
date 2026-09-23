@@ -148,7 +148,7 @@ Put each piece of work in a task. The task records its status and result.
 ```rust
 use agentwerk::Task;
 
-let task = Task::labeled("review", "Review the release notes.");
+let task = Task("Review the release notes.").label("review");
 werk.add_task(task);
 ```
 
@@ -197,7 +197,7 @@ let writer = Agent::from_env()
 werk.add_agent(writer);
 werk.set_template("company", "Canvas Computing");
 werk.finish_tasks("research").await;
-werk.add_task(Task::labeled("report", "Write the board report."));
+werk.add_task(Task("Write the board report.").label("report"));
 ```
 
 <details>
@@ -522,8 +522,8 @@ let writer = Agent::from_env()
 let werk = Werk();
 werk.add_agent(analyst).add_agent(writer);
 
-werk.add_task(Task::labeled("analysis", "Rank all products by value."));
-werk.add_task(Task::labeled("report", "Write up the ranking."));
+werk.add_task(Task("Rank all products by value.").label("analysis"));
+werk.add_task(Task("Write up the ranking.").label("report"));
 ```
 
 `start()` keeps processing tasks in the background. `finish()` runs tasks and waits for results.
@@ -649,7 +649,7 @@ Use a hook to create a new task when a matching result arrives:
 ```rust
 werk.on_result(|werk, done, result| {
     if done.get_label() == Some("research") {
-        werk.add_task(Task::labeled("report", result.clone()));
+        werk.add_task(Task(result.clone()).label("report"));
     }
 });
 ```
@@ -664,10 +664,9 @@ use agentwerk::Condition;
 werk.add_condition(
     Condition("task.label = research AND task.status = finished")
         .agent(Agent::from_env().label("report"))
-        .task(Task::labeled(
-            "report",
+        .task(Task(
             "Write {{ result: task.label = research AND task.status = finished }}",
-        )),
+        ).label("report")),
 );
 ```
 
@@ -676,13 +675,12 @@ werk.add_condition(
 Wait for the research task, then insert its result into the report task:
 
 ```rust
-werk.add_task(Task::labeled("research", "Rank all products by value."));
+werk.add_task(Task("Rank all products by value.").label("research"));
 werk.finish_task("research").await;
 
-werk.add_task(Task::labeled(
-    "report",
+werk.add_task(Task(
     "Write the board report from:\n\n{{ result: research }}",
-));
+).label("report"));
 ```
 
 #### Knowledge
@@ -715,10 +713,9 @@ let writer = Agent::from_env()
     .tool(TaskTool);
 
 werk.add_agent(writer);
-werk.add_task(Task::labeled(
-    "report",
+werk.add_task(Task(
     "Read the result of t-1 with the task tool, then write the board report.",
-));
+).label("report"));
 ```
 
 #### ReadFileTool
@@ -733,10 +730,9 @@ let writer = Agent::from_env()
     .tool(ReadFileTool);
 
 werk.add_agent(writer);
-werk.add_task(Task::labeled(
-    "report",
+werk.add_task(Task(
     "Read .agentwerk/tasks/t-1/result.json, then write the board report.",
-));
+).label("report"));
 ```
 
 ### Configuration

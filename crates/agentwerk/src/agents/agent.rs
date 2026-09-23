@@ -1221,8 +1221,8 @@ mod tests {
                 ))]))
                 .model("test"),
         );
-        agent.add_task(Task::labeled("scan", "scan"));
-        let report = werk.add_task(Task::labeled("report", "report"));
+        agent.add_task(crate::Task("scan").label("scan"));
+        let report = werk.add_task(crate::Task("report").label("report"));
 
         assert_eq!(
             agent.finish().await,

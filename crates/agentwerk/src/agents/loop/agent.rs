@@ -708,9 +708,9 @@ mod tests {
                         .model("mock")
                         .role("test"),
                 )
-                .task(Task::labeled("edit", "edit the draft")),
+                .task(crate::Task("edit the draft").label("edit")),
         );
-        werk.add_task(Task::labeled("draft", "write the draft"));
+        werk.add_task(crate::Task("write the draft").label("draft"));
 
         tokio::time::timeout(Duration::from_secs(5), werk.finish())
             .await
@@ -757,10 +757,10 @@ mod tests {
                 .iter()
                 .filter_map(|scan| scan["answer"].as_str())
                 .collect();
-            werk.add_task(Task::labeled(
-                "report",
-                format!("Write the report from {}.", verdicts.join(" and ")),
-            ));
+            werk.add_task(
+                crate::Task(format!("Write the report from {}.", verdicts.join(" and ")))
+                    .label("report"),
+            );
         });
 
         for label in ["scan", "scan", "report"] {
@@ -774,8 +774,8 @@ mod tests {
         }
 
         werk.start();
-        werk.add_task(Task::labeled("scan", "scan a.py"));
-        werk.add_task(Task::labeled("scan", "scan b.py"));
+        werk.add_task(crate::Task("scan a.py").label("scan"));
+        werk.add_task(crate::Task("scan b.py").label("scan"));
 
         tokio::time::timeout(Duration::from_secs(5), werk.finish())
             .await

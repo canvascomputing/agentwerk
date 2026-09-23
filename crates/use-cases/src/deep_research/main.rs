@@ -38,8 +38,8 @@ async fn main() {
         .role(WRITER_ROLE)
         .knowledge(&knowledge);
 
-    let research_task = Task::labeled(RESEARCH, RESEARCH_TASK);
-    let report_task = Task::labeled(REPORT, REPORT_TASK);
+    let research_task = Task(RESEARCH_TASK).label(RESEARCH);
+    let report_task = Task(REPORT_TASK).label(REPORT);
     let finished_research = "task.label = research AND task.status = finished";
     let write_report = Condition(finished_research).task(report_task);
 

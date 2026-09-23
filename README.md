@@ -242,15 +242,11 @@ APIs: [Tools](API.md#tools), [FetchTool](API.md#fetchtool), and [Custom tools](A
 Create one task for research and another for writing. Each label routes the task to the matching agent. The `question` and `focus` templates insert shared values into the prompts. A condition queues the report after the research finishes.
 
 ```rust
-let research_task = Task::labeled(
-    "research",
-    "Research {{ question }} with emphasis on {{ focus }}.",
-);
+let research_task = Task("Research {{ question }} with emphasis on {{ focus }}.")
+    .label("research");
 
-let report_task = Task::labeled(
-    "report",
-    "Write a cited report answering:\n\n{{ question }}",
-);
+let report_task = Task("Write a cited report answering:\n\n{{ question }}")
+    .label("report");
 
 let write_report = Condition("task.label = research AND task.status = finished")
     .task(report_task);
@@ -462,10 +458,8 @@ Store the session in `./session` so you can stop the program and continue the sa
 let werk = Werk();
 werk.set_dir("./session");
 
-let coder_task = Task::labeled(
-    "coding",
-    "Implement this plan:\n\n{{ result: plan }}",
-);
+let coder_task = Task("Implement this plan:\n\n{{ result: plan }}")
+    .label("coding");
 
 let start_coder = Condition("task.label = plan AND task.status = finished")
     .task(coder_task);
@@ -474,10 +468,8 @@ let start_coder = Condition("task.label = plan AND task.status = finished")
 Register the agents and condition, add the planning task, then run until the interactive coder pauses.
 
 ```rust
-let plan_task = Task::labeled(
-    "plan",
-    "Add a --dry-run flag to the database migration command.",
-);
+let plan_task = Task("Add a --dry-run flag to the database migration command.")
+    .label("plan");
 
 werk.add_agent(planner);
 werk.add_agent(coder);

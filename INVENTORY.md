@@ -602,7 +602,6 @@ The rules the tables never repeat.
 | Python | `Task`: values are read through the same `get_*` methods as Rust; replies and errors are converted on access | |
 | Rust | `.new(task: json): this` | pub |
 | Python | `Task(task)` | |
-| Rust | `.labeled(label: string, task: json): this` | pub |
 | Python | `Task(task, label=l)` | |
 | Rust | `.label(label: string): this` | pub |
 | Python | `Task(task, label=l)` | |

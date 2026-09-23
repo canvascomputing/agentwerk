@@ -48,13 +48,13 @@ async fn walks_every_task_action() -> std::result::Result<(), Box<dyn std::error
     });
     werk.on_result(|werk, done, _| {
         if done.get_label() == Some("archive") {
-            werk.add_task(Task::labeled(
-                "auditor",
-                serde_json::json!({
+            werk.add_task(
+                Task(serde_json::json!({
                     "source_task_id": done.get_id(),
                     "instruction": "Audit the archived record."
-                }),
-            ));
+                }))
+                .label("auditor"),
+            );
         }
     });
 

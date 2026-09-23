@@ -248,8 +248,7 @@ fn git_tool() -> CommandTool {
 }
 
 fn coder_condition() -> Condition {
-    Condition("task.label = plan AND task.status = finished")
-        .task(Task::labeled(CODING, CODER_TASK))
+    Condition("task.label = plan AND task.status = finished").task(Task(CODER_TASK).label(CODING))
 }
 
 #[cfg(test)]

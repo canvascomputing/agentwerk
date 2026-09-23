@@ -672,8 +672,8 @@ mod tests {
     #[test]
     fn result_selectors_keep_strings_plain_and_structured_values_compact() {
         let (werk, _dir) = session();
-        let first = werk.add_task(Task::labeled("research", "first"));
-        let second = werk.add_task(Task::labeled("research", "second"));
+        let first = werk.add_task(Task("first").label("research"));
+        let second = werk.add_task(Task("second").label("research"));
         werk.set_task_finished(&first, serde_json::json!("first {{ company }}"))
             .unwrap();
         werk.set_task_finished(&second, serde_json::json!({"answer": 42}))
@@ -691,7 +691,7 @@ mod tests {
     #[test]
     fn result_json_paths_render_fields_and_structured_values() {
         let (werk, _dir) = session();
-        let id = werk.add_task(Task::labeled("research", "go"));
+        let id = werk.add_task(Task("go").label("research"));
         werk.set_task_finished(
             &id,
             serde_json::json!({
@@ -724,7 +724,7 @@ mod tests {
     fn plural_result_json_paths_use_the_selected_array_as_the_root() {
         let (werk, _dir) = session();
         for verdict in ["safe", "review"] {
-            let id = werk.add_task(Task::labeled("scan", "go"));
+            let id = werk.add_task(Task("go").label("scan"));
             werk.set_task_finished(&id, serde_json::json!({"verdict": verdict}))
                 .unwrap();
         }
@@ -746,8 +746,8 @@ mod tests {
     #[test]
     fn task_expressions_return_the_first_match_in_query_order() {
         let (werk, _dir) = session();
-        werk.add_task(Task::labeled("scan", serde_json::json!({"file": "one"})));
-        werk.add_task(Task::labeled("scan", serde_json::json!({"file": "two"})));
+        werk.add_task(Task(serde_json::json!({"file": "one"})).label("scan"));
+        werk.add_task(Task(serde_json::json!({"file": "two"})).label("scan"));
 
         assert_eq!(
             render(&werk, "{{ task: scan ORDER BY task.id DESC | task.file }}",).unwrap(),
@@ -758,8 +758,8 @@ mod tests {
     #[test]
     fn tasks_expressions_use_the_selected_array_as_the_path_root() {
         let (werk, _dir) = session();
-        let first = werk.add_task(Task::labeled("scan", "one"));
-        let second = werk.add_task(Task::labeled("scan", "two"));
+        let first = werk.add_task(Task("one").label("scan"));
+        let second = werk.add_task(Task("two").label("scan"));
 
         assert_eq!(
             render(&werk, "{{ tasks: scan | [*].id }}").unwrap(),
@@ -770,7 +770,7 @@ mod tests {
     #[test]
     fn task_expressions_use_the_current_task_serde_shape() {
         let (werk, _dir) = session();
-        werk.add_task(Task::labeled("scan", serde_json::json!({"file": "one"})));
+        werk.add_task(Task(serde_json::json!({"file": "one"})).label("scan"));
 
         let serialized: Value =
             serde_json::from_str(&render(&werk, "{{ task: scan }}").unwrap()).unwrap();
@@ -861,7 +861,7 @@ mod tests {
     #[test]
     fn quoted_aql_pipes_do_not_start_json_paths() {
         let (werk, _dir) = session();
-        let id = werk.add_task(Task::labeled("research | notes", "go"));
+        let id = werk.add_task(Task("go").label("research | notes"));
         werk.set_task_finished(&id, serde_json::json!({"answer": "found"}))
             .unwrap();
 
@@ -878,7 +878,7 @@ mod tests {
     #[test]
     fn compact_aql_pipes_do_not_start_json_paths() {
         let (werk, _dir) = session();
-        let id = werk.add_task(Task::labeled("research|notes", "go"));
+        let id = werk.add_task(Task("go").label("research|notes"));
         werk.set_task_finished(&id, serde_json::json!("compact"))
             .unwrap();
 
@@ -891,7 +891,7 @@ mod tests {
     #[test]
     fn pipes_inside_query_variable_names_do_not_start_json_paths() {
         let (werk, _dir) = session();
-        let id = werk.add_task(Task::labeled("research", "go"));
+        let id = werk.add_task(Task("go").label("research"));
         werk.set_task_finished(&id, serde_json::json!({"answer": "found"}))
             .unwrap();
         werk.set_template("selection | literal", "research");
@@ -905,7 +905,7 @@ mod tests {
     #[test]
     fn malformed_json_paths_report_the_parse_failure() {
         let (werk, _dir) = session();
-        let id = werk.add_task(Task::labeled("research", "go"));
+        let id = werk.add_task(Task("go").label("research"));
         werk.set_task_finished(&id, serde_json::json!({"answer": "found"}))
             .unwrap();
 
@@ -954,7 +954,7 @@ mod tests {
     #[test]
     fn strings_selected_by_json_paths_are_not_rendered_again() {
         let (werk, _dir) = session();
-        let id = werk.add_task(Task::labeled("research", "go"));
+        let id = werk.add_task(Task("go").label("research"));
         werk.set_task_finished(&id, serde_json::json!({"answer": "{{ company }}"}))
             .unwrap();
         werk.set_template("company", "Acme");
@@ -968,9 +968,9 @@ mod tests {
     #[test]
     fn plural_result_selectors_follow_aql_order_and_skip_pending_tasks() {
         let (werk, _dir) = session();
-        let first = werk.add_task(Task::labeled("research", "first"));
-        let second = werk.add_task(Task::labeled("research", "second"));
-        werk.add_task(Task::labeled("research", "pending"));
+        let first = werk.add_task(Task("first").label("research"));
+        let second = werk.add_task(Task("second").label("research"));
+        werk.add_task(Task("pending").label("research"));
         werk.set_task_finished(&first, serde_json::json!("first"))
             .unwrap();
         werk.set_task_finished(&second, serde_json::json!("second"))
@@ -985,7 +985,7 @@ mod tests {
     #[test]
     fn joined_result_selectors_emit_each_matching_task_once() {
         let (werk, _dir) = session();
-        let selected = werk.add_task(Task::labeled("research", "selected"));
+        let selected = werk.add_task(Task("selected").label("research"));
         werk.set_task_finished(&selected, serde_json::json!({"answer": 42}))
             .unwrap();
         werk.emit_event(Event::new("selected").task_id(&selected));
@@ -1004,7 +1004,7 @@ mod tests {
     #[test]
     fn quoted_braces_inside_aql_do_not_end_the_expression() {
         let (werk, _dir) = session();
-        let id = werk.add_task(Task::labeled("research}notes", "go"));
+        let id = werk.add_task(Task("go").label("research}notes"));
         werk.set_task_finished(&id, serde_json::json!({"research": "found"}))
             .unwrap();
         assert_eq!(
@@ -1061,9 +1061,9 @@ mod tests {
     #[test]
     fn result_expressions_suppress_nulls_and_empty_arrays() {
         let (werk, _dir) = session();
-        let pending = werk.add_task(Task::labeled("research", "pending"));
-        let empty = werk.add_task(Task::labeled("empty", "empty"));
-        let useful = werk.add_task(Task::labeled("useful", "useful"));
+        let pending = werk.add_task(Task("pending").label("research"));
+        let empty = werk.add_task(Task("empty").label("empty"));
+        let useful = werk.add_task(Task("useful").label("useful"));
 
         assert_eq!(render(&werk, "{{ result: research }}").unwrap(), "");
         assert_eq!(render(&werk, "{{ results: research }}").unwrap(), "");
@@ -1138,7 +1138,7 @@ mod tests {
     #[test]
     fn direct_aql_resolves_but_aql_in_template_values_stays_literal() {
         let (werk, _dir) = session();
-        let id = werk.add_task(Task::labeled("research", "go"));
+        let id = werk.add_task(Task("go").label("research"));
         werk.set_task_finished(&id, serde_json::json!("Use {{ company }}"))
             .unwrap();
         werk.set_template("research", "{{ result: research }}");
@@ -1151,7 +1151,7 @@ mod tests {
     #[test]
     fn query_variables_expand_before_aql_parsing() {
         let (werk, _dir) = session();
-        let id = werk.add_task(Task::labeled("research", "go"));
+        let id = werk.add_task(Task("go").label("research"));
         werk.set_task_finished(&id, serde_json::json!("found"))
             .unwrap();
         werk.set_template("selection", "research");
@@ -1165,7 +1165,7 @@ mod tests {
     #[test]
     fn multiple_query_variables_expand_inside_quoted_aql_values() {
         let (werk, _dir) = session();
-        let id = werk.add_task(Task::labeled("research", "go"));
+        let id = werk.add_task(Task("go").label("research"));
         werk.set_task_finished(&id, serde_json::json!("found"))
             .unwrap();
         werk.set_templates([("field", "task.label"), ("label", "research")]);
@@ -1179,7 +1179,7 @@ mod tests {
     #[test]
     fn nested_replacements_are_not_rendered_again() {
         let (werk, _dir) = session();
-        let literal = werk.add_task(Task::labeled("{{ other }}", "go"));
+        let literal = werk.add_task(Task("go").label("{{ other }}"));
         werk.set_task_finished(&literal, serde_json::json!("literal"))
             .unwrap();
         werk.set_templates([
