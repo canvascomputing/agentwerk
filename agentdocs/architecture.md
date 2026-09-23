@@ -102,9 +102,9 @@ The invariants that govern orchestration, tools, providers, events, and durable 
 
 - Implement `Persist` for values saved and loaded as a whole; use inherent `append` only for append-only logs such as `Stats` and `Replies`.
 - Route whole-file writes through `write_atomic` and log writes through `append_line`.
-- Store task metadata, replies, results, tool outputs, events, trajectories, and knowledge in separate files under the Werk directory.
+- Store task metadata, replies, results, tool outputs, events, and knowledge in separate files under the Werk directory.
 - Keep automatic session writes best-effort so an I/O failure does not replace an in-memory task outcome.
-- Return I/O failures from caller-driven operations such as `Trajectory::save` and `Knowledge::get_pages` mutations.
+- Return I/O failures from caller-driven operations such as `Knowledge::get_pages` mutations.
 
 ## Knowledge
 

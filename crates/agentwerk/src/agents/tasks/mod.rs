@@ -12,7 +12,6 @@ mod error;
 mod reply;
 mod store;
 mod task;
-mod trajectory;
 mod werk;
 
 #[cfg(test)]
@@ -21,7 +20,6 @@ pub(super) mod test_util;
 pub use error::TaskError;
 pub use reply::{Author, Reply, ReplyContent};
 pub use task::{Status, Task};
-pub use trajectory::Trajectory;
 pub use werk::{FinishReason, Werk};
 
 pub(crate) use task::{Replies, TaskResult};

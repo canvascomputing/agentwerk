@@ -201,7 +201,7 @@ impl PyWerk {
     }
 
     /// Get the model that agent runs, or `None` when no agent of that name is
-    /// added. `Trajectory.from_task` needs it.
+    /// added.
     fn get_model_for_agent(&self, agent_id: &str) -> Option<String> {
         self.inner.get_model_for_agent(agent_id)
     }
@@ -244,9 +244,6 @@ impl PyWerk {
     }
 
     /// Read a task as it starts, finishes, or fails.
-    ///
-    /// It arrives with its messages, so a handler can pass it straight to
-    /// `Trajectory.from_task`.
     fn on_task<'py>(slf: PyRef<'py, Self>, handler: Py<PyAny>) -> PyRef<'py, Self> {
         slf.inner.on_task(move |werk, event: &Event, task: &Task| {
             Python::attach(|py| {

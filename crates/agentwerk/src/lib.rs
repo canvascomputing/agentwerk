@@ -96,7 +96,6 @@ pub use agents::Werk;
 pub use agents::Knowledge;
 pub use agents::Policy;
 pub use agents::PolicyViolation;
-pub use agents::Trajectory;
 
 pub use schemas::Schema;
 
