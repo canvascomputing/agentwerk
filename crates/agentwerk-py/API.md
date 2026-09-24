@@ -27,6 +27,7 @@ results = await agent.finish()
 
 | Area | Method | Description |
 |------|--------|-------------|
+| **Construct** | `Agent()` | Create an unconfigured agent. |
 | **Configure** | `role(role)` | Define who the agent is and how it should work. |
 | | `tool(tool)` | Register a tool the agent may call. |
 | | `tools(tools)` | Register several tools together. |
@@ -52,14 +53,15 @@ Send an agent's model requests to Anthropic, OpenAI, Mistral, or a LiteLLM proxy
 ```python
 from agentwerk import Agent, Anthropic
 
+provider = Anthropic(key)
 agent = (
     Agent()
-    .provider(Anthropic(key))
+    .provider(provider)
     .model("claude-sonnet-4-20250514")
 )
 ```
 
-You can also read the model or provider individually: `.provider(Provider.from_env())` or `.model(Model.from_env())`.
+You can also load the provider or model individually from environment variables: `.provider(Provider.from_env())` or `.model(Model.from_env())`.
 
 Set a model's context window or reasoning level when the defaults do not fit. Claude, GPT, Mistral, and Qwen families have built-in settings.
 
@@ -68,9 +70,13 @@ Configure a custom model:
 ```python
 from agentwerk import Agent, Model
 
-agent = Agent().model(
-    Model("my-local-model").context_window(128_000).reasoning_effort("high")
+model = (
+    Model("my-local-model")
+    .context_window(128_000)
+    .reasoning_effort("high")
 )
+
+agent = Agent().model(model)
 ```
 
 <details>
@@ -152,6 +158,7 @@ werk.add_task(task)
 
 | Area | Member | Description |
 |------|--------|-------------|
+| **Construct** | `Task(value)` | Create a task. |
 | **Identity** | `get_id()` | Get the task ID in the form `t-N`. |
 | | `get_task()` | Get the work assigned to the task. |
 | | `get_label()` | Get the task's label. |
@@ -187,16 +194,15 @@ from agentwerk import Agent, Task
 writer = (
     Agent.from_env()
     .label("report")
-    .role(
-        "Write for {{ company }} using:\n"
-        "{{ find_results(research) }}"
-    )
+    .role("Write for {{ company }} using:\n{{ find_results(research) }}")
 )
+
+report = Task("Write the board report.", label="report")
 
 werk.add_agent(writer)
 werk.set_template("company", "Canvas Computing")
 await werk.finish_tasks("research")
-werk.add_task(Task("Write the board report.", label="report"))
+werk.add_task(report)
 ```
 
 <details>
@@ -288,23 +294,22 @@ Missing fields, incompatible types, and out-of-range indexes produce `null`. Wil
 
 </details>
 
-### Corrective Templates
+### Corrective templates
 
 Corrective templates tell agents how to recover from failed tool calls or invalid output. Agentwerk provides [built-in templates](https://github.com/canvascomputing/agentwerk/tree/main/crates/agentwerk/src/prompts/templates) for these failures that you can override.
 
 ```python
 from agentwerk import Agent
 
+corrective_templates = {
+    "tool_timed_out": "Reduce the command scope.",
+    "cache_miss": "No cache entry exists for {{ path }}.",
+}
 
 agent = (
     Agent.from_env()
     .template("grep_failed", "The search did not run. Narrow `path`.")
-    .templates(
-        {
-            "tool_timed_out": "Reduce the command scope.",
-            "cache_miss": "No cache entry exists for {{ path }}.",
-        }
-    )
+    .templates(corrective_templates)
 )
 ```
 
@@ -315,15 +320,16 @@ Attach a `Schema` when a task must return a specific JSON object structure.
 ```python
 from agentwerk import Schema, Task
 
-schema = Schema(
-    {
-        "type": "object",
-        "properties": {"title": {"type": "string"}},
-        "required": ["title"],
-    }
-)
+schema_document = {
+    "type": "object",
+    "properties": {"title": {"type": "string"}},
+    "required": ["title"],
+}
 
-werk.add_task(Task("Write a report.", schema=schema))
+schema = Schema(schema_document)
+report = Task("Write a report.", schema=schema)
+
+werk.add_task(report)
 ```
 
 <details>
@@ -347,11 +353,13 @@ Add tools to let an agent read and write files, run commands, fetch URLs, manage
 ```python
 from agentwerk import Agent, CommandTool, GrepTool, ReadFileTool
 
+git = CommandTool("git").allow("git *")
+
 agent = (
     Agent()
     .tool(ReadFileTool())
     .tool(GrepTool())
-    .tool(CommandTool("git").allow("git *"))
+    .tool(git)
 )
 ```
 
@@ -375,7 +383,7 @@ agent = (
 
 </details>
 
-#### FinishTool
+### FinishTool
 
 An agent calls `FinishTool` to finish its task and return a result:
 
@@ -390,7 +398,7 @@ To return a result, the agent must call `FinishTool`. If the task has a result s
 
 [Interactive agents](#interactive-agents) are the exception: they have no `FinishTool` unless you add one explicitly with `.tool(FinishTool())`.
 
-#### Timeouts
+### Timeouts
 
 Call `timeout(seconds)` to override a tool's limit. Use zero to disable it.
 
@@ -415,7 +423,7 @@ When a Python tool times out, the agent stops waiting, but its worker thread may
 
 </details>
 
-#### EventTool
+### EventTool
 
 Add `EventTool` when an agent needs to publish custom events:
 
@@ -447,7 +455,7 @@ Only `task_finished` completes the current task. Its `data` is the result dictio
 
 Set a [corrective template](#corrective-templates) under the event name to customize the text returned to the model.
 
-#### CommandTool
+### CommandTool
 
 Use `CommandTool` to allow or deny specific commands and flags.
 
@@ -467,7 +475,7 @@ With an `allow_flag` set, a command carrying any other flag is refused:
 cargo = CommandTool("cargo").allow("cargo test*").allow_flag("--all-features")
 ```
 
-#### FetchTool
+### FetchTool
 
 Use `FetchTool` to fetch a URL as text. It sends the user agent `agentwerk/<version>`. `impersonate()` uses a browser's headers and HTTP/2 settings.
 
@@ -475,14 +483,11 @@ Use `FetchTool` to fetch a URL as text. It sends the user agent `agentwerk/<vers
 web = FetchTool().impersonate()
 ```
 
-#### Custom tools
+### Custom tools
 
 Mark a custom tool as concurrent with `concurrent=True` only when it has no side effects and can safely run beside other calls.
 
-agentwerk uses type annotations to tell the model which arguments it can pass.
-Arguments without default values are required. It understands lists,
-dictionaries, tuples, `Literal`, `Optional`, and unions. Use `schema=` when
-annotations are not enough.
+agentwerk uses type annotations to tell the model which arguments it can pass. Arguments without default values are required. It understands lists, dictionaries, tuples, `Literal`, `Optional`, and unions. Use `schema=` when annotations are not enough.
 
 ```python
 from agentwerk import tool
@@ -503,22 +508,18 @@ A `Werk` assigns tasks to agents and collects their results and events.
 ```python
 from agentwerk import Agent, Task, Werk
 
-analyst = (
-    Agent.from_env()
-    .label("analysis")
-)
+analyst = Agent.from_env().label("analysis")
+writer = Agent.from_env().label("report")
 
-writer = (
-    Agent.from_env()
-    .label("report")
-)
+analysis = Task("Rank all products by value.", label="analysis")
+report = Task("Write up the ranking.", label="report")
 
 werk = Werk()
 werk.add_agent(analyst)
 werk.add_agent(writer)
 
-werk.add_task(Task("Rank all products by value.", label="analysis"))
-werk.add_task(Task("Write up the ranking.", label="report"))
+werk.add_task(analysis)
+werk.add_task(report)
 ```
 
 `start()` keeps processing tasks in the background. `finish()` runs tasks and waits for results.
@@ -579,8 +580,7 @@ if answer is not None:
 
 ### AQL
 
-Use Agent Query Language (AQL) to find tasks and events. Pass an AQL string
-directly, or compile it with `Query` to reuse it.
+Use Agent Query Language (AQL) to find tasks and events. Pass an AQL string directly, or compile it with `Query` to reuse it.
 
 ```python
 # Find tasks labeled "scan".
@@ -636,8 +636,8 @@ Agents can pass work and results in these ways:
 1. **Follow-up routing**: [hooks](#hooks) or a condition creates follow-up tasks.
 2. **[Task templates](#templates)**: interpolate shared values, results, tasks, and events.
 3. **[Knowledge](#knowledge)**: shares durable pages between agents.
-4. **[TaskTool](#tools)**: reads any finished task's result by ID.
-5. **[ReadFileTool](#tools)**: opens a task's `result.json` in the session directory.
+4. **[TaskTool](#tasktool)**: reads any finished task's result by ID.
+5. **[ReadFileTool](#readfiletool)**: opens a task's `result.json` in the session directory.
 
 #### Result hook
 
@@ -645,8 +645,11 @@ Use a hook to create a new task when a matching result arrives:
 
 ```python
 def hand_to_report(werk, done, result):
-    if done.get_label() == "research":
-        werk.add_task(Task(result, label="report"))
+    if done.get_label() != "research":
+        return
+
+    report = Task(result, label="report")
+    werk.add_task(report)
 
 
 werk.on_result(hand_to_report)
@@ -659,16 +662,19 @@ Use a condition to create follow-up tasks or add agents when an AQL query matche
 ```python
 from agentwerk import Condition
 
-werk.add_condition(
-    Condition("task.label = research AND task.status = finished")
-    .agent(Agent.from_env().label("report"))
-    .task(
-        Task(
-            "Write {{ find_result(task.label = research AND task.status = finished) }}",
-            label="report",
-        )
-    )
+report_agent = Agent.from_env().label("report")
+report_task = Task(
+    "Write {{ find_result(task.label = research AND task.status = finished) }}",
+    label="report",
 )
+
+report_condition = (
+    Condition("task.label = research AND task.status = finished")
+    .agent(report_agent)
+    .task(report_task)
+)
+
+werk.add_condition(report_condition)
 ```
 
 #### Task templates
@@ -676,15 +682,15 @@ werk.add_condition(
 Wait for the research task, then insert its result into the report task:
 
 ```python
-werk.add_task(Task("Rank all products by value.", label="research"))
+research = Task("Rank all products by value.", label="research")
+werk.add_task(research)
 await werk.finish_task("research")
 
-werk.add_task(
-    Task(
-        "Write the board report from:\n\n{{ find_result(research) }}",
-        label="report",
-    )
+report = Task(
+    "Write the board report from:\n\n{{ find_result(research) }}",
+    label="report",
 )
+werk.add_task(report)
 ```
 
 #### Knowledge
@@ -709,13 +715,13 @@ from agentwerk import TaskTool
 
 writer = Agent.from_env().label("report").tool(TaskTool())
 
-werk.add_agent(writer)
-werk.add_task(
-    Task(
-        "Read the result of t-1 with the task tool, then write the board report.",
-        label="report",
-    )
+report = Task(
+    "Read the result of t-1 with the task tool, then write the board report.",
+    label="report",
 )
+
+werk.add_agent(writer)
+werk.add_task(report)
 ```
 
 #### ReadFileTool
@@ -727,13 +733,13 @@ from agentwerk import ReadFileTool
 
 writer = Agent.from_env().label("report").tool(ReadFileTool())
 
-werk.add_agent(writer)
-werk.add_task(
-    Task(
-        "Read .agentwerk/tasks/t-1/result.json, then write the board report.",
-        label="report",
-    )
+report = Task(
+    "Read .agentwerk/tasks/t-1/result.json, then write the board report.",
+    label="report",
 )
+
+werk.add_agent(writer)
+werk.add_task(report)
 ```
 
 ### Configuration
@@ -741,7 +747,8 @@ werk.add_task(
 Use a `Policy` to set turn, token, and time limits, retry behavior, and compaction.
 
 ```python
-werk.set_policy(Policy(max_turns=40, max_time=300.0))
+policy = Policy(max_turns=40, max_time=300.0)
+werk.set_policy(policy)
 ```
 
 <details>
@@ -768,7 +775,8 @@ werk.set_policy(Policy(max_turns=40, max_time=300.0))
 Compaction replaces older messages with a summary as a task approaches the model's context limit or after the provider reports an overflow.
 
 ```python
-werk.set_policy(Policy(compaction_threshold=0.7))
+policy = Policy(compaction_threshold=0.7)
+werk.set_policy(policy)
 ```
 
 <details>
@@ -833,14 +841,17 @@ Publish custom events through the Werk. Add agent or task context when relevant:
 ```python
 from agentwerk import Event
 
-werk.emit_event(
+document_indexed = (
     Event("document_indexed")
     .data({"documents": 42})
     .task_id("t-1")
     .agent_id("indexer-1")
 )
 
-werk.emit_event(Event("index_refreshed"))
+index_refreshed = Event("index_refreshed")
+
+werk.emit_event(document_indexed)
+werk.emit_event(index_refreshed)
 ```
 
 `Werk.emit_event()` does not change task status. Use [EventTool](#eventtool) for model-driven completion through `task_finished`.
@@ -891,6 +902,7 @@ Event methods:
 
 | Event method | Description |
 |--------------|-------------|
+| `Event(name)` | Create a custom event. |
 | `get_name()` | Read the event name. |
 | `get_data()` | Read the event payload. |
 | `get_task_id()` | Read the associated task ID. |
@@ -943,14 +955,14 @@ Create entries in code:
 ```python
 from agentwerk import Page
 
-store.get_pages().save(
-    Page(
-        "build-command",
-        "How the project is built.",
-        "Run `make` to compile.",
-        tags=["build"],
-    )
+build_page = Page(
+    "build-command",
+    "How the project is built.",
+    "Run `make` to compile.",
+    tags=["build"],
 )
+
+store.get_pages().save(build_page)
 
 page = store.get_pages().get_page("build-command")
 store.get_pages().remove("build-command")
