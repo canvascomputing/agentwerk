@@ -252,9 +252,8 @@ async def test_empty_template_values_render_without_crashing(werk, scripted_open
     assert werk.get_task(task).is_finished()
 
 
-async def test_malformed_result_selector_fails_before_provider_request(
-    werk, scripted_openai
-):
+async def test_malformed_result_selector_stays_literal(werk, scripted_openai):
+    scripted_openai.respond_with_tool("finish", {"answer": "done"})
     werk.add_agent(
         aw.Agent()
         .provider(scripted_openai.provider())
@@ -262,19 +261,11 @@ async def test_malformed_result_selector_fails_before_provider_request(
         .role("{{ find_result(task.label =) }}")
     )
     task = werk.add_task("go")
-    failures = []
-
-    def record_failure(_werk, event):
-        if event.get_name().endswith("_failed"):
-            failures.append(event.get_name())
-
-    werk.on_event(record_failure)
     await asyncio.wait_for(werk.finish(), timeout=5)
-    assert scripted_openai.requests == []
-    assert failures == [aw.Event.PROMPT_RENDER_FAILED, aw.Event.TASK_FAILED]
-    error = werk.get_task(task).get_errors()[0].get_data()
-    assert error["expression"] == "find_result(task.label =)"
-    assert error["message"] == "The query ends in the middle of a term."
+    assert scripted_openai.requests[0]["messages"][0]["content"] == (
+        "{{ find_result(task.label =) }}"
+    )
+    assert werk.get_task(task).is_finished()
 
 
 async def test_template_cycles_are_inserted_literally(werk, scripted_openai):
