@@ -27,7 +27,7 @@
 <div align="center">
   <img src="assets/demo.gif" width="800" />
 </div>
-<div align="center"><a href="crates/agentwerk-py/examples/pit_stop/README.md">Pit Stop: Coordinate a Pit Crew Against the Clock</a></div>
+<div align="center"><a href="crates/agentwerk-py/examples/pit_stop/main.py">19 agents, 52 tasks, one pit stop</a></div>
 <div align="center"><em>“Werk” is German for both a factory and a work of art.</em></div>
 
 ---
@@ -44,9 +44,7 @@ cargo add agentwerk
 
 ## Let's Build a Coding Harness
 
-We’ll use a [planner and coder agent](crates/use-cases/src/coding_harness/main.rs) to make changes to a repository.
-
-Give both agents read-only repository tools, then add editing tools only to the coder. The planner returns a grounded plan for the coder to implement.
+Use a [planner and coder](crates/use-cases/src/coding_harness/main.rs) to change a repository. Both agents inspect the repository, but only the coder edits files and runs Rust checks. Define the command tools first.
 
 <details>
 <summary><code>planner.md</code></summary>
@@ -130,13 +128,27 @@ NOTE: Do not call `finish`. The user accepts the change or sends another instruc
 </details>
 
 ```rust
+let git = || CommandTool("git")
+    .allow("git status*")
+    .allow("git diff*");
+
+let cargo = || CommandTool("cargo")
+    .allow("cargo fmt*")
+    .allow("cargo check*")
+    .allow("cargo test*");
+```
+
+Give both agents Git access and only the coder Cargo access.
+
+```rust
 let planner = Agent::from_env()
     .label("plan")
     .role(include_str!("planner.md"))
     .tool(ListDirectoryTool)
     .tool(GlobTool)
     .tool(GrepTool)
-    .tool(ReadFileTool);
+    .tool(ReadFileTool)
+    .tool(git());
 
 let coder = Agent::from_env()
     .label("coding")
@@ -147,28 +159,12 @@ let coder = Agent::from_env()
     .tool(GrepTool)
     .tool(ReadFileTool)
     .tool(EditFileTool)
-    .tool(WriteFileTool);
+    .tool(WriteFileTool)
+    .tool(git())
+    .tool(cargo());
 ```
 
-Both agents can inspect the working tree, but only the coder can run Rust checks.
-
-```rust
-let git = || CommandTool("git")
-    .allow("git status*")
-    .allow("git diff*");
-
-let cargo = || CommandTool("cargo")
-    .allow("cargo fmt*")
-    .allow("cargo check*")
-    .allow("cargo test*");
-
-let planner = planner.tool(git());
-
-let coder = coder.tool(git()).tool(cargo());
-```
-
-A condition starts the coder with the saved plan as soon as the planner finishes.
-Store the session in `./session` so you can stop the program and continue the same plan and coder conversation later.
+Start the coder when the plan finishes. Save to `./session` to resume the conversation later.
 
 ```rust
 let werk = Werk("./session")?;
@@ -180,7 +176,7 @@ let start_coder = Condition("task.label = plan AND task.status = finished")
     .task(coder_task);
 ```
 
-Register the agents and condition, add the planning task, then run until the interactive coder pauses.
+Register the agents, condition, and task, then run until the coder pauses.
 
 ```rust
 let plan_task = Task("Add a --dry-run flag to the database migration command.")
@@ -198,7 +194,7 @@ werk.finish().await;
 
 ## Let's Build a Research Harness
 
-We'll research a question and write a report with citations. Start with a researcher and a writer, then give the researcher a [custom Brave Search tool](crates/use-cases/src/deep_research/web_search.rs) and the built-in `FetchTool`.
+Give the researcher a [Brave Search tool](crates/use-cases/src/deep_research/web_search.rs) and `FetchTool`. The writer turns shared findings into a cited report.
 
 <details>
 <summary><code>researcher.md</code></summary>
@@ -285,7 +281,7 @@ let writer = Agent::from_env()
     .knowledge(&knowledge);
 ```
 
-Create one task for research and another for writing. Each label routes the task to the matching agent. A condition queues the report after the research finishes.
+Labels route tasks to agents. Queue the report when research finishes.
 
 ```rust
 let research_task = Task("Research {{ question }} with emphasis on {{ focus }}.")
@@ -298,7 +294,7 @@ let write_report = Condition("task.label = research AND task.status = finished")
     .task(report_task);
 ```
 
-Create the `Werk`, limit the run to five minutes, and set the question and research focus.
+Set the `Werk` time limit, question, and focus.
 
 ```rust
 let werk = Werk(".agentwerk")?;
@@ -312,7 +308,7 @@ werk.set_template("question", "What makes an agent harness efficient?");
 werk.set_template("focus", "latency and reliability");
 ```
 
-Observe each knowledge page as it is saved and log every other event by name.
+Log saved pages and other events.
 
 ```rust
 werk.on_event(|_, event| {
@@ -325,7 +321,7 @@ werk.on_event(|_, event| {
 });
 ```
 
-Add the two agents, the report condition, and the research task, then wait for the report.
+Register the agents, condition, and task, then wait for the report.
 
 ```rust
 werk.add_agent(researcher);
@@ -337,7 +333,7 @@ werk.add_task(research_task);
 werk.finish().await;
 ```
 
-Read and print the writer's report.
+Print the report.
 
 ```rust
 let result = werk.find_result("report").unwrap();
@@ -350,9 +346,7 @@ println!("{report}");
 
 ## More Use Cases
 
-Example projects built with agentwerk:
-
-- [Pit Stop](crates/agentwerk-py/examples/pit_stop/README.md): a 3D pit stop where the crew changes tires, clears the car, and sends it back into the race
+- [Pit Stop](crates/agentwerk-py/examples/pit_stop/main.py): coordinate a 3D pit crew
 - [Hello World](crates/use-cases/src/hello_world/main.rs): basic example
 - [Terminal REPL](crates/use-cases/src/terminal_repl/main.rs): minimal multi-turn terminal chat
 - [Coding Harness](crates/use-cases/src/coding_harness/main.rs): plan, implement, and verify a repository change
@@ -366,10 +360,10 @@ Example projects built with agentwerk:
 | Section | Covers |
 | --- | --- |
 | [Agents](docs/api/agents.md) | Configure model providers and agent behavior. |
-| [Tools](docs/api/tools.md) | Give agents access to files, commands, web pages, events, tasks, and knowledge. |
+| [Tools](docs/api/tools.md) | Access files, commands, web pages, events, tasks, and knowledge. |
 | [Tasks](docs/api/tasks.md) | Define work, result schemas, and templates. |
 | [Werk](docs/api/werk.md) | Coordinate execution, policies, compaction, and sessions. |
 | [AQL](docs/api/aql.md) | Find and order tasks, results, and events. |
 | [Events](docs/api/events.md) | Publish and inspect runtime activity. |
-| [Knowledge](docs/api/knowledge.md) | Share durable pages between agents and tasks. |
+| [Knowledge](docs/api/knowledge.md) | Share durable knowledge pages. |
 | [Collaboration](docs/api/collaboration.md) | Pass work and results between agents. |

@@ -27,7 +27,7 @@
 <div align="center">
   <img src="../../assets/demo.gif" width="800" />
 </div>
-<div align="center"><a href="examples/pit_stop/README.md">Pit Stop — 19 agents, 52 tasks, one coordinated release</a></div>
+<div align="center"><a href="examples/pit_stop/main.py">19 agents, 52 tasks, one pit stop</a></div>
 <div align="center"><em>“Werk” is German for both a factory and a work of art.</em></div>
 
 ---
@@ -44,9 +44,7 @@ pip install agentwerk
 
 ## Let's Build a Coding Harness
 
-We’ll use a [planner and coder agent](examples/coding_harness.py) to make changes to a repository.
-
-Give both agents read-only repository tools, then add editing tools only to the coder. The planner returns a grounded plan for the coder to implement.
+Use a [planner and coder](examples/coding_harness.py) to change a repository. Both agents inspect the repository, but only the coder edits files and runs Rust checks. Define the command tools first.
 
 <details>
 <summary><code>planner.md</code></summary>
@@ -130,6 +128,21 @@ NOTE: Do not call `finish`. The user accepts the change or sends another instruc
 </details>
 
 ```python
+def git_tool():
+    return CommandTool("git").allow("git status*").allow("git diff*")
+
+def cargo_tool():
+    return (
+        CommandTool("cargo")
+        .allow("cargo fmt*")
+        .allow("cargo check*")
+        .allow("cargo test*")
+    )
+```
+
+Give both agents Git access and only the coder Cargo access.
+
+```python
 planner = (
     Agent.from_env()
     .label("plan")
@@ -138,6 +151,7 @@ planner = (
     .tool(GlobTool())
     .tool(GrepTool())
     .tool(ReadFileTool())
+    .tool(git_tool())
 )
 
 coder = (
@@ -151,30 +165,12 @@ coder = (
     .tool(ReadFileTool())
     .tool(EditFileTool())
     .tool(WriteFileTool())
+    .tool(git_tool())
+    .tool(cargo_tool())
 )
 ```
 
-Both agents can inspect the working tree, but only the coder can run Rust checks.
-
-```python
-def git_tool():
-    return CommandTool("git").allow("git status*").allow("git diff*")
-
-def cargo_tool():
-    return (
-        CommandTool("cargo")
-        .allow("cargo fmt*")
-        .allow("cargo check*")
-        .allow("cargo test*")
-    )
-
-planner.tool(git_tool())
-
-coder.tool(git_tool()).tool(cargo_tool())
-```
-
-A condition starts the coder with the saved plan as soon as the planner finishes.
-Store the session in `./session` so you can stop the program and continue the same plan and coder conversation later.
+Start the coder when the plan finishes. Save to `./session` to resume the conversation later.
 
 ```python
 werk = Werk("./session")
@@ -189,7 +185,7 @@ start_coder = Condition(
 ).task(coder_task)
 ```
 
-Register the agents and condition, add the planning task, then run until the interactive coder pauses.
+Register the agents, condition, and task, then run until the coder pauses.
 
 ```python
 plan_task = Task(
@@ -208,7 +204,7 @@ await werk.finish()
 
 ## Let's Build a Research Harness
 
-We'll research a question and write a report with citations. Start with a researcher and a writer, then give the researcher a [custom Brave Search tool](examples/web_search.py) and the built-in `FetchTool`.
+Give the researcher a [Brave Search tool](examples/web_search.py) and `FetchTool`. The writer turns shared findings into a cited report.
 
 <details>
 <summary><code>researcher.md</code></summary>
@@ -294,7 +290,7 @@ writer.role(Path("writer.md").read_text())
 writer.knowledge(knowledge)
 ```
 
-Create one task for research and another for writing. Each label routes the task to the matching agent. A condition queues the report after the research finishes.
+Labels route tasks to agents. Queue the report when research finishes.
 
 ```python
 research_task = Task(
@@ -312,7 +308,7 @@ write_report = Condition(
 ).task(report_task)
 ```
 
-Create the `Werk`, limit the run to five minutes, and set the question and research focus.
+Set the `Werk` time limit, question, and focus.
 
 ```python
 werk = Werk()
@@ -323,7 +319,7 @@ werk.set_template("question", "What makes an agent harness efficient?")
 werk.set_template("focus", "latency and reliability")
 ```
 
-Observe each knowledge page as it is saved and log every other event by name.
+Log saved pages and other events.
 
 ```python
 def log_research(_, event):
@@ -336,7 +332,7 @@ def log_research(_, event):
 werk.on_event(log_research)
 ```
 
-Add the two agents, the report condition, and the research task, then wait for the report.
+Register the agents, condition, and task, then wait for the report.
 
 ```python
 werk.add_agent(researcher)
@@ -347,7 +343,7 @@ werk.add_task(research_task)
 await werk.finish()
 ```
 
-Read and print the writer's report.
+Print the report.
 
 ```python
 result = werk.find_result("report") or {}
@@ -360,14 +356,12 @@ print(report)
 
 ## More Use Cases
 
-Example projects built with agentwerk:
-
 - [Hello World](https://github.com/canvascomputing/agentwerk/blob/main/crates/use-cases/src/hello_world/main.rs): basic example, also available as a [Python example](https://github.com/canvascomputing/agentwerk/blob/main/crates/agentwerk-py/examples/hello_world.py)
 - [Terminal REPL](https://github.com/canvascomputing/agentwerk/blob/main/crates/use-cases/src/terminal_repl/main.rs): minimal multi-turn terminal chat
 - [Coding Harness](https://github.com/canvascomputing/agentwerk/blob/main/crates/use-cases/src/coding_harness/main.rs): plan, implement, and verify a repository change, also available as a [Python example](https://github.com/canvascomputing/agentwerk/blob/main/crates/agentwerk-py/examples/coding_harness.py)
 - [Deep Research](https://github.com/canvascomputing/agentwerk/blob/main/crates/agentwerk-py/examples/deep_research.py): research across several sources (requires `BRAVE_API_KEY`)
 - [Malware Scanner](https://github.com/canvascomputing/malwi): find signs of malware in a software package
-- [Pit Stop](examples/pit_stop/README.md): a 3D pit stop with 19 agents, 52 tasks, visible equipment handoffs, and a verified release
+- [Pit Stop](examples/pit_stop/main.py): coordinate a 3D pit crew
 - [Apparat Fabrik](https://github.com/canvascomputing/agentwerk/blob/main/crates/agentwerk-py/examples/apparat_fabrik.py): simulate agents inspecting and assembling factory parts
 
 ---
@@ -377,10 +371,10 @@ Example projects built with agentwerk:
 | Section | Covers |
 | --- | --- |
 | [Agents](docs/api/agents.md) | Configure model providers and agent behavior. |
-| [Tools](docs/api/tools.md) | Give agents access to files, commands, web pages, events, tasks, and knowledge. |
+| [Tools](docs/api/tools.md) | Access files, commands, web pages, events, tasks, and knowledge. |
 | [Tasks](docs/api/tasks.md) | Define work, result schemas, and templates. |
 | [Werk](docs/api/werk.md) | Coordinate execution, policies, compaction, and sessions. |
 | [AQL](docs/api/aql.md) | Find and order tasks, results, and events. |
 | [Events](docs/api/events.md) | Publish and inspect runtime activity. |
-| [Knowledge](docs/api/knowledge.md) | Share durable pages between agents and tasks. |
+| [Knowledge](docs/api/knowledge.md) | Share durable knowledge pages. |
 | [Collaboration](docs/api/collaboration.md) | Pass work and results between agents. |
