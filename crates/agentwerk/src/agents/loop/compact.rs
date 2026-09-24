@@ -51,13 +51,8 @@ impl Agent {
             })
         };
 
-        let system_prompt = match crate::prompts::compaction_template(werk) {
-            Ok(prompt) => prompt,
-            Err(error) => {
-                self.fail_render(werk, task_id, error);
-                return false;
-            }
-        };
+        let template = crate::prompts::templates::SUMMARY_REQUESTED;
+        let system_prompt = werk.prompt.render(template, &[] as &[(&str, &str)]);
         let replies = std::mem::take(&mut task.replies);
         let compaction = Compaction::new(
             self.get_provider(),
@@ -413,28 +408,36 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn an_invalid_compaction_template_fails_the_task_before_summarizing() {
-        let provider = MockProvider::with_results(vec![Ok(tool_call_response_with_usage(
-            "primer",
-            crate::providers::types::TokenUsage {
-                input_tokens: 180_000,
-                output_tokens: 0,
-            },
-        ))]);
+    async fn an_invalid_compaction_template_stays_literal_and_compaction_continues() {
+        let provider = MockProvider::with_results(vec![
+            Ok(tool_call_response_with_usage(
+                "primer",
+                crate::providers::types::TokenUsage {
+                    input_tokens: 180_000,
+                    output_tokens: 0,
+                },
+            )),
+            Ok(text_response_with_usage(
+                "SUMMARY",
+                crate::providers::types::TokenUsage::default(),
+            )),
+            Ok(write_result_response("done")),
+        ]);
         let (events, provider, task) = run_compaction(provider, |werk| {
-            werk.set_template(
-                crate::prompts::templates::SUMMARY_REQUESTED,
-                "{{ find_result(task.label =) }}",
-            );
+            werk.set_template("summary_requested", "{{ find_result(task.label =) }}");
         })
         .await;
 
-        assert_eq!(provider.requests(), 1);
-        assert_eq!(task.status, Status::Failed);
+        assert_eq!(provider.requests(), 3);
+        assert_eq!(task.status, Status::Finished);
         assert!(events
             .iter()
-            .any(|event| event.get_name() == crate::event::Event::PROMPT_RENDER_FAILED));
-        assert_eq!(compaction_finishes(&events, CompactReason::Proactive), 0);
+            .all(|event| event.get_name() != crate::event::Event::PROMPT_RENDER_FAILED));
+        assert_eq!(compaction_finishes(&events, CompactReason::Proactive), 1);
+        assert_eq!(
+            provider.received_system_prompts()[1],
+            "{{ find_result(task.label =) }}"
+        );
     }
 
     #[tokio::test]

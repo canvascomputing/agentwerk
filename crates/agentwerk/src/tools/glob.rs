@@ -213,7 +213,7 @@ mod tests {
     use std::fs;
 
     fn test_ctx(path: &std::path::Path) -> ToolContext {
-        ToolContext::new(path.to_path_buf())
+        ToolContext::new(path.to_path_buf(), crate::Werk::new())
     }
 
     #[tokio::test]

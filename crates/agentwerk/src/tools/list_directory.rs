@@ -51,7 +51,8 @@ async fn run(args: ListDirectoryArgs, ctx: ToolContext) -> Event {
 
     if base.exists() && !base.is_dir() {
         return Event::error(
-            ctx.templates
+            ctx.werk
+                .prompt
                 .render(LIST_DIRECTORY_PATH_IS_FILE, &[("path", &path_str)]),
         );
     }
@@ -72,17 +73,14 @@ async fn run(args: ListDirectoryArgs, ctx: ToolContext) -> Event {
                 .collect();
             Event::success(lines.join("\n"))
         }
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Event::error(ctx.templates.render(
-            LIST_DIRECTORY_NOT_FOUND,
-            &[
-                ("path", &path_str),
-                (
-                    "hint",
-                    &super::util::not_found_hint(&ctx.dir, &base, &ctx.templates),
-                ),
-            ],
-        )),
-        Err(e) => Event::error(ctx.templates.render(
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            let hint = super::util::not_found_hint(&ctx.dir, &base, &ctx.werk);
+            Event::error(ctx.werk.prompt.render(
+                LIST_DIRECTORY_NOT_FOUND,
+                &[("path", &path_str), ("hint", &hint)],
+            ))
+        }
+        Err(e) => Event::error(ctx.werk.prompt.render(
             LIST_DIRECTORY_FAILED,
             &[("path", &path_str), ("error", &e.to_string())],
         )),
@@ -156,7 +154,7 @@ mod tests {
     use std::fs;
 
     fn test_ctx(path: &std::path::Path) -> ToolContext {
-        ToolContext::new(path.to_path_buf())
+        ToolContext::new(path.to_path_buf(), crate::Werk::new())
     }
 
     #[tokio::test]

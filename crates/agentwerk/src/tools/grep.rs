@@ -11,9 +11,9 @@ use serde_json::{Map, Value};
 
 use super::tool::{Event, Tool, ToolContext};
 use crate::prompts::templates::{
-    TemplateRenderer, GREP_CANCELLED, GREP_FAILED, GREP_FILE_TYPE_UNKNOWN, GREP_GLOB_REJECTED,
-    GREP_PATTERN_REJECTED,
+    GREP_CANCELLED, GREP_FAILED, GREP_FILE_TYPE_UNKNOWN, GREP_GLOB_REJECTED, GREP_PATTERN_REJECTED,
 };
+use crate::Werk;
 
 /// Search the working directory for a regular-expression `pattern` and return a
 /// structured result: matching lines, matching file names, or per-file counts,
@@ -65,16 +65,20 @@ async fn run(args: GrepArgs, ctx: ToolContext) -> Event {
     let interrupt = Arc::new(AtomicBool::new(false));
     let _interrupt_on_drop = InterruptOnDrop(Arc::clone(&interrupt));
     let searching = Arc::clone(&interrupt);
-    let searching_templates = ctx.templates.clone();
+    let searching_werk = Arc::clone(&ctx.werk);
     let handle = tokio::task::spawn_blocking(move || {
-        search_corpus(&dir, &query, &searching, &searching_templates)
+        search_corpus(&dir, &query, &searching, &searching_werk)
     });
 
     tokio::select! {
         biased;
-        _ = ctx.cancelled() => Event::error(ctx.templates.render(GREP_CANCELLED, &[])).template(GREP_CANCELLED),
+        _ = ctx.cancelled() => {
+            Event::error(ctx.werk.prompt.render(GREP_CANCELLED, &[] as &[(&str, &str)]))
+        },
         r = handle => match r {
-            Err(_) => Event::error(ctx.templates.render(GREP_FAILED, &[])).template(GREP_FAILED),
+            Err(_) => {
+                Event::error(ctx.werk.prompt.render(GREP_FAILED, &[] as &[(&str, &str)]))
+            },
             Ok(result) => result,
         },
     }
@@ -210,12 +214,7 @@ fn default_head_limit() -> usize {
 /// every file, hidden and gitignored included, so the scan never makes a payload
 /// invisible; narrow with `path`/`glob` instead. Runs on a blocking thread; the
 /// interrupt flag lets a long or cancelled search bail between files.
-fn search_corpus(
-    dir: &Path,
-    query: &Query,
-    interrupt: &AtomicBool,
-    templates: &TemplateRenderer,
-) -> Event {
+fn search_corpus(dir: &Path, query: &Query, interrupt: &AtomicBool, werk: &Werk) -> Event {
     let root = match &query.path {
         Some(path) => dir.join(path),
         None => dir.to_path_buf(),
@@ -231,8 +230,9 @@ fn search_corpus(
             }
             Err(error) => {
                 return Event::error(
-                    templates.render(GREP_GLOB_REJECTED, &[("error", &error.to_string())]),
-                )
+                    werk.prompt
+                        .render(GREP_GLOB_REJECTED, &[("error", &error.to_string())]),
+                );
             }
         }
     }
@@ -245,10 +245,10 @@ fn search_corpus(
                 walk.types(types);
             }
             Err(error) => {
-                return Event::error(templates.render(
+                return Event::error(werk.prompt.render(
                     GREP_FILE_TYPE_UNKNOWN,
                     &[("file_type", file_type), ("error", &error.to_string())],
-                ))
+                ));
             }
         }
     }
@@ -256,8 +256,8 @@ fn search_corpus(
     let files = collect_files(walk.build(), dir, interrupt);
 
     match query.syntax {
-        Syntax::Regex => run_regex(&files, query, interrupt, templates),
-        Syntax::Code => super::code::run(&files, query, interrupt, templates),
+        Syntax::Regex => run_regex(&files, query, interrupt, werk),
+        Syntax::Code => super::code::run(&files, query, interrupt, werk),
     }
 }
 
@@ -268,7 +268,7 @@ fn run_regex(
     files: &[(PathBuf, String)],
     query: &Query,
     interrupt: &AtomicBool,
-    templates: &TemplateRenderer,
+    werk: &Werk,
 ) -> Event {
     // Ripgrep's Rust-regex matcher, line-oriented. `dot_matches_new_line` and the
     // searcher's multi-line mode are tied to `multiline` so `.` spans newlines only
@@ -286,8 +286,9 @@ fn run_regex(
         // re-sending the same doomed pattern.
         Err(error) => {
             return Event::error(
-                templates.render(GREP_PATTERN_REJECTED, &[("error", &error.to_string())]),
-            )
+                werk.prompt
+                    .render(GREP_PATTERN_REJECTED, &[("error", &error.to_string())]),
+            );
         }
     };
 
@@ -487,7 +488,6 @@ pub(super) fn render_count(rows: &[(String, u64)], query: &Query) -> Event {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::prompts::templates::TOOL_TIMED_OUT;
 
     #[test]
     fn every_example_the_schema_shows_deserializes_into_the_arguments() {
@@ -519,7 +519,7 @@ mod tests {
             .await;
 
         assert_eq!(result.get_name(), Event::TOOL_CALL_FAILED);
-        assert_eq!(result.get_template(), Some(TOOL_TIMED_OUT));
+        assert_eq!(result.get_template(), None);
         assert!(result
             .get_content()
             .contains("Tool `grep` timed out after 10ms"));
@@ -527,7 +527,7 @@ mod tests {
     use std::fs;
 
     fn test_ctx(path: &std::path::Path) -> ToolContext {
-        ToolContext::new(path.to_path_buf())
+        ToolContext::new(path.to_path_buf(), crate::Werk::new())
     }
 
     fn setup_test_dir() -> crate::test_util::TempDir {

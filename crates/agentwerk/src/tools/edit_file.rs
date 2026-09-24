@@ -52,11 +52,10 @@ async fn run(args: EditFileArgs, ctx: ToolContext) -> Event {
     let content = match std::fs::read_to_string(&resolved) {
         Ok(c) => c,
         Err(e) => {
-            return Event::error(ctx.templates.render(
+            return Event::error(ctx.werk.prompt.render(
                 EDIT_FILE_READ_FAILED,
                 &[("path", &path), ("error", &e.to_string())],
-            ))
-            .template(EDIT_FILE_READ_FAILED);
+            ));
         }
     };
 
@@ -64,18 +63,17 @@ async fn run(args: EditFileArgs, ctx: ToolContext) -> Event {
 
     if count == 0 {
         return Event::error(
-            ctx.templates
+            ctx.werk
+                .prompt
                 .render(EDIT_FILE_OLD_STRING_NOT_FOUND, &[("path", &path)]),
-        )
-        .template(EDIT_FILE_OLD_STRING_NOT_FOUND);
+        );
     }
 
     if count > 1 && !replace_all {
-        return Event::error(ctx.templates.render(
+        return Event::error(ctx.werk.prompt.render(
             EDIT_FILE_OLD_STRING_NOT_UNIQUE,
             &[("path", &path), ("count", &count.to_string())],
-        ))
-        .template(EDIT_FILE_OLD_STRING_NOT_UNIQUE);
+        ));
     }
 
     let new_content = if replace_all {
@@ -86,11 +84,10 @@ async fn run(args: EditFileArgs, ctx: ToolContext) -> Event {
 
     match std::fs::write(&resolved, &new_content) {
         Ok(()) => Event::success(format!("Edited {path}: replaced {count} occurrence(s)")),
-        Err(e) => Event::error(ctx.templates.render(
+        Err(e) => Event::error(ctx.werk.prompt.render(
             EDIT_FILE_WRITE_FAILED,
             &[("path", &path), ("error", &e.to_string())],
-        ))
-        .template(EDIT_FILE_WRITE_FAILED),
+        )),
     }
 }
 
@@ -112,7 +109,7 @@ mod tests {
     use std::path::PathBuf;
 
     fn test_ctx(dir: &std::path::Path) -> ToolContext {
-        ToolContext::new(PathBuf::from(dir))
+        ToolContext::new(PathBuf::from(dir), crate::Werk::new())
     }
 
     #[tokio::test]

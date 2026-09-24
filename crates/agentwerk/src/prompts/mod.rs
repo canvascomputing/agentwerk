@@ -10,34 +10,15 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde_json::Value;
 
-use prompt::render_values;
-pub(crate) use prompt::RenderError;
-use templates::{
-    built_in, TemplateRenderer, ARGUMENTS_EXPECTED, ARGUMENTS_REJECTED, RESULT_SCHEMA_REQUIRED,
-    SUMMARY_REQUESTED,
-};
+use prompt::render_template_values;
+pub(crate) use prompt::Prompt;
+use templates::{ARGUMENTS_EXPECTED, ARGUMENTS_REJECTED};
 
 use crate::agents::policy::Policy;
 use crate::agents::stats::Stats;
 use crate::event::Event;
-use crate::schemas::Schema;
 
 const CONTEXT_TEMPLATE: &str = include_str!("context.md");
-
-/// The system prompt for collapsing an over-budget conversation into one
-/// summary. No placeholders: the messages themselves are what it summarizes.
-pub(crate) fn compaction_template(werk: &crate::Werk) -> Result<String, RenderError> {
-    werk.render_template(SUMMARY_REQUESTED, &[])
-}
-
-/// Render the block telling the agent how to return a result matching
-/// `schema`. Leads with a blank line so callers append it directly after
-/// preceding text.
-pub(crate) fn result_schema_template(schema: &Schema) -> String {
-    let pretty = serde_json::to_string_pretty(schema.get_raw_schema()).unwrap_or_default();
-    let body = built_in(RESULT_SCHEMA_REQUIRED, &[("schema", &pretty)]);
-    format!("\n\n{body}")
-}
 
 /// Compose the detail for a call whose arguments did not match its tool's
 /// schema. The validator names what was wrong but not the target shape, so the
@@ -47,9 +28,9 @@ pub(crate) fn arguments_retry_detail(
     tool_name: &str,
     violations: &str,
     schema: Option<&Value>,
-    templates: &TemplateRenderer,
+    werk: &crate::Werk,
 ) -> String {
-    let rejected = templates.render(
+    let rejected = werk.prompt.render(
         ARGUMENTS_REJECTED,
         &[("tool", tool_name), ("violations", violations)],
     );
@@ -57,7 +38,7 @@ pub(crate) fn arguments_retry_detail(
         return rejected;
     };
     let pretty = serde_json::to_string_pretty(schema).unwrap_or_default();
-    let expected = templates.render(
+    let expected = werk.prompt.render(
         ARGUMENTS_EXPECTED,
         &[("tool", tool_name), ("schema", &pretty)],
     );
@@ -124,7 +105,7 @@ fn render_context(values: &[(&str, String)]) -> String {
         .lines()
         .filter_map(|line| {
             let mut has_value = false;
-            let rendered = render_values(line, |name| {
+            let rendered = render_template_values(line, |name| {
                 values
                     .iter()
                     .find(|(key, _)| *key == name)
@@ -166,8 +147,14 @@ mod tests {
     use super::*;
     use crate::event::Event;
     use crate::providers::TokenUsage;
+    use crate::Schema;
     use std::path::PathBuf;
     use std::time::Duration;
+
+    fn result_schema(schema: &Schema) -> String {
+        let pretty = serde_json::to_string_pretty(schema.get_raw_schema()).unwrap_or_default();
+        templates::built_in(templates::RESULT_SCHEMA_REQUIRED, &[("schema", &pretty)])
+    }
 
     fn turn() -> Event {
         Event::new(Event::TURN_STARTED)
@@ -199,21 +186,21 @@ mod tests {
         ];
 
         for shape in shapes {
-            let template = result_schema_template(&Schema::new(shape).expect("valid schema"));
+            let template = result_schema(&Schema::new(shape).expect("valid schema"));
             assert!(template.contains("JSON object"), "{template}");
             assert!(template.contains("matching this schema"), "{template}");
         }
     }
 
     #[test]
-    fn result_schema_template_renders_the_schema_itself() {
+    fn result_schema_includes_the_schema_itself() {
         let schema = Schema::new(serde_json::json!({
             "type": "object",
             "properties": {"summary": {"type": "string"}},
         }))
         .expect("valid schema");
 
-        assert!(result_schema_template(&schema).contains("summary"));
+        assert!(result_schema(&schema).contains("summary"));
     }
 
     #[test]
@@ -226,7 +213,7 @@ mod tests {
             "read_file",
             "/offset: expected type integer",
             Some(&schema),
-            &TemplateRenderer::default(),
+            &crate::Werk::new(),
         );
         assert!(rendered.contains("read_file"));
         assert!(rendered.contains("/offset: expected type integer"));
@@ -241,7 +228,7 @@ mod tests {
             "read_file",
             "/offset: expected type integer",
             None,
-            &TemplateRenderer::default(),
+            &crate::Werk::new(),
         );
         assert!(rendered.contains("read_file"));
         assert!(!rendered.contains("accepts:"));

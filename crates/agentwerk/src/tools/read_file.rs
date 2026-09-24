@@ -59,13 +59,16 @@ async fn run(args: ReadFileArgs, ctx: ToolContext) -> Event {
 
     if resolved.is_dir() {
         let message = match super::util::directory_entries(&resolved) {
-            Some(entries) => ctx.templates.render(
-                READ_FILE_PATH_IS_DIRECTORY_WITH_ENTRIES,
-                &[("path", &path), ("entries", &entries)],
-            ),
-            None => ctx
-                .templates
-                .render(READ_FILE_PATH_IS_DIRECTORY, &[("path", &path)]),
+            Some(entries) => {
+                let key = READ_FILE_PATH_IS_DIRECTORY_WITH_ENTRIES;
+                ctx.werk
+                    .prompt
+                    .render(key, &[("path", &path), ("entries", &entries)])
+            }
+            None => {
+                let key = READ_FILE_PATH_IS_DIRECTORY;
+                ctx.werk.prompt.render(key, &[("path", &path)])
+            }
         };
         return Event::error(message);
     }
@@ -79,7 +82,7 @@ async fn run(args: ReadFileArgs, ctx: ToolContext) -> Event {
             // templates. Otherwise decode lossily so odd-encoded source
             // stays inspectable, the point of a scan.
             if bytes.contains(&0) {
-                return Event::success(ctx.templates.render(
+                return Event::success(ctx.werk.prompt.render(
                     READ_FILE_IS_BINARY,
                     &[("path", &path), ("bytes", &bytes.len().to_string())],
                 ));
@@ -87,19 +90,15 @@ async fn run(args: ReadFileArgs, ctx: ToolContext) -> Event {
             String::from_utf8_lossy(&bytes).into_owned()
         }
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-            return Event::error(ctx.templates.render(
-                READ_FILE_NOT_FOUND,
-                &[
-                    ("path", &path),
-                    (
-                        "hint",
-                        &super::util::not_found_hint(&ctx.dir, &resolved, &ctx.templates),
-                    ),
-                ],
-            ));
+            let hint = super::util::not_found_hint(&ctx.dir, &resolved, &ctx.werk);
+            return Event::error(
+                ctx.werk
+                    .prompt
+                    .render(READ_FILE_NOT_FOUND, &[("path", &path), ("hint", &hint)]),
+            );
         }
         Err(e) => {
-            return Event::error(ctx.templates.render(
+            return Event::error(ctx.werk.prompt.render(
                 READ_FILE_FAILED,
                 &[("path", &path), ("error", &e.to_string())],
             ));
@@ -171,7 +170,7 @@ mod tests {
     use std::path::PathBuf;
 
     fn test_ctx(dir: &std::path::Path) -> ToolContext {
-        ToolContext::new(PathBuf::from(dir))
+        ToolContext::new(PathBuf::from(dir), crate::Werk::new())
     }
 
     #[tokio::test]

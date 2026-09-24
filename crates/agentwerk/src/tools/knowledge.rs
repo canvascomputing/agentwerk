@@ -132,7 +132,8 @@ fn run(store: &Knowledge, args: KnowledgeArgs, ctx: &ToolContext) -> Event {
                         "message": why.to_string(),
                     })));
                     Event::error(
-                        ctx.templates
+                        ctx.werk
+                            .prompt
                             .render(KNOWLEDGE_WRITE_FAILED, &[("error", &why.to_string())]),
                     )
                 }
@@ -152,7 +153,8 @@ fn run(store: &Knowledge, args: KnowledgeArgs, ctx: &ToolContext) -> Event {
                     "message": why.to_string(),
                 })));
                 Event::success(
-                    ctx.templates
+                    ctx.werk
+                        .prompt
                         .render(KNOWLEDGE_PAGE_NOT_FOUND, &[("slug", &slug)]),
                 )
             }
@@ -173,7 +175,8 @@ fn run(store: &Knowledge, args: KnowledgeArgs, ctx: &ToolContext) -> Event {
                     "message": why.to_string(),
                 })));
                 Event::error(
-                    ctx.templates
+                    ctx.werk
+                        .prompt
                         .render(KNOWLEDGE_REMOVE_FAILED, &[("error", &why.to_string())]),
                 )
             }
@@ -227,7 +230,7 @@ mod tests {
     }
 
     fn ctx() -> ToolContext {
-        ToolContext::new(std::env::current_dir().unwrap())
+        ToolContext::new(std::env::current_dir().unwrap(), crate::Werk::new())
     }
 
     fn assert_success(result: &Event, fragment: &str) {
@@ -428,7 +431,7 @@ mod tests {
                 seen.lock().unwrap().push(event.get_name().to_string());
             }
         });
-        let ctx = ToolContext::new(std::env::current_dir().unwrap()).werk(Arc::clone(&werk));
+        let ctx = ToolContext::new(std::env::current_dir().unwrap(), Arc::clone(&werk));
 
         run(
             &store,

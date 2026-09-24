@@ -7,8 +7,8 @@ use serde_json::Value;
 use crate::agents::tasks::{Status, Task, TaskError, Werk};
 use crate::agents::Query;
 use crate::prompts::templates::{
-    TemplateRenderer, TASK_EDIT_INCOMPLETE, TASK_ID_MISSING, TASK_NOT_ASSIGNED, TASK_NOT_FOUND,
-    TASK_QUERY_INVALID, TASK_RESULT_MISSING, TASK_TRANSITION_REJECTED, WERK_UNAVAILABLE,
+    TASK_EDIT_INCOMPLETE, TASK_ID_MISSING, TASK_NOT_ASSIGNED, TASK_NOT_FOUND, TASK_QUERY_INVALID,
+    TASK_RESULT_MISSING, TASK_TRANSITION_REJECTED,
 };
 
 use super::tool::{Event, ToolContext};
@@ -46,17 +46,12 @@ pub enum TaskArgs {
 }
 
 pub(super) fn dispatch(args: TaskArgs, ctx: &ToolContext) -> Event {
-    let Some(werk) = ctx.werk.clone() else {
-        return Event::error(ctx.templates.render(WERK_UNAVAILABLE, &[]))
-            .template(WERK_UNAVAILABLE);
-    };
-
     match args {
-        TaskArgs::Task { id } => action_task(&werk, id, ctx),
-        TaskArgs::Result { id } => action_result(&werk, id, ctx),
-        TaskArgs::List { aql } => action_list(&werk, aql, &ctx.templates),
-        TaskArgs::Create { task, label } => action_create(&werk, task, label, ctx),
-        TaskArgs::Edit { id, task, label } => action_edit(&werk, id, task, label, ctx),
+        TaskArgs::Task { id } => action_task(&ctx.werk, id, ctx),
+        TaskArgs::Result { id } => action_result(&ctx.werk, id, ctx),
+        TaskArgs::List { aql } => action_list(&ctx.werk, aql),
+        TaskArgs::Create { task, label } => action_create(&ctx.werk, task, label, ctx),
+        TaskArgs::Edit { id, task, label } => action_edit(&ctx.werk, id, task, label, ctx),
     }
 }
 
@@ -74,19 +69,30 @@ pub(super) fn resolve_current_id(werk: &Werk, ctx: &ToolContext) -> Result<Strin
     }
     // A closure, never `task.assignee = {id}`: an id derives from a host-supplied label,
     // and AQL binds no values, so one carrying `=` or a quote rewrites the query.
-    let agent_id = ctx.agent_id.clone().ok_or_else(|| {
-        Event::error(ctx.templates.render(TASK_ID_MISSING, &[])).template(TASK_ID_MISSING)
-    })?;
+    let Some(agent_id) = ctx.agent_id.clone() else {
+        return Err(Event::error(
+            ctx.werk
+                .prompt
+                .render(TASK_ID_MISSING, &[] as &[(&str, &str)]),
+        )
+        .into());
+    };
     match werk.find_task(move |t: &Task| {
         t.status == Status::InProgress && t.assignee.as_deref() == Some(agent_id.as_str())
     }) {
         Some(t) => Ok(t.id.clone()),
-        None => Err(Event::error(ctx.templates.render(TASK_NOT_ASSIGNED, &[])).into()),
+        None => Err(Event::error(
+            ctx.werk
+                .prompt
+                .render(TASK_NOT_ASSIGNED, &[] as &[(&str, &str)]),
+        )
+        .into()),
     }
 }
 
-pub(super) fn task_error_message(err: TaskError, templates: &TemplateRenderer) -> String {
-    templates.render(TASK_TRANSITION_REJECTED, &[("error", &err.to_string())])
+pub(super) fn task_error_message(err: TaskError, werk: &Werk) -> String {
+    werk.prompt
+        .render(TASK_TRANSITION_REJECTED, &[("error", &err.to_string())])
 }
 
 fn render_task(t: &Task) -> String {
@@ -180,8 +186,7 @@ fn action_task(werk: &Werk, id: Option<String>, ctx: &ToolContext) -> Event {
     };
     match werk.get_task(&id) {
         Some(t) => Event::success(render_task(&t)),
-        None => Event::error(ctx.templates.render(TASK_NOT_FOUND, &[("id", &id)]))
-            .template(TASK_NOT_FOUND),
+        None => Event::error(ctx.werk.prompt.render(TASK_NOT_FOUND, &[("id", &id)])),
     }
 }
 
@@ -191,25 +196,28 @@ fn action_result(werk: &Werk, id: Option<String>, ctx: &ToolContext) -> Event {
         Err(event) => return *event,
     };
     let Some(task) = werk.get_task(&id) else {
-        return Event::error(ctx.templates.render(TASK_NOT_FOUND, &[("id", &id)]))
-            .template(TASK_NOT_FOUND);
+        return Event::error(ctx.werk.prompt.render(TASK_NOT_FOUND, &[("id", &id)]));
     };
     match task.result.as_ref() {
         Some(result) => Event::success(render_result(&id, &werk.result_path(&id), result)),
-        None => Event::error(ctx.templates.render(
-            TASK_RESULT_MISSING,
-            &[("id", &id), ("status", status_label(task.status))],
-        )),
+        None => {
+            let status = status_label(task.status).to_string();
+            Event::error(
+                werk.prompt
+                    .render(TASK_RESULT_MISSING, &[("id", &id), ("status", &status)]),
+            )
+        }
     }
 }
 
-fn action_list(werk: &Werk, aql: Option<String>, templates: &TemplateRenderer) -> Event {
+fn action_list(werk: &Werk, aql: Option<String>) -> Event {
     let pool: Vec<Task> = match aql.as_deref().map(Query::new) {
         Some(Ok(query)) => werk.find_tasks(query),
         Some(Err(error)) => {
             return Event::error(
-                templates.render(TASK_QUERY_INVALID, &[("error", &error.to_string())]),
-            )
+                werk.prompt
+                    .render(TASK_QUERY_INVALID, &[("error", &error.to_string())]),
+            );
         }
         None => werk.get_tasks(),
     };
@@ -257,13 +265,16 @@ fn action_edit(
         Err(event) => return *event,
     };
     if new_task.is_none() && new_label.is_none() {
-        return Event::error(ctx.templates.render(TASK_EDIT_INCOMPLETE, &[]))
-            .template(TASK_EDIT_INCOMPLETE);
+        return Event::error(
+            ctx.werk
+                .prompt
+                .render(TASK_EDIT_INCOMPLETE, &[] as &[(&str, &str)]),
+        );
     }
 
     match werk.edit(&id, new_task, new_label) {
         Ok(()) => Event::success(format!("Edited task {id}")),
-        Err(e) => Event::error(task_error_message(e, &ctx.templates)),
+        Err(e) => Event::error(task_error_message(e, &ctx.werk)),
     }
 }
 
@@ -277,9 +288,7 @@ mod tests {
     /// Build a context for a tool test, optionally with a "current
     /// task" already InProgress and assigned to `agent`.
     fn ctx_with(werk: Arc<Werk>, agent: &str) -> ToolContext {
-        ToolContext::new(PathBuf::from("/tmp"))
-            .werk(werk)
-            .agent_id(agent.to_string())
+        ToolContext::new(PathBuf::from("/tmp"), werk).agent_id(agent.to_string())
     }
 
     /// Insert one `todo` task, claim it for `agent` (atomically labels +
@@ -371,7 +380,7 @@ mod tests {
     async fn key_is_not_an_alias_for_id() {
         let werk = Werk(isolated_test_dir()).unwrap();
         werk.add_task("body");
-        let ctx = ToolContext::new(PathBuf::from("/tmp")).werk(werk);
+        let ctx = ToolContext::new(PathBuf::from("/tmp"), werk);
 
         let result = call(
             TaskTool,
@@ -387,7 +396,7 @@ mod tests {
     #[tokio::test]
     async fn task_not_found_template_binds_the_id() {
         let werk = Werk(isolated_test_dir()).unwrap();
-        let ctx = ToolContext::new(PathBuf::from("/tmp")).werk(werk);
+        let ctx = ToolContext::new(PathBuf::from("/tmp"), werk);
 
         let result = call(
             TaskTool,

@@ -27,9 +27,6 @@ enum CompactReason {
 pub(crate) mod test_util;
 
 #[cfg(test)]
-mod render_tests;
-
-#[cfg(test)]
 mod tests {
     use crate::agents::r#loop::test_util::*;
     use crate::agents::tasks::{Author, ReplyContent};

@@ -11,9 +11,10 @@ use super::grep::{
 use super::tool::Event;
 use crate::codegrep::{self, Conf, Pattern};
 use crate::prompts::templates::{
-    TemplateRenderer, CODE_CONSTRAINT_INCOMPLETE, CODE_CONSTRAINT_METAVARIABLE_UNKNOWN,
+    CODE_CONSTRAINT_INCOMPLETE, CODE_CONSTRAINT_METAVARIABLE_UNKNOWN,
     CODE_CONSTRAINT_REGEX_REJECTED, CODE_PATTERN_REJECTED,
 };
+use crate::Werk;
 
 /// Match every file with the `codegrep` engine and render per `output_mode`,
 /// reusing `grep`'s renderers so code results carry the same structured
@@ -22,7 +23,7 @@ pub(super) fn run(
     files: &[(PathBuf, String)],
     query: &Query,
     interrupt: &AtomicBool,
-    templates: &TemplateRenderer,
+    werk: &Werk,
 ) -> Event {
     let mut conf = Conf::default_multiline();
     conf.caseless = query.case_insensitive;
@@ -30,11 +31,12 @@ pub(super) fn run(
         Ok(pattern) => pattern,
         Err(error) => {
             return Event::error(
-                templates.render(CODE_PATTERN_REJECTED, &[("error", &error.to_string())]),
-            )
+                werk.prompt
+                    .render(CODE_PATTERN_REJECTED, &[("error", &error.to_string())]),
+            );
         }
     };
-    let constraints = match parse_constraints(&query.constraints, &pattern, templates) {
+    let constraints = match parse_constraints(&query.constraints, &pattern, werk) {
         Ok(constraints) => constraints,
         Err(message) => return Event::error(message),
     };
@@ -168,8 +170,8 @@ fn truncate_to_chars(text: &str, max_chars: usize) -> String {
 fn parse_constraints(
     constraints: &Value,
     pattern: &Pattern,
-    templates: &TemplateRenderer,
-) -> std::result::Result<Vec<(String, regex::Regex)>, String> {
+    werk: &Werk,
+) -> Result<Vec<(String, regex::Regex)>, String> {
     let Some(items) = constraints.as_array() else {
         return Ok(Vec::new());
     };
@@ -182,17 +184,24 @@ fn parse_constraints(
             .trim_start_matches('$');
         let source = item["regex"].as_str().unwrap_or("");
         if name.is_empty() || source.is_empty() {
-            return Err(templates.render(CODE_CONSTRAINT_INCOMPLETE, &[]));
+            return Err(werk
+                .prompt
+                .render(CODE_CONSTRAINT_INCOMPLETE, &[] as &[(&str, &str)]));
         }
         if !names.contains(name) {
-            return Err(templates.render(CODE_CONSTRAINT_METAVARIABLE_UNKNOWN, &[("name", name)]));
+            return Err(werk
+                .prompt
+                .render(CODE_CONSTRAINT_METAVARIABLE_UNKNOWN, &[("name", name)]));
         }
-        let regex = regex::Regex::new(source).map_err(|error| {
-            templates.render(
-                CODE_CONSTRAINT_REGEX_REJECTED,
-                &[("name", name), ("error", &error.to_string())],
-            )
-        })?;
+        let regex = match regex::Regex::new(source) {
+            Ok(regex) => regex,
+            Err(error) => {
+                return Err(werk.prompt.render(
+                    CODE_CONSTRAINT_REGEX_REJECTED,
+                    &[("name", name), ("error", &error.to_string())],
+                ));
+            }
+        };
         compiled.push((name.to_string(), regex));
     }
     Ok(compiled)
@@ -219,7 +228,7 @@ mod tests {
     use std::fs;
 
     fn test_ctx(path: &std::path::Path) -> ToolContext {
-        ToolContext::new(path.to_path_buf())
+        ToolContext::new(path.to_path_buf(), crate::Werk::new())
     }
 
     async fn search(ctx: &ToolContext, input: Value) -> Value {
