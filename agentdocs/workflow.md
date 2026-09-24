@@ -82,6 +82,26 @@ make use_case name=deep-research args="What is a good life?"
 - Pass program arguments through `args=`, not after `--`.
 - Set `BRAVE_API_KEY` before running `deep-research`.
 
+The Python Pit Stop showcase runs through uv in `crates/agentwerk-py/examples/pit_stop/`:
+
+```bash
+uv sync --frozen
+npm ci
+npm run build
+uv run main.py
+uv run pytest -q
+npm test
+npx playwright install chromium webkit
+npm run test:browser
+```
+
+- Default playback uses its committed recording without a provider. Use `uv run main.py --live` with provider environment variables to record real agents.
+- Keep the built viewer running and run `npm run capture -- ../../../../assets/demo.gif` to replace the shared README GIF. Capture screenshots and intermediates belong under `.context/`.
+
+The Pit Stop capture script enforces a 2,000,000-byte GIF limit at 800×450 over
+12 seconds, trying 15 fps before a 12-fps fallback. It preserves the previous GIF
+if no encoding meets the budget.
+
 ## Local Tooling
 
 **Treat setup targets as changes outside the repository.**

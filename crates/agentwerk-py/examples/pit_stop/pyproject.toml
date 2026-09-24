@@ -1,0 +1,22 @@
+[project]
+name = "agentwerk-pit-stop"
+version = "0.1.0"
+description = "A cinematic pit stop driven by nineteen agentwerk agents"
+requires-python = ">=3.10"
+dependencies = ["agentwerk", "aiohttp>=3.10,<4"]
+
+[tool.uv.sources]
+agentwerk = { path = "../..", editable = true }
+
+[dependency-groups]
+dev = [
+    "pytest>=8",
+    "pytest-asyncio>=0.23",
+    "imageio-ffmpeg>=0.6",
+    "ruff>=0.16.8",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+pythonpath = ["."]

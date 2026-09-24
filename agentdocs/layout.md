@@ -69,3 +69,11 @@ Where code, tests, bindings, examples, and repository guidance live.
 - Keep the Rust API reference under `docs/api/` and mirror it for Python under `crates/agentwerk-py/docs/api/`; each README is the index for its language.
 - Use `INVENTORY.md` for declaration-level API tracking; use `agentdocs/` only for decisions the code does not state.
 - Keep reusable agent skills under `skills/`, hook configuration under `hooks/`, and repository checks under `tools/`.
+
+## Browser Use Cases
+
+**Keep visualization and simulation in the consuming example.**
+
+- `crates/agentwerk-py/examples/pit_stop/` is a uv project using the local Python binding and an example-local Vite/Three.js frontend. Its shared `layout.json` supplies car, staging and equipment geometry; `movement.py` records seeded routes and timing independently of orchestration. The frontend separates recorded motion, persistent equipment, hand articulation, and HUD derivation; it bundles its pixel font with its license under `public/licenses/`.
+- Keep agent composition, mechanical state, transport, playback, and rendering separate. All authoritative simulation changes originate in validated host actions; the browser observes events.
+- Commit its lockfiles and successful real-agent recording. Keep dependency installations, frontend builds, and capture intermediates untracked.

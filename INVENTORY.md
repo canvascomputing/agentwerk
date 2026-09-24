@@ -2659,3 +2659,240 @@ Binds `tools/`.
 | Rust | `extract_tool(obj: any): Tool throws PyErr` | crate |
 | Rust | `handle(inner: Tool): PyTool` | private |
 | Rust | `register(m: PyModule): void throws PyErr` | crate |
+# Pit Stop example
+
+These declarations belong to the consuming example, not the agentwerk library API.
+
+## `crates/agentwerk-py/examples/pit_stop/orchestration.py`
+
+### Internal
+
+| Declaration | Purpose |
+| --- | --- |
+| `PROMPTS`, `MECHANICAL_EVENTS`, `LIFECYCLE_EVENTS`, `FAILURE_EVENTS` | Role prompts and browser event selection |
+| `action_tool(pit, member)` / `perform(action)` | Bind a validated mechanical tool to one crew identity |
+| `build_crew(pit)` | Compose one Werk, nineteen agents, schemas and result hooks |
+| `schedule()` | Claim eligible actions once and enqueue labeled tasks |
+| `completed(_, task, result)` | Verify mechanical completion before scheduling handoffs |
+| `run_stop(feed, seed=None)` | Run apron preparation alongside arrival, then stopped-car service and authorized departure |
+| `preparation_started(actor)` | Cue car arrival after two collectors begin moving |
+| `publish(name, data)` / `observe(_, event)` | Route simulation events through Werk and whitelist browser observations |
+
+## `crates/agentwerk-py/examples/pit_stop/simulation.py`
+
+### Internal
+
+| Declaration | Purpose |
+| --- | --- |
+| `CORNERS`, `DURATIONS`, `WHEEL_PREREQUISITES`, `WHEEL_RESULTS`, `CREW` | Wheel stations, action timings, transitions and nineteen crew assignments |
+| `Crew(id, role, station, actions)` | Immutable crew identity and permitted actions |
+| `PitStop(publish, sleep, seed=None)` | Own authoritative car and crew state under a reentrant lock |
+| `equipment()` | Create uniquely owned working tools and fresh/used tires |
+| `snapshot()` / `emit(name, **data)` | Copy state and publish action observations |
+| `arrive()` / `depart()` | Drive gated vehicle movement and its lifecycle events |
+| `serviced()` / `ready(actor, action)` | Derive mechanical prerequisites from state |
+| `eligible()` | Return actions whose prerequisites are satisfied |
+| `perform(actor, action)` | Validate ownership, execute recorded phases and commit mechanical work |
+| `complete_phase(worker, actor, action, phase)` | Apply one recorded travel, pickup, drop or work phase |
+| `apply_effect(actor, action)` | Commit the work phase to authoritative equipment and mechanical state |
+| `hold(message)` | Prevent further action completion or release after failure |
+
+## `crates/agentwerk-py/examples/pit_stop/feed.py`
+
+### Internal
+
+| Declaration | Purpose |
+| --- | --- |
+| `Feed(record_file)` | Ordered thread-safe browser history and optional JSONL recording |
+| `push(name, data)` / `after(number)` | Record events and recover those after a reconnect cursor |
+| `read_recording(path)` | Load and validate event ordering |
+| `application(feed, recording, dist)` | Construct the local aiohttp server |
+| `config(request)` / `events(request)` / `index(request)` | Serve initial state, resumable SSE and the built viewer |
+
+## `crates/agentwerk-py/examples/pit_stop/main.py`
+
+### Internal
+
+| Declaration | Purpose |
+| --- | --- |
+| `HERE` | Resolve example assets independently of the working directory |
+| `main(args)` | Run replay, live viewing or recording-only execution with cleanup |
+
+## `crates/agentwerk-py/examples/pit_stop/src/playback.js`
+
+### Internal
+
+| Declaration | Purpose |
+| --- | --- |
+| `Playback(frames, mode)` | Shared deterministic live/replay event history and clock |
+| `REPLAY_SECONDS` | Shared twelve-second duration for browser replay and GIF capture |
+| `append(frames)` | Deduplicate reconnects and reject gaps or decreasing timestamps |
+| `duration` / `speed` | Derive loop duration and uniform replay compression |
+| `tick(seconds)` / `reset()` / `sample(time)` | Advance, reset and reconstruct state and active actions |
+
+## `crates/agentwerk-py/examples/pit_stop/src/animation.js`
+
+### Internal
+
+| Declaration | Purpose |
+| --- | --- |
+| `clamp`, `smooth`, `lerp`, `progress` | Bounded interpolation over recorded action time |
+| `vehiclePosition(carEvent, time, state)` | Stationary and departure positions gated by authoritative events |
+| `jackHeight(sample, end)` | Chassis lift derived from each jack action |
+| `workerTarget(worker, action, x, z)` | Give legacy and recorded crew motion the same facing target |
+| `animateLegacyWorker(worker, sample)` | Preserve motion for recordings without route phases |
+| `animateWorker(worker, sample)` | Crew poses, tool work, wheel carrying and withdrawal |
+| `animateVehicle`, `animateWheels`, `animateFlaps`, `animateJacks`, `animateReleaseSign` | Apply recorded state to each scene component |
+| `animateScene(world, sample)` | Apply car, wheel, wing, jack and signal state to the renderer |
+
+## `crates/agentwerk-py/examples/pit_stop/src/car.js`
+
+### Internal
+
+| Declaration | Purpose |
+| --- | --- |
+| `CORNERS` | Wheel positions in car coordinates |
+| `carbon`, `silver`, `rubber`, `ivory`, `red`, `blue`, `yellow` | Shared car materials |
+| `tire(fresh)` | Detailed removable wheel with compound marking |
+| `body(parent, outline, depth, surface, y)` | Extruded bodywork contour |
+| `agentMark(parent)` | Paint the original Fabrik pixel figure onto the rear wing |
+| `createBodywork`, `createCockpit`, `createWings`, `createWheels` | Build the car's visual assemblies |
+| `createCar()` | Chassis, suspension, cockpit, removable wheels and adjustable flaps |
+
+## `crates/agentwerk-py/examples/pit_stop/src/crew.js`
+
+### Internal
+
+| Declaration | Purpose |
+| --- | --- |
+| `COLORS`, `dark`, `metal` | Role colors and equipment surfaces |
+| `positions(member)` | Safe waiting and working positions per crew station |
+| `pick(colors)` | Choose clothing colors deterministically from the recorded seed |
+| `clothingTexture(color, index)` | Local pixel fabric texture with seams and pockets |
+| `createReleaseSign(torso)` | Rectangular board gripped directly with both hands, with release-gated rim colors |
+| `createCrew(member, seed=27)` | Articulated crew, seeded racing-color clothing, carried wheels and role equipment |
+| `createJack(end)` | Movable jack and lifting arm |
+
+## `crates/agentwerk-py/examples/pit_stop/src/geometry.js`
+
+### Internal
+
+| Declaration | Purpose |
+| --- | --- |
+| `material(color, options)` | Shared physical material defaults |
+| `mesh(parent, geometry, surface, position)` | Attach positioned shadow-casting geometry |
+| `box`, `cylinder`, `rod` | Repeated equipment and articulation primitives |
+| `decal(parent, text, width, height, position, color, size)` | Locally rendered paint and livery texture |
+
+## `crates/agentwerk-py/examples/pit_stop/src/scene.js`
+
+### Internal
+
+| Declaration | Purpose |
+| --- | --- |
+| `asphaltTexture()` | Seeded procedural asphalt without external assets |
+| `streetPaint(scene)` | Repeating pixel sponsor panels painted onto the asphalt |
+| `pitMarkings(scene)` / `strip(width, depth, x, z)` | Worn yellow pit rails and alignment ticks |
+| `paintApron`, `buildGarage`, `buildStations` | Build the pit box environment in visual groups |
+| `environment(scene, metadata)` | Pit box, garage and equipment stations |
+| `createScene(canvas, crew, metadata)` | Orthographic scene, lighting, models and renderer |
+| `resize()` | Fit the closer camera view to the browser aspect ratio |
+
+## `crates/agentwerk-py/examples/pit_stop/src/main.js`
+
+### Internal
+
+| Declaration | Purpose |
+| --- | --- |
+| `ui` | Phase, wheel readiness, progress and error elements |
+| `phase(state)` / `updateHud(playback, sample)` | Readable service and release status |
+| `currentItem(sample, actor)` | Resolve the authoritative equipment held by one worker |
+| `showError(message)` | Browser-visible startup or graphics failures |
+| `inspectScene(world, playback)` | Read renderer state for capture and browser verification |
+| `connectLiveFeed(playback, onFrame)` | Append browser events and report stream errors |
+| `start()` | Load the run and connect playback, renderer, controls and SSE |
+| `render()` / `tick(now)` | Draw the sampled state and maintain the browser clock |
+| `window.pitStop.seek(seconds)` / `inspect()` | Deterministic renderer capture and browser verification |
+
+## `crates/agentwerk-py/examples/pit_stop/capture.mjs`
+
+### Internal
+
+| Declaration | Purpose |
+| --- | --- |
+| Capture entry point | Render 180 frames at 800×450, encode a twelve-second GIF below 2 MB and save review screenshots |
+
+## `crates/agentwerk-py/examples/pit_stop/vite.config.js`
+
+### Internal
+
+| Declaration | Purpose |
+| --- | --- |
+| Default Vite configuration | Proxy development API and SSE routes to the local Python viewer |
+
+## `crates/agentwerk-py/examples/pit_stop/playwright.config.js`
+
+### Internal
+
+| Declaration | Purpose |
+| --- | --- |
+| `port`, `baseURL`, default Playwright configuration | Chromium/WebKit checks against a uv-launched viewer on a configurable test port |
+
+## `crates/agentwerk-py/examples/pit_stop/movement.py`
+
+### Internal
+
+| Declaration | Purpose |
+| --- | --- |
+| `LAYOUT` | Shared staging, work, equipment and vehicle-clearance geometry |
+| `route(start, target, lane)` / `distance(points)` | Construct apron waypoints and measure their length |
+| `end_heading(phase)` | Preserve recorded orientation through phases and task handoffs |
+| `position(phases, seconds)` | Sample recorded movement for reservation checks |
+| `Movement(seed, crew, durations)` | Precompute independent pace, action timing and arrival variation |
+| `plan(member, action, start, now, crew=None)` / `walk(target, kind, loaded)` | Author turns, travel, local yields, handoffs and cleanup phases |
+| `pause(kind, duration, **data)` / `face(target)` / `transfer(kind, item, source, target, effect)` | Append recorded handling, facing, and ownership changes |
+| `conflicts(phases, now, occupied=())` | Check journeys, handling intervals, and stationary workers before reserving space |
+
+## `crates/agentwerk-py/examples/pit_stop/src/motion.js`
+
+### Internal
+
+| Declaration | Purpose |
+| --- | --- |
+| `clamp(value)` | Bound motion progress to one phase |
+| `arrivalPose(data, progress)` | Curved approach, tangent heading, and smooth braking onto the marks |
+| `routePosition(points, progress)` | Interpolate distance and heading along recorded waypoints |
+| `actionMotion(event, time)` | Sample movement, work progress and gait state without frame history |
+| `workProgress(event, time)` | Mechanical progress with legacy-recording fallback |
+
+## `crates/agentwerk-py/examples/pit_stop/src/equipment.js`
+
+### Internal
+
+| Declaration | Purpose |
+| --- | --- |
+| `smooth(p)` | Ease equipment transfers between owners |
+| `createEquipment(scene, items)` / `createTool(kind)` | Build one visible object per authoritative tool or tire |
+| `ownerPose(world, sample, owner, kind)` | Resolve slot, hand, hub and tool-contact anchors |
+| `equipmentPose(world, sample, id)` | Sample continuous transfer position and orientation |
+| `animateEquipment(world, sample)` | Place persistent equipment from recorded ownership and phases |
+
+## `crates/agentwerk-py/examples/pit_stop/src/character-motion.js`
+
+### Internal
+
+| Declaration | Purpose |
+| --- | --- |
+| `smooth(p)` | Ease changes in posture and hand contact |
+| `poseCharacter(worker, sample)` / `handles(kind)` | Recorded walking, turning, carrying, handling and signaling poses |
+| `aimHand(worker, index, target)` | Solve shoulder and elbow angles for hand contact |
+| `poseHands(world, sample)` | Keep hands on tires, tools, jack handles and chassis |
+
+## `crates/agentwerk-py/examples/pit_stop/src/hud.js`
+
+### Internal
+
+| Declaration | Purpose |
+| --- | --- |
+| `wheelStatus(sample, corner)` / `active(role, action)` | Derive parallel corner progress from validated work |
+| `updateServiceDiagram(element, side, sample)` | Compact overhead tire status and side view with independent front/rear lift |

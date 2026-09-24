@@ -25,9 +25,9 @@
 ---
 
 <div align="center">
-  <img src="https://raw.githubusercontent.com/canvascomputing/agentwerk/main/assets/demo.gif" width="800" />
+  <img src="assets/demo.gif" width="800" />
 </div>
-<div align="center"><a href="crates/agentwerk-py/examples/apparat_fabrik.py">Apparat Fabrik</a></div>
+<div align="center"><a href="crates/agentwerk-py/examples/pit_stop/README.md">Pit Stop: Coordinate a Pit Crew Against the Clock</a></div>
 <div align="center"><em>“Werk” is German for both a factory and a work of art.</em></div>
 
 ---
@@ -130,25 +130,22 @@ NOTE: Do not call `finish`. The user accepts the change or sends another instruc
 </details>
 
 ```rust
-fn read_tools() -> Vec<Tool> {
-    vec![
-        ListDirectoryTool.into(),
-        GlobTool.into(),
-        GrepTool.into(),
-        ReadFileTool.into(),
-    ]
-}
-
 let planner = Agent::from_env()
     .label("plan")
     .role(include_str!("planner.md"))
-    .tools(read_tools());
+    .tool(ListDirectoryTool)
+    .tool(GlobTool)
+    .tool(GrepTool)
+    .tool(ReadFileTool);
 
 let coder = Agent::from_env()
     .label("coding")
     .role(include_str!("coder.md"))
     .interactive()
-    .tools(read_tools())
+    .tool(ListDirectoryTool)
+    .tool(GlobTool)
+    .tool(GrepTool)
+    .tool(ReadFileTool)
     .tool(EditFileTool)
     .tool(WriteFileTool);
 ```
@@ -355,6 +352,7 @@ println!("{report}");
 
 Example projects built with agentwerk:
 
+- [Pit Stop](crates/agentwerk-py/examples/pit_stop/README.md): a 3D pit stop where the crew changes tires, clears the car, and sends it back into the race
 - [Hello World](crates/use-cases/src/hello_world/main.rs): basic example
 - [Terminal REPL](crates/use-cases/src/terminal_repl/main.rs): minimal multi-turn terminal chat
 - [Coding Harness](crates/use-cases/src/coding_harness/main.rs): plan, implement, and verify a repository change
