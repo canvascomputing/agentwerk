@@ -13,7 +13,7 @@
 <div align="center">
   <a href="#installation">Installation</a> •
   <a href="../../README.md">Rust</a> •
-  <a href="API.md">API</a> •
+  <a href="#api">API</a> •
   <a href="../../DEVELOPMENT.md">Development</a> •
   <a href="../../SECURITY.md">Security</a>
 </div>
@@ -377,11 +377,11 @@ Example projects built with agentwerk:
 
 | Section | Covers |
 | --- | --- |
-| [Agents](API.md#agents) | Configure model providers and agent behavior. |
-| [Tools](API.md#tools) | Give agents access to files, commands, web pages, events, tasks, and knowledge. |
-| [Tasks](API.md#tasks) | Define work, result schemas, and templates. |
-| [Werk](API.md#werk) | Coordinate execution, policies, compaction, and sessions. |
-| [AQL](API.md#aql) | Find and order tasks, results, and events. |
-| [Events](API.md#events) | Publish and inspect runtime activity. |
-| [Knowledge](API.md#knowledge) | Share durable pages between agents and tasks. |
-| [Collaboration](API.md#collaboration) | Pass work and results between agents. |
+| [Agents](docs/api/agents.md) | Configure model providers and agent behavior. |
+| [Tools](docs/api/tools.md) | Give agents access to files, commands, web pages, events, tasks, and knowledge. |
+| [Tasks](docs/api/tasks.md) | Define work, result schemas, and templates. |
+| [Werk](docs/api/werk.md) | Coordinate execution, policies, compaction, and sessions. |
+| [AQL](docs/api/aql.md) | Find and order tasks, results, and events. |
+| [Events](docs/api/events.md) | Publish and inspect runtime activity. |
+| [Knowledge](docs/api/knowledge.md) | Share durable pages between agents and tasks. |
+| [Collaboration](docs/api/collaboration.md) | Pass work and results between agents. |
