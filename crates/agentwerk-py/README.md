@@ -7,8 +7,7 @@
 <div align="center">
   <strong>A minimal agentic loop for building efficient harnesses.</strong>
 </div>
-
-<div align="center">Coordinate agent fleets across complex tasks, with detailed observability and shared knowledge.</div>
+<div align="center"><em>“Werk” is German for both a factory and a work of art.</em></div>
 
 <div align="center">
   <a href="#installation">Installation</a> •
@@ -28,7 +27,7 @@
   <img src="../../assets/demo.gif" width="800" />
 </div>
 <div align="center"><a href="examples/pit_stop/main.py">19 agents, 52 tasks, one pit stop</a></div>
-<div align="center"><em>“Werk” is German for both a factory and a work of art.</em></div>
+<div align="center">Coordinate agent fleets across complex tasks, with detailed observability and shared knowledge.</div>
 
 ---
 
