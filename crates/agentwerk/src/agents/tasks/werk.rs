@@ -327,6 +327,68 @@ pub struct Werk {
     pub(super) next_task_id: Mutex<Option<u64>>,
 }
 
+fn create_prompt_builder(werk: Weak<Werk>) -> Prompt {
+    let prompt = Prompt::new();
+    register_template_function(&prompt, "find_task", &werk, |werk, query| {
+        werk.find_task(query)
+            .map(serde_json::to_value)
+            .transpose()
+            .map_err(selection_serialization_error)
+    });
+    register_template_function(&prompt, "find_tasks", &werk, |werk, query| {
+        let values = werk.find_tasks(query);
+        if values.is_empty() {
+            return Ok(None);
+        }
+        serde_json::to_value(values)
+            .map(Some)
+            .map_err(selection_serialization_error)
+    });
+    register_template_function(&prompt, "find_event", &werk, |werk, query| {
+        werk.find_event(query)
+            .map(serde_json::to_value)
+            .transpose()
+            .map_err(selection_serialization_error)
+    });
+    register_template_function(&prompt, "find_events", &werk, |werk, query| {
+        let values = werk.find_events(query);
+        if values.is_empty() {
+            return Ok(None);
+        }
+        serde_json::to_value(values)
+            .map(Some)
+            .map_err(selection_serialization_error)
+    });
+    register_template_function(&prompt, "find_result", &werk, |werk, query| {
+        Ok(werk.find_result(query))
+    });
+    register_template_function(&prompt, "find_results", &werk, |werk, query| {
+        let values = werk.find_results(query);
+        Ok((!values.is_empty()).then_some(serde_json::Value::Array(values)))
+    });
+    prompt
+}
+
+fn register_template_function(
+    prompt: &Prompt,
+    name: &'static str,
+    werk: &Weak<Werk>,
+    function: impl Fn(&Werk, Query) -> Result<Option<serde_json::Value>, String> + Send + Sync + 'static,
+) {
+    let werk = werk.clone();
+    prompt.set_template_function(name, move |argument| {
+        let query = Query::new(argument).map_err(|error| error.to_string())?;
+        let werk = werk
+            .upgrade()
+            .expect("template function cannot outlive its Werk");
+        function(&werk, query)
+    });
+}
+
+fn selection_serialization_error(error: serde_json::Error) -> String {
+    format!("cannot serialize selection: {error}")
+}
+
 /// Continue a session from `werk_dir`, or start one there when it is empty.
 #[allow(non_snake_case)]
 pub fn Werk(werk_dir: impl Into<PathBuf>) -> io::Result<Arc<Werk>> {
@@ -342,7 +404,7 @@ impl Werk {
             agents: Mutex::new(Vec::new()),
             conditions: Mutex::new(ConditionRegistry::default()),
             policy: Mutex::new(Policy::default()),
-            prompt: Prompt::new(weak.clone()),
+            prompt: create_prompt_builder(weak.clone()),
             run: Arc::new(Run::default()),
             cancel_filters: Mutex::new(Vec::new()),
             terminal_transitions: watch::Sender::new(0),
@@ -430,7 +492,7 @@ impl Werk {
             agents: Mutex::new(Vec::new()),
             conditions: Mutex::new(ConditionRegistry::default()),
             policy: Mutex::new(Policy::default()),
-            prompt: Prompt::new(weak.clone()),
+            prompt: create_prompt_builder(weak.clone()),
             run: Arc::new(Run::default()),
             cancel_filters: Mutex::new(Vec::new()),
             terminal_transitions: watch::Sender::new(0),

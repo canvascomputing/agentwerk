@@ -1,36 +1,34 @@
-//! Werk-owned prompt rendering.
+//! Prompt rendering with named values and one-argument functions.
 
 use std::collections::HashMap;
-use std::sync::{Mutex, Weak};
+use std::sync::{Arc, Mutex};
 
 use serde_json::Value;
 
 use super::json_path::JsonPath;
-use crate::{Query, Werk};
+
+type TemplateFunction = dyn Fn(&str) -> Result<Option<Value>, String> + Send + Sync + 'static;
 
 pub(crate) struct Prompt {
-    werk: Weak<Werk>,
     templates: Mutex<HashMap<String, String>>,
+    functions: Mutex<HashMap<String, Arc<TemplateFunction>>>,
 }
 
 impl Prompt {
-    pub(crate) fn new(werk: Weak<Werk>) -> Self {
+    pub(crate) fn new() -> Self {
         Self {
-            werk,
             templates: Mutex::new(HashMap::new()),
+            functions: Mutex::new(HashMap::new()),
         }
     }
 
     pub(crate) fn render<V: AsRef<str>>(&self, text: &str, values: &[(&str, V)]) -> String {
-        let werk = self
-            .werk
-            .upgrade()
-            .expect("Prompt cannot outlive its owning Werk");
         let templates = self.templates.lock().unwrap();
+        let functions = self.functions.lock().unwrap().clone();
         let text = super::templates::name(text)
             .and_then(|name| templates.get(name))
             .map_or(text, String::as_str);
-        render_text(&werk, text, values, &templates)
+        render_text(text, values, &templates, &functions)
     }
 
     pub(crate) fn get_template(&self, key: &str) -> Option<String> {
@@ -39,6 +37,17 @@ impl Prompt {
 
     pub(crate) fn set_template(&self, key: String, value: String) {
         self.templates.lock().unwrap().insert(key, value);
+    }
+
+    pub(crate) fn set_template_function(
+        &self,
+        name: impl Into<String>,
+        function: impl Fn(&str) -> Result<Option<Value>, String> + Send + Sync + 'static,
+    ) {
+        self.functions
+            .lock()
+            .unwrap()
+            .insert(name.into(), Arc::new(function));
     }
 
     pub(crate) fn inherit_templates(&self, source: &Self) {
@@ -51,10 +60,10 @@ impl Prompt {
 }
 
 fn render_text<V: AsRef<str>>(
-    werk: &Werk,
     text: &str,
     runtime_values: &[(&str, V)],
     templates: &HashMap<String, String>,
+    functions: &HashMap<String, Arc<TemplateFunction>>,
 ) -> String {
     let mut value = |name: &str| {
         runtime_values
@@ -63,7 +72,7 @@ fn render_text<V: AsRef<str>>(
             .or_else(|| templates.get(name).cloned())
     };
     render_template(text.trim(), |expression, literal| {
-        resolve_expression(werk, expression, literal, &mut value)
+        resolve_expression(functions, expression, literal, &mut value)
     })
 }
 
@@ -120,14 +129,14 @@ pub(super) fn render_template_values(
 }
 
 fn resolve_expression(
-    werk: &Werk,
+    functions: &HashMap<String, Arc<TemplateFunction>>,
     expression: &str,
     literal: &str,
     value: &mut impl FnMut(&str) -> Option<String>,
 ) -> String {
     let expression = expression.trim();
-    match selection_expression(expression) {
-        Ok(Some(selection)) => match resolve_selection(werk, selection, value) {
+    match function_expression(expression, functions) {
+        Ok(Some(function)) => match resolve_function(functions, function, value) {
             Ok(value) => value.map(result_text).unwrap_or_default(),
             Err(_) => literal.to_string(),
         },
@@ -137,18 +146,21 @@ fn resolve_expression(
     }
 }
 
-fn resolve_selection(
-    werk: &Werk,
-    selection: SelectionExpression<'_>,
+fn resolve_function(
+    functions: &HashMap<String, Arc<TemplateFunction>>,
+    expression: FunctionExpression<'_>,
     value: &mut impl FnMut(&str) -> Option<String>,
 ) -> Result<Option<Value>, String> {
-    let query = expand_nested(selection.query, value)?;
-    let json_path = selection
+    let argument = expand_nested(expression.argument, functions, value)?;
+    let json_path = expression
         .json_path
         .map(JsonPath::parse)
         .transpose()
         .map_err(|error| error.to_string())?;
-    let Some(value) = select_value(werk, selection.kind, query.trim())? else {
+    let function = functions
+        .get(expression.name)
+        .expect("parsed template function is registered");
+    let Some(value) = function(argument.trim())? else {
         return Ok(None);
     };
     let Some(json_path) = json_path else {
@@ -159,6 +171,7 @@ fn resolve_selection(
 
 fn expand_nested(
     expression: &str,
+    functions: &HashMap<String, Arc<TemplateFunction>>,
     value: &mut impl FnMut(&str) -> Option<String>,
 ) -> Result<String, String> {
     let mut output = String::with_capacity(expression.len());
@@ -172,7 +185,7 @@ fn expand_nested(
         let name = body[..close].trim();
         if name.is_empty()
             || name.contains(EXPRESSION_OPEN)
-            || selection_expression(name)?.is_some()
+            || function_expression(name, functions)?.is_some()
         {
             return Err("nested expressions must name a template value".into());
         }
@@ -186,50 +199,25 @@ fn expand_nested(
     Ok(output)
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum SelectionKind {
-    Result,
-    Results,
-    Task,
-    Tasks,
-    Event,
-    Events,
-}
-
-impl SelectionKind {
-    fn parse(source: &str) -> Option<Self> {
-        Some(match source {
-            "find_result" => Self::Result,
-            "find_results" => Self::Results,
-            "find_task" => Self::Task,
-            "find_tasks" => Self::Tasks,
-            "find_event" => Self::Event,
-            "find_events" => Self::Events,
-            _ => return None,
-        })
-    }
-
-    fn is_plural(self) -> bool {
-        matches!(self, Self::Results | Self::Tasks | Self::Events)
-    }
-}
-
 #[derive(Debug, Clone, Copy)]
-struct SelectionExpression<'a> {
-    kind: SelectionKind,
-    query: &'a str,
+struct FunctionExpression<'a> {
+    name: &'a str,
+    argument: &'a str,
     json_path: Option<&'a str>,
 }
 
-fn selection_expression(expression: &str) -> Result<Option<SelectionExpression<'_>>, String> {
+fn function_expression<'a>(
+    expression: &'a str,
+    functions: &HashMap<String, Arc<TemplateFunction>>,
+) -> Result<Option<FunctionExpression<'a>>, String> {
     let Some((name, body)) = expression.split_once('(') else {
         return Ok(None);
     };
-    let Some(kind) = SelectionKind::parse(name) else {
+    if !functions.contains_key(name) {
         return Ok(None);
-    };
-    let Some((query, suffix)) = split_selection_call(body) else {
-        return Err("unclosed selection call".into());
+    }
+    let Some((argument, suffix)) = split_function_call(body) else {
+        return Err("unclosed template function call".into());
     };
     let suffix = suffix.trim();
     let json_path = if suffix.is_empty() {
@@ -244,17 +232,18 @@ fn selection_expression(expression: &str) -> Result<Option<SelectionExpression<'
         Some(suffix)
     } else {
         return Err(
-            "expected a JSON path beginning with `.` or `[` after the selection call".into(),
+            "expected a JSON path beginning with `.` or `[` after the template function call"
+                .into(),
         );
     };
-    Ok(Some(SelectionExpression {
-        kind,
-        query: query.trim(),
+    Ok(Some(FunctionExpression {
+        name,
+        argument: argument.trim(),
         json_path,
     }))
 }
 
-fn split_selection_call(source: &str) -> Option<(&str, &str)> {
+fn split_function_call(source: &str) -> Option<(&str, &str)> {
     let mut quote = None;
     let mut escaped = false;
     let mut parenthesis_depth = 0usize;
@@ -366,51 +355,6 @@ fn expression_end(body: &str) -> Result<Option<usize>, &'static str> {
     }
 }
 
-fn select_value(werk: &Werk, kind: SelectionKind, query: &str) -> Result<Option<Value>, String> {
-    let query = Query::new(query).map_err(|error| error.to_string())?;
-    match kind {
-        SelectionKind::Task => werk.find_task(query).map(serde_json::to_value).transpose(),
-        SelectionKind::Tasks => {
-            let values = werk.find_tasks(query);
-            (!values.is_empty())
-                .then(|| serde_json::to_value(values))
-                .transpose()
-        }
-        SelectionKind::Event => werk.find_event(query).map(serde_json::to_value).transpose(),
-        SelectionKind::Events => {
-            let values = werk.find_events(query);
-            (!values.is_empty())
-                .then(|| serde_json::to_value(values))
-                .transpose()
-        }
-        kind => return select_result(werk, kind, query),
-    }
-    .map_err(|error| format!("cannot serialize selection: {error}"))
-}
-
-fn select_result(werk: &Werk, kind: SelectionKind, query: Query) -> Result<Option<Value>, String> {
-    let mut tasks = werk.result_tasks(query);
-    let is_plural = kind.is_plural();
-    if tasks.is_empty() {
-        return Ok(None);
-    }
-    if !is_plural {
-        tasks.truncate(1);
-    }
-    let values = tasks
-        .iter()
-        .map(|task| {
-            task.get_result()
-                .cloned()
-                .expect("result selector requires a result")
-        })
-        .collect::<Vec<_>>();
-    if is_plural {
-        return Ok(Some(Value::Array(values)));
-    }
-    Ok(values.into_iter().next())
-}
-
 fn result_text(value: Value) -> String {
     let empty = {
         let mut pending = vec![&value];
@@ -437,12 +381,56 @@ mod tests {
     use super::*;
 
     #[test]
-    fn prompt_text_is_trimmed() {
-        let werk = Werk::new();
+    fn prompt_renders_without_a_werk() {
+        let prompt = Prompt::new();
         assert_eq!(
-            werk.prompt
-                .render("\n\nYou review code.\n", &[] as &[(&str, &str)]),
+            prompt.render("\n\nYou review code.\n", &[] as &[(&str, &str)]),
             "You review code."
+        );
+    }
+
+    #[test]
+    fn template_functions_receive_one_expanded_argument_and_support_json_paths() {
+        let prompt = Prompt::new();
+        prompt.set_template("subject".into(), "research".into());
+        prompt.set_template_function("inspect", |argument| {
+            Ok(Some(serde_json::json!({"argument": argument})))
+        });
+
+        assert_eq!(
+            prompt.render(
+                "{{ inspect(prefix, {{ subject }}).argument }}",
+                &[] as &[(&str, &str)],
+            ),
+            "prefix, research"
+        );
+    }
+
+    #[test]
+    fn later_template_functions_replace_previous_bindings() {
+        let prompt = Prompt::new();
+        prompt.set_template_function("inspect", |_| Ok(Some(Value::String("old".into()))));
+        prompt.set_template_function("inspect", |_| Ok(Some(Value::String("new".into()))));
+
+        assert_eq!(
+            prompt.render("{{ inspect(value) }}", &[] as &[(&str, &str)]),
+            "new"
+        );
+    }
+
+    #[test]
+    fn missing_failed_and_unknown_template_functions_keep_existing_behavior() {
+        let prompt = Prompt::new();
+        prompt.set_template("unknown(value)".into(), "named value".into());
+        prompt.set_template_function("missing", |_| Ok(None));
+        prompt.set_template_function("failed", |_| Err("failure".into()));
+
+        assert_eq!(
+            prompt.render(
+                "{{ missing(value) }} | {{ failed(value) }} | {{ unknown(value) }}",
+                &[] as &[(&str, &str)],
+            ),
+            " | {{ failed(value) }} | named value"
         );
     }
 
@@ -953,12 +941,18 @@ mod tests {
 
     #[test]
     fn escaped_quotes_do_not_end_selection_calls() {
-        let expression = r#"find_result(task.label = "research \" ) notes").answer"#;
-        let selection = selection_expression(expression).unwrap().unwrap();
+        let prompt = Prompt::new();
+        prompt.set_template_function("inspect", |argument| {
+            Ok(Some(serde_json::json!({"argument": argument})))
+        });
 
-        assert_eq!(selection.kind, SelectionKind::Result);
-        assert_eq!(selection.query, r#"task.label = "research \" ) notes""#);
-        assert_eq!(selection.json_path, Some("answer"));
+        assert_eq!(
+            prompt.render(
+                r#"{{ inspect(task.label = "research \" ) notes").argument }}"#,
+                &[] as &[(&str, &str)],
+            ),
+            r#"task.label = "research \" ) notes""#
+        );
     }
 
     #[test]
