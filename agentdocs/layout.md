@@ -66,5 +66,6 @@ Where code, tests, bindings, examples, and repository guidance live.
 - Keep Rust unit tests inline under `#[cfg(test)]`; keep live-provider tests under `crates/agentwerk/tests/integration/`.
 - Keep Python tests under `crates/agentwerk-py/tests/` and use the `live` marker for provider-dependent cases.
 - Keep use-case-specific tests inside their binary modules so the binary test pass reaches them.
+- Keep the Rust API reference under `docs/api/` and mirror it for Python under `crates/agentwerk-py/docs/api/`; each README is the index for its language.
 - Use `INVENTORY.md` for declaration-level API tracking; use `agentdocs/` only for decisions the code does not state.
 - Keep reusable agent skills under `skills/`, hook configuration under `hooks/`, and repository checks under `tools/`.
