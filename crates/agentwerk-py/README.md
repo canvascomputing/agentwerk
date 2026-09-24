@@ -206,8 +206,6 @@ werk.add_task(plan_task)
 await werk.finish()
 ```
 
-APIs: [CommandTool](API.md#commandtool), [Templates](API.md#templates), [Collaboration](API.md#collaboration), [Conditions](API.md#conditions), [Sessions](API.md#sessions), and [Interactive agents](API.md#interactive-agents).
-
 ---
 
 ## Let's Build a Research Harness
@@ -360,8 +358,6 @@ report = result.get("report", "")
 print(report)
 ```
 
-APIs: [Agents](API.md#agents), [Tools](API.md#tools), [Tasks](API.md#tasks), [Knowledge](API.md#knowledge), [Werk](API.md#werk), [Events](API.md#events), [Conditions](API.md#conditions), and [Collaboration](API.md#collaboration).
-
 ---
 
 ## More Use Cases
@@ -374,3 +370,18 @@ Example projects built with agentwerk:
 - [Deep Research](https://github.com/canvascomputing/agentwerk/blob/main/crates/agentwerk-py/examples/deep_research.py): research across several sources (requires `BRAVE_API_KEY`)
 - [Malware Scanner](https://github.com/canvascomputing/malwi): find signs of malware in a software package
 - [Apparat Fabrik](https://github.com/canvascomputing/agentwerk/blob/main/crates/agentwerk-py/examples/apparat_fabrik.py): simulate agents inspecting and assembling factory parts
+
+---
+
+## API
+
+| Section | Covers |
+| --- | --- |
+| [Agents](API.md#agents) | Configure model providers and agent behavior. |
+| [Tools](API.md#tools) | Give agents access to files, commands, web pages, events, tasks, and knowledge. |
+| [Tasks](API.md#tasks) | Define work, result schemas, and templates. |
+| [Werk](API.md#werk) | Coordinate execution, policies, compaction, and sessions. |
+| [AQL](API.md#aql) | Find and order tasks, results, and events. |
+| [Events](API.md#events) | Publish and inspect runtime activity. |
+| [Knowledge](API.md#knowledge) | Share durable pages between agents and tasks. |
+| [Collaboration](API.md#collaboration) | Pass work and results between agents. |
