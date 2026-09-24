@@ -25,9 +25,9 @@
 ---
 
 <div align="center">
-  <img src="https://raw.githubusercontent.com/canvascomputing/agentwerk/main/assets/demo.gif" width="800" />
+  <img src="../../assets/demo.gif" width="800" />
 </div>
-<div align="center"><a href="examples/apparat_fabrik.py">Apparat Fabrik</a></div>
+<div align="center"><a href="examples/pit_stop/README.md">Pit Stop — 19 agents, 52 tasks, one coordinated release</a></div>
 <div align="center"><em>“Werk” is German for both a factory and a work of art.</em></div>
 
 ---
@@ -130,19 +130,14 @@ NOTE: Do not call `finish`. The user accepts the change or sends another instruc
 </details>
 
 ```python
-def read_tools():
-    return [
-        ListDirectoryTool(),
-        GlobTool(),
-        GrepTool(),
-        ReadFileTool(),
-    ]
-
 planner = (
     Agent.from_env()
     .label("plan")
     .role(Path("planner.md").read_text())
-    .tools(read_tools())
+    .tool(ListDirectoryTool())
+    .tool(GlobTool())
+    .tool(GrepTool())
+    .tool(ReadFileTool())
 )
 
 coder = (
@@ -150,7 +145,10 @@ coder = (
     .label("coding")
     .role(Path("coder.md").read_text())
     .interactive()
-    .tools(read_tools())
+    .tool(ListDirectoryTool())
+    .tool(GlobTool())
+    .tool(GrepTool())
+    .tool(ReadFileTool())
     .tool(EditFileTool())
     .tool(WriteFileTool())
 )
@@ -369,6 +367,7 @@ Example projects built with agentwerk:
 - [Coding Harness](https://github.com/canvascomputing/agentwerk/blob/main/crates/use-cases/src/coding_harness/main.rs): plan, implement, and verify a repository change, also available as a [Python example](https://github.com/canvascomputing/agentwerk/blob/main/crates/agentwerk-py/examples/coding_harness.py)
 - [Deep Research](https://github.com/canvascomputing/agentwerk/blob/main/crates/agentwerk-py/examples/deep_research.py): research across several sources (requires `BRAVE_API_KEY`)
 - [Malware Scanner](https://github.com/canvascomputing/malwi): find signs of malware in a software package
+- [Pit Stop](examples/pit_stop/README.md): a 3D pit stop with 19 agents, 52 tasks, visible equipment handoffs, and a verified release
 - [Apparat Fabrik](https://github.com/canvascomputing/agentwerk/blob/main/crates/agentwerk-py/examples/apparat_fabrik.py): simulate agents inspecting and assembling factory parts
 
 ---

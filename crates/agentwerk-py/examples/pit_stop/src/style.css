@@ -1,0 +1,196 @@
+:root {
+  font-family: "Silkscreen", ui-monospace, monospace;
+  color: #eff1e8;
+  background: #101719;
+  font-synthesis: none;
+}
+* {
+  box-sizing: border-box;
+}
+body {
+  margin: 0;
+}
+main {
+  height: 100svh;
+  min-height: 440px;
+  position: relative;
+  overflow: hidden;
+}
+#scene {
+  position: absolute;
+  width: 100%;
+  height: calc(100% - 72px);
+  display: block;
+}
+.status {
+  position: absolute;
+  z-index: 2;
+  left: 0;
+  right: 0;
+  bottom: 8px;
+  padding: 0 24px;
+  color: #e8e3cf;
+}
+.status-body {
+  display: grid;
+  grid-template-columns: 1fr 1.2fr;
+  align-items: center;
+  gap: 20px;
+}
+h2 {
+  font-size: 18px;
+  text-align: center;
+  line-height: 1.3;
+  font-weight: 400;
+  text-transform: uppercase;
+  text-shadow: 2px 2px 0 #060f13;
+  margin: 0;
+}
+.service-views {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  align-items: center;
+}
+.service-car {
+  display: block;
+  width: 100%;
+  max-width: 180px;
+  height: 60px;
+  justify-self: center;
+  overflow: visible;
+}
+.car-shadow {
+  fill: #02090c;
+  opacity: 0.65;
+}
+.mini-body {
+  fill: #d9dfd4;
+  stroke: #ecf1df;
+  stroke-width: 1.5;
+}
+.mini-sidepod {
+  fill: #437fba;
+}
+.mini-cockpit {
+  fill: #15272c;
+}
+.mini-suspension {
+  fill: none;
+  stroke: #748780;
+  stroke-width: 2;
+}
+.mini-wing {
+  fill: none;
+  stroke: #d9dfd4;
+  stroke-width: 5;
+}
+.service-car[data-lifted="true"] .mini-body {
+  fill: #83bbd7;
+  stroke: #bfe6ee;
+}
+.mini-ground {
+  fill: none;
+  stroke: #40554d;
+  stroke-width: 1.5;
+}
+.side-jack {
+  fill: none;
+  stroke: #8dcbe2;
+  stroke-width: 3;
+}
+.mini-tire {
+  fill: #233735;
+  stroke: #738a80;
+  stroke-width: 2;
+}
+.mini-hub {
+  fill: #e1c66c;
+}
+[data-status="fitted"] .mini-tire {
+  fill: #528cba;
+  stroke: #94c4e8;
+}
+[data-working="true"] .mini-tire {
+  fill: #dfbb55;
+  stroke: #fae5a0;
+}
+[data-status="secured"] .mini-tire {
+  fill: #a4c884;
+  stroke: #d2e6b8;
+}
+#hold-reason {
+  font-size: 11px;
+  line-height: 1.7;
+  color: #f4b89f;
+}
+.progress {
+  position: absolute;
+  bottom: 0;
+  height: 6px;
+  background: #ffffff12;
+  width: 100%;
+  z-index: 3;
+}
+#progress {
+  height: 100%;
+  background: #c2da9e;
+  width: 0;
+}
+.vignette {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background:
+    linear-gradient(#071214a8, transparent 38%, transparent 64%, #081516e6),
+    radial-gradient(ellipse, transparent 45%, #07121477 100%);
+  z-index: 1;
+}
+#error {
+  position: absolute;
+  inset: 25% 15%;
+  background: #172226;
+  border: 1px solid #d7e4da44;
+  padding: 30px;
+  z-index: 10;
+  line-height: 1.7;
+}
+@media (max-width: 700px) {
+  .status {
+    padding: 0 16px;
+  }
+  .status-body {
+    grid-template-columns: 1fr 1.2fr;
+    gap: 12px;
+  }
+  h2 {
+    font-size: 16px;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  * {
+    transition: none !important;
+  }
+}
+
+.activity {
+  margin: 5px 0 0;
+  text-align: center;
+  font-size: 10px;
+  color: #a7b6a7;
+}
+@media (max-width: 550px) {
+  .status-body {
+    grid-template-columns: 1fr;
+    gap: 4px;
+  }
+  #scene {
+    height: calc(100% - 125px);
+  }
+  .status {
+    padding: 4px 16px;
+  }
+  .activity {
+    font-size: 9px;
+  }
+}
