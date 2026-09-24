@@ -14,11 +14,12 @@ The invariants that govern orchestration, tools, providers, events, and durable 
 
 ## Prompts
 
-**Prompt rendering is a private Werk implementation detail; callers provide strings and shared template values.**
+**Prompt rendering is a private implementation detail; callers provide strings and shared template values.**
 
 - Delegate Agent setters to Werk. Import missing templates when binding; destination values win.
+- Keep Prompt independent of Werk. Let each Werk register its selectors as one-argument template functions that capture only a weak reference back to that Werk.
 - Parse double-brace syntax once in `prompts/prompt.rs`; use strict expression resolution for prompts and configurable corrective templates, and infallible named resolution only for bundled text rendered without a Werk. Never scan inserted values.
-- Name prompt selectors after Werk's `find_*` methods and allow one layer of template variables inside their AQL arguments as raw source.
+- Name registered prompt selectors after Werk's `find_*` methods and allow one layer of template variables inside their AQL arguments as raw source.
 - Parse a field or bracket JSON path after the selector call before expanding query variables. Evaluate it through `prompts/json_path.rs` before plain formatting; named template values do not support paths.
 - Let Werk snapshot shared templates once when it prepares a role and initial string task, and report failures through `prompt_render_failed` before the first request.
 - Read corrective templates, including custom event responses, from the current Werk values at use time. Bind call-specific fields before shared values and keep inserted values literal.

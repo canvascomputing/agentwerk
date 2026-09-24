@@ -663,7 +663,7 @@ The rules the tables never repeat.
 | Python | a string, such as `policy_violated(turns)` | |
 | Rust | `.Drained`, `.PolicyViolated(PolicyViolation)`, `.Cancelled` | pub |
 | Rust | `impl Display for FinishReason` | pub |
-| both | `Werk { weak_self: Weak<Werk>, tasks: Record<string, Task>, agents: Agent[], conditions: ConditionRegistry, policy: Policy, run: Run, cancel_filters: CancelFilter[], terminal_transitions: watch::Sender<number>, templates: Record<string, string>, stats: Stats, event_handlers: EventHandler[], awaited_events: AwaitedEvents, event_stream: Sender<Event>, dir: string, events_lock: void, join_handle: JoinHandle<void>?, next_task_id: number? }` | pub |
+| both | `Werk { weak_self: Weak<Werk>, tasks: Record<string, Task>, agents: Agent[], conditions: ConditionRegistry, policy: Policy, prompt: Prompt, run: Run, cancel_filters: CancelFilter[], terminal_transitions: watch::Sender<number>, stats: Stats, event_handlers: EventHandler[], awaited_events: AwaitedEvents, event_stream: Sender<Event>, dir: string, events_lock: void, join_handle: JoinHandle<void>?, next_task_id: number? }` | pub |
 | Rust | `Werk(werk_dir: string): this throws io::Error` | pub |
 | Rust | `.new(): this` | pub |
 | Python | `Werk(werk_dir?: string)` | |
@@ -735,6 +735,9 @@ The rules the tables never repeat.
 | Rust | `ConditionRegistry { entries: Condition[], next_id: number }` | private |
 | Rust | `impl Default for ConditionRegistry` | private |
 | Rust | `AwaitedEvents { handlers: AwaitedHandler[], queued: Delivery[], draining: void, queueing: void }` | super |
+| Rust | `create_prompt_builder(werk: Weak<Werk>): Prompt` | private |
+| Rust | `register_template_function(prompt: Prompt, name: string, werk: Weak<Werk>, function: (werk: Werk, query: Query) => json? throws string): void` | private |
+| Rust | `selection_serialization_error(error: serde_json::Error): string` | private |
 | Rust | `Run { phase: Phase }` | crate |
 | Rust | `Phase` | private |
 | Rust | `.Working` | private |
@@ -780,8 +783,6 @@ The rules the tables never repeat.
 | Rust | `.clone_agents(): Agent[]` | crate |
 | Rust | `.next_event_or_end(stream: Receiver<Event>, transitions: watch::Receiver<number>): Promise<boolean>` | private |
 | Rust | `.result_tasks(matches: Matcher<Task>): Task[]` | crate |
-
-| Rust | `.template_values(): Record<string, string>` | crate |
 
 ## `crates/agentwerk/src/codegrep/ast.rs`
 
@@ -1138,33 +1139,24 @@ Not bound: prompt preparation and rendering are private Werk behavior.
 
 | Language | Item | Visibility |
 |----------|------|------------|
-| Rust | `Prompt { werk: Weak<Werk>, templates: Mutex<Record<string, string>> }` | crate |
-| Rust | `Prompt.new(werk: Weak<Werk>): this` | crate |
+| Rust | `TemplateFunction = (argument: string) => json? throws string` | private |
+| Rust | `Prompt { templates: Mutex<Record<string, string>>, functions: Mutex<Record<string, TemplateFunction>> }` | crate |
+| Rust | `Prompt.new(): this` | crate |
 | Rust | `.render(text: string, values: [string, string][]): string` | crate |
 | Rust | `.get_template(key: string): string?` | crate |
 | Rust | `.set_template(key: string, value: string): void` | crate |
+| Rust | `.set_template_function(name: string, function: TemplateFunction): void` | crate |
 | Rust | `.inherit_templates(source: Prompt): void` | crate |
-| Rust | `render_text(werk: Werk, text: string, runtime_values: [string, string][], templates: Record<string, string>): string` | private |
+| Rust | `render_text(text: string, runtime_values: [string, string][], templates: Record<string, string>, functions: Record<string, TemplateFunction>): string` | private |
 | Rust | `render_template(template: string, value: (expression: string, literal: string) => string): string` | private |
 | Rust | `render_template_values(template: string, value: (name: string) => string?): string` | super |
-| Rust | `resolve_expression(werk: Werk, expression: string, literal: string, value: (name: string) => string?): string` | private |
-| Rust | `resolve_selection(werk: Werk, selection: SelectionExpression, value: (name: string) => string?): json? throws string` | private |
-| Rust | `expand_nested(expression: string, value: (name: string) => string?): string throws string` | private |
-| Rust | `SelectionKind` | private |
-| Rust | `.Result` | private |
-| Rust | `.Results` | private |
-| Rust | `.Task` | private |
-| Rust | `.Tasks` | private |
-| Rust | `.Event` | private |
-| Rust | `.Events` | private |
-| Rust | `.parse(source: string): SelectionKind?` | private |
-| Rust | `.is_plural(): boolean` | private |
-| Rust | `SelectionExpression { kind: SelectionKind, query: string, json_path: string? }` | private |
-| Rust | `selection_expression(expression: string): SelectionExpression? throws string` | private |
-| Rust | `split_selection_call(source: string): [string, string]?` | private |
+| Rust | `resolve_expression(functions: Record<string, TemplateFunction>, expression: string, literal: string, value: (name: string) => string?): string` | private |
+| Rust | `resolve_function(functions: Record<string, TemplateFunction>, expression: FunctionExpression, value: (name: string) => string?): json? throws string` | private |
+| Rust | `expand_nested(expression: string, functions: Record<string, TemplateFunction>, value: (name: string) => string?): string throws string` | private |
+| Rust | `FunctionExpression { name: string, argument: string, json_path: string? }` | private |
+| Rust | `function_expression(expression: string, functions: Record<string, TemplateFunction>): FunctionExpression? throws string` | private |
+| Rust | `split_function_call(source: string): [string, string]?` | private |
 | Rust | `expression_end(body: string): number? throws string` | private |
-| Rust | `select_value(werk: Werk, kind: SelectionKind, query: string): json throws string` | private |
-| Rust | `select_result(werk: Werk, kind: SelectionKind, query: Query): json throws string` | private |
 | Rust | `result_text(value: json): string` | private |
 
 ## `crates/agentwerk/src/prompts/json_path.rs`
