@@ -29,8 +29,6 @@ use serde_json::{Map, Value};
 pub struct Event {
     /// The event name.
     pub(crate) name: String,
-    /// The template used for this event's model-facing message, when one applies.
-    pub(crate) template: Option<String>,
     /// The JSON value carried by the event.
     pub(crate) data: Value,
     /// ID of the task this event concerns, or empty when it has no task
@@ -148,7 +146,6 @@ impl Event {
     pub fn new(name: impl Into<String>) -> Self {
         Self {
             name: name.into(),
-            template: None,
             data: Value::Object(Map::new()),
             task_id: String::new(),
             agent_id: String::new(),
@@ -388,12 +385,6 @@ impl Event {
         }))
     }
 
-    /// Associate the event with the template used to explain it to the model.
-    pub fn template(mut self, template: impl Into<String>) -> Self {
-        self.template = Some(template.into());
-        self
-    }
-
     /// Set the JSON value carried by this event.
     pub fn data(mut self, data: Value) -> Self {
         self.data = data;
@@ -415,11 +406,6 @@ impl Event {
     /// The event name.
     pub fn get_name(&self) -> &str {
         &self.name
-    }
-
-    /// The template used to explain this event to the model, if any.
-    pub fn get_template(&self) -> Option<&str> {
-        self.template.as_deref()
     }
 
     /// The JSON value carried by this event.
@@ -455,9 +441,6 @@ impl Serialize for Event {
     {
         let mut object = Map::new();
         object.insert("name".into(), self.name.clone().into());
-        if let Some(template) = &self.template {
-            object.insert("template".into(), template.clone().into());
-        }
         object.insert("data".into(), self.data.clone());
         object.insert("task_id".into(), self.task_id.clone().into());
         object.insert("agent_id".into(), self.agent_id.clone().into());
@@ -476,13 +459,8 @@ impl<'de> Deserialize<'de> for Event {
     {
         let mut object = Map::<String, Value>::deserialize(deserializer)?;
         let created_at = take_or(&mut object, "created_at", 0)?;
-        let template = match object
-            .remove("template")
-            .or_else(|| object.remove("directive"))
-        {
-            Some(value) => serde_json::from_value(value).map_err(D::Error::custom)?,
-            None => None,
-        };
+        object.remove("template");
+        object.remove("directive");
         let agent_id = take_or(&mut object, "agent_id", String::new())?;
         let task_id = take_or(&mut object, "task_id", String::new())?;
         let label = match object.remove("label") {
@@ -512,7 +490,6 @@ impl<'de> Deserialize<'de> for Event {
         };
         Ok(Self {
             name,
-            template,
             data,
             task_id,
             agent_id,
@@ -1320,22 +1297,6 @@ pub(crate) mod tests {
                 "created_at": 0,
             })
         );
-    }
-
-    #[test]
-    fn template_is_optional_and_round_trips_at_the_top_level() {
-        let plain = Event::new(Event::TOOL_CALL_FAILED);
-        assert_eq!(plain.get_template(), None);
-        assert!(serde_json::to_value(&plain)
-            .unwrap()
-            .get("template")
-            .is_none());
-
-        let event = plain.template("tool_timed_out");
-        let value = serde_json::to_value(&event).unwrap();
-        assert_eq!(value["template"], "tool_timed_out");
-        let restored: Event = serde_json::from_value(value).unwrap();
-        assert_eq!(restored.get_template(), Some("tool_timed_out"));
     }
 
     #[test]

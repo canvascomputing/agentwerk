@@ -197,7 +197,6 @@ mod tests {
             "expected cancelled result"
         );
         assert!(content.contains("cancelled"));
-        assert_eq!(result.get_template(), None);
         assert!(
             elapsed < Duration::from_millis(500),
             "cancel should return within 500ms, took {elapsed:?}",

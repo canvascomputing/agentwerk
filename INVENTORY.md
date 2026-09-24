@@ -934,7 +934,7 @@ Not bound, like the rest of `codegrep`.
 
 | Language | Item | Visibility |
 |----------|------|------------|
-| Rust | `Event { name: string, data: json, template: string?, task_id: string, agent_id: string, label: string?, created_at: number }` | pub with crate-private fields |
+| Rust | `Event { name: string, data: json, task_id: string, agent_id: string, label: string?, created_at: number }` | pub with crate-private fields |
 | Rust | `Event(name: string): Event` | pub |
 | both | `.RUN_STARTED`, `.RUN_FINISHED`, `.TASK_CREATED`, `.TASK_STARTED`, `.TASK_FINISHED`, `.TASK_FAILED`, `.TURN_STARTED`: string | pub |
 | both | `.PROMPT_RENDER_FAILED`, `.REQUEST_STARTED`, `.REQUEST_FINISHED`, `.REQUEST_FAILED`, `.REQUEST_RETRIED`, `.TEXT_CHUNK_RECEIVED`, `.TOOL_CALL_REPAIRED`: string | pub |
@@ -944,11 +944,9 @@ Not bound, like the rest of `codegrep`.
 | both | `Event.new(name: string): this` | pub |
 | both | named constructors for every built-in event, from `run_started` through `compaction_failed` | pub |
 | both | `.data(value: json): this` | pub |
-| both | `.template(template: string): this` | pub |
 | both | `.task_id(task_id: string): this` | pub |
 | both | `.agent_id(agent_id: string): this` | pub |
 | both | `.get_name(): string` | pub |
-| both | `.get_template(): string?` | pub |
 | both | `.get_data(): json` | pub |
 | both | `.get_task_id(): string` | pub |
 | both | `.get_agent_id(): string` | pub |
@@ -2360,11 +2358,9 @@ Binds `event.rs`.
 | Rust | built-in name class attributes matching `Event` | python |
 | Rust | `.new(name: string): this` | python |
 | Rust | `.data(value: any): this throws PyErr` | python |
-| Rust | `.template(template: string): this` | python |
 | Rust | `.task_id(task_id: string): this` | python |
 | Rust | `.agent_id(agent_id: string): this` | python |
 | Rust | `.get_name(): string` | python |
-| Rust | `.get_template(): string?` | python |
 | Rust | `.get_data(): any throws PyErr` | python |
 | Rust | `.get_task_id(): string` | python |
 | Rust | `.get_agent_id(): string` | python |

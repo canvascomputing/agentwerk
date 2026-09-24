@@ -242,7 +242,7 @@ Each context field is also available separately: `{{ task_id }}`, `{{ date }}`, 
 | Record | JSONPath properties |
 |---|---|
 | Task | `task`, `label`, `schema`, `id`, `status`, `reporter`, `assignee`, `created_at`, `started_at`, `finished_at`, `failed_at` |
-| Event | `name`, `template`, `data`, `task_id`, `agent_id`, `label`, `created_at` |
+| Event | `name`, `data`, `task_id`, `agent_id`, `label`, `created_at` |
 
 For example, given this `research` result:
 
@@ -621,7 +621,7 @@ Filter tasks and events through these fields.
 | Origin | Fields |
 |--------|--------|
 | **Task** | `task.id`, `task.label`, `task.status`, `task.pending`, `task.cancelled`, `task.assignee`, `task.input`, `task.result`, `task.errors`, `task.created`, `task.started`, `task.finished`, `task.failed` |
-| **Event** | `event.name`, `event.agent_id`, `event.task_id`, `event.label`, `event.template`, `event.created`, `event.data` |
+| **Event** | `event.name`, `event.agent_id`, `event.task_id`, `event.label`, `event.created`, `event.data` |
 
 Queries using both namespaces match events with their referenced tasks. Events without an existing task do not match. Joined matches default to event-log order. `ORDER BY` accepts task or event fields.
 
@@ -922,8 +922,6 @@ Event methods:
 | `get_agent_id()` | Read the associated agent ID. |
 | `get_label()` | Read the associated task's label. |
 | `get_created_at()` | Read the timestamp in epoch milliseconds. |
-| `template(value)` | Set template metadata. |
-| `get_template()` | Read the template metadata. |
 
 </details>
 
