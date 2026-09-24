@@ -5,7 +5,7 @@ use serde_json::Value;
 use crate::event::Event;
 use crate::schemas::Schema;
 
-use super::super::event;
+use super::super::event::{self, EventTool};
 use super::super::tool::{Tool, ToolContext};
 
 const DEFINITION: &str = include_str!("finish.tool.md");
@@ -36,15 +36,15 @@ impl FinishTool {
     /// Bind the task's result schema directly as the tool arguments.
     pub(crate) fn from_schema(schema: Option<Schema>) -> Tool {
         let arguments = event::task_finished_schema(schema.as_ref());
+        let event_tool = EventTool::from_schema(schema);
         let run = move |input: Value, ctx: ToolContext| {
-            let schema = schema.clone();
+            let event_tool = event_tool.clone();
             async move {
-                let event = serde_json::json!({
+                let task_finished = serde_json::json!({
                     "name": Event::TASK_FINISHED,
                     "data": input,
                 });
-                event::dispatch(&event, &ctx, schema.as_ref(), FinishTool::NAME)
-                    .unwrap_or_else(|event| *event)
+                event_tool.call(task_finished, &ctx).await
             }
         };
         Tool::new(Self::NAME)
