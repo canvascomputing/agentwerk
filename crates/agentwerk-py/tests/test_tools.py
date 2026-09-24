@@ -354,11 +354,10 @@ async def test_positive_python_timeout_fails_the_call_and_the_agent_continues(
         scripted_openai, tmp_path, wait, "wait", {"seconds": 1.0}
     )
 
-    failure = werk.find_event(
+    assert werk.find_event(
         lambda event: event.get_name() == aw.Event.TOOL_CALL_FAILED
         and event.get_data().get("tool_name") == "wait"
-    )
-    assert failure.get_template() is None
+    ) is not None
     assert results == [{"answer": "done"}]
     assert completed == []
 

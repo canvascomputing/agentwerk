@@ -87,7 +87,6 @@ The invariants that govern orchestration, tools, providers, events, and durable 
 - Keep synchronous handlers cheap; async hook variants are queued and drained by the completion call.
 - Build `on_result` and `on_task` on the ordered `on_event` chain so handlers coexist.
 - Let an explicit shared template keyed by a non-terminal `EventTool` event name replace the text returned to the model, binding the event's JSON data before publishing the event.
-- Record the configured custom event template key in `Event.template`. Accept persisted `directive` metadata only as a legacy input and serialize `template` exclusively.
 
 ## Providers and Retries
 

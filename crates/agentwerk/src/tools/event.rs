@@ -87,17 +87,14 @@ pub(super) fn dispatch(
     let task_id = ctx.task_id.as_deref().unwrap_or_default();
     let agent_id = ctx.agent_id.as_deref().unwrap_or_default();
     let template = custom_event_template(name, &data, &ctx.werk);
-    let mut event = Event::new(name)
+    let event = Event::new(name)
         .data(data)
         .task_id(task_id)
         .agent_id(agent_id);
-    if template.is_some() {
-        event = event.template(name);
-    }
     ctx.werk.emit_event(event);
 
     Ok(match template {
-        Some(content) => Event::success(content).template(name),
+        Some(content) => Event::success(content),
         None => Event::success(format!("Event {name} published")),
     })
 }
@@ -227,7 +224,6 @@ mod tests {
 
         assert_eq!(outcome.get_name(), Event::TOOL_CALL_FINISHED);
         assert_eq!(outcome.get_content(), "Event candidate_found published");
-        assert_eq!(outcome.get_template(), None);
         let event = seen.lock().unwrap().clone().expect("event observed");
         assert_eq!(event.get_task_id(), id);
         assert_eq!(event.get_agent_id(), "alice");
@@ -243,7 +239,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn a_custom_event_template_binds_its_data_and_marks_the_events() {
+    async fn a_custom_event_template_binds_its_data() {
         let (_dir, werk, _id, ctx) = claimed_task();
         werk.set_template("company", "Acme");
         werk.set_template(
@@ -266,18 +262,11 @@ mod tests {
             )
             .await;
 
-        assert_eq!(outcome.get_template(), Some("candidate_found"));
         assert!(outcome.get_content().starts_with(
             "Found src/auth.rs for Acme at 42 with {\"reviewed\":true}; keep {{ missing }}.",
         ));
         assert!(outcome.get_content().contains("\"path\":\"src/auth.rs\""));
         assert!(outcome.get_content().contains("\"data\":\"shadow\""));
-        assert_eq!(
-            werk.find_event(r#"event.name = "candidate_found""#)
-                .unwrap()
-                .get_template(),
-            Some("candidate_found"),
-        );
     }
 
     #[tokio::test]
@@ -292,7 +281,6 @@ mod tests {
             .await;
 
         assert_eq!(outcome.get_content(), "Event grep_failed published");
-        assert_eq!(outcome.get_template(), None);
     }
 
     #[tokio::test]

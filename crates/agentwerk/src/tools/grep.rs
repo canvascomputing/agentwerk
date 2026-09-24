@@ -519,7 +519,6 @@ mod tests {
             .await;
 
         assert_eq!(result.get_name(), Event::TOOL_CALL_FAILED);
-        assert_eq!(result.get_template(), None);
         assert!(result
             .get_content()
             .contains("Tool `grep` timed out after 10ms"));

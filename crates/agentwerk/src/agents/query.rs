@@ -66,7 +66,6 @@ mod tests {
             ("event.agent_id = agent-1", Origin::Event),
             ("event.task_id = t-1", Origin::Event),
             ("event.label = scan", Origin::Event),
-            ("event.template = tool_timed_out", Origin::Event),
             ("event.created > 0", Origin::Event),
             ("event.data ~ scan", Origin::Event),
         ];
@@ -130,7 +129,7 @@ mod tests {
     }
 
     #[test]
-    fn the_removed_result_namespace_is_rejected() {
+    fn removed_fields_are_rejected() {
         for field in [
             "result.task_id",
             "result.label",
@@ -146,6 +145,7 @@ mod tests {
             "result.started",
             "result.finished",
             "result.failed",
+            "event.template",
         ] {
             assert!(
                 matches!(
@@ -302,19 +302,6 @@ mod tests {
         assert!(data.matches_event(&named_in_data));
         assert!(name.matches_event(&named_only));
         assert!(!name.matches_event(&named_in_data));
-    }
-
-    #[test]
-    fn event_template_queries_configured_message_metadata() {
-        let configured = Event::new(Event::TOOL_CALL_FAILED).template("tool_timed_out");
-        let plain = Event::new(Event::TOOL_CALL_FAILED);
-        let selected = Query::new("event.template = tool_timed_out").unwrap();
-        let empty = Query::new("event.template IS EMPTY").unwrap();
-
-        assert!(selected.matches_event(&configured));
-        assert!(!selected.matches_event(&plain));
-        assert!(!empty.matches_event(&configured));
-        assert!(empty.matches_event(&plain));
     }
 
     #[test]
@@ -859,7 +846,6 @@ enum Field {
     EventAgentId,
     EventTaskId,
     EventLabel,
-    EventTemplate,
     EventCreated,
     EventData,
 }
@@ -894,7 +880,6 @@ impl Field {
         ("event.agent_id", Field::EventAgentId),
         ("event.task_id", Field::EventTaskId),
         ("event.label", Field::EventLabel),
-        ("event.template", Field::EventTemplate),
         ("event.created", Field::EventCreated),
         ("event.data", Field::EventData),
     ];
@@ -939,7 +924,6 @@ impl Field {
             | Self::EventAgentId
             | Self::EventTaskId
             | Self::EventLabel
-            | Self::EventTemplate
             | Self::EventCreated
             | Self::EventData => Origin::Event,
         }
@@ -970,7 +954,6 @@ impl Field {
                 | Self::EventAgentId
                 | Self::EventTaskId
                 | Self::EventLabel
-                | Self::EventTemplate
         )
     }
 
@@ -1057,7 +1040,6 @@ impl Field {
             Self::EventAgentId => carried(&event.agent_id),
             Self::EventTaskId => carried(&event.task_id),
             Self::EventLabel => event.label.as_deref().map(Cow::Borrowed),
-            Self::EventTemplate => event.template.as_deref().map(Cow::Borrowed),
             Self::EventCreated => Some(millis_text(event.created_at)),
             Self::EventData => serde_json::to_string(&event.data).ok().map(Cow::Owned),
             _ => None,

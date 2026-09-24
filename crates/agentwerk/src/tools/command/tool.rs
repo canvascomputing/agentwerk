@@ -546,7 +546,6 @@ mod tests {
         let result = Tool::from(tool.clone()).invoke(input, &ctx).await;
         let content = result.get_content();
         assert!(result.get_name() == Event::TOOL_CALL_FAILED);
-        assert_eq!(result.get_template(), None);
         assert!(content.contains("Tool `sleep` timed out after 100ms"));
     }
 
@@ -569,7 +568,6 @@ mod tests {
         let result = tool.invoke(input, &test_tool_context()).await;
 
         assert_eq!(result.get_name(), Event::TOOL_CALL_FAILED);
-        assert_eq!(result.get_template(), None);
         assert!(result
             .get_content()
             .contains("Tool `sleep` timed out after 10ms"));

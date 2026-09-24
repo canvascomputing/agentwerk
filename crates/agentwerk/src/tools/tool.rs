@@ -821,7 +821,6 @@ mod tests {
         let result = tool.invoke(serde_json::json!({}), &test_ctx()).await;
 
         assert_eq!(result.get_name(), Event::TOOL_CALL_FAILED);
-        assert_eq!(result.get_template(), None);
         assert_eq!(result.get_data()["kind"], "execution_failed");
         assert!(result.get_content().contains("slow"));
         assert!(result.get_content().contains("10ms"));
@@ -844,7 +843,6 @@ mod tests {
             .await;
 
         assert_eq!(result.get_name(), Event::TOOL_CALL_FAILED);
-        assert_eq!(result.get_template(), None);
         assert!(result
             .get_content()
             .contains("Tool `fetch` timed out after 10ms"));
@@ -881,7 +879,6 @@ mod tests {
         let result = tool.invoke(serde_json::json!({}), &test_ctx()).await;
 
         assert_eq!(result.get_name(), Event::TOOL_CALL_FAILED);
-        assert_eq!(result.get_template(), None);
     }
 
     #[test]

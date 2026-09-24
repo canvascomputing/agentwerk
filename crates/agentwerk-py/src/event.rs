@@ -316,11 +316,6 @@ impl PyEvent {
         Ok(slf)
     }
 
-    fn template<'py>(mut slf: PyRefMut<'py, Self>, template: &str) -> PyRefMut<'py, Self> {
-        slf.inner = slf.inner.clone().template(template);
-        slf
-    }
-
     fn task_id<'py>(mut slf: PyRefMut<'py, Self>, task_id: &str) -> PyRefMut<'py, Self> {
         slf.inner = slf.inner.clone().task_id(task_id);
         slf
@@ -333,10 +328,6 @@ impl PyEvent {
 
     fn get_name(&self) -> &str {
         self.inner.get_name()
-    }
-
-    fn get_template(&self) -> Option<&str> {
-        self.inner.get_template()
     }
 
     fn get_data<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
