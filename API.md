@@ -51,12 +51,13 @@ Send an agent's model requests to Anthropic, OpenAI, Mistral, or a LiteLLM proxy
 ```rust
 use agentwerk::providers::Anthropic;
 
+let provider = Anthropic(key);
 let agent = Agent()
-    .provider(Anthropic(key))
+    .provider(provider)
     .model("claude-sonnet-4-20250514");
 ```
 
-You can also read the model or provider individually: `.provider(Provider::from_env()?)` or `.model(Model::from_env()?)`.
+You can also load the provider or model individually from environment variables: `.provider(Provider::from_env()?)` or `.model(Model::from_env()?)`.
 
 Set a model's context window or reasoning level when the defaults do not fit. Claude, GPT, Mistral, and Qwen families have built-in settings.
 
@@ -65,11 +66,11 @@ Configure a custom model:
 ```rust
 use agentwerk::providers::{Model, ReasoningEffort};
 
-let agent = Agent().model(
-    Model("my-local-model")
-        .context_window(128_000)
-        .reasoning_effort(ReasoningEffort::High),
-);
+let model = Model("my-local-model")
+    .context_window(128_000)
+    .reasoning_effort(ReasoningEffort::High);
+
+let agent = Agent().model(model);
 ```
 
 <details>
@@ -192,10 +193,12 @@ let writer = Agent::from_env()
     .label("report")
     .role("Write for {{ company }} using:\n{{ find_results(research) }}");
 
+let report = Task("Write the board report.").label("report");
+
 werk.add_agent(writer);
 werk.set_template("company", "Canvas Computing");
 werk.finish_tasks("research").await;
-werk.add_task(Task("Write the board report.").label("report"));
+werk.add_task(report);
 ```
 
 <details>
@@ -287,17 +290,19 @@ Missing fields, incompatible types, and out-of-range indexes produce `null`. Wil
 
 </details>
 
-### Corrective Templates
+### Corrective templates
 
 Corrective templates tell agents how to recover from failed tool calls or invalid output. Agentwerk provides [built-in templates](https://github.com/canvascomputing/agentwerk/tree/main/crates/agentwerk/src/prompts/templates) for these failures that you can override.
 
 ```rust
+let corrective_templates = [
+    ("tool_timed_out", "Reduce the command scope."),
+    ("cache_miss", "No cache entry exists for {{ path }}."),
+];
+
 let agent = Agent::from_env()
     .template("grep_failed", "The search did not run. Narrow `path`.")
-    .templates([
-        ("tool_timed_out", "Reduce the command scope."),
-        ("cache_miss", "No cache entry exists for {{ path }}."),
-    ]);
+    .templates(corrective_templates);
 ```
 
 ### Schemas
@@ -307,13 +312,16 @@ Attach a `Schema` when a task must return a specific JSON object structure.
 ```rust
 use agentwerk::schemas::Schema;
 
-let schema = Schema(json!({
+let schema_document = json!({
     "type": "object",
     "properties": { "title": { "type": "string" } },
     "required": ["title"]
-}))?;
+});
 
-werk.add_task(Task("Write a report.").schema(schema));
+let schema = Schema(schema_document)?;
+let report = Task("Write a report.").schema(schema);
+
+werk.add_task(report);
 ```
 
 <details>
@@ -338,10 +346,12 @@ Add tools to let an agent read and write files, run commands, fetch URLs, manage
 ```rust
 use agentwerk::tools::{CommandTool, GrepTool, ReadFileTool};
 
+let git = CommandTool("git").allow("git *");
+
 let agent = Agent()
     .tool(ReadFileTool)
     .tool(GrepTool)
-    .tool(CommandTool("git").allow("git *"));
+    .tool(git);
 ```
 
 <details>
@@ -364,7 +374,7 @@ let agent = Agent()
 
 </details>
 
-#### FinishTool
+### FinishTool
 
 An agent calls `FinishTool` to finish its task and return a result:
 
@@ -379,7 +389,7 @@ To return a result, the agent must call `FinishTool`. If the task has a result s
 
 [Interactive agents](#interactive-agents) are the exception: they have no `FinishTool` unless you add one explicitly with `.tool(FinishTool)`.
 
-#### Timeouts
+### Timeouts
 
 Call `timeout(duration)` to override a tool's limit. Use zero to disable it.
 
@@ -403,7 +413,7 @@ let patient_fetch = FetchTool.timeout(Duration::ZERO);
 
 </details>
 
-#### EventTool
+### EventTool
 
 Add `EventTool` when an agent needs to publish custom events:
 
@@ -435,7 +445,7 @@ Only `task_finished` completes the current task. Its `data` is the result object
 
 Set a [corrective template](#corrective-templates) under the event name to customize the text returned to the model.
 
-#### CommandTool
+### CommandTool
 
 Use `CommandTool` to allow or deny specific commands and flags.
 
@@ -455,7 +465,7 @@ let cargo = CommandTool("cargo")
     .allow_flag("--all-features");
 ```
 
-#### FetchTool
+### FetchTool
 
 Use `FetchTool` to fetch a URL as text. It sends the user agent `agentwerk/<version>`. `impersonate()` uses a browser's headers and HTTP/2 settings.
 
@@ -463,7 +473,7 @@ Use `FetchTool` to fetch a URL as text. It sends the user agent `agentwerk/<vers
 let web = FetchTool.impersonate();
 ```
 
-#### Custom tools
+### Custom tools
 
 Mark a custom tool as concurrent with `concurrent(true)` only when it has no side effects and can safely run beside other calls.
 
@@ -473,13 +483,15 @@ Describe the tool, then hand it the code it runs:
 use agentwerk::{Event, tools::Tool};
 use serde_json::Value;
 
+let greet_schema = json!({
+    "type": "object",
+    "properties": { "name": { "type": "string" } },
+    "required": ["name"]
+});
+
 let greet = Tool("greet")
     .description("Say hello")
-    .schema(json!({
-        "type": "object",
-        "properties": { "name": { "type": "string" } },
-        "required": ["name"]
-    }))
+    .schema(greet_schema)
     .concurrent(true)
     .timeout(std::time::Duration::from_secs(5))
     .handler(|input: Value| async move {
@@ -505,11 +517,15 @@ let analyst = Agent::from_env()
 let writer = Agent::from_env()
     .label("report");
 
-let werk = Werk(".agentwerk")?;
-werk.add_agent(analyst).add_agent(writer);
+let analysis = Task("Rank all products by value.").label("analysis");
+let report = Task("Write up the ranking.").label("report");
 
-werk.add_task(Task("Rank all products by value.").label("analysis"));
-werk.add_task(Task("Write up the ranking.").label("report"));
+let werk = Werk(".agentwerk")?;
+werk.add_agent(analyst);
+werk.add_agent(writer);
+
+werk.add_task(analysis);
+werk.add_task(report);
 ```
 
 `start()` keeps processing tasks in the background. `finish()` runs tasks and waits for results.
@@ -570,8 +586,7 @@ if let Some(answer) = werk.finish_task(task).await {
 
 ### AQL
 
-Use Agent Query Language (AQL) to find tasks and events. Pass an AQL string
-directly, or compile it with `Query(text)` to reuse it.
+Use Agent Query Language (AQL) to find tasks and events. Pass an AQL string directly, or compile it with `Query(text)` to reuse it.
 
 ```rust
 // Find tasks labeled `scan`.
@@ -625,8 +640,8 @@ Agents can pass work and results in these ways:
 1. **Follow-up routing**: [hooks](#hooks) or a condition creates follow-up tasks.
 2. **[Task templates](#templates)**: interpolate shared values, results, tasks, and events.
 3. **[Knowledge](#knowledge)**: shares durable pages between agents.
-4. **[TaskTool](#tools)**: reads any finished task's result by ID.
-5. **[ReadFileTool](#tools)**: opens a task's `result.json` in the session directory.
+4. **[TaskTool](#tasktool)**: reads any finished task's result by ID.
+5. **[ReadFileTool](#readfiletool)**: opens a task's `result.json` in the session directory.
 
 #### Result hook
 
@@ -634,9 +649,12 @@ Use a hook to create a new task when a matching result arrives:
 
 ```rust
 werk.on_result(|werk, done, result| {
-    if done.get_label() == Some("research") {
-        werk.add_task(Task(result.clone()).label("report"));
+    if done.get_label() != Some("research") {
+        return;
     }
+
+    let report = Task(result.clone()).label("report");
+    werk.add_task(report);
 });
 ```
 
@@ -647,13 +665,16 @@ Use a condition to create follow-up tasks or add agents when an AQL query matche
 ```rust
 use agentwerk::Condition;
 
-werk.add_condition(
-    Condition("task.label = research AND task.status = finished")
-        .agent(Agent::from_env().label("report"))
-        .task(Task(
-            "Write {{ find_result(task.label = research AND task.status = finished) }}",
-        ).label("report")),
-);
+let report_agent = Agent::from_env().label("report");
+let report_task = Task(
+    "Write {{ find_result(task.label = research AND task.status = finished) }}",
+).label("report");
+
+let report_condition = Condition("task.label = research AND task.status = finished")
+    .agent(report_agent)
+    .task(report_task);
+
+werk.add_condition(report_condition);
 ```
 
 #### Task templates
@@ -661,12 +682,14 @@ werk.add_condition(
 Wait for the research task, then insert its result into the report task:
 
 ```rust
-werk.add_task(Task("Rank all products by value.").label("research"));
+let research = Task("Rank all products by value.").label("research");
+werk.add_task(research);
 werk.finish_task("research").await;
 
-werk.add_task(Task(
+let report = Task(
     "Write the board report from:\n\n{{ find_result(research) }}",
-).label("report"));
+).label("report");
+werk.add_task(report);
 ```
 
 #### Knowledge
@@ -698,10 +721,12 @@ let writer = Agent::from_env()
     .label("report")
     .tool(TaskTool);
 
-werk.add_agent(writer);
-werk.add_task(Task(
+let report = Task(
     "Read the result of t-1 with the task tool, then write the board report.",
-).label("report"));
+).label("report");
+
+werk.add_agent(writer);
+werk.add_task(report);
 ```
 
 #### ReadFileTool
@@ -715,10 +740,12 @@ let writer = Agent::from_env()
     .label("report")
     .tool(ReadFileTool);
 
-werk.add_agent(writer);
-werk.add_task(Task(
+let report = Task(
     "Read .agentwerk/tasks/t-1/result.json, then write the board report.",
-).label("report"));
+).label("report");
+
+werk.add_agent(writer);
+werk.add_task(report);
 ```
 
 ### Configuration
@@ -726,11 +753,13 @@ werk.add_task(Task(
 Use a `Policy` to set turn, token, and time limits, retry behavior, and compaction.
 
 ```rust
-werk.set_policy(Policy {
+let policy = Policy {
     max_turns: Some(40),
     max_time: Some(std::time::Duration::from_secs(300)),
     ..Default::default()
-});
+};
+
+werk.set_policy(policy);
 ```
 
 <details>
@@ -757,10 +786,12 @@ werk.set_policy(Policy {
 Compaction replaces older messages with a summary as a task approaches the model's context limit or after the provider reports an overflow.
 
 ```rust
-werk.set_policy(Policy {
+let policy = Policy {
     compaction_threshold: Some(0.7),
     ..Default::default()
-});
+};
+
+werk.set_policy(policy);
 ```
 
 <details>
@@ -825,14 +856,15 @@ Publish custom events through the Werk. Add agent or task context when relevant:
 use agentwerk::Event;
 use serde_json::json;
 
-werk.emit_event(
-    Event("document_indexed")
-        .data(json!({ "documents": 42 }))
-        .task_id("t-1")
-        .agent_id("indexer-1"),
-);
+let document_indexed = Event("document_indexed")
+    .data(json!({ "documents": 42 }))
+    .task_id("t-1")
+    .agent_id("indexer-1");
 
-werk.emit_event(Event("index_refreshed"));
+let index_refreshed = Event("index_refreshed");
+
+werk.emit_event(document_indexed);
+werk.emit_event(index_refreshed);
 ```
 
 `Werk::emit_event` does not change task status. Use [EventTool](#eventtool) for model-driven completion through `task_finished`.
@@ -936,13 +968,15 @@ Create entries in code:
 ```rust
 use agentwerk::agents::knowledge::Page;
 
-store.get_pages().save(Page {
+let build_page = Page {
     slug: "build-command".into(),
     kind: String::new(),
     description: "How the project is built.".into(),
     content: "Run `make` to compile.".into(),
     tags: vec!["build".into()],
-})?;
+};
+
+store.get_pages().save(build_page)?;
 
 let page = store.get_pages().get_page("build-command")?;
 store.get_pages().remove("build-command")?;
