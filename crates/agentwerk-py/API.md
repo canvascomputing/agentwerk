@@ -242,8 +242,6 @@ Each context field is also available separately: `{{ task_id }}`, `{{ date }}`, 
 | Task | `task`, `label`, `schema`, `id`, `status`, `reporter`, `assignee`, `created_at`, `started_at`, `finished_at`, `failed_at` |
 | Event | `name`, `template`, `data`, `task_id`, `agent_id`, `label`, `created_at` |
 
-`task` is the original JSON input. Unset `label`, `schema`, `assignee`, and `template` properties are omitted. Task results, errors, replies, and cancellation state are not serialized.
-
 For example, given this `research` result:
 
 ```json
@@ -290,6 +288,26 @@ Missing fields, incompatible types, and out-of-range indexes produce `null`. Wil
 
 </details>
 
+### Corrective Templates
+
+Corrective templates tell agents how to recover from failed tool calls or invalid output. Agentwerk provides [built-in templates](https://github.com/canvascomputing/agentwerk/tree/main/crates/agentwerk/src/prompts/templates) for these failures that you can override.
+
+```python
+from agentwerk import Agent
+
+
+agent = (
+    Agent.from_env()
+    .template("grep_failed", "The search did not run. Narrow `path`.")
+    .templates(
+        {
+            "tool_timed_out": "Reduce the command scope.",
+            "cache_miss": "No cache entry exists for {{ path }}.",
+        }
+    )
+)
+```
+
 ### Schemas
 
 Attach a `Schema` when a task must return a specific JSON object structure.
@@ -319,35 +337,6 @@ Use shallow, focused schemas for small models. Split complex work into tasks wit
 |------|--------|-------------|
 | **Schema** | `Schema(document)` | Create a schema. |
 | | `validate(value)` | Return the validated value and JSON pointers to repaired values, or report violations. |
-
-</details>
-
-### Corrective templates
-
-Corrective templates also cover custom event responses and use the same values as role and task templates. Set a bundled corrective key or custom event name to customize the next template across the Werk.
-
-```python
-from agentwerk import Agent
-
-
-agent = (
-    Agent.from_env()
-    .template("grep_failed", "The search did not run. Narrow `path`.")
-    .templates(
-        {
-            "tool_timed_out": "Reduce the command scope.",
-            "cache_miss": "No cache entry exists for {{ path }}.",
-        }
-    )
-)
-```
-
-<details>
-<summary>Corrective template reference</summary>
-
-Agentwerk uses its bundled corrective template when you do not customize one. A custom event without a matching template returns its standard text. Runtime values such as `{{ detail }}`, `{{ attempt }}`, and event payload fields take precedence over shared values. Named values and AQL selectors use the full template language. An invalid expression emits `prompt_render_failed` and fails the current task.
-
-See [prompts/templates](https://github.com/canvascomputing/agentwerk/tree/main/crates/agentwerk/src/prompts/templates) for the bundled corrective templates.
 
 </details>
 

@@ -1,294 +1,114 @@
-//! Defines the bundled corrective templates.
+mod command;
+mod fetch;
+mod files;
+mod knowledge;
+mod r#loop;
+mod registry;
+mod schemas;
+mod search;
+mod task;
 
-use std::collections::HashMap;
-use std::sync::{Arc, Mutex, OnceLock};
+pub(crate) use command::{
+    COMMAND_ASSIGNMENT_FOUND, COMMAND_CANCELLED, COMMAND_CONTROL_CHARACTER_FOUND,
+    COMMAND_FLAG_DENIED, COMMAND_FLAG_NOT_ALLOWED, COMMAND_MISSING, COMMAND_NOT_ALLOWED,
+    COMMAND_NOT_STARTED, COMMAND_PATTERN_DENIED, COMMAND_QUOTE_UNTERMINATED,
+    COMMAND_SHELL_OPERATOR_FOUND,
+};
+pub(crate) use fetch::{
+    FETCH_BODY_NOT_READ, FETCH_CREDENTIALS_PRESENT, FETCH_HOST_MISSING, FETCH_HOST_NOT_RESOLVABLE,
+    FETCH_REDIRECT_LOCATION_MISSING, FETCH_REQUEST_FAILED, FETCH_RESPONSE_TOO_LARGE,
+    FETCH_SCHEME_MISSING, FETCH_SCHEME_UNSUPPORTED, FETCH_TOO_LONG, FETCH_TOO_MANY_REDIRECTS,
+};
+pub(crate) use files::{
+    EDIT_FILE_OLD_STRING_NOT_FOUND, EDIT_FILE_OLD_STRING_NOT_UNIQUE, EDIT_FILE_READ_FAILED,
+    EDIT_FILE_WRITE_FAILED, LIST_DIRECTORY_FAILED, LIST_DIRECTORY_NOT_FOUND,
+    LIST_DIRECTORY_PATH_IS_FILE, PATH_HINT_DIRECTORY_LISTED, PATH_HINT_SUGGESTION,
+    PATH_HINT_WORKING_DIRECTORY, READ_FILE_FAILED, READ_FILE_IS_BINARY, READ_FILE_NOT_FOUND,
+    READ_FILE_PATH_IS_DIRECTORY, READ_FILE_PATH_IS_DIRECTORY_WITH_ENTRIES, WRITE_FILE_FAILED,
+    WRITE_FILE_PARENT_NOT_CREATED,
+};
+pub(crate) use knowledge::{
+    KNOWLEDGE_PAGE_NOT_FOUND, KNOWLEDGE_REMOVE_FAILED, KNOWLEDGE_WRITE_FAILED,
+};
+pub(crate) use r#loop::{
+    ARGUMENTS_EXPECTED, ARGUMENTS_REJECTED, KNOWLEDGE_INDEX_TRUNCATED, NO_TOOL_CALLED,
+    REPLY_REJECTED, RESULT_SCHEMA_REQUIRED, SUMMARY_REQUESTED,
+};
+pub(crate) use registry::{
+    NO_TOOLS_REGISTERED, TOOL_NOT_FOUND, TOOL_OUTPUT_EMPTY, TOOL_OUTPUT_OFFLOADED, TOOL_PANICKED,
+    TOOL_TIMED_OUT,
+};
+pub(crate) use schemas::{
+    SCHEMA_ANY_OF_UNMATCHED, SCHEMA_ARRAY_TOO_LONG, SCHEMA_ARRAY_TOO_SHORT,
+    SCHEMA_CONST_MISMATCHED, SCHEMA_ENUM_MISMATCHED, SCHEMA_FALSE_REJECTED, SCHEMA_HINT_JSON,
+    SCHEMA_HINT_QUOTE, SCHEMA_HINT_UNQUOTE, SCHEMA_NOT_MATCHED, SCHEMA_NUMBER_TOO_LARGE,
+    SCHEMA_NUMBER_TOO_SMALL, SCHEMA_ONE_OF_AMBIGUOUS, SCHEMA_PATTERN_UNMATCHED,
+    SCHEMA_PROPERTY_MISSING, SCHEMA_PROPERTY_UNEXPECTED, SCHEMA_STRING_TOO_LONG,
+    SCHEMA_STRING_TOO_SHORT, SCHEMA_TYPE_MISMATCHED,
+};
+pub(crate) use search::{
+    CODE_CONSTRAINT_INCOMPLETE, CODE_CONSTRAINT_METAVARIABLE_UNKNOWN,
+    CODE_CONSTRAINT_REGEX_REJECTED, CODE_PATTERN_REJECTED, GREP_CANCELLED, GREP_FAILED,
+    GREP_FILE_TYPE_UNKNOWN, GREP_GLOB_REJECTED, GREP_PATTERN_REJECTED,
+};
+pub(crate) use task::{
+    TASK_EDIT_INCOMPLETE, TASK_ID_MISSING, TASK_NOT_ASSIGNED, TASK_NOT_FOUND, TASK_QUERY_INVALID,
+    TASK_RESULT_MISSING, TASK_TRANSITION_REJECTED,
+};
 
-use super::prompt::render_values;
-use super::RenderError;
-use crate::Werk;
+use super::prompt::render_template_values;
 
-/// The templates, one file per area, each holding its entries under `## key`
-/// headings. Named values are bound by the call site; names without values
-/// render as written.
-const TEMPLATES: &[&str] = &[
-    include_str!("templates/loop.md"),
-    include_str!("templates/registry.md"),
-    include_str!("templates/files.md"),
-    include_str!("templates/command.md"),
-    include_str!("templates/search.md"),
-    include_str!("templates/fetch.md"),
-    include_str!("templates/knowledge.md"),
-    include_str!("templates/task.md"),
-    include_str!("templates/schemas.md"),
+const GROUPS: &[&[(&str, &str)]] = &[
+    command::TEMPLATES,
+    fetch::TEMPLATES,
+    files::TEMPLATES,
+    knowledge::TEMPLATES,
+    r#loop::TEMPLATES,
+    registry::TEMPLATES,
+    schemas::TEMPLATES,
+    search::TEMPLATES,
+    task::TEMPLATES,
 ];
 
-/// Declare every template once: the constant a render site writes and its
-/// template key. A key with no `## ` heading behind it is caught by the tests
-/// below.
-macro_rules! templates {
-    ($($name:ident = $key:literal),* $(,)?) => {
-        $(
-            pub(crate) const $name: &str = $key;
-        )*
-
-        #[cfg(test)]
-        const ALL: &[&str] = &[$($key),*];
-    };
-}
-
-templates! {
-    REPLY_REJECTED = "reply_rejected",
-    NO_TOOL_CALLED = "no_tool_called",
-    ARGUMENTS_REJECTED = "arguments_rejected",
-    ARGUMENTS_EXPECTED = "arguments_expected",
-    RESULT_SCHEMA_REQUIRED = "result_schema_required",
-    SUMMARY_REQUESTED = "summary_requested",
-    KNOWLEDGE_INDEX_TRUNCATED = "knowledge_index_truncated",
-    TOOL_NOT_FOUND = "tool_not_found",
-    NO_TOOLS_REGISTERED = "no_tools_registered",
-    TOOL_PANICKED = "tool_panicked",
-    TOOL_TIMED_OUT = "tool_timed_out",
-    TOOL_OUTPUT_EMPTY = "tool_output_empty",
-    TOOL_OUTPUT_OFFLOADED = "tool_output_offloaded",
-    EDIT_FILE_READ_FAILED = "edit_file_read_failed",
-    EDIT_FILE_OLD_STRING_NOT_FOUND = "edit_file_old_string_not_found",
-    EDIT_FILE_OLD_STRING_NOT_UNIQUE = "edit_file_old_string_not_unique",
-    EDIT_FILE_WRITE_FAILED = "edit_file_write_failed",
-    WRITE_FILE_PARENT_NOT_CREATED = "write_file_parent_not_created",
-    WRITE_FILE_FAILED = "write_file_failed",
-    READ_FILE_PATH_IS_DIRECTORY = "read_file_path_is_directory",
-    READ_FILE_PATH_IS_DIRECTORY_WITH_ENTRIES = "read_file_path_is_directory_with_entries",
-    READ_FILE_IS_BINARY = "read_file_is_binary",
-    READ_FILE_NOT_FOUND = "read_file_not_found",
-    READ_FILE_FAILED = "read_file_failed",
-    LIST_DIRECTORY_PATH_IS_FILE = "list_directory_path_is_file",
-    LIST_DIRECTORY_NOT_FOUND = "list_directory_not_found",
-    LIST_DIRECTORY_FAILED = "list_directory_failed",
-    PATH_HINT_DIRECTORY_LISTED = "path_hint_directory_listed",
-    PATH_HINT_SUGGESTION = "path_hint_suggestion",
-    PATH_HINT_WORKING_DIRECTORY = "path_hint_working_directory",
-    COMMAND_CANCELLED = "command_cancelled",
-    COMMAND_NOT_STARTED = "command_not_started",
-    COMMAND_MISSING = "command_missing",
-    COMMAND_SHELL_OPERATOR_FOUND = "command_shell_operator_found",
-    COMMAND_QUOTE_UNTERMINATED = "command_quote_unterminated",
-    COMMAND_CONTROL_CHARACTER_FOUND = "command_control_character_found",
-    COMMAND_ASSIGNMENT_FOUND = "command_assignment_found",
-    COMMAND_FLAG_DENIED = "command_flag_denied",
-    COMMAND_PATTERN_DENIED = "command_pattern_denied",
-    COMMAND_NOT_ALLOWED = "command_not_allowed",
-    COMMAND_FLAG_NOT_ALLOWED = "command_flag_not_allowed",
-    GREP_CANCELLED = "grep_cancelled",
-    GREP_FAILED = "grep_failed",
-    GREP_GLOB_REJECTED = "grep_glob_rejected",
-    GREP_FILE_TYPE_UNKNOWN = "grep_file_type_unknown",
-    GREP_PATTERN_REJECTED = "grep_pattern_rejected",
-    CODE_PATTERN_REJECTED = "code_pattern_rejected",
-    CODE_CONSTRAINT_INCOMPLETE = "code_constraint_incomplete",
-    CODE_CONSTRAINT_METAVARIABLE_UNKNOWN = "code_constraint_metavariable_unknown",
-    CODE_CONSTRAINT_REGEX_REJECTED = "code_constraint_regex_rejected",
-    FETCH_TOO_LONG = "fetch_too_long",
-    FETCH_SCHEME_MISSING = "fetch_scheme_missing",
-    FETCH_SCHEME_UNSUPPORTED = "fetch_scheme_unsupported",
-    FETCH_CREDENTIALS_PRESENT = "fetch_credentials_present",
-    FETCH_HOST_MISSING = "fetch_host_missing",
-    FETCH_HOST_NOT_RESOLVABLE = "fetch_host_not_resolvable",
-    FETCH_TOO_MANY_REDIRECTS = "fetch_too_many_redirects",
-    FETCH_REQUEST_FAILED = "fetch_request_failed",
-    FETCH_BODY_NOT_READ = "fetch_body_not_read",
-    FETCH_RESPONSE_TOO_LARGE = "fetch_response_too_large",
-    FETCH_REDIRECT_LOCATION_MISSING = "fetch_redirect_location_missing",
-    KNOWLEDGE_PAGE_NOT_FOUND = "knowledge_page_not_found",
-    KNOWLEDGE_WRITE_FAILED = "knowledge_write_failed",
-    KNOWLEDGE_REMOVE_FAILED = "knowledge_remove_failed",
-    WERK_UNAVAILABLE = "werk_unavailable",
-    TASK_ID_MISSING = "task_id_missing",
-    TASK_NOT_ASSIGNED = "task_not_assigned",
-    TASK_NOT_FOUND = "task_not_found",
-    TASK_RESULT_MISSING = "task_result_missing",
-    TASK_QUERY_INVALID = "task_query_invalid",
-    TASK_EDIT_INCOMPLETE = "task_edit_incomplete",
-    TASK_TRANSITION_REJECTED = "task_transition_rejected",
-    SCHEMA_FALSE_REJECTED = "schema_false_rejected",
-    SCHEMA_TYPE_MISMATCHED = "schema_type_mismatched",
-    SCHEMA_CONST_MISMATCHED = "schema_const_mismatched",
-    SCHEMA_ENUM_MISMATCHED = "schema_enum_mismatched",
-    SCHEMA_ANY_OF_UNMATCHED = "schema_any_of_unmatched",
-    SCHEMA_ONE_OF_AMBIGUOUS = "schema_one_of_ambiguous",
-    SCHEMA_NOT_MATCHED = "schema_not_matched",
-    SCHEMA_PROPERTY_MISSING = "schema_property_missing",
-    SCHEMA_PROPERTY_UNEXPECTED = "schema_property_unexpected",
-    SCHEMA_ARRAY_TOO_SHORT = "schema_array_too_short",
-    SCHEMA_ARRAY_TOO_LONG = "schema_array_too_long",
-    SCHEMA_STRING_TOO_SHORT = "schema_string_too_short",
-    SCHEMA_STRING_TOO_LONG = "schema_string_too_long",
-    SCHEMA_PATTERN_UNMATCHED = "schema_pattern_unmatched",
-    SCHEMA_NUMBER_TOO_SMALL = "schema_number_too_small",
-    SCHEMA_NUMBER_TOO_LARGE = "schema_number_too_large",
-    SCHEMA_HINT_UNQUOTE = "schema_hint_unquote",
-    SCHEMA_HINT_JSON = "schema_hint_json",
-    SCHEMA_HINT_QUOTE = "schema_hint_quote",
-}
-
-/// Renders bundled or explicitly configured templates against one Werk.
-///
-/// Clones share the first rendering error so concurrent tool calls can finish
-/// before the agent loop fails the task without appending malformed output.
-#[derive(Clone, Default)]
-pub(crate) struct TemplateRenderer {
-    werk: Option<Arc<Werk>>,
-    error: Arc<Mutex<Option<RenderError>>>,
-}
-
-impl TemplateRenderer {
-    pub(crate) fn new(werk: Arc<Werk>) -> Self {
-        Self {
-            werk: Some(werk),
-            error: Arc::new(Mutex::new(None)),
-        }
-    }
-
-    /// Render a configured template or its bundled default.
-    pub(crate) fn render(&self, key: &str, values: &[(&str, &str)]) -> String {
-        let rendered = match &self.werk {
-            Some(werk) => werk.render_template(key, values),
-            None => Ok(built_in(key, values)),
-        };
-        self.record(rendered)
-    }
-
-    /// Render a custom event's template, leaving an unconfigured event alone.
-    pub(crate) fn render_event_template(
-        &self,
-        name: &str,
-        values: &[(&str, &str)],
-    ) -> Result<Option<String>, RenderError> {
-        let Some(werk) = self.werk.as_ref() else {
-            return Ok(None);
-        };
-        match werk.render_event_template(name, values) {
-            Ok(rendered) => Ok(rendered),
-            Err(error) => {
-                self.store_error(error.clone());
-                Err(error)
-            }
-        }
-    }
-
-    pub(crate) fn take_error(&self) -> Option<RenderError> {
-        self.error.lock().unwrap().take()
-    }
-
-    fn record(&self, rendered: Result<String, RenderError>) -> String {
-        match rendered {
-            Ok(rendered) => rendered,
-            Err(error) => {
-                self.store_error(error);
-                String::new()
-            }
-        }
-    }
-
-    fn store_error(&self, error: RenderError) {
-        let mut stored = self.error.lock().unwrap();
-        if stored.is_none() {
-            *stored = Some(error);
-        }
-    }
-}
-
-/// The bundled template for `key`, with `values` bound and no Werk consulted.
-/// Three groups render through this, each composed where no agent is in reach:
-/// the schema violations, the knowledge index, and the result-schema block a
-/// task appends to its own task.
-pub(crate) fn built_in(key: &str, values: &[(&str, &str)]) -> String {
-    render_values(templates().get(key).copied().unwrap_or(key), |name| {
+/// Render a bundled template where no Werk is available.
+pub(crate) fn built_in(template: &str, values: &[(&str, &str)]) -> String {
+    render_template_values(template, |name| {
         values
             .iter()
             .find_map(|(key, value)| (*key == name).then(|| (*value).to_string()))
     })
 }
 
-/// Walk the `## key` headings of one template file. Whatever precedes the
-/// first heading is the file's own comment, which is not an entry.
-fn entries(markdown: &str) -> impl Iterator<Item = (&str, &str)> {
-    markdown
-        .split("\n## ")
-        .skip(1)
-        .filter_map(|entry| entry.split_once('\n'))
-        .map(|(key, body)| (key.trim(), body.trim_matches('\n')))
-}
-
-/// The bundled templates, parsed once from the `##` headings in every
-/// file.
-pub(super) fn templates() -> &'static HashMap<&'static str, &'static str> {
-    static PARSED: OnceLock<HashMap<&'static str, &'static str>> = OnceLock::new();
-    PARSED.get_or_init(|| TEMPLATES.iter().flat_map(|file| entries(file)).collect())
+/// Return the stable configuration name for a bundled template body.
+pub(super) fn name(template: &str) -> Option<&'static str> {
+    GROUPS
+        .iter()
+        .flat_map(|group| group.iter())
+        .find_map(|(name, default)| (*default == template).then_some(*name))
 }
 
 #[cfg(test)]
 mod tests {
+    use std::collections::HashSet;
+
     use super::*;
 
     #[test]
-    fn every_key_has_a_heading() {
-        for key in ALL {
-            assert!(
-                templates().contains_key(key),
-                "no `## {key}` heading in the templates",
-            );
+    fn bundled_templates_have_unique_names_and_defaults() {
+        let mut names = HashSet::new();
+        let mut defaults = HashSet::new();
+        for (name, default) in GROUPS.iter().flat_map(|group| group.iter()) {
+            assert!(names.insert(*name), "duplicate template name: {name}");
+            assert!(!default.is_empty(), "empty template: {name}");
+            assert!(defaults.insert(*default), "duplicate template body: {name}");
+            assert_eq!(super::name(default), Some(*name));
         }
     }
 
     #[test]
-    fn every_heading_has_a_key() {
-        for key in templates().keys() {
-            assert!(
-                ALL.contains(key),
-                "`## {key}` in the templates names no key"
-            );
-        }
-    }
-
-    #[test]
-    fn no_key_is_declared_twice() {
-        let mut seen = ALL.to_vec();
-        seen.sort_unstable();
-        seen.dedup();
-        assert_eq!(seen.len(), ALL.len());
-    }
-
-    #[test]
-    fn no_template_body_is_empty() {
-        for key in ALL {
-            assert!(!built_in(key, &[]).is_empty(), "{key} renders empty");
-        }
-    }
-
-    #[test]
-    fn every_bundled_template_passes_strict_rendering() {
-        let werk = Werk::new();
-        for key in ALL {
-            werk.render_template(key, &[])
-                .unwrap_or_else(|error| panic!("{key} does not render: {error}"));
-        }
-    }
-
-    #[test]
-    fn built_in_templates_render_named_values() {
+    fn built_in_templates_render_runtime_values() {
         let rendered = built_in(EDIT_FILE_OLD_STRING_NOT_FOUND, &[("path", "src/lib.rs")]);
         assert!(rendered.contains("src/lib.rs"));
         assert!(!rendered.contains("{{ path }}"));
-    }
-
-    #[test]
-    fn renderer_reads_current_werk_values_at_each_use() {
-        let werk = Werk::new();
-        werk.set_template(TOOL_TIMED_OUT, "first");
-        let renderer = TemplateRenderer::new(Arc::clone(&werk));
-        assert_eq!(renderer.render(TOOL_TIMED_OUT, &[]), "first");
-
-        werk.set_template(TOOL_TIMED_OUT, "second");
-        assert_eq!(renderer.render(TOOL_TIMED_OUT, &[]), "second");
     }
 }

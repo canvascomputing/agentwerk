@@ -65,7 +65,7 @@ mod tests {
     use crate::schemas::Schema;
 
     fn ctx_with(werk: Arc<Werk>, agent: &str, dir: PathBuf) -> ToolContext {
-        ToolContext::new(dir).werk(werk).agent_id(agent.to_string())
+        ToolContext::new(dir, werk).agent_id(agent.to_string())
     }
 
     fn one_task(agent: &str, dir: &std::path::Path) -> (Arc<Werk>, String) {

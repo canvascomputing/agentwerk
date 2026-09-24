@@ -1,72 +1,52 @@
 //! Werk-owned prompt rendering.
 
 use std::collections::HashMap;
-use std::fmt;
+use std::sync::{Mutex, Weak};
 
 use serde_json::Value;
 
 use super::json_path::JsonPath;
 use crate::{Query, Werk};
 
-/// An expression that could not be rendered.
-#[derive(Debug, Clone)]
-pub(crate) struct RenderError {
-    /// Expression that failed, without its surrounding braces.
-    pub(crate) expression: String,
-    /// Why the expression could not be resolved.
-    pub(crate) message: String,
+pub(crate) struct Prompt {
+    werk: Weak<Werk>,
+    templates: Mutex<HashMap<String, String>>,
 }
 
-impl fmt::Display for RenderError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str("cannot render {{")?;
-        f.write_str(&self.expression)?;
-        f.write_str("}}: ")?;
-        f.write_str(&self.message)
-    }
-}
-
-impl std::error::Error for RenderError {}
-
-impl Werk {
-    /// Resolve a prompt from runtime values, shared templates, and results.
-    ///
-    /// Runtime values override shared templates and remain literal after insertion.
-    pub(crate) fn render_prompt(
-        &self,
-        prompt: &str,
-        values: &[(&str, String)],
-    ) -> Result<String, RenderError> {
-        let templates = self.template_values();
-        render_text(self, prompt, values, &templates)
+impl Prompt {
+    pub(crate) fn new(werk: Weak<Werk>) -> Self {
+        Self {
+            werk,
+            templates: Mutex::new(HashMap::new()),
+        }
     }
 
-    /// Render a configured template by key, falling back to its bundled text.
-    pub(crate) fn render_template(
-        &self,
-        key: &str,
-        values: &[(&str, &str)],
-    ) -> Result<String, RenderError> {
-        let templates = self.template_values();
-        let template = templates
-            .get(key)
-            .map(String::as_str)
-            .or_else(|| super::templates::templates().get(key).copied())
-            .unwrap_or(key);
-        render_text(self, template, values, &templates)
+    pub(crate) fn render<V: AsRef<str>>(&self, text: &str, values: &[(&str, V)]) -> String {
+        let werk = self
+            .werk
+            .upgrade()
+            .expect("Prompt cannot outlive its owning Werk");
+        let templates = self.templates.lock().unwrap();
+        let text = super::templates::name(text)
+            .and_then(|name| templates.get(name))
+            .map_or(text, String::as_str);
+        render_text(&werk, text, values, &templates)
     }
 
-    /// Render a custom event's template when one is configured.
-    pub(crate) fn render_event_template(
-        &self,
-        name: &str,
-        values: &[(&str, &str)],
-    ) -> Result<Option<String>, RenderError> {
-        let templates = self.template_values();
-        let Some(template) = templates.get(name) else {
-            return Ok(None);
-        };
-        render_text(self, template, values, &templates).map(Some)
+    pub(crate) fn get_template(&self, key: &str) -> Option<String> {
+        self.templates.lock().unwrap().get(key).cloned()
+    }
+
+    pub(crate) fn set_template(&self, key: String, value: String) {
+        self.templates.lock().unwrap().insert(key, value);
+    }
+
+    pub(crate) fn inherit_templates(&self, source: &Self) {
+        let templates = source.templates.lock().unwrap().clone();
+        let mut current = self.templates.lock().unwrap();
+        for (key, value) in templates {
+            current.entry(key).or_insert(value);
+        }
     }
 }
 
@@ -75,23 +55,17 @@ fn render_text<V: AsRef<str>>(
     text: &str,
     runtime_values: &[(&str, V)],
     templates: &HashMap<String, String>,
-) -> Result<String, RenderError> {
-    let mut values: Values<'_> = HashMap::new();
-    for (key, value) in runtime_values {
-        values.entry(*key).or_insert(value.as_ref());
-    }
+) -> String {
     let mut value = |name: &str| {
-        values
-            .get(name)
-            .map(|value| (*value).to_string())
+        runtime_values
+            .iter()
+            .find_map(|(key, value)| (*key == name).then(|| value.as_ref().to_string()))
             .or_else(|| templates.get(name).cloned())
     };
-    render_template(text.trim(), |expression| {
-        resolve_expression(werk, expression, &mut value)
+    render_template(text.trim(), |expression, literal| {
+        resolve_expression(werk, expression, literal, &mut value)
     })
 }
-
-type Values<'a> = HashMap<&'a str, &'a str>;
 
 const EXPRESSION_OPEN: &str = "{{";
 const EXPRESSION_CLOSE: &str = "}}";
@@ -99,19 +73,14 @@ const ESCAPED_EXPRESSION_OPEN: &str = "{{{{";
 const ESCAPED_EXPRESSION_CLOSE: &str = "}}}}";
 
 /// Render a template's expressions; replacement values are never scanned.
-fn render_template(
-    template: &str,
-    mut resolve: impl FnMut(&str) -> Result<Option<String>, RenderError>,
-) -> Result<String, RenderError> {
+fn render_template(template: &str, mut value: impl FnMut(&str, &str) -> String) -> String {
     let mut output = String::with_capacity(template.len());
     let mut remaining = template;
     while let Some(character) = remaining.chars().next() {
         if let Some(escaped) = remaining.strip_prefix(ESCAPED_EXPRESSION_OPEN) {
             let Some(end) = escaped.find(ESCAPED_EXPRESSION_CLOSE) else {
-                return Err(RenderError {
-                    expression: escaped.to_string(),
-                    message: "unclosed escaped expression".into(),
-                });
+                output.push_str(remaining);
+                break;
             };
             output.push_str(EXPRESSION_OPEN);
             output.push_str(&escaped[..end]);
@@ -126,72 +95,54 @@ fn render_template(
         };
         let end = match expression_end(body) {
             Ok(Some(end)) => end,
-            Ok(None) => {
-                return Err(RenderError {
-                    expression: body.to_string(),
-                    message: "unclosed expression or quoted value".into(),
-                });
-            }
-            Err(message) => {
-                return Err(RenderError {
-                    expression: body.to_string(),
-                    message: message.into(),
-                });
+            Ok(None) | Err(_) => {
+                output.push_str(remaining);
+                break;
             }
         };
         let expression = &body[..end];
         let expression_end = EXPRESSION_OPEN.len() + end + EXPRESSION_CLOSE.len();
         let literal = &remaining[..expression_end];
-        let replacement = resolve(expression)?;
-        output.push_str(replacement.as_deref().unwrap_or(literal));
+        output.push_str(&value(expression, literal));
         remaining = &remaining[expression_end..];
     }
-    Ok(output)
+    output
 }
 
 /// Resolve only named values, preserving an unknown or malformed template.
-pub(super) fn render_values(
+pub(super) fn render_template_values(
     template: &str,
-    mut named_value: impl FnMut(&str) -> Option<String>,
+    mut value: impl FnMut(&str) -> Option<String>,
 ) -> String {
-    render_template(template, |expression| Ok(named_value(expression.trim())))
-        .unwrap_or_else(|_| template.to_string())
+    render_template(template, |expression, literal| {
+        value(expression.trim()).unwrap_or_else(|| literal.to_string())
+    })
 }
 
 fn resolve_expression(
     werk: &Werk,
     expression: &str,
-    named_value: &mut impl FnMut(&str) -> Option<String>,
-) -> Result<Option<String>, RenderError> {
+    literal: &str,
+    value: &mut impl FnMut(&str) -> Option<String>,
+) -> String {
     let expression = expression.trim();
-    resolve_expression_value(werk, expression, named_value).map_err(|message| RenderError {
-        expression: expression.to_string(),
-        message,
-    })
-}
-
-fn resolve_expression_value(
-    werk: &Werk,
-    expression: &str,
-    named_value: &mut impl FnMut(&str) -> Option<String>,
-) -> Result<Option<String>, String> {
-    if let Some(selection) = selection_expression(expression)? {
-        let value = resolve_selection(werk, selection, named_value)?;
-        return Ok(Some(value.map(result_text).unwrap_or_default()));
+    match selection_expression(expression) {
+        Ok(Some(selection)) => match resolve_selection(werk, selection, value) {
+            Ok(value) => value.map(result_text).unwrap_or_default(),
+            Err(_) => literal.to_string(),
+        },
+        Err(_) => literal.to_string(),
+        Ok(None) if expression.contains(EXPRESSION_OPEN) => literal.to_string(),
+        Ok(None) => value(expression).unwrap_or_else(|| literal.to_string()),
     }
-
-    if expression.contains(EXPRESSION_OPEN) {
-        return Err("nested values are only supported inside selection expressions".into());
-    }
-    Ok(named_value(expression))
 }
 
 fn resolve_selection(
     werk: &Werk,
     selection: SelectionExpression<'_>,
-    named_value: &mut impl FnMut(&str) -> Option<String>,
+    value: &mut impl FnMut(&str) -> Option<String>,
 ) -> Result<Option<Value>, String> {
-    let (query, _had_nested_value) = expand_nested(selection.query, named_value)?;
+    let query = expand_nested(selection.query, value)?;
     let json_path = selection
         .json_path
         .map(JsonPath::parse)
@@ -208,11 +159,10 @@ fn resolve_selection(
 
 fn expand_nested(
     expression: &str,
-    named_value: &mut impl FnMut(&str) -> Option<String>,
-) -> Result<(String, bool), String> {
+    value: &mut impl FnMut(&str) -> Option<String>,
+) -> Result<String, String> {
     let mut output = String::with_capacity(expression.len());
     let mut remaining = expression;
-    let mut expanded = false;
     while let Some(open) = remaining.find(EXPRESSION_OPEN) {
         output.push_str(&remaining[..open]);
         let body = &remaining[open + EXPRESSION_OPEN.len()..];
@@ -226,15 +176,14 @@ fn expand_nested(
         {
             return Err("nested expressions must name a template value".into());
         }
-        let Some(value) = named_value(name) else {
+        let Some(value) = value(name) else {
             return Err(format!("unknown nested template value `{name}`"));
         };
         output.push_str(&value);
         remaining = &body[close + EXPRESSION_CLOSE.len()..];
-        expanded = true;
     }
     output.push_str(remaining);
-    Ok((output, expanded))
+    Ok(output)
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -491,15 +440,16 @@ mod tests {
     fn prompt_text_is_trimmed() {
         let werk = Werk::new();
         assert_eq!(
-            werk.render_prompt("\n\nYou review code.\n", &[]).unwrap(),
+            werk.prompt
+                .render("\n\nYou review code.\n", &[] as &[(&str, &str)]),
             "You review code."
         );
     }
 
     use crate::{Event, Task, Werk};
 
-    fn render(werk: &Werk, prompt: impl AsRef<str>) -> Result<String, RenderError> {
-        werk.render_prompt(prompt.as_ref(), &[])
+    fn render(werk: &Werk, prompt: impl AsRef<str>) -> String {
+        werk.prompt.render(prompt.as_ref(), &[] as &[(&str, &str)])
     }
 
     fn session() -> (std::sync::Arc<Werk>, crate::test_util::TempDir) {
@@ -515,7 +465,7 @@ mod tests {
         werk.set_template("company", "old");
         werk.set_template("company", "Acme");
 
-        assert_eq!(render(&werk, "{{ company }}").unwrap(), "Acme");
+        assert_eq!(render(&werk, "{{ company }}"), "Acme");
     }
 
     #[test]
@@ -523,9 +473,47 @@ mod tests {
         let werk = Werk::new();
 
         assert_eq!(
-            render(&werk, "{{ tool_timed_out }}").unwrap(),
+            render(&werk, "{{ tool_timed_out }}"),
             "{{ tool_timed_out }}",
         );
+    }
+
+    #[test]
+    fn bundled_templates_render_their_defaults() {
+        let werk = Werk::new();
+
+        assert_eq!(
+            werk.prompt.render(
+                super::super::templates::EDIT_FILE_OLD_STRING_NOT_FOUND,
+                &[("path", "src/lib.rs")],
+            ),
+            "No `old_string` match in src/lib.rs. Read the file and copy the text exactly, including indentation, because `edit_file` matches byte for byte.",
+        );
+    }
+
+    #[test]
+    fn stable_names_override_bundled_templates() {
+        let werk = Werk::new();
+        werk.set_template(
+            "edit_file_old_string_not_found",
+            "Nothing matched in {{ path }}.",
+        );
+
+        assert_eq!(
+            werk.prompt.render(
+                super::super::templates::EDIT_FILE_OLD_STRING_NOT_FOUND,
+                &[("path", "src/lib.rs")],
+            ),
+            "Nothing matched in src/lib.rs.",
+        );
+    }
+
+    #[test]
+    fn plain_text_equal_to_a_shared_value_name_stays_plain_text() {
+        let werk = Werk::new();
+        werk.set_template("company", "Acme");
+
+        assert_eq!(render(&werk, "company"), "company");
     }
 
     #[test]
@@ -543,14 +531,18 @@ mod tests {
         ]);
 
         assert_eq!(
-            werk.render_template("retry", &[("path", "src/lib.rs")])
-                .unwrap(),
+            werk.prompt.render(
+                &werk.prompt.get_template("retry").unwrap(),
+                &[("path", "src/lib.rs")],
+            ),
             "src/lib.rs for Acme: 42",
         );
         werk.set_template("path", "shared/path");
         assert_eq!(
-            werk.render_template("retry", &[("path", "runtime/path")])
-                .unwrap(),
+            werk.prompt.render(
+                &werk.prompt.get_template("retry").unwrap(),
+                &[("path", "runtime/path")],
+            ),
             "runtime/path for Acme: 42",
         );
     }
@@ -564,18 +556,25 @@ mod tests {
         ]);
 
         assert_eq!(
-            werk.render_template("retry", &[]).unwrap(),
+            werk.prompt.render(
+                &werk.prompt.get_template("retry").unwrap(),
+                &[] as &[(&str, &str)],
+            ),
             "{{ find_result(missing) }}",
         );
     }
 
     #[test]
-    fn invalid_template_expressions_are_reported() {
+    fn invalid_prompt_expressions_stay_literal() {
         let werk = Werk::new();
-        werk.set_template("retry", "{{ find_result(task.label =) }}");
 
-        let error = werk.render_template("retry", &[]).unwrap_err();
-        assert_eq!(error.expression, "find_result(task.label =)");
+        for expression in [
+            "{{ find_result(task.label =) }}",
+            "{{ find_result({{ missing_selection }}) }}",
+            "{{ find_result(absent).items[?active] }}",
+        ] {
+            assert_eq!(render(&werk, expression), expression);
+        }
     }
 
     #[test]
@@ -584,7 +583,7 @@ mod tests {
         werk.set_template("company", "Acme");
         werk.set_template("data", "{{ company }} {{ find_result(missing) }}");
         assert_eq!(
-            render(&werk, "{{ company }}: {{ data }}").unwrap(),
+            render(&werk, "{{ company }}: {{ data }}"),
             "Acme: {{ company }} {{ find_result(missing) }}"
         );
     }
@@ -596,8 +595,7 @@ mod tests {
         let values = [("company", "Local {{ topic }}".to_string())];
 
         assert_eq!(
-            werk.render_prompt("{{ company }}: {{ topic }}", &values)
-                .unwrap(),
+            werk.prompt.render("{{ company }}: {{ topic }}", &values),
             "Local {{ topic }}: prompts"
         );
     }
@@ -605,7 +603,7 @@ mod tests {
     #[test]
     fn value_rendering_replaces_known_names_once_and_preserves_unknown_names() {
         let values = [("name", "{{ other }}"), ("other", "expanded")];
-        let rendered = render_values("{{ name }} {{name}} {{ missing }}", |name| {
+        let rendered = render_template_values("{{ name }} {{name}} {{ missing }}", |name| {
             values
                 .iter()
                 .find_map(|(key, value)| (*key == name).then(|| (*value).to_string()))
@@ -619,28 +617,34 @@ mod tests {
         let value = |name: &str| (name == "name").then(|| "expanded".to_string());
         let json = r#"{"one":{"two":{"three":{"value":1}}}}"#;
 
-        assert_eq!(render_values("{name}", value), "{name}");
-        assert_eq!(render_values(json, value), json);
+        assert_eq!(render_template_values("{name}", value), "{name}");
+        assert_eq!(render_template_values(json, value), json);
     }
 
     #[test]
     fn value_rendering_unescapes_double_brace_expressions() {
-        assert_eq!(render_values("{{{{ name }}}}", |_| None), "{{ name }}");
+        assert_eq!(
+            render_template_values("{{{{ name }}}}", |_| None),
+            "{{ name }}"
+        );
     }
 
     #[test]
     fn value_rendering_preserves_non_value_expressions() {
         let template = "{{ readable(result: x) }} {{ find_result(x) }} {{ outer {{ name }} }}";
 
-        assert_eq!(render_values(template, |_| None), template);
+        assert_eq!(render_template_values(template, |_| None), template);
     }
 
     #[test]
-    fn value_rendering_preserves_the_entire_malformed_template() {
+    fn value_rendering_preserves_the_unclosed_remainder() {
         let value = |name: &str| (name == "name").then(|| "expanded".to_string());
         let malformed = "{{ name }} then {{ missing";
 
-        assert_eq!(render_values(malformed, value), malformed);
+        assert_eq!(
+            render_template_values(malformed, value),
+            "expanded then {{ missing"
+        );
     }
 
     #[test]
@@ -648,10 +652,10 @@ mod tests {
         let werk = Werk::new();
         let json = r#"{"one":{"two":{"three":{"value":1}}}}"#;
 
-        assert_eq!(render(&werk, "{company}").unwrap(), "{company}");
-        assert_eq!(render(&werk, json).unwrap(), json);
+        assert_eq!(render(&werk, "{company}"), "{company}");
+        assert_eq!(render(&werk, json), json);
         assert_eq!(
-            render(&werk, "standalone }}}} braces").unwrap(),
+            render(&werk, "standalone }}}} braces"),
             "standalone }}}} braces"
         );
     }
@@ -660,7 +664,7 @@ mod tests {
     fn prompt_rendering_preserves_unknown_expressions() {
         let werk = Werk::new();
 
-        assert_eq!(render(&werk, "{{ unknown }}").unwrap(), "{{ unknown }}");
+        assert_eq!(render(&werk, "{{ unknown }}"), "{{ unknown }}");
     }
 
     #[test]
@@ -669,7 +673,7 @@ mod tests {
         werk.set_template("company", "Acme");
 
         assert_eq!(
-            render(&werk, "{{company}} | {{ company }} | 日本 {{ company }}").unwrap(),
+            render(&werk, "{{company}} | {{ company }} | 日本 {{ company }}"),
             "Acme | Acme | 日本 Acme"
         );
     }
@@ -680,7 +684,7 @@ mod tests {
         werk.set_template("profile", r#"{"company":{"name":"Shared"}}"#);
 
         assert_eq!(
-            render(&werk, "{{ profile | company.name }}").unwrap(),
+            render(&werk, "{{ profile | company.name }}"),
             "{{ profile | company.name }}"
         );
     }
@@ -691,7 +695,7 @@ mod tests {
         let profile = r#"{"company":{"name":"Acme"}}"#;
         werk.set_template("profile", profile);
 
-        assert_eq!(render(&werk, "{{ profile }}").unwrap(), profile);
+        assert_eq!(render(&werk, "{{ profile }}"), profile);
     }
 
     #[test]
@@ -710,7 +714,7 @@ mod tests {
             ("{{ profile| company }}", "right only"),
             ("{{ profile | company }}", "spaced"),
         ] {
-            assert_eq!(render(&werk, expression).unwrap(), expected, "{expression}");
+            assert_eq!(render(&werk, expression), expected, "{expression}");
         }
     }
 
@@ -719,7 +723,7 @@ mod tests {
         let (werk, _dir) = session();
         werk.set_template("company", "Acme");
 
-        assert_eq!(render(&werk, "{{{{ company }}}}").unwrap(), "{{ company }}");
+        assert_eq!(render(&werk, "{{{{ company }}}}"), "{{ company }}");
     }
 
     #[test]
@@ -732,11 +736,11 @@ mod tests {
         werk.set_task_finished(&second, serde_json::json!({"answer": 42}))
             .unwrap();
         assert_eq!(
-            render(&werk, "{{ find_result(research) }}").unwrap(),
+            render(&werk, "{{ find_result(research) }}"),
             "first {{ company }}"
         );
         assert_eq!(
-            render(&werk, format!("{{{{ find_result({second}) }}}}")).unwrap(),
+            render(&werk, format!("{{{{ find_result({second}) }}}}")),
             r#"{"answer":42}"#
         );
     }
@@ -757,23 +761,23 @@ mod tests {
         .unwrap();
 
         assert_eq!(
-            render(&werk, "{{ find_result(research).company.name }}").unwrap(),
+            render(&werk, "{{ find_result(research).company.name }}"),
             "Acme"
         );
         assert_eq!(
-            render(&werk, "{{ find_result(research).findings[0] }}").unwrap(),
+            render(&werk, "{{ find_result(research).findings[0] }}"),
             r#"{"summary":"one"}"#
         );
         assert_eq!(
-            render(&werk, "{{ find_result(research).company.missing }}").unwrap(),
+            render(&werk, "{{ find_result(research).company.missing }}"),
             ""
         );
         assert_eq!(
-            render(&werk, r#"{{ find_result(research)."unusual.name" }}"#).unwrap(),
+            render(&werk, r#"{{ find_result(research)."unusual.name" }}"#),
             "quoted"
         );
         assert_eq!(
-            render(&werk, r#"{{ find_result(research)."}}" }}"#).unwrap(),
+            render(&werk, r#"{{ find_result(research)."}}" }}"#),
             "closed"
         );
     }
@@ -788,21 +792,15 @@ mod tests {
         }
 
         assert_eq!(
-            render(&werk, "{{ find_results(scan)[*].verdict }}").unwrap(),
+            render(&werk, "{{ find_results(scan)[*].verdict }}"),
             r#"["safe","review"]"#
         );
+        assert_eq!(render(&werk, "{{ find_results(scan)[0].verdict }}"), "safe");
         assert_eq!(
-            render(&werk, "{{ find_results(scan)[0].verdict }}").unwrap(),
-            "safe"
-        );
-        assert_eq!(
-            render(&werk, "{{ find_results(scan)[0:1].verdict }}").unwrap(),
+            render(&werk, "{{ find_results(scan)[0:1].verdict }}"),
             r#"["safe"]"#
         );
-        assert_eq!(
-            render(&werk, "{{ find_results(missing)[*].verdict }}").unwrap(),
-            ""
-        );
+        assert_eq!(render(&werk, "{{ find_results(missing)[*].verdict }}"), "");
     }
 
     #[test]
@@ -816,14 +814,8 @@ mod tests {
             werk.set_task_finished(&id, values).unwrap();
         }
 
-        assert_eq!(
-            render(&werk, "{{ find_result(object).* }}").unwrap(),
-            r#"["found"]"#
-        );
-        assert_eq!(
-            render(&werk, "{{ find_results(array)[] }}").unwrap(),
-            "[1,2,3]"
-        );
+        assert_eq!(render(&werk, "{{ find_result(object).* }}"), r#"["found"]"#);
+        assert_eq!(render(&werk, "{{ find_results(array)[] }}"), "[1,2,3]");
     }
 
     #[test]
@@ -836,8 +828,7 @@ mod tests {
             render(
                 &werk,
                 "{{ find_task(scan ORDER BY task.id DESC).task.file }}",
-            )
-            .unwrap(),
+            ),
             "two"
         );
     }
@@ -849,7 +840,7 @@ mod tests {
         let second = werk.add_task(Task("two").label("scan"));
 
         assert_eq!(
-            render(&werk, "{{ find_tasks(scan)[*].id }}").unwrap(),
+            render(&werk, "{{ find_tasks(scan)[*].id }}"),
             serde_json::json!([first, second]).to_string()
         );
     }
@@ -860,7 +851,7 @@ mod tests {
         werk.add_task(Task(serde_json::json!({"file": "one"})).label("scan"));
 
         let serialized: Value =
-            serde_json::from_str(&render(&werk, "{{ find_task(scan) }}").unwrap()).unwrap();
+            serde_json::from_str(&render(&werk, "{{ find_task(scan) }}")).unwrap();
 
         assert_eq!(serialized["task"]["file"], "one");
         assert!(serialized.get("result").is_none());
@@ -873,8 +864,8 @@ mod tests {
     fn unmatched_task_expressions_render_nothing() {
         let (werk, _dir) = session();
 
-        assert_eq!(render(&werk, "{{ find_task(missing) }}").unwrap(), "");
-        assert_eq!(render(&werk, "{{ find_tasks(missing) }}").unwrap(), "");
+        assert_eq!(render(&werk, "{{ find_task(missing) }}"), "");
+        assert_eq!(render(&werk, "{{ find_tasks(missing) }}"), "");
     }
 
     #[test]
@@ -884,7 +875,7 @@ mod tests {
         werk.emit_event(Event::new("inspection").data(serde_json::json!({"name": "two"})));
 
         assert_eq!(
-            render(&werk, "{{ find_event(event.name = inspection).data.name }}",).unwrap(),
+            render(&werk, "{{ find_event(event.name = inspection).data.name }}",),
             "one"
         );
     }
@@ -899,8 +890,7 @@ mod tests {
             render(
                 &werk,
                 "{{ find_events(event.name = inspection)[*].data.name }}",
-            )
-            .unwrap(),
+            ),
             r#"["one","two"]"#
         );
     }
@@ -910,10 +900,9 @@ mod tests {
         let (werk, _dir) = session();
         werk.emit_event(Event::new("inspection").data(serde_json::json!({"name": "one"})));
 
-        let serialized: Value = serde_json::from_str(
-            &render(&werk, "{{ find_event(event.name = inspection) }}").unwrap(),
-        )
-        .unwrap();
+        let serialized: Value =
+            serde_json::from_str(&render(&werk, "{{ find_event(event.name = inspection) }}"))
+                .unwrap();
 
         assert_eq!(serialized["name"], "inspection");
         assert_eq!(serialized["data"]["name"], "one");
@@ -923,14 +912,8 @@ mod tests {
     fn unmatched_event_expressions_render_nothing() {
         let (werk, _dir) = session();
 
-        assert_eq!(
-            render(&werk, "{{ find_event(event.name = absent) }}").unwrap(),
-            ""
-        );
-        assert_eq!(
-            render(&werk, "{{ find_events(event.name = absent) }}").unwrap(),
-            ""
-        );
+        assert_eq!(render(&werk, "{{ find_event(event.name = absent) }}"), "");
+        assert_eq!(render(&werk, "{{ find_events(event.name = absent) }}"), "");
     }
 
     #[test]
@@ -948,7 +931,7 @@ mod tests {
             "{{ event: research }}",
             "{{ events: research }}",
         ] {
-            assert_eq!(render(&werk, template).unwrap(), template);
+            assert_eq!(render(&werk, template), template);
         }
     }
 
@@ -963,8 +946,7 @@ mod tests {
             render(
                 &werk,
                 r#"{{ find_result(task.label = "research ) notes").answer }}"#,
-            )
-            .unwrap(),
+            ),
             "found"
         );
     }
@@ -990,8 +972,7 @@ mod tests {
             render(
                 &werk,
                 "{{ find_result((task.label = research OR task.label = notes)).answer }}",
-            )
-            .unwrap(),
+            ),
             "found"
         );
     }
@@ -1005,50 +986,37 @@ mod tests {
         werk.set_template("selection ) literal", "research");
 
         assert_eq!(
-            render(&werk, "{{ find_result({{ selection ) literal }}).answer }}",).unwrap(),
+            render(&werk, "{{ find_result({{ selection ) literal }}).answer }}",),
             "found"
         );
     }
 
     #[test]
-    fn malformed_json_paths_report_the_parse_failure() {
+    fn malformed_json_paths_stay_literal() {
         let (werk, _dir) = session();
         let id = werk.add_task(Task("go").label("research"));
         werk.set_task_finished(&id, serde_json::json!({"answer": "found"}))
             .unwrap();
 
-        for (prompt, message) in [
-            ("{{ find_result(research). }}", "JSON path cannot be empty"),
-            ("{{ find_result(missing). }}", "JSON path cannot be empty"),
-            (
-                "{{ find_result(research).answer || missing }}",
-                "unsupported JSON path syntax at byte 6",
-            ),
+        for prompt in [
+            "{{ find_result(research). }}",
+            "{{ find_result(missing). }}",
+            "{{ find_result(research).answer || missing }}",
         ] {
-            let error = render(&werk, prompt).unwrap_err();
-            assert_eq!(error.expression, prompt[2..prompt.len() - 2].trim());
-            assert_eq!(error.message, message, "{prompt}");
+            assert_eq!(render(&werk, prompt), prompt);
         }
     }
 
     #[test]
-    fn malformed_selection_calls_report_the_parse_failure() {
+    fn malformed_selection_calls_stay_literal() {
         let werk = Werk::new();
 
-        for (prompt, message) in [
-            ("{{ find_result(research }}", "unclosed selection call"),
-            (
-                "{{ find_result(research) answer }}",
-                "expected a JSON path beginning with `.` or `[` after the selection call",
-            ),
-            (
-                "{{ find_result(research).[0] }}",
-                "expected a JSON path field after `.`",
-            ),
+        for prompt in [
+            "{{ find_result(research }}",
+            "{{ find_result(research) answer }}",
+            "{{ find_result(research).[0] }}",
         ] {
-            let error = render(&werk, prompt).unwrap_err();
-            assert_eq!(error.expression, prompt[2..prompt.len() - 2].trim());
-            assert_eq!(error.message, message, "{prompt}");
+            assert_eq!(render(&werk, prompt), prompt);
         }
     }
 
@@ -1062,9 +1030,7 @@ mod tests {
             "{{ find_task(research).{{ path }} }}",
             "{{ find_event(event.name = task_finished).{{ path }} }}",
         ] {
-            let error = render(&werk, prompt).unwrap_err();
-            assert_eq!(error.expression, prompt[2..prompt.len() - 2].trim());
-            assert_eq!(error.message, "unsupported JSON path syntax at byte 0");
+            assert_eq!(render(&werk, prompt), prompt);
         }
     }
 
@@ -1073,10 +1039,8 @@ mod tests {
         let (werk, _dir) = session();
         werk.set_template("selection", "research | answer");
 
-        let error = render(&werk, "{{ find_result({{ selection }}) }}").unwrap_err();
-
-        assert_eq!(error.expression, "find_result({{ selection }})");
-        assert_eq!(error.message, "Unexpected `|` in the query.");
+        let prompt = "{{ find_result({{ selection }}) }}";
+        assert_eq!(render(&werk, prompt), prompt);
     }
 
     #[test]
@@ -1088,7 +1052,7 @@ mod tests {
         werk.set_template("company", "Acme");
 
         assert_eq!(
-            render(&werk, "{{ find_result(research).answer }}").unwrap(),
+            render(&werk, "{{ find_result(research).answer }}"),
             "{{ company }}"
         );
     }
@@ -1105,7 +1069,7 @@ mod tests {
             .unwrap();
 
         assert_eq!(
-            render(&werk, "{{ find_results(research ORDER BY task.id DESC) }}",).unwrap(),
+            render(&werk, "{{ find_results(research ORDER BY task.id DESC) }}",),
             r#"["second","first"]"#
         );
     }
@@ -1123,8 +1087,7 @@ mod tests {
             render(
                 &werk,
                 "{{ find_results(task.label = research AND event.name = selected) }}",
-            )
-            .unwrap(),
+            ),
             r#"[{"answer":42}]"#
         );
     }
@@ -1136,7 +1099,7 @@ mod tests {
         werk.set_task_finished(&id, serde_json::json!({"research": "found"}))
             .unwrap();
         assert_eq!(
-            render(&werk, r#"{{ find_result(task.label = "research}notes") }}"#,).unwrap(),
+            render(&werk, r#"{{ find_result(task.label = "research}notes") }}"#,),
             r#"{"research":"found"}"#
         );
     }
@@ -1145,8 +1108,8 @@ mod tests {
     fn unmatched_result_expressions_render_nothing() {
         let (werk, _dir) = session();
 
-        assert_eq!(render(&werk, "{{ find_result(missing) }}").unwrap(), "");
-        assert_eq!(render(&werk, "{{ find_results(missing) }}").unwrap(), "");
+        assert_eq!(render(&werk, "{{ find_result(missing) }}"), "");
+        assert_eq!(render(&werk, "{{ find_results(missing) }}"), "");
     }
 
     #[test]
@@ -1161,7 +1124,7 @@ mod tests {
             "{{ find_event(event.name = missing).data.answer }}",
             "{{ find_events(event.name = missing)[*].data.answer }}",
         ] {
-            assert_eq!(render(&werk, expression).unwrap(), "", "{expression}");
+            assert_eq!(render(&werk, expression), "", "{expression}");
         }
     }
 
@@ -1178,11 +1141,7 @@ mod tests {
             "{{ find_events(event.name = missing) }}",
         ] {
             let prompt = format!("before {expression} after");
-            assert_eq!(
-                render(&werk, prompt).unwrap(),
-                "before  after",
-                "{expression}"
-            );
+            assert_eq!(render(&werk, prompt), "before  after", "{expression}");
         }
     }
 
@@ -1193,8 +1152,8 @@ mod tests {
         let empty = werk.add_task(Task("empty").label("empty"));
         let useful = werk.add_task(Task("useful").label("useful"));
 
-        assert_eq!(render(&werk, "{{ find_result(research) }}").unwrap(), "");
-        assert_eq!(render(&werk, "{{ find_results(research) }}").unwrap(), "");
+        assert_eq!(render(&werk, "{{ find_result(research) }}"), "");
+        assert_eq!(render(&werk, "{{ find_results(research) }}"), "");
 
         werk.set_task_finished(&pending, Value::Null).unwrap();
         werk.set_task_finished(&empty, serde_json::json!([]))
@@ -1202,67 +1161,41 @@ mod tests {
         werk.set_task_finished(&useful, serde_json::json!(["instruction"]))
             .unwrap();
 
-        assert_eq!(render(&werk, "{{ find_result(research) }}").unwrap(), "");
-        assert_eq!(render(&werk, "{{ find_results(research) }}").unwrap(), "");
-        assert_eq!(render(&werk, "{{ find_result(empty) }}").unwrap(), "");
-        assert_eq!(render(&werk, "{{ find_results(empty) }}").unwrap(), "");
+        assert_eq!(render(&werk, "{{ find_result(research) }}"), "");
+        assert_eq!(render(&werk, "{{ find_results(research) }}"), "");
+        assert_eq!(render(&werk, "{{ find_result(empty) }}"), "");
+        assert_eq!(render(&werk, "{{ find_results(empty) }}"), "");
         assert_eq!(
-            render(&werk, "{{ find_result(useful) }}").unwrap(),
+            render(&werk, "{{ find_result(useful) }}"),
             r#"["instruction"]"#
         );
         assert_eq!(
-            render(&werk, "{{ find_results(useful) }}").unwrap(),
+            render(&werk, "{{ find_results(useful) }}"),
             r#"[["instruction"]]"#
         );
     }
 
     #[test]
-    fn malformed_aql_reports_the_query_failure() {
+    fn malformed_aql_stays_literal() {
         let (werk, _dir) = session();
-        for (prompt, expression, message) in [
-            (
-                "{{ find_result() }}",
-                "find_result()",
-                "A query cannot be blank. Name an origin-qualified field or a task ID.",
-            ),
-            (
-                "{{ find_results(task.label =) }}",
-                "find_results(task.label =)",
-                "The query ends in the middle of a term.",
-            ),
-            (
-                "{{ find_task(task.label =) }}",
-                "find_task(task.label =)",
-                "The query ends in the middle of a term.",
-            ),
-            (
-                "{{ find_events(event.name =) }}",
-                "find_events(event.name =)",
-                "The query ends in the middle of a term.",
-            ),
+        for prompt in [
+            "{{ find_result() }}",
+            "{{ find_results(task.label =) }}",
+            "{{ find_task(task.label =) }}",
+            "{{ find_events(event.name =) }}",
         ] {
-            let error = render(&werk, prompt).unwrap_err();
-            assert_eq!(error.expression, expression);
-            assert_eq!(error.message, message);
+            assert_eq!(render(&werk, prompt), prompt);
         }
     }
 
     #[test]
-    fn unclosed_expressions_report_the_unclosed_construct() {
+    fn unclosed_expressions_stay_literal() {
         let werk = Werk::new();
-        for (prompt, message) in [
-            (
-                "{{ find_result(research)",
-                "unclosed expression or quoted value",
-            ),
-            (
-                "{{ find_result(task.label = \"oops) }}",
-                "unclosed expression or quoted value",
-            ),
+        for prompt in [
+            "{{ find_result(research)",
+            "{{ find_result(task.label = \"oops) }}",
         ] {
-            let error = render(&werk, prompt).unwrap_err();
-            assert_eq!(error.message, message, "{prompt}");
-            assert!(error.to_string().starts_with("cannot render {{"));
+            assert_eq!(render(&werk, prompt), prompt);
         }
     }
 
@@ -1274,7 +1207,7 @@ mod tests {
             .unwrap();
         werk.set_template("research", "{{ find_result(research) }}");
         assert_eq!(
-            render(&werk, "{{ research }} | {{ find_result(research) }}").unwrap(),
+            render(&werk, "{{ research }} | {{ find_result(research) }}"),
             "{{ find_result(research) }} | Use {{ company }}"
         );
     }
@@ -1287,10 +1220,7 @@ mod tests {
             .unwrap();
         werk.set_template("selection", "research");
 
-        assert_eq!(
-            render(&werk, "{{ find_result({{ selection }}) }}").unwrap(),
-            "found"
-        );
+        assert_eq!(render(&werk, "{{ find_result({{ selection }}) }}"), "found");
     }
 
     #[test]
@@ -1302,7 +1232,7 @@ mod tests {
         werk.set_templates([("field", "task.label"), ("label", "research")]);
 
         assert_eq!(
-            render(&werk, r#"{{ find_result({{ field }} = "{{ label }}") }}"#,).unwrap(),
+            render(&werk, r#"{{ find_result({{ field }} = "{{ label }}") }}"#,),
             "found"
         );
     }
@@ -1319,38 +1249,22 @@ mod tests {
         ]);
 
         assert_eq!(
-            render(&werk, "{{ find_result({{ literal_query }}) }}").unwrap(),
+            render(&werk, "{{ find_result({{ literal_query }}) }}"),
             "literal"
         );
     }
 
     #[test]
-    fn invalid_nested_expressions_report_why_they_are_rejected() {
+    fn invalid_nested_expressions_stay_literal() {
         let (werk, _dir) = session();
         werk.set_templates([("name", "research"), ("outer", "name")]);
-        for (prompt, message) in [
-            (
-                "{{ find_result({{ missing }}) }}",
-                "unknown nested template value `missing`",
-            ),
-            (
-                "{{ find_result({{ find_result(research) }}) }}",
-                "nested expressions must name a template value",
-            ),
-            (
-                "{{ find_result({{ outer {{ name }} }}) }}",
-                "nested expressions may only be one level deep",
-            ),
-            (
-                "{{ prefix {{ name }} }}",
-                "nested values are only supported inside selection expressions",
-            ),
+        for prompt in [
+            "{{ find_result({{ missing }}) }}",
+            "{{ find_result({{ find_result(research) }}) }}",
+            "{{ find_result({{ outer {{ name }} }}) }}",
+            "{{ prefix {{ name }} }}",
         ] {
-            assert_eq!(
-                render(&werk, prompt).unwrap_err().message,
-                message,
-                "{prompt}"
-            );
+            assert_eq!(render(&werk, prompt), prompt);
         }
     }
 
@@ -1359,9 +1273,7 @@ mod tests {
         let (werk, _dir) = session();
         werk.set_template("selection", "task.label =");
 
-        let error = render(&werk, "{{ find_result({{ selection }}) }}").unwrap_err();
-
-        assert_eq!(error.expression, "find_result({{ selection }})");
-        assert_eq!(error.message, "The query ends in the middle of a term.");
+        let prompt = "{{ find_result({{ selection }}) }}";
+        assert_eq!(render(&werk, prompt), prompt);
     }
 }

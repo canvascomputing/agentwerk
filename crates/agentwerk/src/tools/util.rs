@@ -8,9 +8,10 @@ use std::path::{Path, PathBuf};
 use super::command::Command;
 use super::tool::{Event, ToolContext};
 use crate::prompts::templates::{
-    TemplateRenderer, COMMAND_CANCELLED, COMMAND_NOT_STARTED, PATH_HINT_DIRECTORY_LISTED,
-    PATH_HINT_SUGGESTION, PATH_HINT_WORKING_DIRECTORY,
+    COMMAND_CANCELLED, COMMAND_NOT_STARTED, PATH_HINT_DIRECTORY_LISTED, PATH_HINT_SUGGESTION,
+    PATH_HINT_WORKING_DIRECTORY,
 };
+use crate::Werk;
 
 /// Execute one program directly, returning combined stdout/stderr. No shell is
 /// involved, so an operator in an argument is text the program receives rather
@@ -28,16 +29,17 @@ pub(crate) async fn run_command(command: &Command, ctx: &ToolContext) -> Event {
 
     let result = tokio::select! {
         biased;
-        _ = ctx.cancelled() => return Event::error(ctx.templates.render(COMMAND_CANCELLED, &[])).template(COMMAND_CANCELLED),
+        _ = ctx.cancelled() => {
+            return Event::error(ctx.werk.prompt.render(COMMAND_CANCELLED, &[] as &[(&str, &str)]));
+        },
         r = output_fut => r,
     };
 
     match result {
-        Err(e) => Event::error(ctx.templates.render(
+        Err(e) => Event::error(ctx.werk.prompt.render(
             COMMAND_NOT_STARTED,
             &[("program", &command.program), ("error", &e.to_string())],
-        ))
-        .template(COMMAND_NOT_STARTED),
+        )),
         Ok(output) => {
             let mut content = String::from_utf8_lossy(&output.stdout).into_owned();
             let stderr = String::from_utf8_lossy(&output.stderr);
@@ -117,15 +119,11 @@ fn nearest_existing_dir(path: &Path) -> Option<&Path> {
 /// directory, so a wrong guess becomes the real directory contents next turn.
 /// Falls back to echoing the working directory plus a dropped-folder suggestion
 /// for paths that escape it.
-pub(crate) fn not_found_hint(
-    ctx_dir: &Path,
-    resolved: &Path,
-    templates: &TemplateRenderer,
-) -> String {
+pub(crate) fn not_found_hint(ctx_dir: &Path, resolved: &Path, werk: &Werk) -> String {
     if let Some(dir) = nearest_existing_dir(resolved) {
         if dir.starts_with(ctx_dir) {
             if let Some(entries) = directory_entries(dir) {
-                return templates.render(
+                return werk.prompt.render(
                     PATH_HINT_DIRECTORY_LISTED,
                     &[("dir", &dir.display().to_string()), ("entries", &entries)],
                 );
@@ -134,14 +132,16 @@ pub(crate) fn not_found_hint(
     }
     let cwd = ctx_dir.display().to_string();
     match suggest_path(ctx_dir, resolved) {
-        Some(suggestion) => templates.render(
+        Some(suggestion) => werk.prompt.render(
             PATH_HINT_SUGGESTION,
             &[
                 ("dir", &cwd),
                 ("suggestion", &suggestion.display().to_string()),
             ],
         ),
-        None => templates.render(PATH_HINT_WORKING_DIRECTORY, &[("dir", &cwd)]),
+        None => werk
+            .prompt
+            .render(PATH_HINT_WORKING_DIRECTORY, &[("dir", &cwd)]),
     }
 }
 
@@ -179,7 +179,8 @@ mod tests {
     #[tokio::test]
     async fn cancel_interrupts_long_running_subprocess() {
         let run = std::sync::Arc::new(Run::default());
-        let ctx = ToolContext::new(std::env::current_dir().unwrap()).run(Arc::clone(&run));
+        let ctx = ToolContext::new(std::env::current_dir().unwrap(), crate::Werk::new())
+            .run(Arc::clone(&run));
         tokio::spawn(async move {
             tokio::time::sleep(Duration::from_millis(100)).await;
             run.set_draining(FinishReason::Cancelled);
@@ -196,7 +197,7 @@ mod tests {
             "expected cancelled result"
         );
         assert!(content.contains("cancelled"));
-        assert_eq!(result.get_template(), Some(COMMAND_CANCELLED));
+        assert_eq!(result.get_template(), None);
         assert!(
             elapsed < Duration::from_millis(500),
             "cancel should return within 500ms, took {elapsed:?}",
@@ -269,7 +270,7 @@ mod tests {
 
         // Model guessed pkg/pkg (package-name-as-file); pkg exists.
         let resolved = pkg.join("pkg");
-        let hint = not_found_hint(tmp.path(), &resolved, &TemplateRenderer::default());
+        let hint = not_found_hint(tmp.path(), &resolved, &crate::Werk::new());
         assert!(
             hint.contains(&format!("'{}' contains", pkg.display())),
             "got {hint}"
@@ -289,7 +290,7 @@ mod tests {
 
         // Escaped path (whole prefix dropped); the suffix exists under cwd.
         let resolved = Path::new("/data83/pkg/setup.py");
-        let hint = not_found_hint(&cwd, resolved, &TemplateRenderer::default());
+        let hint = not_found_hint(&cwd, resolved, &crate::Werk::new());
         assert!(
             hint.contains("your current working directory"),
             "got {hint}"

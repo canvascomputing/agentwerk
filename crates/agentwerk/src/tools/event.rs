@@ -5,7 +5,6 @@ use serde_json::Value;
 
 use crate::agents::tasks::Werk;
 use crate::event::Event;
-use crate::prompts::templates::{TemplateRenderer, WERK_UNAVAILABLE};
 use crate::schemas::Schema;
 
 use super::task::{resolve_current_id, task_error_message};
@@ -75,9 +74,6 @@ pub(super) fn dispatch(
     schema: Option<&Schema>,
     tool_name: &str,
 ) -> Result<Event, Box<Event>> {
-    let werk = ctx.werk.clone().ok_or_else(|| {
-        Event::error(ctx.templates.render(WERK_UNAVAILABLE, &[])).template(WERK_UNAVAILABLE)
-    })?;
     let name = input["name"].as_str().unwrap_or_default();
     let data = input
         .get("data")
@@ -85,13 +81,12 @@ pub(super) fn dispatch(
         .unwrap_or_else(|| serde_json::json!({}));
 
     if name == Event::TASK_FINISHED {
-        return finish(&werk, &data, ctx, schema, tool_name);
+        return finish(&ctx.werk, &data, ctx, schema, tool_name);
     }
 
     let task_id = ctx.task_id.as_deref().unwrap_or_default();
     let agent_id = ctx.agent_id.as_deref().unwrap_or_default();
-    let template = custom_event_template(name, &data, &ctx.templates)
-        .map_err(|_| Event::error("template rendering failed"))?;
+    let template = custom_event_template(name, &data, &ctx.werk);
     let mut event = Event::new(name)
         .data(data)
         .task_id(task_id)
@@ -99,7 +94,7 @@ pub(super) fn dispatch(
     if template.is_some() {
         event = event.template(name);
     }
-    werk.emit_event(event);
+    ctx.werk.emit_event(event);
 
     Ok(match template {
         Some(content) => Event::success(content).template(name),
@@ -110,11 +105,8 @@ pub(super) fn dispatch(
 /// Render an explicit custom-event response from its JSON payload. The
 /// complete payload is `{{ data }}`; top-level object fields are variables of
 /// their own.
-fn custom_event_template(
-    name: &str,
-    data: &Value,
-    templates: &TemplateRenderer,
-) -> Result<Option<String>, crate::prompts::RenderError> {
+fn custom_event_template(name: &str, data: &Value, werk: &Werk) -> Option<String> {
+    let template = werk.prompt.get_template(name)?;
     let mut owned = vec![("data".to_string(), json_template_value(data))];
     if let Some(fields) = data.as_object() {
         owned.extend(
@@ -127,7 +119,7 @@ fn custom_event_template(
         .iter()
         .map(|(key, value)| (key.as_str(), value.as_str()))
         .collect();
-    templates.render_event_template(name, &values)
+    Some(werk.prompt.render(&template, &values))
 }
 
 fn json_template_value(value: &Value) -> String {
@@ -152,7 +144,6 @@ fn finish(
         werk,
         schema,
         tool_name,
-        templates: &ctx.templates,
     };
     let (_, repaired) = completion.attach_result(&id, result)?;
     completion.mark_finished(&id, &agent)?;
@@ -165,14 +156,13 @@ struct CompletionContext<'a> {
     werk: &'a Werk,
     schema: Option<&'a Schema>,
     tool_name: &'a str,
-    templates: &'a TemplateRenderer,
 }
 
 impl CompletionContext<'_> {
     fn mark_finished(&self, id: &str, agent: &str) -> Result<(), Box<Event>> {
         self.werk
             .set_finished_by(id, agent)
-            .map_err(|error| Event::error(task_error_message(error, self.templates)).into())
+            .map_err(|error| Event::error(task_error_message(error, self.werk)).into())
     }
 
     fn attach_result(&self, id: &str, result: Value) -> Result<(Value, Vec<String>), Box<Event>> {
@@ -182,7 +172,7 @@ impl CompletionContext<'_> {
                     self.tool_name,
                     &violations.to_string(),
                     self.schema.map(Schema::get_raw_schema),
-                    self.templates,
+                    self.werk,
                 ),
                 "schema_failed",
             )
@@ -208,8 +198,7 @@ mod tests {
         let id = werk
             .claim(&Query::from("task.status = todo"), "alice")
             .expect("claim must succeed");
-        let ctx = ToolContext::new(path)
-            .werk(Arc::clone(&werk))
+        let ctx = ToolContext::new(path, Arc::clone(&werk))
             .task_id(id.clone())
             .agent_id("alice".into());
         (dir, werk, id, ctx)
@@ -404,8 +393,7 @@ mod tests {
         let id = werk
             .claim(&Query::from("task.status = todo"), "alice")
             .expect("claim must succeed");
-        let ctx = ToolContext::new(dir.path().to_path_buf())
-            .werk(Arc::clone(&werk))
+        let ctx = ToolContext::new(dir.path().to_path_buf(), Arc::clone(&werk))
             .task_id(id.clone())
             .agent_id("alice".into());
         let tool = EventTool::from_schema(Some(schema));

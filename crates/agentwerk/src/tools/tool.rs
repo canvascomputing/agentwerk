@@ -10,9 +10,7 @@ use serde_json::Value;
 
 use crate::agents::tasks::{Run, Werk};
 pub(crate) use crate::event::Event;
-use crate::prompts::templates::{
-    TemplateRenderer, ARGUMENTS_REJECTED, TOOL_OUTPUT_EMPTY, TOOL_OUTPUT_OFFLOADED, TOOL_TIMED_OUT,
-};
+use crate::prompts::templates::{TOOL_OUTPUT_EMPTY, TOOL_OUTPUT_OFFLOADED, TOOL_TIMED_OUT};
 use crate::providers::ContentBlock;
 use crate::schemas::Schema;
 
@@ -35,32 +33,24 @@ const PREVIEW_CHARS: usize = 2_000;
 pub(crate) struct ToolContext {
     pub(crate) dir: PathBuf,
     pub(crate) run: Option<Arc<Run>>,
-    pub(crate) werk: Option<Arc<Werk>>,
+    pub(crate) werk: Arc<Werk>,
     pub(crate) agent_id: Option<String>,
     pub(crate) task_id: Option<String>,
-    pub(crate) templates: TemplateRenderer,
 }
 
 impl ToolContext {
-    pub(crate) fn new(dir: PathBuf) -> Self {
+    pub(crate) fn new(dir: PathBuf, werk: Arc<Werk>) -> Self {
         Self {
             dir,
             run: None,
-            werk: None,
+            werk,
             agent_id: None,
             task_id: None,
-            templates: TemplateRenderer::default(),
         }
     }
 
     pub(crate) fn run(mut self, run: Arc<Run>) -> Self {
         self.run = Some(run);
-        self
-    }
-
-    pub(crate) fn werk(mut self, werk: Arc<Werk>) -> Self {
-        self.templates = TemplateRenderer::new(Arc::clone(&werk));
-        self.werk = Some(werk);
         self
     }
 
@@ -74,15 +64,11 @@ impl ToolContext {
         self
     }
 
-    /// Publish `event` for the task and agent this call runs for. A context
-    /// with no Werk publishes nothing; the call still runs.
+    /// Publish `event` for the task and agent this call runs for.
     pub(crate) fn emit_event(&self, event: Event) {
-        let Some(werk) = &self.werk else {
-            return;
-        };
         let id = self.task_id.as_deref().unwrap_or_default();
         let agent = self.agent_id.as_deref().unwrap_or_default();
-        werk.emit_event(event.task_id(id).agent_id(agent));
+        self.werk.emit_event(event.task_id(id).agent_id(agent));
     }
 
     pub(crate) async fn cancelled(&self) {
@@ -104,19 +90,14 @@ impl Event {
         Event::tool_call_failed(content)
     }
 
-    pub(crate) fn tool_timed_out(
-        tool: &str,
-        timeout: Duration,
-        templates: &TemplateRenderer,
-    ) -> Self {
-        Event::error(templates.render(
+    pub(crate) fn tool_timed_out(tool: &str, timeout: Duration, werk: &Werk) -> Self {
+        Event::error(werk.prompt.render(
             TOOL_TIMED_OUT,
             &[
                 ("tool", tool),
                 ("milliseconds", &timeout.as_millis().to_string()),
             ],
         ))
-        .template(TOOL_TIMED_OUT)
     }
 
     /// The text returned to the model by a terminal tool-call event.
@@ -474,11 +455,10 @@ impl Tool {
                         self.get_name(),
                         &violations.to_string(),
                         Some(self.schema.get_raw_schema()),
-                        &ctx.templates,
+                        &ctx.werk,
                     ),
                     "schema_failed",
-                )
-                .template(ARGUMENTS_REJECTED);
+                );
             }
         };
         let timeout = self.timeout.resolve(&input);
@@ -486,7 +466,7 @@ impl Tool {
         let event = match timeout {
             Some(duration) => match tokio::time::timeout(duration, call).await {
                 Ok(event) => event,
-                Err(_) => Event::tool_timed_out(self.get_name(), duration, &ctx.templates),
+                Err(_) => Event::tool_timed_out(self.get_name(), duration, &ctx.werk),
             },
             None => call.await,
         };
@@ -622,7 +602,7 @@ fn cap_results(calls: &[ContentBlock], results: &mut [Event], ctx: &ToolContext)
         let ContentBlock::ToolUse { id, name, .. } = call else {
             continue;
         };
-        replace_empty_output(result, name, &ctx.templates);
+        replace_empty_output(result, name, &ctx.werk);
         cap_oversized_result(result, ctx, id, PER_TOOL_CAP);
     }
     cap_aggregate_outputs(calls, results, ctx, PER_TURN_CAP);
@@ -630,7 +610,7 @@ fn cap_results(calls: &[ContentBlock], results: &mut [Event], ctx: &ToolContext)
 
 /// Put a placeholder in place of an empty result, since empty content has upset
 /// LLM providers.
-fn replace_empty_output(result: &mut Event, tool_name: &str, templates: &TemplateRenderer) {
+fn replace_empty_output(result: &mut Event, tool_name: &str, werk: &Werk) {
     if result.name != Event::TOOL_CALL_FINISHED {
         return;
     }
@@ -638,7 +618,9 @@ fn replace_empty_output(result: &mut Event, tool_name: &str, templates: &Templat
         return;
     };
     if content.is_empty() {
-        *content = templates.render(TOOL_OUTPUT_EMPTY, &[("tool", tool_name)]);
+        *content = werk
+            .prompt
+            .render(TOOL_OUTPUT_EMPTY, &[("tool", tool_name)]);
     }
 }
 
@@ -719,8 +701,7 @@ fn largest_inline_success<'a>(
 fn write_out(content: &mut String, ctx: &ToolContext, call_id: &str) -> Option<PathBuf> {
     let output = persist_output(ctx, call_id, content)?;
     let preview = truncate_preview(content);
-    let stub =
-        format_oversized_tool_result(content.len(), &output.display, preview, &ctx.templates);
+    let stub = format_oversized_tool_result(content.len(), &output.display, preview, &ctx.werk);
     *content = stub;
     Some(output.rel)
 }
@@ -728,13 +709,12 @@ fn write_out(content: &mut String, ctx: &ToolContext, call_id: &str) -> Option<P
 /// Write `content` under the task's outputs directory, reporting both the
 /// path relative to the session and the path on disk.
 ///
-/// `None` when the context names no task, no Werk is attached, or
-/// the write fails. Like the rest of the logging, it is best effort.
+/// `None` when the context names no task or the write fails. Like the rest of
+/// the logging, it is best effort.
 fn persist_output(ctx: &ToolContext, tool_use_id: &str, content: &str) -> Option<PersistedOutput> {
-    let werk = ctx.werk.as_ref()?;
     let id = ctx.task_id.as_deref()?;
-    let rel = werk.write_tool_output(id, tool_use_id, content)?;
-    let display = werk.get_dir().join(&rel);
+    let rel = ctx.werk.write_tool_output(id, tool_use_id, content)?;
+    let display = ctx.werk.get_dir().join(&rel);
     Some(PersistedOutput { rel, display })
 }
 
@@ -752,17 +732,18 @@ fn format_oversized_tool_result(
     original_len: usize,
     path: &Path,
     preview: &str,
-    templates: &TemplateRenderer,
+    werk: &Werk,
 ) -> String {
     // The tags stay out of the message: `cap_aggregate_outputs` reads the
     // opening one to tell an already-stubbed result from a fresh one.
-    let body = templates.render(
+    let preview = preview.to_string();
+    let body = werk.prompt.render(
         TOOL_OUTPUT_OFFLOADED,
         &[
             ("size", &format_bytes(original_len)),
             ("path", &path.display().to_string()),
             ("preview_size", &format_bytes(preview.len())),
-            ("preview", preview),
+            ("preview", &preview),
         ],
     );
     format!("{OVERSIZED_STUB_TAG_OPEN}{body}\n{OVERSIZED_STUB_TAG_CLOSE}")
@@ -840,7 +821,7 @@ mod tests {
         let result = tool.invoke(serde_json::json!({}), &test_ctx()).await;
 
         assert_eq!(result.get_name(), Event::TOOL_CALL_FAILED);
-        assert_eq!(result.get_template(), Some(TOOL_TIMED_OUT));
+        assert_eq!(result.get_template(), None);
         assert_eq!(result.get_data()["kind"], "execution_failed");
         assert!(result.get_content().contains("slow"));
         assert!(result.get_content().contains("10ms"));
@@ -863,7 +844,7 @@ mod tests {
             .await;
 
         assert_eq!(result.get_name(), Event::TOOL_CALL_FAILED);
-        assert_eq!(result.get_template(), Some(TOOL_TIMED_OUT));
+        assert_eq!(result.get_template(), None);
         assert!(result
             .get_content()
             .contains("Tool `fetch` timed out after 10ms"));
@@ -900,7 +881,7 @@ mod tests {
         let result = tool.invoke(serde_json::json!({}), &test_ctx()).await;
 
         assert_eq!(result.get_name(), Event::TOOL_CALL_FAILED);
-        assert_eq!(result.get_template(), Some(ARGUMENTS_REJECTED));
+        assert_eq!(result.get_template(), None);
     }
 
     #[test]
@@ -1093,7 +1074,7 @@ mod tests {
     }
 
     fn test_ctx() -> ToolContext {
-        ToolContext::new(std::env::current_dir().unwrap())
+        ToolContext::new(std::env::current_dir().unwrap(), Werk::new())
     }
 
     #[test]
@@ -1499,7 +1480,8 @@ mod tests {
         let werk = Werk(dir.path().to_path_buf()).unwrap();
         werk.add_task("seed");
         let id = "t-1".to_string();
-        let ctx = test_ctx().werk(Arc::clone(&werk)).task_id(id.clone());
+        let ctx = ToolContext::new(std::env::current_dir().unwrap(), Arc::clone(&werk))
+            .task_id(id.clone());
         (ctx, werk, id, dir)
     }
 
@@ -1671,12 +1653,7 @@ mod tests {
     #[test]
     fn format_oversized_tool_result_renders_template() {
         let path = PathBuf::from("/tmp/agentwerk/tasks/t-1/outputs/call-1.txt");
-        let stub = format_oversized_tool_result(
-            1_048_576,
-            &path,
-            "preview-body",
-            &TemplateRenderer::default(),
-        );
+        let stub = format_oversized_tool_result(1_048_576, &path, "preview-body", &Werk::new());
         assert!(stub.starts_with("<persisted-output>"));
         assert!(stub.contains("Output too large (1.0 MB)."));
         assert!(stub.contains("Full output saved to: /tmp/agentwerk/tasks/t-1/outputs/call-1.txt"));
@@ -1721,14 +1698,14 @@ mod tests {
     #[test]
     fn replace_empty_output_substitutes_placeholder() {
         let mut result = Event::success("");
-        replace_empty_output(&mut result, "bash", &TemplateRenderer::default());
+        replace_empty_output(&mut result, "bash", &Werk::new());
         assert_eq!(result.get_content(), "(bash completed with no output)");
     }
 
     #[test]
     fn replace_empty_output_passes_non_empty_through() {
         let mut result = Event::success("hello");
-        replace_empty_output(&mut result, "bash", &TemplateRenderer::default());
+        replace_empty_output(&mut result, "bash", &Werk::new());
         assert_eq!(result.get_content(), "hello");
     }
 
@@ -1737,7 +1714,7 @@ mod tests {
         // The guard reads the variant, not the content, so even an empty
         // failure message is left as the tool reported it.
         let mut result = Event::error("");
-        replace_empty_output(&mut result, "bash", &TemplateRenderer::default());
+        replace_empty_output(&mut result, "bash", &Werk::new());
         assert_eq!(result.get_content(), "");
     }
 

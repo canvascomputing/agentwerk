@@ -7,10 +7,11 @@ use super::super::tool::{Event, Tool, ToolContext};
 use super::super::util::{glob_match, run_command};
 use super::parse::{Argument, Command, Refusal};
 use crate::prompts::templates::{
-    TemplateRenderer, COMMAND_ASSIGNMENT_FOUND, COMMAND_CONTROL_CHARACTER_FOUND,
-    COMMAND_FLAG_DENIED, COMMAND_FLAG_NOT_ALLOWED, COMMAND_MISSING, COMMAND_NOT_ALLOWED,
-    COMMAND_PATTERN_DENIED, COMMAND_QUOTE_UNTERMINATED, COMMAND_SHELL_OPERATOR_FOUND,
+    COMMAND_ASSIGNMENT_FOUND, COMMAND_CONTROL_CHARACTER_FOUND, COMMAND_FLAG_DENIED,
+    COMMAND_FLAG_NOT_ALLOWED, COMMAND_MISSING, COMMAND_NOT_ALLOWED, COMMAND_PATTERN_DENIED,
+    COMMAND_QUOTE_UNTERMINATED, COMMAND_SHELL_OPERATOR_FOUND,
 };
+use crate::Werk;
 
 /// The shared part of every tool's description, with the per-instance patterns
 /// appended at construction time, and the arguments every one of them accepts.
@@ -208,24 +209,25 @@ impl CommandTool {
     /// Rules match the normalized form rather than the line as written, because
     /// that is what runs: otherwise a second space or a pair of quotes walks a
     /// command past a deny that names it.
-    fn check(
-        &self,
-        line: &str,
-        templates: &TemplateRenderer,
-    ) -> std::result::Result<Command, String> {
+    fn check(&self, line: &str, werk: &Werk) -> Result<Command, String> {
         let line = line.trim();
-        let command =
-            Command::split(line).map_err(|refusal| self.unreadable(line, refusal, templates))?;
+        let command = match Command::split(line) {
+            Ok(command) => command,
+            Err(refusal) => return Err(self.unreadable(line, refusal, werk)),
+        };
         let normalized = command.normalized();
 
         if is_assignment(&command.program) {
-            return Err(templates.render(COMMAND_ASSIGNMENT_FOUND, &[("command", &normalized)]));
+            return Err(werk.prompt.render(
+                COMMAND_ASSIGNMENT_FOUND,
+                &[("command", normalized.as_str())],
+            ));
         }
 
         if let Some((flag, _)) = command.flags().find(|(_, found)| self.denies_flag(*found)) {
-            return Err(templates.render(
+            return Err(werk.prompt.render(
                 COMMAND_FLAG_DENIED,
-                &[("command", &normalized), ("flag", flag)],
+                &[("command", normalized.as_str()), ("flag", flag)],
             ));
         }
 
@@ -234,9 +236,9 @@ impl CommandTool {
             .iter()
             .find(|pattern| glob_match(pattern, &normalized))
         {
-            return Err(templates.render(
+            return Err(werk.prompt.render(
                 COMMAND_PATTERN_DENIED,
-                &[("command", &normalized), ("pattern", pattern)],
+                &[("command", normalized.as_str()), ("pattern", pattern)],
             ));
         }
 
@@ -249,24 +251,26 @@ impl CommandTool {
         };
 
         if !permitted {
-            return Err(templates.render(
+            let allowed = self.allowed_line();
+            return Err(werk.prompt.render(
                 COMMAND_NOT_ALLOWED,
                 &[
-                    ("command", &normalized),
-                    ("tool", &self.tool_name),
-                    ("allowed", &self.allowed_line()),
+                    ("command", normalized.as_str()),
+                    ("tool", self.tool_name.as_str()),
+                    ("allowed", allowed.as_str()),
                 ],
             ));
         }
 
         if let Some((flag, _)) = command.flags().find(|(_, found)| !self.allows_flag(*found)) {
-            return Err(templates.render(
+            let allowed = quoted(&self.allow_flags);
+            return Err(werk.prompt.render(
                 COMMAND_FLAG_NOT_ALLOWED,
                 &[
-                    ("command", &normalized),
+                    ("command", normalized.as_str()),
                     ("flag", flag),
-                    ("tool", &self.tool_name),
-                    ("allowed", &quoted(&self.allow_flags)),
+                    ("tool", self.tool_name.as_str()),
+                    ("allowed", allowed.as_str()),
                 ],
             ));
         }
@@ -276,19 +280,19 @@ impl CommandTool {
 
     /// The message for a line that is not one command, naming what stopped it
     /// so the model can fix the call rather than guess at it.
-    fn unreadable(&self, line: &str, refusal: Refusal, templates: &TemplateRenderer) -> String {
+    fn unreadable(&self, line: &str, refusal: Refusal, werk: &Werk) -> String {
         match refusal {
-            Refusal::OperatorFound(operator) => templates.render(
+            Refusal::OperatorFound(operator) => werk.prompt.render(
                 COMMAND_SHELL_OPERATOR_FOUND,
                 &[("command", line), ("operator", &operator.to_string())],
             ),
-            Refusal::Unterminated => {
-                templates.render(COMMAND_QUOTE_UNTERMINATED, &[("command", line)])
-            }
-            Refusal::ControlCharacterFound => {
-                templates.render(COMMAND_CONTROL_CHARACTER_FOUND, &[("command", line)])
-            }
-            Refusal::Empty => templates.render(COMMAND_MISSING, &[]),
+            Refusal::Unterminated => werk
+                .prompt
+                .render(COMMAND_QUOTE_UNTERMINATED, &[("command", line)]),
+            Refusal::ControlCharacterFound => werk
+                .prompt
+                .render(COMMAND_CONTROL_CHARACTER_FOUND, &[("command", line)]),
+            Refusal::Empty => werk.prompt.render(COMMAND_MISSING, &[] as &[(&str, &str)]),
         }
     }
 
@@ -393,7 +397,7 @@ impl CommandTool {
     async fn run(&self, args: CommandArgs, ctx: ToolContext) -> Event {
         let CommandArgs { command } = args;
 
-        let command = match self.check(&command, &ctx.templates) {
+        let command = match self.check(&command, &ctx.werk) {
             Ok(command) => command,
             Err(refusal) => return Event::error(refusal),
         };
@@ -427,7 +431,6 @@ impl From<CommandTool> for Tool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::prompts::templates::TOOL_TIMED_OUT;
 
     #[test]
     fn function_and_associated_constructor_match() {
@@ -456,7 +459,7 @@ mod tests {
     }
 
     fn test_tool_context() -> ToolContext {
-        ToolContext::new(std::env::current_dir().unwrap())
+        ToolContext::new(std::env::current_dir().unwrap(), crate::Werk::new())
     }
 
     #[test]
@@ -543,7 +546,7 @@ mod tests {
         let result = Tool::from(tool.clone()).invoke(input, &ctx).await;
         let content = result.get_content();
         assert!(result.get_name() == Event::TOOL_CALL_FAILED);
-        assert_eq!(result.get_template(), Some(TOOL_TIMED_OUT));
+        assert_eq!(result.get_template(), None);
         assert!(content.contains("Tool `sleep` timed out after 100ms"));
     }
 
@@ -566,7 +569,7 @@ mod tests {
         let result = tool.invoke(input, &test_tool_context()).await;
 
         assert_eq!(result.get_name(), Event::TOOL_CALL_FAILED);
-        assert_eq!(result.get_template(), Some(TOOL_TIMED_OUT));
+        assert_eq!(result.get_template(), None);
         assert!(result
             .get_content()
             .contains("Tool `sleep` timed out after 10ms"));
@@ -701,7 +704,7 @@ mod tests {
     /// command never reached the disk.
     async fn refuses_chaining(command: &str) {
         let dir = crate::test_util::TempDir::new().unwrap();
-        let ctx = ToolContext::new(dir.path().to_path_buf());
+        let ctx = ToolContext::new(dir.path().to_path_buf(), crate::Werk::new());
         let tool = CommandTool("touch").allow("touch *");
 
         let result = Tool::from(tool)
@@ -724,7 +727,7 @@ mod tests {
         // The control for every refusal below: without it they would all pass
         // on a tool that refuses everything.
         let dir = crate::test_util::TempDir::new().unwrap();
-        let ctx = ToolContext::new(dir.path().to_path_buf());
+        let ctx = ToolContext::new(dir.path().to_path_buf(), crate::Werk::new());
 
         let result = Tool::from(CommandTool("touch").allow("touch *"))
             .call(serde_json::json!({ "command": "touch chained.txt" }), &ctx)
@@ -770,7 +773,7 @@ mod tests {
         // holding a space has to survive as one entry rather than two.
         let dir = crate::test_util::TempDir::new().unwrap();
         std::fs::write(dir.path().join("two words.txt"), "x").unwrap();
-        let ctx = ToolContext::new(dir.path().to_path_buf());
+        let ctx = ToolContext::new(dir.path().to_path_buf(), crate::Werk::new());
 
         let result = Tool::from(CommandTool("ls").allow("ls *"))
             .call(
@@ -1153,7 +1156,7 @@ mod tests {
     async fn a_denied_command_never_runs() {
         let dir = crate::test_util::TempDir::new().unwrap();
         let tool = CommandTool("touch").allow("touch *").deny("touch marker*");
-        let ctx = ToolContext::new(dir.path().to_path_buf());
+        let ctx = ToolContext::new(dir.path().to_path_buf(), crate::Werk::new());
 
         Tool::from(tool.clone())
             .call(serde_json::json!({ "command": "touch allowed.txt" }), &ctx)

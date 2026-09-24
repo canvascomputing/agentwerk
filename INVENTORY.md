@@ -250,12 +250,11 @@ The rules the tables never repeat.
 |----------|------|------------|
 | Rust | `Agent.run(): Promise<void>` | super |
 | Rust | `.run_task(werk: Werk, task: Task): Promise<void>` | private |
-| Rust | `.create_system_prompt(werk: Werk, task: Task, knowledge: string, policy: Policy): string throws RenderError` | private |
+| Rust | `.create_system_prompt(werk: Werk, task: Task, policy: Policy): string` | private |
 | Rust | `.run_is_over(werk: Werk): boolean` | private |
 | Rust | `.claim_task(werk: Werk): Task?` | private |
 | Rust | `.emit_event(werk: Werk, task_id: string, event: Event): Event` | super |
 | Rust | `.fail_task(werk: Werk, task_id: string): void` | super |
-| Rust | `.fail_render(werk: Werk, task_id: string, error: RenderError): void` | private |
 | Rust | `.silence_retry(werk: Werk, task_id: string, policy: Policy, consecutive_schema_failures: number): boolean` | private |
 
 ## `crates/agentwerk/src/agents/loop/compact.rs`
@@ -639,7 +638,7 @@ The rules the tables never repeat.
 
 | Language | Item | Visibility |
 |----------|------|------------|
-| Rust | `.initial_reply(werk: Werk, context_values: [string, string][]): Reply throws RenderError` | crate |
+| Rust | `.initial_reply(werk: Werk, context_values: [string, string][]): Reply` | crate |
 | Rust | `.is_waiting_for_response(): boolean` | crate |
 | Rust | `.is_paused(): boolean` | crate |
 | Rust | `.cancelled: boolean`: transient and excluded from serialization | crate |
@@ -1011,22 +1010,110 @@ Not bound directly: callers configure named values through `Agent.template(s)` a
 
 | Language | Item | Visibility |
 |----------|------|------------|
-| Rust | crate-private key constants, one per template heading: `REPLY_REJECTED`, `NO_TOOL_CALLED`, `ARGUMENTS_REJECTED`, `ARGUMENTS_EXPECTED`, `RESULT_SCHEMA_REQUIRED`, `SUMMARY_REQUESTED`, `KNOWLEDGE_INDEX_TRUNCATED`, `TOOL_NOT_FOUND`, `NO_TOOLS_REGISTERED`, `TOOL_PANICKED`, `TOOL_TIMED_OUT`, `TOOL_OUTPUT_EMPTY`, `TOOL_OUTPUT_OFFLOADED`, `EDIT_FILE_READ_FAILED`, `EDIT_FILE_OLD_STRING_NOT_FOUND`, `EDIT_FILE_OLD_STRING_NOT_UNIQUE`, `EDIT_FILE_WRITE_FAILED`, `WRITE_FILE_PARENT_NOT_CREATED`, `WRITE_FILE_FAILED`, `READ_FILE_PATH_IS_DIRECTORY`, `READ_FILE_PATH_IS_DIRECTORY_WITH_ENTRIES`, `READ_FILE_IS_BINARY`, `READ_FILE_NOT_FOUND`, `READ_FILE_FAILED`, `LIST_DIRECTORY_PATH_IS_FILE`, `LIST_DIRECTORY_NOT_FOUND`, `LIST_DIRECTORY_FAILED`, `PATH_HINT_DIRECTORY_LISTED`, `PATH_HINT_SUGGESTION`, `PATH_HINT_WORKING_DIRECTORY`, `COMMAND_CANCELLED`, `COMMAND_NOT_STARTED`, `COMMAND_MISSING`, `COMMAND_SHELL_OPERATOR_FOUND`, `COMMAND_QUOTE_UNTERMINATED`, `COMMAND_CONTROL_CHARACTER_FOUND`, `COMMAND_ASSIGNMENT_FOUND`, `COMMAND_FLAG_DENIED`, `COMMAND_PATTERN_DENIED`, `COMMAND_NOT_ALLOWED`, `COMMAND_FLAG_NOT_ALLOWED`, `GREP_CANCELLED`, `GREP_FAILED`, `GREP_GLOB_REJECTED`, `GREP_FILE_TYPE_UNKNOWN`, `GREP_PATTERN_REJECTED`, `CODE_PATTERN_REJECTED`, `CODE_CONSTRAINT_INCOMPLETE`, `CODE_CONSTRAINT_METAVARIABLE_UNKNOWN`, `CODE_CONSTRAINT_REGEX_REJECTED`, `FETCH_TOO_LONG`, `FETCH_SCHEME_MISSING`, `FETCH_SCHEME_UNSUPPORTED`, `FETCH_CREDENTIALS_PRESENT`, `FETCH_HOST_MISSING`, `FETCH_HOST_NOT_RESOLVABLE`, `FETCH_TOO_MANY_REDIRECTS`, `FETCH_REQUEST_FAILED`, `FETCH_BODY_NOT_READ`, `FETCH_RESPONSE_TOO_LARGE`, `FETCH_REDIRECT_LOCATION_MISSING`, `KNOWLEDGE_PAGE_NOT_FOUND`, `KNOWLEDGE_WRITE_FAILED`, `KNOWLEDGE_REMOVE_FAILED`, `WERK_UNAVAILABLE`, `TASK_ID_MISSING`, `TASK_NOT_ASSIGNED`, `TASK_NOT_FOUND`, `TASK_RESULT_MISSING`, `TASK_QUERY_INVALID`, `TASK_EDIT_INCOMPLETE`, `TASK_TRANSITION_REJECTED`, `SCHEMA_FALSE_REJECTED`, `SCHEMA_TYPE_MISMATCHED`, `SCHEMA_CONST_MISMATCHED`, `SCHEMA_ENUM_MISMATCHED`, `SCHEMA_ANY_OF_UNMATCHED`, `SCHEMA_ONE_OF_AMBIGUOUS`, `SCHEMA_NOT_MATCHED`, `SCHEMA_PROPERTY_MISSING`, `SCHEMA_PROPERTY_UNEXPECTED`, `SCHEMA_ARRAY_TOO_SHORT`, `SCHEMA_ARRAY_TOO_LONG`, `SCHEMA_STRING_TOO_SHORT`, `SCHEMA_STRING_TOO_LONG`, `SCHEMA_PATTERN_UNMATCHED`, `SCHEMA_NUMBER_TOO_SMALL`, `SCHEMA_NUMBER_TOO_LARGE`, `SCHEMA_HINT_UNQUOTE`, `SCHEMA_HINT_JSON`, `SCHEMA_HINT_QUOTE` | crate |
-| Rust | `templates!(name = key, ..)`, declaring each crate-private key constant and its `ALL` entry | private |
-| Rust | `ALL: string[]` | private, test only |
-| Rust | `TEMPLATES: string[]` | private |
-| Rust | `TemplateRenderer { werk: Werk?, error: RenderError? }` | crate |
-| Rust | `impl Clone, Default for TemplateRenderer` | crate |
-| Rust | `.new(werk: Werk): this` | crate |
-| Rust | `.render(key: string, values: [string, string][]): string` | crate |
-| Rust | `.render_event_template(name: string, values: [string, string][]): string?` | crate |
-| Rust | `.has_error(): boolean` | crate |
-| Rust | `.take_error(): RenderError?` | crate |
-| Rust | `.record(rendered: string throws RenderError): string` | private |
-| Rust | `.store_error(error: RenderError): void` | private |
-| Rust | `built_in(key: string, values: [string, string][]): string` | crate |
-| Rust | `entries(markdown: string): [string, string][]` | private |
-| Rust | `templates(): Record<string, string>` | super |
+| Rust | crate-private template-body constants: `REPLY_REJECTED`, `NO_TOOL_CALLED`, `ARGUMENTS_REJECTED`, `ARGUMENTS_EXPECTED`, `RESULT_SCHEMA_REQUIRED`, `SUMMARY_REQUESTED`, `KNOWLEDGE_INDEX_TRUNCATED`, `TOOL_NOT_FOUND`, `NO_TOOLS_REGISTERED`, `TOOL_PANICKED`, `TOOL_TIMED_OUT`, `TOOL_OUTPUT_EMPTY`, `TOOL_OUTPUT_OFFLOADED`, `EDIT_FILE_READ_FAILED`, `EDIT_FILE_OLD_STRING_NOT_FOUND`, `EDIT_FILE_OLD_STRING_NOT_UNIQUE`, `EDIT_FILE_WRITE_FAILED`, `WRITE_FILE_PARENT_NOT_CREATED`, `WRITE_FILE_FAILED`, `READ_FILE_PATH_IS_DIRECTORY`, `READ_FILE_PATH_IS_DIRECTORY_WITH_ENTRIES`, `READ_FILE_IS_BINARY`, `READ_FILE_NOT_FOUND`, `READ_FILE_FAILED`, `LIST_DIRECTORY_PATH_IS_FILE`, `LIST_DIRECTORY_NOT_FOUND`, `LIST_DIRECTORY_FAILED`, `PATH_HINT_DIRECTORY_LISTED`, `PATH_HINT_SUGGESTION`, `PATH_HINT_WORKING_DIRECTORY`, `COMMAND_CANCELLED`, `COMMAND_NOT_STARTED`, `COMMAND_MISSING`, `COMMAND_SHELL_OPERATOR_FOUND`, `COMMAND_QUOTE_UNTERMINATED`, `COMMAND_CONTROL_CHARACTER_FOUND`, `COMMAND_ASSIGNMENT_FOUND`, `COMMAND_FLAG_DENIED`, `COMMAND_PATTERN_DENIED`, `COMMAND_NOT_ALLOWED`, `COMMAND_FLAG_NOT_ALLOWED`, `GREP_CANCELLED`, `GREP_FAILED`, `GREP_GLOB_REJECTED`, `GREP_FILE_TYPE_UNKNOWN`, `GREP_PATTERN_REJECTED`, `CODE_PATTERN_REJECTED`, `CODE_CONSTRAINT_INCOMPLETE`, `CODE_CONSTRAINT_METAVARIABLE_UNKNOWN`, `CODE_CONSTRAINT_REGEX_REJECTED`, `FETCH_TOO_LONG`, `FETCH_SCHEME_MISSING`, `FETCH_SCHEME_UNSUPPORTED`, `FETCH_CREDENTIALS_PRESENT`, `FETCH_HOST_MISSING`, `FETCH_HOST_NOT_RESOLVABLE`, `FETCH_TOO_MANY_REDIRECTS`, `FETCH_REQUEST_FAILED`, `FETCH_BODY_NOT_READ`, `FETCH_RESPONSE_TOO_LARGE`, `FETCH_REDIRECT_LOCATION_MISSING`, `KNOWLEDGE_PAGE_NOT_FOUND`, `KNOWLEDGE_WRITE_FAILED`, `KNOWLEDGE_REMOVE_FAILED`, `TASK_ID_MISSING`, `TASK_NOT_ASSIGNED`, `TASK_NOT_FOUND`, `TASK_RESULT_MISSING`, `TASK_QUERY_INVALID`, `TASK_EDIT_INCOMPLETE`, `TASK_TRANSITION_REJECTED`, `SCHEMA_FALSE_REJECTED`, `SCHEMA_TYPE_MISMATCHED`, `SCHEMA_CONST_MISMATCHED`, `SCHEMA_ENUM_MISMATCHED`, `SCHEMA_ANY_OF_UNMATCHED`, `SCHEMA_ONE_OF_AMBIGUOUS`, `SCHEMA_NOT_MATCHED`, `SCHEMA_PROPERTY_MISSING`, `SCHEMA_PROPERTY_UNEXPECTED`, `SCHEMA_ARRAY_TOO_SHORT`, `SCHEMA_ARRAY_TOO_LONG`, `SCHEMA_STRING_TOO_SHORT`, `SCHEMA_STRING_TOO_LONG`, `SCHEMA_PATTERN_UNMATCHED`, `SCHEMA_NUMBER_TOO_SMALL`, `SCHEMA_NUMBER_TOO_LARGE`, `SCHEMA_HINT_UNQUOTE`, `SCHEMA_HINT_JSON`, `SCHEMA_HINT_QUOTE` | crate |
+| Rust | per-area `TEMPLATES: [(stable_name, default_body)]` registries | super |
+| Rust | `GROUPS: [[(stable_name, default_body)]]` | private |
+| Rust | `built_in(template: string, values: [string, string][]): string` | crate |
+| Rust | `name(template: string): string?` | super |
+
+## `crates/agentwerk/src/prompts/templates/command.rs`
+
+Not bound: defines the command template-body constants re-exported by `prompts::templates`.
+
+### Internal
+
+| Language | Item | Visibility |
+|----------|------|------------|
+| Rust | command template-body constants | crate |
+| Rust | `TEMPLATES: [(stable_name, default_body)]` | super |
+
+## `crates/agentwerk/src/prompts/templates/fetch.rs`
+
+Not bound: defines the fetch template-body constants re-exported by `prompts::templates`.
+
+### Internal
+
+| Language | Item | Visibility |
+|----------|------|------------|
+| Rust | fetch template-body constants | crate |
+| Rust | `TEMPLATES: [(stable_name, default_body)]` | super |
+
+## `crates/agentwerk/src/prompts/templates/files.rs`
+
+Not bound: defines the file-tool template-body constants re-exported by `prompts::templates`.
+
+### Internal
+
+| Language | Item | Visibility |
+|----------|------|------------|
+| Rust | file-tool template-body constants | crate |
+| Rust | `TEMPLATES: [(stable_name, default_body)]` | super |
+
+## `crates/agentwerk/src/prompts/templates/knowledge.rs`
+
+Not bound: defines the knowledge template-body constants re-exported by `prompts::templates`.
+
+### Internal
+
+| Language | Item | Visibility |
+|----------|------|------------|
+| Rust | knowledge template-body constants | crate |
+| Rust | `TEMPLATES: [(stable_name, default_body)]` | super |
+
+## `crates/agentwerk/src/prompts/templates/loop.rs`
+
+Not bound: defines the agent-loop template-body constants re-exported by `prompts::templates`.
+
+### Internal
+
+| Language | Item | Visibility |
+|----------|------|------------|
+| Rust | agent-loop template-body constants | crate |
+| Rust | `TEMPLATES: [(stable_name, default_body)]` | super |
+
+## `crates/agentwerk/src/prompts/templates/registry.rs`
+
+Not bound: defines the tool-registry template-body constants re-exported by `prompts::templates`.
+
+### Internal
+
+| Language | Item | Visibility |
+|----------|------|------------|
+| Rust | tool-registry template-body constants | crate |
+| Rust | `TEMPLATES: [(stable_name, default_body)]` | super |
+
+## `crates/agentwerk/src/prompts/templates/schemas.rs`
+
+Not bound: defines the schema template-body constants re-exported by `prompts::templates`.
+
+### Internal
+
+| Language | Item | Visibility |
+|----------|------|------------|
+| Rust | schema template-body constants | crate |
+| Rust | `TEMPLATES: [(stable_name, default_body)]` | super |
+
+## `crates/agentwerk/src/prompts/templates/search.rs`
+
+Not bound: defines the search template-body constants re-exported by `prompts::templates`.
+
+### Internal
+
+| Language | Item | Visibility |
+|----------|------|------------|
+| Rust | search template-body constants | crate |
+| Rust | `TEMPLATES: [(stable_name, default_body)]` | super |
+
+## `crates/agentwerk/src/prompts/templates/task.rs`
+
+Not bound: defines the task template-body constants re-exported by `prompts::templates`.
+
+### Internal
+
+| Language | Item | Visibility |
+|----------|------|------------|
+| Rust | task template-body constants | crate |
+| Rust | `TEMPLATES: [(stable_name, default_body)]` | super |
 
 ## `crates/agentwerk/src/prompts/mod.rs`
 
@@ -1039,11 +1126,9 @@ Not bound: prompt preparation and rendering are private Werk behavior.
 | Rust | `pub(crate) mod templates` | crate |
 | Rust | `mod prompt` | private |
 | Rust | `mod json_path` | private |
-| Rust | re-exports `RenderError` inside the crate | crate |
+| Rust | re-exports `Prompt` inside the crate | crate |
 | Rust | `CONTEXT_TEMPLATE: string` | private |
-| Rust | `compaction_template(werk: Werk): string throws RenderError` | crate |
-| Rust | `result_schema_template(schema: Schema): string` | crate |
-| Rust | `arguments_retry_detail(tool_name: string, violations: string, schema: json?, templates: TemplateRenderer): string` | crate |
+| Rust | `arguments_retry_detail(tool_name: string, violations: string, schema: json?, werk: Werk): string` | crate |
 | Rust | `context_values(dir: string, policy: Policy, stats: Stats, task_id: string): [string, string][]` | crate |
 | Rust | `optional(value: string?): string` | private |
 | Rust | `render_context(values: [string, string][]): string` | private |
@@ -1055,20 +1140,18 @@ Not bound: prompt preparation and rendering are private Werk behavior.
 
 | Language | Item | Visibility |
 |----------|------|------------|
-| Rust | `RenderError { expression: string, message: string }` | crate |
-| Rust | `impl Clone`, `Debug`, `Display`, and `std::error::Error for RenderError` | crate |
-| Rust | `Werk.render_prompt(prompt: string, values: [string, string][]): string throws RenderError` | crate |
-| Rust | `Werk.render_template(key: string, values: [string, string][]): string throws RenderError` | crate |
-| Rust | `Werk.render_event_template(name: string, values: [string, string][]): string? throws RenderError` | crate |
-| Rust | `render_text(werk: Werk, text: string, values: [string, string][], templates: Record<string, string>): string throws RenderError` | private |
-| Rust | `owned_values(values: [string, string][]): [string, string][]` | private |
-| Rust | `Values = Record<string, string>` | private |
-| Rust | `render_template(template: string, resolve: (expression: string) => string? throws RenderError): string throws RenderError` | private |
-| Rust | `render_values(template: string, named_value: (name: string) => string?): string` | private |
-| Rust | `resolve_expression(werk: Werk, expression: string, named_value: (name: string) => string?): string? throws RenderError` | private |
-| Rust | `resolve_expression_value(werk: Werk, expression: string, named_value: (name: string) => string?): string? throws string` | private |
-| Rust | `resolve_selection(werk: Werk, selection: SelectionExpression, named_value: (name: string) => string?): json throws string` | private |
-| Rust | `expand_nested(expression: string, named_value: (name: string) => string?): [string, boolean] throws string` | private |
+| Rust | `Prompt { werk: Weak<Werk>, templates: Mutex<Record<string, string>> }` | crate |
+| Rust | `Prompt.new(werk: Weak<Werk>): this` | crate |
+| Rust | `.render(text: string, values: [string, string][]): string` | crate |
+| Rust | `.get_template(key: string): string?` | crate |
+| Rust | `.set_template(key: string, value: string): void` | crate |
+| Rust | `.inherit_templates(source: Prompt): void` | crate |
+| Rust | `render_text(werk: Werk, text: string, runtime_values: [string, string][], templates: Record<string, string>): string` | private |
+| Rust | `render_template(template: string, value: (expression: string, literal: string) => string): string` | private |
+| Rust | `render_template_values(template: string, value: (name: string) => string?): string` | super |
+| Rust | `resolve_expression(werk: Werk, expression: string, literal: string, value: (name: string) => string?): string` | private |
+| Rust | `resolve_selection(werk: Werk, selection: SelectionExpression, value: (name: string) => string?): json? throws string` | private |
+| Rust | `expand_nested(expression: string, value: (name: string) => string?): string throws string` | private |
 | Rust | `SelectionKind` | private |
 | Rust | `.Result` | private |
 | Rust | `.Results` | private |
@@ -1787,10 +1870,10 @@ Not bound: it is how `CommandTool` reads one command line.
 | Rust | `.from_schema(schema: Schema?): Tool` | crate |
 | Rust | `task_finished_schema(schema: Schema?): json` | super |
 | Rust | `dispatch(input: json, ctx: ToolContext, schema: Schema?, tool_name: string): Event throws Event` | super |
-| Rust | `custom_event_template(name: string, data: json, templates: TemplateRenderer): string?` | private |
+| Rust | `custom_event_template(name: string, data: json, werk: Werk): string?` | private |
 | Rust | `json_template_value(value: json): string` | private |
 | Rust | `finish(werk: Werk, input: json, ctx: ToolContext, schema: Schema?, tool_name: string): Event throws Event` | private |
-| Rust | `CompletionContext { werk: Werk, schema: Schema?, tool_name: string, templates: TemplateRenderer }` | private |
+| Rust | `CompletionContext { werk: Werk, schema: Schema?, tool_name: string }` | private |
 | Rust | `.mark_finished(id: string, agent: string): void throws Event` | private |
 | Rust | `.attach_result(id: string, result: json): [json, string[]] throws Event` | private |
 
@@ -2100,10 +2183,9 @@ Not bound: it is how `CommandTool` reads one command line.
 | Rust | `PER_TOOL_CAP: number = 50000` | private |
 | Rust | `PER_TURN_CAP: number = 200000` | private |
 | Rust | `PREVIEW_CHARS: number = 2000` | private |
-| Rust | `ToolContext { dir: string, run: Run?, werk: Werk?, agent_id: string?, task_id: string?, templates: TemplateRenderer }` | crate |
-| Rust | `.new(dir: string): this` | crate |
+| Rust | `ToolContext { dir: string, run: Run?, werk: Werk, agent_id: string?, task_id: string? }` | crate |
+| Rust | `.new(dir: string, werk: Werk): this` | crate |
 | Rust | `ToolContext.run(run: Run): this` | crate |
-| Rust | `.werk(werk: Werk): this` | crate |
 | Rust | `.agent_id(name: string): this` | crate |
 | Rust | `.task_id(id: string): this` | crate |
 | Rust | `.cancelled(): Promise<void>` | crate |
@@ -2115,7 +2197,7 @@ Not bound: it is how `CommandTool` reads one command line.
 | Python | not bound: a call reaches Python as the decorated function's arguments | |
 | Rust | `ToolHandler = (input: json, ctx: ToolContext) => Promise<Event>` | private |
 | Rust | `TimeoutPolicy`: resolves a fixed or input-derived invocation deadline | private |
-| Rust | `Event.tool_timed_out(tool: string, timeout: number, templates: TemplateRenderer): Event` | crate |
+| Rust | `Event.tool_timed_out(tool: string, timeout: number, werk: Werk): Event` | crate |
 | Rust | `Tool.find_tool(tools: Tool[], tool_name: string): Tool?` | crate |
 | Rust | `.normalize_name(tool_name: string): string` | private |
 | Rust | `read_arguments_then(name: string, handler: (input: json, ctx: ToolContext) => Promise<Event>): ToolHandler` | private |

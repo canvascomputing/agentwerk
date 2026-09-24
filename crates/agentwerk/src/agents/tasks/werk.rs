@@ -21,6 +21,7 @@ use super::task::{Status, Task};
 use super::{numeric_id, policy_violated, Reply};
 use crate::event::{default_logger, Event};
 use crate::persistence::Persist;
+use crate::prompts::Prompt;
 
 /// Why execution ended.
 ///
@@ -294,7 +295,7 @@ pub struct Werk {
     pub(super) agents: Mutex<Vec<Agent>>,
     conditions: Mutex<ConditionRegistry>,
     pub(super) policy: Mutex<Policy>,
-    templates: Mutex<HashMap<String, String>>,
+    pub(crate) prompt: Prompt,
     /// Why the run ended, once the main loop decides. The agent tasks, the
     /// tools, and every `finish` read it to know the run is over.
     pub(crate) run: Arc<Run>,
@@ -341,7 +342,7 @@ impl Werk {
             agents: Mutex::new(Vec::new()),
             conditions: Mutex::new(ConditionRegistry::default()),
             policy: Mutex::new(Policy::default()),
-            templates: Mutex::new(HashMap::new()),
+            prompt: Prompt::new(weak.clone()),
             run: Arc::new(Run::default()),
             cancel_filters: Mutex::new(Vec::new()),
             terminal_transitions: watch::Sender::new(0),
@@ -429,7 +430,7 @@ impl Werk {
             agents: Mutex::new(Vec::new()),
             conditions: Mutex::new(ConditionRegistry::default()),
             policy: Mutex::new(Policy::default()),
-            templates: Mutex::new(HashMap::new()),
+            prompt: Prompt::new(weak.clone()),
             run: Arc::new(Run::default()),
             cancel_filters: Mutex::new(Vec::new()),
             terminal_transitions: watch::Sender::new(0),
@@ -859,10 +860,7 @@ impl Werk {
     /// New tasks use it before their first request. A key matching a bundled
     /// corrective or custom event template customizes that template.
     pub fn set_template(&self, key: impl Into<String>, value: impl Into<String>) -> &Self {
-        self.templates
-            .lock()
-            .unwrap()
-            .insert(key.into(), value.into());
+        self.prompt.set_template(key.into(), value.into());
         self
     }
 
@@ -873,16 +871,10 @@ impl Werk {
         K: Into<String>,
         V: Into<String>,
     {
-        let values: Vec<_> = variables
-            .into_iter()
-            .map(|(k, v)| (k.into(), v.into()))
-            .collect();
-        self.templates.lock().unwrap().extend(values);
+        for (key, value) in variables {
+            self.prompt.set_template(key.into(), value.into());
+        }
         self
-    }
-
-    pub(crate) fn template_values(&self) -> HashMap<String, String> {
-        self.templates.lock().unwrap().clone()
     }
 
     /// Get the session directory.
@@ -1320,13 +1312,7 @@ impl Werk {
                     .upgrade()
                     .expect("self Arc dropped during bind"),
             ) {
-                let templates = prior.template_values();
-                {
-                    let mut shared = self.templates.lock().unwrap();
-                    for (key, value) in templates {
-                        shared.entry(key).or_insert(value);
-                    }
-                }
+                self.prompt.inherit_templates(&prior.prompt);
                 let drained: Vec<Task> = {
                     let mut old = prior.tasks.lock().unwrap();
                     std::mem::take(&mut *old).into_values().collect()

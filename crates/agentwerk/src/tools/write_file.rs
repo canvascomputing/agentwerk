@@ -38,21 +38,19 @@ async fn run(args: WriteFileArgs, ctx: ToolContext) -> Event {
 
     if let Some(parent) = resolved.parent() {
         if let Err(e) = std::fs::create_dir_all(parent) {
-            return Event::error(ctx.templates.render(
+            return Event::error(ctx.werk.prompt.render(
                 WRITE_FILE_PARENT_NOT_CREATED,
                 &[("path", &path), ("error", &e.to_string())],
-            ))
-            .template(WRITE_FILE_PARENT_NOT_CREATED);
+            ));
         }
     }
 
     match std::fs::write(&resolved, content) {
         Ok(()) => Event::success(format!("File written: {path}")),
-        Err(e) => Event::error(ctx.templates.render(
+        Err(e) => Event::error(ctx.werk.prompt.render(
             WRITE_FILE_FAILED,
             &[("path", &path), ("error", &e.to_string())],
-        ))
-        .template(WRITE_FILE_FAILED),
+        )),
     }
 }
 
@@ -74,7 +72,7 @@ mod tests {
     use std::path::PathBuf;
 
     fn test_ctx(dir: &std::path::Path) -> ToolContext {
-        ToolContext::new(PathBuf::from(dir))
+        ToolContext::new(PathBuf::from(dir), crate::Werk::new())
     }
 
     #[tokio::test]

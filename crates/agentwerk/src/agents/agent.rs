@@ -562,7 +562,7 @@ mod tests {
     ) -> String {
         let werk = agent.werk.upgrade().unwrap();
         let context_values = crate::prompts::context_values(&agent.dir, policy, stats, task_id);
-        let rendered_role = werk.render_prompt(&agent.role, &context_values).unwrap();
+        let rendered_role = werk.prompt.render(&agent.role, &context_values);
         let knowledge_body = knowledge.unwrap_or_default().trim_matches('\n');
         match (rendered_role.is_empty(), knowledge_body.is_empty()) {
             (_, true) => rendered_role,
@@ -810,10 +810,15 @@ mod tests {
             crate::Agent().templates([("shared", "second"), ("from_second", "two")]),
         ));
 
-        let values = werk.template_values();
-        assert_eq!(values["shared"], "werk");
-        assert_eq!(values["from_first"], "one");
-        assert_eq!(values["from_second"], "two");
+        assert_eq!(werk.prompt.get_template("shared").as_deref(), Some("werk"));
+        assert_eq!(
+            werk.prompt.get_template("from_first").as_deref(),
+            Some("one")
+        );
+        assert_eq!(
+            werk.prompt.get_template("from_second").as_deref(),
+            Some("two")
+        );
     }
 
     #[test]

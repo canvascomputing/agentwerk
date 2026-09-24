@@ -252,16 +252,16 @@ impl Task {
         &self,
         werk: &crate::Werk,
         context_values: &[(&str, String)],
-    ) -> Result<Reply, crate::prompts::RenderError> {
+    ) -> Reply {
         let mut initial = self.clone();
         if let serde_json::Value::String(text) = &self.task {
-            let text = werk.render_prompt(text, context_values)?;
+            let text = werk.prompt.render(text, context_values);
             initial.task = serde_json::Value::String(text);
         }
         let Message::User { content } = initial.as_user_message() else {
             unreachable!("Task::asUserMessage returns a user message");
         };
-        Ok(Reply::user(&content, &HashMap::new()))
+        Reply::user(&content, &HashMap::new())
     }
 
     /// Turn this task's replies into the messages sent to the model.
@@ -440,7 +440,12 @@ impl AsUserMessage for Task {
         // Show the result shape up front: the finish tool validates against it, and
         // the role prompt alone is a thin thread for the model to hold.
         if let Some(schema) = &self.schema {
-            body.push_str(&crate::prompts::result_schema_template(schema));
+            let pretty = serde_json::to_string_pretty(schema.get_raw_schema()).unwrap_or_default();
+            let guidance = crate::prompts::templates::built_in(
+                crate::prompts::templates::RESULT_SCHEMA_REQUIRED,
+                &[("schema", &pretty)],
+            );
+            body.push_str(&format!("\n\n{guidance}"));
         }
         Message::user(body)
     }

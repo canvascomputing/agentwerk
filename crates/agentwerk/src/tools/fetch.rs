@@ -2,11 +2,11 @@
 
 use super::tool::{Event, Tool, ToolContext};
 use crate::prompts::templates::{
-    TemplateRenderer, FETCH_BODY_NOT_READ, FETCH_CREDENTIALS_PRESENT, FETCH_HOST_MISSING,
-    FETCH_HOST_NOT_RESOLVABLE, FETCH_REDIRECT_LOCATION_MISSING, FETCH_REQUEST_FAILED,
-    FETCH_RESPONSE_TOO_LARGE, FETCH_SCHEME_MISSING, FETCH_SCHEME_UNSUPPORTED, FETCH_TOO_LONG,
-    FETCH_TOO_MANY_REDIRECTS,
+    FETCH_BODY_NOT_READ, FETCH_CREDENTIALS_PRESENT, FETCH_HOST_MISSING, FETCH_HOST_NOT_RESOLVABLE,
+    FETCH_REDIRECT_LOCATION_MISSING, FETCH_REQUEST_FAILED, FETCH_RESPONSE_TOO_LARGE,
+    FETCH_SCHEME_MISSING, FETCH_SCHEME_UNSUPPORTED, FETCH_TOO_LONG, FETCH_TOO_MANY_REDIRECTS,
 };
+use crate::Werk;
 use std::time::Duration;
 
 const MAX_URL_LENGTH: usize = 2000;
@@ -144,12 +144,12 @@ impl From<FetchTool> for Tool {
 async fn run(args: FetchArgs, ctx: ToolContext, impersonate: bool) -> Event {
     let FetchArgs { url, max_length } = args;
 
-    let validated_url = match validate_url(&url, &ctx.templates) {
+    let validated_url = match validate_url(&url, &ctx.werk) {
         Ok(u) => u,
         Err(msg) => return Event::error(msg),
     };
 
-    let text = match fetch(&validated_url, impersonate, &ctx.templates).await {
+    let text = match fetch(&validated_url, impersonate, &ctx.werk).await {
         Ok(text) => text,
         Err(msg) => return Event::error(msg),
     };
@@ -198,11 +198,7 @@ enum FetchedContent {
     },
 }
 
-async fn fetch(
-    url: &str,
-    impersonate: bool,
-    templates: &TemplateRenderer,
-) -> std::result::Result<FetchedContent, String> {
+async fn fetch(url: &str, impersonate: bool, werk: &Werk) -> Result<FetchedContent, String> {
     // Manual redirect handling prevents open-redirect exploitation across domains.
     let mut builder = reqwest::Client::builder().redirect(reqwest::redirect::Policy::none());
     if impersonate {
@@ -211,9 +207,15 @@ async fn fetch(
             .http2_initial_connection_window_size(BROWSER_CONNECTION_WINDOW)
             .http2_max_frame_size(BROWSER_MAX_FRAME_SIZE);
     }
-    let client = builder.build().map_err(|e| e.to_string())?;
+    let client = match builder.build() {
+        Ok(client) => client,
+        Err(error) => return Err(error.to_string()),
+    };
 
-    let response = follow_safe_redirects(&client, url, impersonate, templates).await?;
+    let response = match follow_safe_redirects(&client, url, impersonate, werk).await {
+        Ok(response) => response,
+        Err(message) => return Err(message),
+    };
     if let FollowResult::CrossDomain {
         original_url,
         redirect_url,
@@ -238,12 +240,16 @@ async fn fetch(
         .unwrap_or("")
         .to_string();
 
-    let bytes = response
-        .bytes()
-        .await
-        .map_err(|e| templates.render(FETCH_BODY_NOT_READ, &[("error", &e.to_string())]))?;
+    let bytes = match response.bytes().await {
+        Ok(bytes) => bytes,
+        Err(error) => {
+            return Err(werk
+                .prompt
+                .render(FETCH_BODY_NOT_READ, &[("error", &error.to_string())]));
+        }
+    };
     if bytes.len() > MAX_RESPONSE_BYTES {
-        return Err(templates.render(
+        return Err(werk.prompt.render(
             FETCH_RESPONSE_TOO_LARGE,
             &[
                 ("bytes", &bytes.len().to_string()),
@@ -349,8 +355,8 @@ async fn follow_safe_redirects(
     client: &reqwest::Client,
     url: &str,
     impersonate: bool,
-    templates: &TemplateRenderer,
-) -> std::result::Result<FollowResult, String> {
+    werk: &Werk,
+) -> Result<FollowResult, String> {
     let mut current_url = url.to_string();
 
     for hop in 0..MAX_REDIRECT_HOPS {
@@ -358,21 +364,29 @@ async fn follow_safe_redirects(
         for (name, value) in request_headers(impersonate, hop == 0) {
             request = request.header(name, value);
         }
-        let response = request
-            .send()
-            .await
-            .map_err(|e| templates.render(FETCH_REQUEST_FAILED, &[("error", &e.to_string())]))?;
+        let response = match request.send().await {
+            Ok(response) => response,
+            Err(error) => {
+                return Err(werk
+                    .prompt
+                    .render(FETCH_REQUEST_FAILED, &[("error", &error.to_string())]));
+            }
+        };
 
         let status = response.status().as_u16();
         if !is_redirect(status) {
             return Ok(FollowResult::Ok(response));
         }
 
-        let location = response
+        let Some(location) = response
             .headers()
             .get("location")
             .and_then(|v| v.to_str().ok())
-            .ok_or_else(|| templates.render(FETCH_REDIRECT_LOCATION_MISSING, &[]))?;
+        else {
+            return Err(werk
+                .prompt
+                .render(FETCH_REDIRECT_LOCATION_MISSING, &[] as &[(&str, &str)]));
+        };
 
         let redirect_url = resolve_redirect_location(&current_url, location);
 
@@ -387,7 +401,7 @@ async fn follow_safe_redirects(
         }
     }
 
-    Err(templates.render(
+    Err(werk.prompt.render(
         FETCH_TOO_MANY_REDIRECTS,
         &[("limit", &MAX_REDIRECT_HOPS.to_string())],
     ))
@@ -465,9 +479,9 @@ fn resolve_redirect_location(base_url: &str, location: &str) -> String {
 
 // URL validation
 
-fn validate_url(url: &str, templates: &TemplateRenderer) -> std::result::Result<String, String> {
+fn validate_url(url: &str, werk: &Werk) -> Result<String, String> {
     if url.len() > MAX_URL_LENGTH {
-        return Err(templates.render(
+        return Err(werk.prompt.render(
             FETCH_TOO_LONG,
             &[
                 ("length", &url.len().to_string()),
@@ -476,24 +490,34 @@ fn validate_url(url: &str, templates: &TemplateRenderer) -> std::result::Result<
         ));
     }
 
-    let (scheme, rest) = url
-        .split_once("://")
-        .ok_or_else(|| templates.render(FETCH_SCHEME_MISSING, &[]))?;
+    let Some((scheme, rest)) = url.split_once("://") else {
+        return Err(werk
+            .prompt
+            .render(FETCH_SCHEME_MISSING, &[] as &[(&str, &str)]));
+    };
     if !matches!(scheme, "http" | "https") {
-        return Err(templates.render(FETCH_SCHEME_UNSUPPORTED, &[("scheme", scheme)]));
+        return Err(werk
+            .prompt
+            .render(FETCH_SCHEME_UNSUPPORTED, &[("scheme", scheme)]));
     }
 
     let authority = rest.split('/').next().unwrap_or(rest);
     if authority.contains('@') {
-        return Err(templates.render(FETCH_CREDENTIALS_PRESENT, &[]));
+        return Err(werk
+            .prompt
+            .render(FETCH_CREDENTIALS_PRESENT, &[] as &[(&str, &str)]));
     }
 
     let host = authority.split(':').next().unwrap_or(authority);
     if host.is_empty() {
-        return Err(templates.render(FETCH_HOST_MISSING, &[]));
+        return Err(werk
+            .prompt
+            .render(FETCH_HOST_MISSING, &[] as &[(&str, &str)]));
     }
     if host.split('.').count() < 2 {
-        return Err(templates.render(FETCH_HOST_NOT_RESOLVABLE, &[("host", host)]));
+        return Err(werk
+            .prompt
+            .render(FETCH_HOST_NOT_RESOLVABLE, &[("host", host)]));
     }
 
     if scheme == "http" {
@@ -605,7 +629,7 @@ fn collapse_whitespace(text: &str) -> String {
 
 #[cfg(test)]
 fn validate_url_for_test(url: &str) -> std::result::Result<String, String> {
-    validate_url(url, &TemplateRenderer::default())
+    validate_url(url, &Werk::new())
 }
 
 #[cfg(test)]
