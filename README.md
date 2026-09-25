@@ -345,11 +345,11 @@ println!("{report}");
 
 ## More Use Cases
 
-- [Pit Stop](crates/agentwerk-py/examples/pit_stop/main.py): coordinate a 3D pit crew
 - [Hello World](crates/use-cases/src/hello_world/main.rs): basic example
 - [Terminal REPL](crates/use-cases/src/terminal_repl/main.rs): minimal multi-turn terminal chat
 - [Coding Harness](crates/use-cases/src/coding_harness/main.rs): plan, implement, and verify a repository change
 - [Deep Research](crates/use-cases/src/deep_research/main.rs): research across several sources (requires `BRAVE_API_KEY`)
+- [Pit Stop](crates/agentwerk-py/examples/pit_stop/main.py): coordinate a 3D pit crew
 - [Malware Scanner](https://github.com/canvascomputing/malwi): find signs of malware in a software package
 
 ---

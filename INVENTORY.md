@@ -2671,12 +2671,11 @@ These declarations belong to the consuming example, not the agentwerk library AP
 | --- | --- |
 | `PROMPTS`, `MECHANICAL_EVENTS`, `LIFECYCLE_EVENTS`, `FAILURE_EVENTS` | Role prompts and browser event selection |
 | `action_tool(pit, member)` / `perform(action)` | Bind a validated mechanical tool to one crew identity |
-| `build_crew(pit)` | Compose one Werk, nineteen agents, schemas and result hooks |
-| `schedule()` | Claim eligible actions once and enqueue labeled tasks |
-| `completed(_, task, result)` | Verify mechanical completion before scheduling handoffs |
+| `build_crew(pit)` | Compose nineteen host-completed agents and one-shot action Conditions on the simulation Werk |
+| `publish_ready_actions()` | Publish mechanically eligible actions; Conditions own one-shot task creation |
+| `advance_crew(host, event)` | Complete validated tool calls through Werk, publish readiness, and hold failures |
 | `run_stop(feed, seed=None)` | Run apron preparation alongside arrival, then stopped-car service and authorized departure |
-| `preparation_started(actor)` | Cue car arrival after two collectors begin moving |
-| `publish(name, data)` / `observe(_, event)` | Route simulation events through Werk and whitelist browser observations |
+| `observe(_, event)` | Attach derived snapshots to browser events and cue arrival from recorded movement |
 
 ## `crates/agentwerk-py/examples/pit_stop/simulation.py`
 
@@ -2686,15 +2685,16 @@ These declarations belong to the consuming example, not the agentwerk library AP
 | --- | --- |
 | `CORNERS`, `DURATIONS`, `WHEEL_PREREQUISITES`, `WHEEL_RESULTS`, `CREW` | Wheel stations, action timings, transitions and nineteen crew assignments |
 | `Crew(id, role, station, actions)` | Immutable crew identity and permitted actions |
-| `PitStop(publish, sleep, seed=None)` | Own authoritative car and crew state under a reentrant lock |
+| `PitStop(publish, sleep, seed=None, werk=None)` | Project mechanical state from Werk events; serialize validation and event emission |
 | `equipment()` | Create uniquely owned working tools and fresh/used tires |
-| `snapshot()` / `emit(name, **data)` | Copy state and publish action observations |
+| `snapshot()` / `emit(name, **data)` | Copy projected state and append mechanical facts through Werk |
+| `observe(_, event)` / `rebuild()` | Maintain or reconstruct state and active reservations from the event log |
+| `reduce_event(state, active, name, data)` | Deterministically project recorded mechanical transitions and phase timing |
 | `arrive()` / `depart()` | Drive gated vehicle movement and its lifecycle events |
 | `serviced()` / `ready(actor, action)` | Derive mechanical prerequisites from state |
 | `eligible()` | Return actions whose prerequisites are satisfied |
 | `perform(actor, action)` | Validate ownership, execute recorded phases and commit mechanical work |
-| `complete_phase(worker, actor, action, phase)` | Apply one recorded travel, pickup, drop or work phase |
-| `apply_effect(actor, action)` | Commit the work phase to authoritative equipment and mechanical state |
+| `complete_phase(actor, action, phase)` | Emit completion, ownership, and mechanical facts for one phase |
 | `hold(message)` | Prevent further action completion or release after failure |
 
 ## `crates/agentwerk-py/examples/pit_stop/feed.py`
@@ -2793,7 +2793,7 @@ These declarations belong to the consuming example, not the agentwerk library AP
 | `asphaltTexture()` | Seeded procedural asphalt without external assets |
 | `streetPaint(scene)` | Repeating pixel sponsor panels painted onto the asphalt |
 | `pitMarkings(scene)` / `strip(width, depth, x, z)` | Worn yellow pit rails and alignment ticks |
-| `paintApron`, `buildGarage`, `buildStations` | Build the pit box environment in visual groups |
+| `paintApron`, `buildGarage`, `buildStations`, `garageDetails` | Build pit markings, garage, versioned storage, hose, extinguisher, and cupboard props |
 | `environment(scene, metadata)` | Pit box, garage and equipment stations |
 | `createScene(canvas, crew, metadata)` | Orthographic scene, lighting, models and renderer |
 | `resize()` | Fit the closer camera view to the browser aspect ratio |
@@ -2845,13 +2845,13 @@ These declarations belong to the consuming example, not the agentwerk library AP
 | Declaration | Purpose |
 | --- | --- |
 | `LAYOUT` | Shared staging, work, equipment and vehicle-clearance geometry |
-| `route(start, target, lane)` / `distance(points)` | Construct apron waypoints and measure their length |
+| `route(start, target, lane)` / `apron_access(point)` / `distance(points)` | Curve apron paths around station footprints and measure their length |
 | `end_heading(phase)` | Preserve recorded orientation through phases and task handoffs |
 | `position(phases, seconds)` | Sample recorded movement for reservation checks |
 | `Movement(seed, crew, durations)` | Precompute independent pace, action timing and arrival variation |
-| `plan(member, action, start, now, crew=None)` / `walk(target, kind, loaded)` | Author turns, travel, local yields, handoffs and cleanup phases |
+| `plan(member, action, start, now, crew=None, reservations=())` / `walk(target, kind, loaded)` | Author turns, travel, local yields, handoffs and cleanup phases |
 | `pause(kind, duration, **data)` / `face(target)` / `transfer(kind, item, source, target, effect)` | Append recorded handling, facing, and ownership changes |
-| `conflicts(phases, now, occupied=())` | Check journeys, handling intervals, and stationary workers before reserving space |
+| `conflicts(phases, now, occupied=(), reservations=())` | Check travel and handling against supplied event-derived reservations and stationary workers |
 
 ## `crates/agentwerk-py/examples/pit_stop/src/motion.js`
 
@@ -2874,7 +2874,7 @@ These declarations belong to the consuming example, not the agentwerk library AP
 | `smooth(p)` | Ease equipment transfers between owners |
 | `createEquipment(scene, items)` / `createTool(kind)` | Build one visible object per authoritative tool or tire |
 | `ownerPose(world, sample, owner, kind)` | Resolve slot, hand, hub and tool-contact anchors |
-| `equipmentPose(world, sample, id)` | Sample continuous transfer position and orientation |
+| `equipmentPose(world, sample, id)` / `rotation(pose)` | Sample transfer positions and full tool orientations, retaining tire symmetry |
 | `animateEquipment(world, sample)` | Place persistent equipment from recorded ownership and phases |
 
 ## `crates/agentwerk-py/examples/pit_stop/src/character-motion.js`

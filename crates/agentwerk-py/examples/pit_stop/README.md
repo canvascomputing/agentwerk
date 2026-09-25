@@ -19,8 +19,8 @@ uv run main.py
 Open `http://127.0.0.1:8423`. Playback needs no credentials or network after setup.
 Press **Space** to pause/resume or **R** to replay. Reduced motion starts paused.
 
-Real agents using `qwen3-coder-next` through Cortecs produced the recording.
-Its approximately 72-second run plays in a 12-second loop with a reset interval;
+Real agents using `qwen3-coder-next` produced the recording.
+Its approximately 70-second run plays in a 12-second loop with a reset interval;
 uniform acceleration preserves ordering and concurrency.
 This is an illustrative mechanical simulation, not a measured Formula 1 stop.
 
@@ -60,8 +60,21 @@ Failed work or obstructed routes hold the car.
 ## Read the example
 
 Start at [main.py](main.py); [orchestration.py](orchestration.py) configures the
-agents, tools, tasks, and handoffs. Agents call `perform`, check the result, then
-call `finish`. Hooks validate actions before scheduling each handoff once.
+agents, tools, tasks, and handoffs. Each agent calls `perform` once for its assigned
+action. Agents use host completion (`Agent.interactive()`), so their only tool is
+`perform`. A validated tool result completes the task through Werk; no additional
+model turn or `finish` call is needed. One-shot Conditions create dependent tasks
+from mechanical readiness events, and Werk runs independent crew members in parallel.
+
+Mechanical state and active routes are projections of Werk's ordered event log.
+The reducer records completed phases, transfers, mechanical effects, and holds;
+`PitStop.rebuild()` reconstructs the same projection from that log. Live sessions
+are saved under `.agentwerk/pit-stop-<id>/`. The browser receives derived snapshots
+and recorded paths, so it cannot change the car or authorize departure.
+
+Crew follow curved, eased paths around the cupboards and tire platforms. Tools
+lie on the cupboard surfaces and rotate through handoffs. Fresh and used tires
+share two platforms: an old tire returns to the position vacated by its replacement.
 
 One Werk runs all 52 tasks under a 300-second, 160-turn limit and Policy token
 limits. Mechanical effects and ownership changes are validated by the host;
@@ -98,7 +111,7 @@ npm run capture -- ../../../../assets/demo.gif
 
 Capture renders 180 frames at 800×450 for a 12-second loop. It tries 15 fps with
 smaller palettes, then 12 fps to stay below **2,000,000 bytes**. The current GIF
-uses 15 fps and approximately 1.86 MB. Oversized output never replaces the existing GIF.
+uses 15 fps and approximately 1.88 MB. Oversized output never replaces the existing GIF.
 
 FFmpeg comes from the locked `imageio-ffmpeg` dependency. Set `PIT_STOP_URL` for
 another viewer. Screenshots and GIFs without an output path go under `.context/`.

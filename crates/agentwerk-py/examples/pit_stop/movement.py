@@ -10,17 +10,25 @@ LAYOUT = json.loads(Path(__file__).with_name("layout.json").read_text())
 
 
 def route(start, target, lane):
-    corners = [
-        list(start),
-        [start[0], lane],
-        [target[0], lane],
-        list(target),
-    ]
+    def apron_access(point):
+        x, z = point
+        for cx, cz in LAYOUT["stations"].values():
+            crosses = min(z, lane) < cz < max(z, lane)
+            if crosses and abs(x - cx) < 2.3:
+                back = cz + math.copysign(0.67, cz)
+                edge = cx + math.copysign(2.3, x - cx)
+                if abs(z) < abs(cz):
+                    return [list(point), [edge, z]]
+                return [list(point), [x, back], [edge, back]]
+        return [list(point)]
+
+    entry, exit = apron_access(start), apron_access(target)
+    corners = [*entry, [entry[-1][0], lane], [exit[-1][0], lane], *reversed(exit)]
     corners = [p for i, p in enumerate(corners) if i == 0 or p != corners[i - 1]]
     points = [corners[0]]
     for index in range(1, len(corners) - 1):
         before, corner, after = corners[index - 1 : index + 2]
-        radius = min(0.25, math.dist(before, corner) / 3, math.dist(corner, after) / 3)
+        radius = min(0.55, math.dist(before, corner) / 3, math.dist(corner, after) / 3)
         entry = [
             corner[i] + (before[i] - corner[i]) * radius / math.dist(before, corner)
             for i in range(2)
@@ -30,8 +38,8 @@ def route(start, target, lane):
             for i in range(2)
         ]
         points.append(entry)
-        for step in range(1, 5):
-            p = step / 4
+        for step in range(1, 13):
+            p = step / 12
             points.append(
                 [
                     (1 - p) ** 2 * entry[i]
@@ -42,7 +50,35 @@ def route(start, target, lane):
             )
     if corners[-1] != points[-1]:
         points.append(corners[-1])
-    return points
+    curved = [points[0]]
+    for a, b in pairwise(points):
+        length = math.dist(a, b)
+        steps = max(1, math.ceil(length / 0.12))
+        bow = (
+            min(0.12, length * 0.035)
+            if length > 0.8
+            and abs(a[1]) < 3.5
+            and abs(b[1]) < 3.5
+            and abs(b[0] - a[0]) > abs(b[1] - a[1])
+            else 0
+        )
+        for step in range(1, steps + 1):
+            if step == steps:
+                curved.append(list(b))
+                continue
+            t = step / steps
+            bend = bow * math.sin(math.pi * t) ** 2
+            curved.append(
+                [
+                    a[0] + (b[0] - a[0]) * t - (b[1] - a[1]) / length * bend,
+                    a[1] + (b[1] - a[1]) * t + (b[0] - a[0]) / length * bend,
+                ]
+            )
+    for point in curved:
+        point[0] = max(
+            min(p[0] for p in corners), min(max(p[0] for p in corners), point[0])
+        )
+    return curved
 
 
 def distance(points):
@@ -56,7 +92,10 @@ def position(phases, seconds):
         if seconds > duration:
             seconds -= duration
             continue
-        distance_left = distance(points) * min(1, max(0, seconds / duration))
+        progress = min(1, max(0, seconds / duration))
+        if phase.get("easing") == "smooth":
+            progress = progress * progress * (3 - 2 * progress)
+        distance_left = distance(points) * progress
         for start, end in pairwise(points):
             length = math.dist(start, end)
             if distance_left <= length and length:
@@ -83,7 +122,6 @@ class Movement:
     def __init__(self, seed, crew, durations):
         rng = random.Random(seed)
         self.choices = {}
-        self.reservations = []
         for member in crew:
             self.choices[member.id] = {
                 "pace": rng.uniform(0.8, 1.3),
@@ -105,7 +143,7 @@ class Movement:
             "braking": rng.uniform(1.8, 2.5),
         }
 
-    def plan(self, member, action, start, now, crew=None):
+    def plan(self, member, action, start, now, crew=None, reservations=()):
         actor = member.id
         place = LAYOUT["crew"][actor]
         choice = self.choices[actor]
@@ -121,7 +159,7 @@ class Movement:
                 "heading": (crew or {}).get(actor, {}).get("heading", 0),
             }
         ]
-        active = {entry[0] for entry in self.reservations}
+        active = {entry[0] for entry in reservations}
         occupied = [
             worker["position"]
             for name, worker in (crew or {}).items()
@@ -167,10 +205,18 @@ class Movement:
             for delay in range(151):
                 for offset in range(3):
                     variant = (timing["variant"] + offset) % 3
-                    lane = side * (3.12, 3.25, 4.7)[variant] + choice["lane_offset"]
+                    lane = side * (3.12, 3.25, 5.17)[variant]
+                    if variant < 2:
+                        lane += choice["lane_offset"]
                     if member.role == "chief":
                         lane = side * 3.25
                     points = route(origin, target, lane)
+                    if any(
+                        abs(x - cx) < 1.9 and abs(z - cz) < 0.62
+                        for x, z in points
+                        for cx, cz in LAYOUT["stations"].values()
+                    ):
+                        continue
                     travel = {
                         "kind": kind,
                         "duration": distance(points)
@@ -180,6 +226,7 @@ class Movement:
                             * (2 if action == "release" else 0.82 if loaded else 1)
                         ),
                         "points": points,
+                        "easing": "smooth",
                     }
                     waiting = (
                         [{"kind": "yield", "duration": delay * 0.2, "points": [origin]}]
@@ -206,7 +253,9 @@ class Movement:
                         "duration": timing["handling"] * 4 + timing["work"],
                         "points": [target],
                     }
-                    if not self.conflicts(candidate + [handling], now, occupied):
+                    if not self.conflicts(
+                        candidate + [handling], now, occupied, reservations
+                    ):
                         phases.extend(waiting + [turning, travel])
                         return
             raise ValueError(f"The crew route is obstructed for {actor}: {action}")
@@ -259,12 +308,11 @@ class Movement:
                 walk(place["aside"], "step_aside", loaded=action == "remove")
             elif action in ("clear", "lower", "release"):
                 walk(place["home"], "withdraw")
-        if self.conflicts(phases, now, occupied):
+        if self.conflicts(phases, now, occupied, reservations):
             raise ValueError(f"The work position is obstructed for {actor}: {action}")
-        self.reservations.append((actor, now, phases))
         return phases
 
-    def conflicts(self, phases, now, occupied=()):
+    def conflicts(self, phases, now, occupied=(), reservations=()):
         duration = sum(phase["duration"] for phase in phases)
         for step in range(math.ceil(duration / 0.08) + 1):
             elapsed = min(duration, step * 0.08)
@@ -272,7 +320,7 @@ class Movement:
             # Leave room for phase-clock jitter while other agents plan their routes.
             if any(math.dist(point, other) < 0.60 for other in occupied):
                 return True
-            for _, began, other in self.reservations:
+            for _, began, other in reservations:
                 if math.dist(point, position(other, now + elapsed - began)) < 0.60:
                     return True
         return False

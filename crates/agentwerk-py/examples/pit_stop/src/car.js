@@ -1,4 +1,4 @@
-import layout from "../layout.json";
+import layout from "../layout.json" with { type: "json" };
 import * as THREE from "three";
 import { box, cylinder, decal, material, mesh, rod } from "./geometry.js";
 

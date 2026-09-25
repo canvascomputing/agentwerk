@@ -5,7 +5,10 @@ import secrets
 import time
 from copy import deepcopy
 from dataclasses import dataclass
+from tempfile import TemporaryDirectory
 from threading import RLock
+
+from agentwerk import Event, Werk
 
 from movement import LAYOUT, Movement, end_heading
 
@@ -75,14 +78,17 @@ CREW = (
 
 
 class PitStop:
-    def __init__(self, publish, sleep=time.sleep, seed=None):
+    def __init__(self, publish=lambda *_: None, sleep=time.sleep, seed=None, werk=None):
+        self.session = TemporaryDirectory(prefix="pit-stop-") if werk is None else None
+        self.werk = werk if werk is not None else Werk(self.session.name)
         self.publish = publish
+        self.active = {}
         self.sleep = sleep
         self.lock = RLock()
         self.crew = {member.id: member for member in CREW}
         self.seed = seed if seed is not None else secrets.randbits(32)
         self.movement = Movement(self.seed, CREW, DURATIONS)
-        self.state = {
+        initial = {
             "items": self.equipment(),
             "car": "approaching",
             "held": None,
@@ -108,6 +114,27 @@ class PitStop:
             },
         }
 
+        self._state = {}
+        self.werk.on_event(self.observe)
+        self.emit("pit_initialized", initial=initial, seed=self.seed)
+
+    def observe(self, _, event):
+        name, data = event.get_name(), event.get_data()
+        if not name.startswith(("pit_", "car_", "action_")):
+            return
+        with self.lock:
+            reduce_event(self._state, self.active, name, data)
+            self.publish(name, {**data, "state": self.snapshot()})
+
+    def rebuild(self):
+        with self.lock:
+            state, active = {}, {}
+            for event in self.werk.find_events(
+                lambda event: event.get_name().startswith(("pit_", "car_", "action_"))
+            ):
+                reduce_event(state, active, event.get_name(), event.get_data())
+            return state, active
+
     def equipment(self):
         items = {}
         for member in CREW:
@@ -124,30 +151,29 @@ class PitStop:
 
     def snapshot(self):
         with self.lock:
-            return deepcopy(self.state)
+            return deepcopy(self._state)
 
     def emit(self, name, **data):
-        self.publish(name, {**data, "state": self.snapshot()})
+        self.werk.emit_event(Event(name).data(data))
 
     def arrive(self):
         self.emit("car_arriving", **self.movement.arrival)
         self.sleep(self.movement.arrival["duration"])
         with self.lock:
-            self.state["car"] = "stopped"
             self.emit("car_stopped")
 
     def serviced(self):
         wheels_secured = all(
-            wheel == "secured" for wheel in self.state["wheels"].values()
+            wheel == "secured" for wheel in self._state["wheels"].values()
         )
-        wings_adjusted = all(angle == 12 for angle in self.state["wings"].values())
+        wings_adjusted = all(angle == 12 for angle in self._state["wings"].values())
         return wheels_secured and wings_adjusted
 
     def ready(self, actor, action):
         member = self.crew.get(actor)
         if member is None or action not in member.actions:
             return False
-        state = self.state
+        state = self._state
         worker = state["crew"][actor]
         if state["held"] or state["car"] not in ("approaching", "stopped"):
             return False
@@ -174,7 +200,10 @@ class PitStop:
             ]
         if action == "stow":
             return (
-                "remove" in worker["done"] and worker["equipment"] == f"old-{station}"
+                "remove" in worker["done"]
+                and worker["equipment"] == f"old-{station}"
+                and state["items"][f"fresh-{station}"]["owner"]
+                != f"slot:fresh-{station}"
             )
         if action == "withdraw":
             return "fit" in worker["done"] and worker["equipment"] is None
@@ -250,25 +279,26 @@ class PitStop:
                 raise ValueError(
                     f"{actor} cannot {action}: prerequisites are not satisfied"
                 )
-            worker = self.state["crew"][actor]
+            worker = self._state["crew"][actor]
             try:
                 phases = self.movement.plan(
                     self.crew[actor],
                     action,
                     worker["position"],
                     time.monotonic(),
-                    self.state["crew"],
+                    self._state["crew"],
+                    reservations=list(self.active.values()),
                 )
             except ValueError as error:
                 self.hold(str(error))
                 raise
-            worker.update(action=action, clear=False)
             self.emit(
                 "action_started",
                 actor=actor,
                 action=action,
                 duration=sum(phase["duration"] for phase in phases),
                 phases=phases,
+                began=time.monotonic(),
             )
         for index, phase in enumerate(phases):
             with self.lock:
@@ -278,83 +308,115 @@ class PitStop:
                     action=action,
                     phase=index,
                     kind=phase["kind"],
+                    began=time.monotonic(),
                 )
             self.sleep(phase["duration"])
             with self.lock:
-                if self.state["held"]:
-                    worker["action"] = None
+                if self._state["held"]:
                     raise ValueError(
                         "The pit stop is held; no further work can complete"
                     )
-                self.complete_phase(worker, actor, action, phase)
+                self.complete_phase(actor, action, phase)
         with self.lock:
-            if action == "release":
-                if abs(worker["position"][1]) <= LAYOUT["corridor"]:
-                    self.hold("The chief must clear the car's path before release")
-                    raise ValueError(self.state["held"])
-                self.state["car"] = "released"
-            worker["done"].append(action)
-            worker.update(
-                action=None, clear=abs(worker["position"][1]) > LAYOUT["corridor"]
-            )
-            self.movement.reservations = [
-                reservation
-                for reservation in self.movement.reservations
-                if reservation[0] != actor
-            ]
+            if action == "release" and abs(worker["position"][1]) <= LAYOUT["corridor"]:
+                self.hold("The chief must clear the car's path before release")
+                raise ValueError(self._state["held"])
             self.emit("action_completed", actor=actor, action=action)
             return {"actor": actor, "action": action, "completed": True}
 
-    def complete_phase(self, worker, actor, action, phase):
-        worker["position"] = phase["points"][-1]
-        worker["heading"] = end_heading(phase)
+    def complete_phase(self, actor, action, phase):
+        self.emit(
+            "action_phase_completed",
+            actor=actor,
+            action=action,
+            position=phase["points"][-1],
+            heading=end_heading(phase),
+        )
         if transfer := phase.get("transfer"):
-            item = self.state["items"][transfer["item"]]
+            item = self._state["items"][transfer["item"]]
             if item["owner"] != transfer["from"]:
                 raise ValueError("Equipment changed owners before its handoff")
-            item["owner"] = transfer["to"]
-            worker["equipment"] = (
-                transfer["item"] if transfer["to"] == f"crew:{actor}" else None
-            )
             self.emit("action_transfer", actor=actor, action=action, **transfer)
         if phase.get("effect"):
-            self.apply_effect(actor, action)
-            self.emit("action_effect", actor=actor, action=action)
-
-    def apply_effect(self, actor, action):
-        station = self.crew[actor].station
-        if action in ("lift", "lower"):
-            self.state["jacks"][station] = "up" if action == "lift" else "down"
-        elif action in ("brace", "clear"):
-            self.state["steadiers"][station] = (
-                "braced" if action == "brace" else "clear"
+            self.emit(
+                "action_effect",
+                actor=actor,
+                action=action,
+                station=self.crew[actor].station,
             )
-        elif action in WHEEL_RESULTS:
-            self.state["wheels"][station] = WHEEL_RESULTS[action]
-        elif action == "adjust":
-            self.state["wings"][station] = 12
 
     def depart(self):
         with self.lock:
-            if self.state["held"] or self.state["car"] != "released":
+            if self._state["held"] or self._state["car"] != "released":
                 raise ValueError("Departure requires the chief's release")
             if any(
                 not worker["clear"]
                 or worker["action"]
                 or abs(worker["position"][1]) <= LAYOUT["corridor"]
-                for worker in self.state["crew"].values()
+                for worker in self._state["crew"].values()
             ):
                 raise ValueError("Departure requires the chief's release")
-            self.state["car"] = "departing"
             self.emit("car_departing", duration=4.0)
         self.sleep(4.0)
         with self.lock:
-            self.state["car"] = "departed"
             self.emit("car_departed")
 
     def hold(self, message):
         with self.lock:
-            if self.state["held"]:
+            if self._state["held"]:
                 return
-            self.state["held"] = message
             self.emit("pit_held", message=message)
+
+
+def reduce_event(state, active, name, data):
+    """Project mechanical facts; only Werk's event log is authoritative."""
+    if name == "pit_initialized":
+        state.clear()
+        state.update(deepcopy(data["initial"]))
+        active.clear()
+    elif name == "pit_held":
+        state["held"] = data["message"]
+        active.clear()
+        for worker in state["crew"].values():
+            worker["action"] = None
+    elif name in ("car_stopped", "car_departing", "car_departed"):
+        state["car"] = name.removeprefix("car_")
+    elif name.startswith("action_") and "actor" in data:
+        actor, action = data["actor"], data["action"]
+        worker = state["crew"][actor]
+        if name == "action_started":
+            worker.update(action=action, clear=False)
+            active[actor] = (actor, data["began"], data["phases"])
+        elif name == "action_phase" and actor in active:
+            _, _, phases = active[actor]
+            # Keep the original phases so each observed index addresses the recorded plan.
+            active[actor] = (
+                actor,
+                data["began"] - sum(p["duration"] for p in phases[: data["phase"]]),
+                phases,
+            )
+        elif name == "action_phase_completed":
+            worker.update(position=data["position"], heading=data["heading"])
+        elif name == "action_transfer":
+            state["items"][data["item"]]["owner"] = data["to"]
+            worker["equipment"] = (
+                data["item"] if data["to"] == f"crew:{actor}" else None
+            )
+        elif name == "action_effect":
+            station = data["station"]
+            if action in ("lift", "lower"):
+                state["jacks"][station] = "up" if action == "lift" else "down"
+            elif action in ("brace", "clear"):
+                state["steadiers"][station] = "braced" if action == "brace" else "clear"
+            elif action in WHEEL_RESULTS:
+                state["wheels"][station] = WHEEL_RESULTS[action]
+            elif action == "adjust":
+                state["wings"][station] = 12
+        elif name == "action_completed":
+            worker["done"].append(action)
+            worker.update(
+                action=None, clear=abs(worker["position"][1]) > LAYOUT["corridor"]
+            )
+            active.pop(actor, None)
+            if action == "release":
+                state["car"] = "released"

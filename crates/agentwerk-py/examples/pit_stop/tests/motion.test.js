@@ -87,3 +87,17 @@ test("observed phases hold their endpoint until the next event, despite clock dr
   assert.equal(actionMotion(observed, 14.2).kind, "move");
   assert.equal(workProgress(observed, 14.2), 0);
 });
+
+test("walking uses the reservation sampler's eased distance profile", async () => {
+  const { readFileSync } = await import("node:fs");
+  const fixture = JSON.parse(
+    readFileSync(new URL("fixtures/walking.json", import.meta.url)),
+  );
+  for (const sample of fixture.samples) {
+    assert.deepEqual(
+      actionMotion({ t: 0, data: fixture }, sample.time).position,
+      sample.position,
+    );
+  }
+  assert.equal(actionMotion({ t: 0, data: fixture }, 2).walking, false);
+});

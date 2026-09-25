@@ -32,16 +32,26 @@ function createTool(kind) {
     rod(tool, [0, 0, -0.12], [0, 0, 0.38], 0.035, blue);
     box(tool, [0.12, 0.055, 0.08], grip, [0, 0, 0.38]);
   }
+  tool.rotation.set(0, Math.PI / 2, Math.PI / 2);
+  tool.updateMatrixWorld(true);
+  tool.userData.restHeight = -new THREE.Box3().setFromObject(tool).min.y;
+  tool.rotation.set(0, 0, 0);
   return tool;
 }
 
 export function ownerPose(world, sample, owner, kind) {
   const [type, id] = owner.split(":");
-  if (type === "slot")
+  if (type === "slot") {
+    const position = new THREE.Vector3(...sample.metadata.layout.slots[id]);
+    const resting =
+      sample.metadata.version >= 3 && !["fresh", "old"].includes(kind);
+    if (resting) position.y += world.items[id].userData.restHeight;
     return {
-      position: new THREE.Vector3(...sample.metadata.layout.slots[id]),
-      heading: 0,
+      position,
+      heading: resting ? Math.PI / 2 : 0,
+      roll: resting ? Math.PI / 2 : 0,
     };
+  }
   if (type === "hub") {
     const [x, z] = CORNERS[id];
     return {
@@ -94,6 +104,11 @@ export function equipmentPose(world, sample, id) {
   const item = sample.state.items[id];
   const isTire = item.kind === "fresh" || item.kind === "old";
   const pose = ownerPose(world, sample, item.owner, item.kind);
+  const rotation = (pose) =>
+    new THREE.Quaternion().setFromEuler(
+      new THREE.Euler(0, pose.heading, pose.roll ?? 0),
+    );
+  pose.quaternion = rotation(pose);
   for (const event of Object.values(sample.actions)) {
     const motion = actionMotion(event, sample.time);
     const transfer = motion.phase?.transfer;
@@ -108,6 +123,9 @@ export function equipmentPose(world, sample, id) {
     const angle = (to.heading - from.heading) * symmetry;
     const turn = Math.atan2(Math.sin(angle), Math.cos(angle)) / symmetry;
     pose.heading = from.heading + turn * p;
+    pose.quaternion = isTire
+      ? rotation(pose)
+      : rotation(from).slerp(rotation(to), p);
     pose.transfer = transfer;
   }
   return pose;
@@ -120,7 +138,7 @@ export function animateEquipment(world, sample) {
     const item = sample.state.items[id];
     const pose = equipmentPose(world, sample, id);
     object.position.copy(pose.position);
-    object.rotation.set(0, pose.heading, 0);
+    object.quaternion.copy(pose.quaternion);
     if (item.owner.startsWith("hub:"))
       object.rotation.z = -world.car.root.position.x / 0.49;
   }

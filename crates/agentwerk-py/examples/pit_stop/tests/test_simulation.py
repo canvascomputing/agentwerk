@@ -30,7 +30,11 @@ def test_arrival_blocks_service_until_car_stops():
     with pytest.raises(ValueError):
         pit.perform("jack-front", "lift")
     pit.arrive()
-    assert [name for name, _ in events] == ["car_arriving", "car_stopped"]
+    assert [name for name, _ in events] == [
+        "pit_initialized",
+        "car_arriving",
+        "car_stopped",
+    ]
     assert len(pit.eligible()) == 15
 
 
@@ -181,7 +185,9 @@ def test_tool_use_requires_actual_item_ownership():
     for actor, action in pit.eligible():
         pit.perform(actor, action)
     item = "tool-gunner-front-left"
-    pit.state["items"][item]["owner"] = f"slot:{item}"
+    state = pit.snapshot()
+    state["items"][item]["owner"] = f"slot:{item}"
+    pit.emit("pit_initialized", initial=state, seed=pit.seed)
     before = pit.snapshot()
     with pytest.raises(ValueError):
         pit.perform("gunner-front-left", "loosen")
@@ -216,3 +222,19 @@ def test_chief_steps_aside_before_the_sign_can_release_the_car():
     assert travel[0]["points"][-1] == [9, -5.8]
     assert pit.snapshot()["car"] == "released"
     assert pit.snapshot()["crew"]["chief"]["clear"]
+
+
+def test_event_history_reconstructs_active_routes_and_final_mechanical_state(
+    assert_rebuilt,
+):
+    pit, _ = stop()
+
+    def check_projection(_):
+        assert_rebuilt(pit)
+
+    pit.sleep = check_projection
+    pit.arrive()
+    finish_available(pit)
+    pit.depart()
+    assert_rebuilt(pit)
+    assert not pit.active
