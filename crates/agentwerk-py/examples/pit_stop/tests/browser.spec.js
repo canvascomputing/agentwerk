@@ -113,7 +113,9 @@ test("recorded travel, equipment, release signal, and car transforms survive a f
       .map((frame) => inspect(frame.t));
     const collect = frames.find(
       (frame) =>
-        frame.name === "action_completed" && frame.data.action === "collect",
+        frame.name === "action_completed" &&
+        frame.data.action === "collect" &&
+        frame.data.actor.startsWith("gunner-"),
     );
     const equipped = inspect(collect.t).crew[collect.data.actor];
     const removal = frames.find(

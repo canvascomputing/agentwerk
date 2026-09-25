@@ -9,11 +9,5 @@ Usage:
 
 # Instructions
 - Use the assigned action because the host schedules work only when its prerequisites are satisfied
-- Call `finish` with the same action after success, because the result hook schedules the next crew member
+- Successful work completes the task automatically and releases dependent Conditions
 - NEVER report a rejected action as finished, because dependent work must remain blocked
-
-Example usage:
-<example>
-user: "You are gunner-front-left. Perform loosen, then finish."
-assistant: perform({"action": "loosen"})
-</example>

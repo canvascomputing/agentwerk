@@ -30,6 +30,7 @@ export function poseCharacter(worker, sample) {
     Math.atan2(target[0] - x, target[1] - z);
   const kind = motion?.kind;
   const walking = !!motion?.walking;
+  const gait = walking ? Math.min(1, motion.speed ?? 1) : 0;
   const handles = (kind) =>
     [
       "reach",
@@ -60,7 +61,9 @@ export function poseCharacter(worker, sample) {
   worker.torso.rotation.x = reach;
   worker.torso.position.set(
     0,
-    0.57 - crouch * 0.13 + (walking ? Math.abs(Math.sin(rhythm)) * 0.022 : 0),
+    0.57 -
+      crouch * 0.13 +
+      (walking ? Math.abs(Math.sin(rhythm)) * 0.022 * gait : 0),
     engaged * (role === "wheel-on" || role === "wheel-off" ? 0.04 : 0.14),
   );
   worker.head.rotation.y = walking ? Math.sin(rhythm * 0.15) * 0.08 : 0;
@@ -68,13 +71,13 @@ export function poseCharacter(worker, sample) {
     const stride = Math.sin(rhythm + i * Math.PI);
     worker.legs[i].position.y = 0.59 - crouch * 0.13;
     worker.legs[i].rotation.x = walking
-      ? stride * (rushing ? 0.6 : carrying ? 0.35 : 0.5)
+      ? stride * gait * (rushing ? 0.6 : carrying ? 0.35 : 0.5)
       : -crouch * 0.75;
     worker.knees[i].rotation.x = walking
-      ? Math.max(0, -stride) * 0.65
+      ? Math.max(0, -stride) * 0.65 * gait
       : crouch * 1.15;
     worker.arms[i].rotation.set(
-      walking ? -stride * 0.45 : -0.06,
+      walking ? -stride * 0.45 * gait : -0.06,
       0,
       i ? -0.06 : 0.06,
     );
@@ -169,10 +172,12 @@ export function poseHands(world, sample) {
           isTire ? 0.28 : -0.07,
           isTire ? -0.21 : 0,
         );
-        offset.applyAxisAngle(
-          new THREE.Vector3(0, 1, 0),
-          isTire ? worker.root.rotation.y : pose.heading,
-        );
+        if (isTire)
+          offset.applyAxisAngle(
+            new THREE.Vector3(0, 1, 0),
+            worker.root.rotation.y,
+          );
+        else offset.applyQuaternion(pose.quaternion);
         let target = pose.position.clone().add(offset);
         if (["reach", "release_item"].includes(motion?.kind)) {
           const rest = worker.hands[i].getWorldPosition(new THREE.Vector3());

@@ -1,0 +1,10 @@
+{
+  "phases": [{"kind":"move","duration":2,"easing":"smooth","points":[[0,3],[1,3],[1,4]]}],
+  "samples": [
+    {"time":0,"position":[0,3]},
+    {"time":0.5,"position":[0.3125,3]},
+    {"time":1,"position":[1,3]},
+    {"time":1.5,"position":[1,3.6875]},
+    {"time":2,"position":[1,4]}
+  ]
+}

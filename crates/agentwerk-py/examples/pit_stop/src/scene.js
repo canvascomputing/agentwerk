@@ -147,7 +147,13 @@ function buildGarage(scene, { black, steel }) {
   }
 }
 
-function buildStations(scene, { black, steel }, recordedLayout, modern) {
+function buildStations(
+  scene,
+  { black, steel },
+  recordedLayout,
+  modern,
+  version,
+) {
   const cabinetBlue = material("#205cb2", { roughness: 0.55 });
   const topBlue = material("#367ed2", { metalness: 0.25, roughness: 0.5 });
   for (const [x, z] of Object.values(recordedLayout.stations)) {
@@ -172,7 +178,7 @@ function buildStations(scene, { black, steel }, recordedLayout, modern) {
     }
     cabinet.castShadow = true;
   }
-  if (modern) {
+  if (modern && version < 3) {
     for (const [name, point] of Object.entries(recordedLayout.slots)) {
       if (name.startsWith("used-"))
         box(scene, [0.85, 0.05, 0.65], cabinetBlue, [point[0], 0.04, point[2]]);
@@ -183,6 +189,26 @@ function buildStations(scene, { black, steel }, recordedLayout, modern) {
     cylinder(scene, 0.17, 0.55, black, [x, 0.3, -2.9]);
     rod(scene, [x, 1.1, -2.9], [x, 1.45, -2.9], 0.026, steel);
   }
+}
+
+function garageDetails(scene, { black, steel }) {
+  const red = material("#c73932");
+  const cloth = material("#c5b68e", { roughness: 1 });
+  for (let turn = 0; turn < 3; turn++) {
+    const hose = mesh(
+      scene,
+      new THREE.TorusGeometry(0.3 + turn * 0.075, 0.035, 6, 32),
+      black,
+      [-8.6, 0.08, -2.4],
+    );
+    hose.rotation.x = Math.PI / 2;
+  }
+  cylinder(scene, 0.15, 0.6, red, [8.8, 0.33, 2.6]);
+  cylinder(scene, 0.08, 0.12, steel, [8.8, 0.69, 2.6]);
+  rod(scene, [8.68, 0.78, 2.6], [8.92, 0.78, 2.6], 0.035, black);
+  box(scene, [0.43, 0.025, 0.3], black, [-4.65, 0.745, -4.5]);
+  const rag = box(scene, [0.3, 0.035, 0.23], cloth, [-7.4, 0.75, -4.5]);
+  rag.rotation.y = 0.2;
 }
 
 function environment(scene, metadata) {
@@ -197,11 +223,13 @@ function environment(scene, metadata) {
 
   paintApron(scene, surfaces);
   buildGarage(scene, surfaces);
+  if (metadata?.version >= 3) garageDetails(scene, surfaces);
   buildStations(
     scene,
     surfaces,
     metadata?.layout ?? layout,
     !!metadata?.state.items,
+    metadata?.version ?? 1,
   );
 }
 

@@ -63,7 +63,11 @@ export function actionMotion(event, time) {
         : index === phaseIndex
     ) {
       const progress = clamp(elapsed / phase.duration);
-      const pose = routePosition(phase.points, progress);
+      const travel =
+        phase.easing === "smooth"
+          ? progress * progress * (3 - 2 * progress)
+          : progress;
+      const pose = routePosition(phase.points, travel);
       if (phase.headings) {
         const [from, to] = phase.headings;
         const delta = Math.atan2(Math.sin(to - from), Math.cos(to - from));
@@ -76,7 +80,8 @@ export function actionMotion(event, time) {
         phase,
         progress,
         work: phase.kind === "work" || phase.effect ? progress : work,
-        walking: phase.points.length > 1,
+        walking: phase.points.length > 1 && progress < 1,
+        speed: phase.easing === "smooth" ? 6 * progress * (1 - progress) : 1,
       };
     }
     if (phase.kind === "work" || phase.effect) work = 1;
