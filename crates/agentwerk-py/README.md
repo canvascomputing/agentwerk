@@ -558,6 +558,83 @@ Finish each review with:
 
 Bind `move` and `operate` to each crew member. Their handlers update positions and equipment in the simulation.
 
+<details>
+<summary><code>move.tool.md</code></summary>
+
+```markdown
+Move to a position in the task's `destinations`.
+
+- Returns `ok` and an updated `observation`.
+- Rejected moves also return a `message`.
+
+Travel rules:
+
+- Walking is 1.6 m/s and running is 3.2 m/s.
+  Carrying equipment slows travel.
+- Run if walking would delay the car or a waiting worker.
+- Use the arrival time and travel estimates supplied with your task.
+- IMPORTANT: Estimates exclude equipment collection, handling, and traffic.
+- Walk when time allows, including cleanup.
+- Avoid positions listed in `busy_destinations`.
+  If blocked, try another available position.
+  Then return to the required destination.
+- `operate` does not move you between positions.
+
+For example, `move(destination="storage:bench-1", pace="walk")` walks to bench-1.
+```
+
+</details>
+
+<details>
+<summary><code>operate.tool.md</code></summary>
+
+```markdown
+Pick up, put down, or use equipment where you stand.
+
+- Returns `ok` and an updated `observation`.
+- Rejected actions also return a `message`.
+- NEVER report a rejected action as completed.
+
+Choose the action with `task`:
+
+- `pickup`:
+  - Supply an inventory `item`.
+  - You MUST arrive with empty hands.
+  - Locate stored items by their current `owner`.
+    For `slot:bench-2`, move to `storage:bench-2`.
+- `drop`:
+  - Supply the held `item` and an empty slot as `target`.
+  - Stand at that slot first.
+  - At `storage:bench-2`, use `target="bench-2"`.
+- `use`:
+  - Supply the assigned step as `work` and the assigned `target`.
+  - Stand at `work:<role>:<target>`.
+  - For `adjust`, also supply the requested angle in degrees as `value`.
+
+Equipment rules:
+
+- NEVER carry more than one item.
+- You can use a wheel gun on any wheel.
+- Use the fresh tire for your assigned wheel position.
+- Store tools on benches and tires on tire platforms.
+  No other item may occupy the slot.
+- Store unsuitable equipment before collecting a replacement.
+- Lift with your assigned jack.
+  Lifting mounts it and frees your hands.
+- Lower the jack empty-handed.
+- During cleanup, pick up the lowered jack at its work position.
+  Return it to its designated storage.
+- Brace, clear, and remove tires with empty hands.
+- Stay braced until assigned to clear.
+- Removal leaves you holding the old tire.
+- Fitting puts your fresh tire on the car.
+
+Example: you hold `wing-key-5` at an empty `storage:bench-2`.
+Call `operate(task="drop", item="wing-key-5", target="bench-2")` to store it there.
+```
+
+</details>
+
 ```python
 def crew_tools(pit, member):
     @tool(name="move", description=(PROMPTS / "move.tool.md").read_text())
@@ -611,7 +688,7 @@ car_approaching = Condition("event.name = car_approaching").task(prepare)
 werk.add_condition(car_approaching)
 ```
 
-Crew members report completion with `finish`. Conditions pass work to the next crew member, such as removing a wheel after loosening its fasteners.
+Crew members report completion with `finish`. This Condition matches the gunner’s loosening assignment (`task.input`) and completed report (`task.result`) to start wheel removal.
 
 ```python
 remove_wheel = Task(removal_task, label=remover.id, schema=REPORT)
@@ -650,7 +727,7 @@ lift_requested = Condition(
 werk.add_condition(lift_requested)
 ```
 
-The Chief reviews each report, then issues instructions or chooses GO/HOLD. Register a review Condition for each crew member. This one follows `gunner-1`. Arrival and service completion also trigger reviews.
+The Chief reviews reports, then issues instructions or chooses GO/HOLD. This Condition starts a review when `gunner-1` reports. The full example also reviews later reports, arrival, and service completion.
 
 <details>
 <summary>Review task</summary>
@@ -659,10 +736,10 @@ The Chief reviews each report, then issues instructions or chooses GO/HOLD. Regi
 Coordinate the crew from the current state and reports.
 
 Finished crew task IDs, in report order:
-{{ find_tasks(task.label != chief AND task.status = finished ORDER BY task.id)[*].id }}
+{{ find_tasks(task.id IN ({{ report_ids }}) ORDER BY task.id)[*].id }}
 
 Crew reports, in the same order:
-{{ find_results(task.label != chief AND task.status = finished ORDER BY task.id)[*].status }}
+{{ find_results(task.id IN ({{ report_ids }}) ORDER BY task.id)[*].status }}
 
 Issue any newly needed instructions, then finish this review.
 ```
@@ -673,7 +750,7 @@ Issue any newly needed instructions, then finish this review.
 review_reports = Task(review_prompt, label="chief", schema=VERDICT)
 
 gunner_report = Condition("event.name = task_finished AND task.label = gunner-1")
-gunner_report.times(None).task(review_reports)
+gunner_report.task(review_reports)
 
 werk.add_condition(gunner_report)
 ```
