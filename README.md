@@ -589,7 +589,7 @@ werk.on_result(accept_result);
 <details>
 <summary>Worker result check</summary>
 
-For each crew report, `accept_result` records whether the work is valid. Here, `actor` and `step` come from the finished task.
+`accept_result` validates each crew report using the finished task’s `actor` and `step`.
 
 ```rust
 let valid = report_valid(&pit, actor, step, result);
@@ -614,9 +614,7 @@ schedule();
 
 </details>
 
-The scheduler opens each task once its required reports are valid and the car is ready. Wheel removal waits for loosening. Fitting waits for removal. Each handoff uses a Condition and its matching event, just like preparation.
-
-The Chief reviews the crew’s reports before deciding GO or HOLD. The review task also receives the current car state, outstanding work, and destinations.
+Conditions and events open tasks after verified handoffs and when the car is ready. The Chief reviews reports, car state, and outstanding work before choosing GO or HOLD.
 
 <details>
 <summary>Review task</summary>
@@ -649,7 +647,7 @@ let ready = Condition("event.name = pit_ready:chief:review").task(review);
 werk.add_condition(ready);
 ```
 
-After the Chief finishes preparation, the scheduler opens review when all required work is verified or a blocked or invalid report needs attention. It emits this event once:
+Once the Chief is ready, open review when all work is verified or a report is blocked or invalid. Emit the event once:
 
 ```rust
 werk.emit_event(Event("pit_ready:chief:review"));
@@ -658,7 +656,7 @@ werk.emit_event(Event("pit_ready:chief:review"));
 <details>
 <summary>Release check</summary>
 
-For the Chief’s verdict, `accept_result` compares the reviewed task IDs with the recorded report IDs. Both are sets, so their order does not matter. `all_done` requires every assigned task to have a valid report. `pit.clear()` checks the car, stored equipment, and crew clearance.
+Accept GO only when the reviewed task IDs match the report IDs, every task is verified, and the car, equipment, and crew are clear.
 
 ```rust
 let reports_reviewed = reviewed_tasks == report_ids;
@@ -672,9 +670,7 @@ if result["decision"] == "go" && reports_reviewed && all_done && pit.clear() {
 
 </details>
 
-An accepted GO emits `pit_released`. HOLD or a rejected GO emits `pit_held` and stops the run.
-
-Follow the pit stop through custom events.
+Follow custom events through `werk.on_event`. Accepted GO emits `pit_released`. HOLD or a rejected GO emits `pit_held` and stops the run.
 
 ```rust
 werk.on_event(|_, event| {
@@ -690,7 +686,7 @@ werk.on_event(|_, event| {
 });
 ```
 
-Tell the crew the car will arrive in 15 seconds. The simulation schedules arrival separately on its clock, emitting `car_arriving` and `car_stopped` even if preparation is unfinished.
+Announce arrival in 15 seconds. The simulation emits `car_arriving` and `car_stopped` on its clock, even if preparation is unfinished.
 
 ```rust
 let approaching = Event("car_approaching")
@@ -701,7 +697,7 @@ werk.emit_event(approaching);
 werk.finish().await;
 ```
 
-The Chief holds the STOP board during service and steps aside before GO. After release, the simulation drives the car out and emits `car_departing` and `car_departed`.
+The Chief steps aside before GO. After release, the simulation emits `car_departing` and `car_departed` as the car leaves.
 
 ---
 
