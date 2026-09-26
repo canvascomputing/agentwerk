@@ -546,12 +546,31 @@ Finish each review with:
 
 </details>
 
-Give each crew member tools to move around the pit and work on the car.
+Bind `move` and `operate` to each crew member. Their handlers update positions and equipment in the simulation.
+
+```rust
+let crew_tools = |member: &CrewMember| {
+    let actor = member.id;
+    let move_crew = Tool("move")
+        .description(include_str!("move.tool.md"))
+        .schema(move_schema())
+        .handler(move |input: Value| move_crew(actor, input));
+
+    let operate = Tool("operate")
+        .description(include_str!("operate.tool.md"))
+        .schema(operate_schema())
+        .handler(move |input: Value| operate(actor, input));
+
+    [move_crew, operate]
+};
+```
+
+Give the Chief `EventTool` to issue instructions to the crew.
 
 ```rust
 let werk = Werk(".pit-stop")?;
 
-for member in crew {
+for member in &crew {
     let mut agent = Agent::from_env()
         .label(member.id)
         .role(member.role)
@@ -590,37 +609,50 @@ let car_approaching = Condition("event.name = car_approaching").task(prepare);
 werk.add_condition(car_approaching);
 ```
 
-Crew members report completion with `finish`. Conditions pass work to the next crew member, such as removing a tire after loosening it.
+Crew members report completion with `finish`. Conditions pass work to the next crew member, such as removing a wheel after loosening its fasteners.
 
 ```rust
-let remove_tire = Task(removal_task)
+let remove_wheel = Task(removal_task)
     .label(remover.id)
     .schema(report_schema);
 
 let wheel_loosened = Condition(
     "event.name = task_finished AND task.label = gunner-1 \
      AND task.input ~ loosen AND task.result ~ completed",
-).task(remove_tire);
+).task(remove_wheel);
 
 werk.add_condition(wheel_loosened);
 ```
 
-The Chief uses `event` to coordinate work that needs several crew members. Each instruction triggers a Condition once.
+The Chief emits `crew_dispatch:jack-1:lift` when the car has stopped and the jack operator is ready. The Condition assigns the lifting task once.
+
+<details>
+<summary>Lifting task</summary>
+
+```text
+Raise the front of the car with the front jack.
+
+You are at stage:jack:front holding jack-front.
+Move to work:jack:front and lift the car. The wheel crew is waiting on you.
+Stay at the jack and finish when the front is raised.
+```
+
+</details>
 
 ```rust
 let lift_car = Task(lifting_task)
     .label("jack-1")
     .schema(report_schema);
 
-let chief_requested_lift = Condition(
+let lift_requested = Condition(
     "event.name = crew_dispatch:jack-1:lift \
      AND task.label = chief AND task.status = in_progress",
 ).task(lift_car);
 
-werk.add_condition(chief_requested_lift);
+werk.add_condition(lift_requested);
 ```
 
-The Chief reviews crew reports and the current car state after each completion, then issues instructions or chooses GO/HOLD. Arrival and service completion also trigger reviews.
+The Chief reviews each report, then issues instructions or chooses GO/HOLD. Register a review Condition for each crew member. This one follows `gunner-1`. Arrival and service completion also trigger reviews.
 
 <details>
 <summary>Review task</summary>
@@ -644,11 +676,11 @@ let review_reports = Task(review_prompt)
     .label("chief")
     .schema(verdict_schema);
 
-let crew_task_finished = Condition("event.name = task_finished AND task.label != chief")
+let gunner_report = Condition("event.name = task_finished AND task.label = gunner-1")
     .times(None)
     .task(review_reports);
 
-werk.add_condition(crew_task_finished);
+werk.add_condition(gunner_report);
 ```
 
 Follow the crew through `werk.on_event`. The Chief’s GO emits `pit_released`; HOLD emits `pit_held` and stops the run.
