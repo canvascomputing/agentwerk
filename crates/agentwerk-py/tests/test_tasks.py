@@ -442,7 +442,7 @@ def test_result_finders_query_the_producing_tasks(werk):
     werk.set_task_finished(scan, {"verdict": "clean"})
     werk.get_task(unfinished)
 
-    query = aw.Query("task.input ~ scan AND task.result ~ clean")
+    query = aw.Query("task.content ~ scan AND task.result ~ clean")
     assert werk.find_results(query) == [
         {"verdict": "clean"}
     ]

@@ -55,7 +55,7 @@ mod tests {
             ("task.pending = true", Origin::Task),
             ("task.cancelled = false", Origin::Task),
             ("task.assignee = agent-1", Origin::Task),
-            ("task.input ~ scan", Origin::Task),
+            ("task.content ~ scan", Origin::Task),
             ("task.result ~ clean", Origin::Task),
             ("task.errors ~ timeout", Origin::Task),
             ("task.created > 0", Origin::Task),
@@ -188,8 +188,8 @@ mod tests {
             ("NOT (task.label = report OR task.id = t-2)", &scan, true),
             ("task.assignee IS EMPTY", &scan, true),
             ("task.assignee IS NOT EMPTY", &scan, false),
-            ("task.input ~ SCAN", &scan, true),
-            ("task.input !~ report", &scan, true),
+            ("task.content ~ SCAN", &scan, true),
+            ("task.content !~ report", &scan, true),
             ("task.label != scan", &unlabelled, false),
         ] {
             assert_eq!(
@@ -255,7 +255,7 @@ mod tests {
 
     #[test]
     fn fields_reject_operators_for_another_value_kind() {
-        for source in ["task.input = retry", "task.id ~ t-1", "task.created = 0"] {
+        for source in ["task.content = retry", "task.id ~ t-1", "task.created = 0"] {
             assert!(
                 matches!(
                     Query::new(source),
@@ -477,7 +477,7 @@ impl Query {
     /// Query("research")?;
     /// Query("\"needs review\"")?;
     /// Query("task.status = finished AND task.label IN (scan, report)")?;
-    /// Query("task.input ~ \"retry budget\" AND task.assignee IS EMPTY")?;
+    /// Query("task.content ~ \"retry budget\" AND task.assignee IS EMPTY")?;
     /// Query("t-3")?;
     /// Query("task.label = scan ORDER BY task.finished DESC")?;
     /// Query("event.name = tool_call_failed")?;
@@ -835,7 +835,7 @@ enum Field {
     TaskPending,
     TaskCancelled,
     TaskAssignee,
-    TaskInput,
+    TaskContent,
     TaskResult,
     TaskErrors,
     TaskCreated,
@@ -869,7 +869,7 @@ impl Field {
         ("task.pending", Field::TaskPending),
         ("task.cancelled", Field::TaskCancelled),
         ("task.assignee", Field::TaskAssignee),
-        ("task.input", Field::TaskInput),
+        ("task.content", Field::TaskContent),
         ("task.result", Field::TaskResult),
         ("task.errors", Field::TaskErrors),
         ("task.created", Field::TaskCreated),
@@ -913,7 +913,7 @@ impl Field {
             | Self::TaskPending
             | Self::TaskCancelled
             | Self::TaskAssignee
-            | Self::TaskInput
+            | Self::TaskContent
             | Self::TaskResult
             | Self::TaskErrors
             | Self::TaskCreated
@@ -931,7 +931,7 @@ impl Field {
 
     fn kind(self) -> Kind {
         match self {
-            Self::TaskInput | Self::TaskResult | Self::TaskErrors | Self::EventData => Kind::Text,
+            Self::TaskContent | Self::TaskResult | Self::TaskErrors | Self::EventData => Kind::Text,
             Self::TaskCreated
             | Self::TaskStarted
             | Self::TaskFinished
@@ -1023,7 +1023,7 @@ impl Field {
             Self::TaskPending => Some(Cow::Borrowed(bool_text(task.is_pending()))),
             Self::TaskCancelled => Some(Cow::Borrowed(bool_text(task.is_cancelled()))),
             Self::TaskAssignee => task.assignee.as_deref().map(Cow::Borrowed),
-            Self::TaskInput => Some(as_text(&task.task)),
+            Self::TaskContent => Some(as_text(&task.task)),
             Self::TaskResult => task.result.as_ref().map(as_text),
             Self::TaskErrors => serialized_errors(task),
             Self::TaskCreated => Some(millis_text(task.created_at)),

@@ -429,7 +429,7 @@ The rules the tables never repeat.
 | Rust | `enum View { Task(Task), Event(Event), Joined(Task, Event) }` | private |
 | Rust | `.value(field: Field): string?` | private |
 | Rust | `.tie_break(): [number, number]` | private |
-| Rust | `enum Field { TaskId, TaskLabel, TaskStatus, TaskPending, TaskCancelled, TaskAssignee, TaskInput, TaskResult, TaskErrors, TaskCreated, TaskStarted, TaskFinished, TaskFailed, EventName, EventAgentId, EventTaskId, EventLabel, EventTemplate, EventCreated, EventData }` | private |
+| Rust | `enum Field { TaskId, TaskLabel, TaskStatus, TaskPending, TaskCancelled, TaskAssignee, TaskContent, TaskResult, TaskErrors, TaskCreated, TaskStarted, TaskFinished, TaskFailed, EventName, EventAgentId, EventTaskId, EventLabel, EventTemplate, EventCreated, EventData }` | private |
 | Rust | `.FIELDS: [string, Field][]` | private |
 | Rust | `.named(name: string): Field?` | private |
 | Rust | `.spellings(): string` | private |

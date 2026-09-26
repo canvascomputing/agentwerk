@@ -35,7 +35,7 @@ Filter tasks and events through these fields.
 
 | Origin | Fields |
 | --- | --- |
-| Task | `task.id`, `task.label`, `task.status`, `task.pending`, `task.cancelled`, `task.assignee`, `task.input`, `task.result`, `task.errors`, `task.created`, `task.started`, `task.finished`, `task.failed` |
+| Task | `task.id`, `task.label`, `task.status`, `task.pending`, `task.cancelled`, `task.assignee`, `task.content`, `task.result`, `task.errors`, `task.created`, `task.started`, `task.finished`, `task.failed` |
 | Event | `event.name`, `event.agent_id`, `event.task_id`, `event.label`, `event.created`, `event.data` |
 
 Mixed task and event queries join each event to its referenced task; events without a task do not match. Results retain event-log order unless `ORDER BY` names a task or event field. Result finders default to finished tasks with results; an explicit status overrides this. `finish_task`, `finish_tasks`, and `cancel_tasks` accept AQL. Cancellation lasts only for the current run; `start()` clears it.
