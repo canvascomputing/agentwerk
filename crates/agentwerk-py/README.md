@@ -589,10 +589,10 @@ Choose whether to walk or run. Finish when you are ready.
 </details>
 
 ```python
-task = Task(assignment, label=member.id, schema=REPORT)
-prepare = Condition("event.name = car_approaching").task(task)
+prepare = Task(assignment, label=member.id, schema=REPORT)
+car_approaching = Condition("event.name = car_approaching").task(prepare)
 
-werk.add_condition(prepare)
+werk.add_condition(car_approaching)
 ```
 
 Crew members report completion with `finish`. Conditions pass work to the next crew member, such as removing a tire after loosening it.
