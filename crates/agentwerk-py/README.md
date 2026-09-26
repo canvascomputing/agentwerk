@@ -591,9 +591,6 @@ Crew members call the built-in `finish` tool when their task is done. The [resul
 werk.on_result(accept_result)
 ```
 
-<details>
-<summary>Worker result check</summary>
-
 `accept_result` validates each crew report using the finished task’s `actor` and `step`.
 
 ```python
@@ -615,8 +612,6 @@ if valid:
     completed.add((actor, step))
 schedule()
 ```
-
-</details>
 
 Conditions and events open tasks after verified handoffs and when the car is ready. The Chief reviews reports, car state, and outstanding work before choosing GO or HOLD.
 
@@ -654,9 +649,6 @@ Once the Chief is ready, open review when all work is verified or a report is bl
 werk.emit_event(Event("pit_ready:chief:review"))
 ```
 
-<details>
-<summary>Release check</summary>
-
 Accept GO only when the reviewed task IDs match the report IDs, every task is verified, and the car, equipment, and crew are clear.
 
 ```python
@@ -667,8 +659,6 @@ if result["decision"] == "go" and reports_reviewed and all_done and pit.clear():
 else:
     pit.hold("HOLD: work or clearance unverified")
 ```
-
-</details>
 
 Follow custom events through `werk.on_event`. Accepted GO emits `pit_released`. HOLD or a rejected GO emits `pit_held` and stops the run.
 
