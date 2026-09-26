@@ -644,11 +644,11 @@ let review_reports = Task(review_prompt)
     .label("chief")
     .schema(verdict_schema);
 
-let crew_reported = Condition("event.name = task_finished AND task.label != chief")
+let crew_task_finished = Condition("event.name = task_finished AND task.label != chief")
     .times(None)
     .task(review_reports);
 
-werk.add_condition(crew_reported);
+werk.add_condition(crew_task_finished);
 ```
 
 Follow the crew through `werk.on_event`. The Chief’s GO emits `pit_released`; HOLD emits `pit_held` and stops the run.
