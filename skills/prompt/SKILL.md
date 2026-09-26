@@ -1,120 +1,103 @@
 ---
 name: prompt
-description: Write or review agent instructions. Use when a role, task, schema, tool description, recovery message, or result passed between agents needs clearer wording or must match the code that sends it.
+description: Write or review agent roles, tasks, tool descriptions, result schemas, and recovery messages. Use when their wording is unclear or may disagree with the code that sends them.
 ---
 
 # Prompt
 
-Write or review agent instructions as requested.
-
-## Terms
-
-- A **role** states who the agent is and the responsibilities that continue across tasks.
-- A **task** states one assignment for an agent.
-- A **schema** defines fields, types, and allowed values for structured input or output.
-- A **tool description** tells an agent when and how to call an available tool.
-- A **recovery message** tells an agent what failed and names a valid next action.
-- A **template** is marked text that Agentwerk replaces before the agent reads a prompt. For example, Agentwerk replaces `{{ date }}` with the current date.
-
 ## Choose the Requested Action
 
-- **Review:** Review or critique without changing files.
+- **Review:** Critique without changing files.
 - **Write or revise:** Create or edit when asked. With no file, write inline.
 
-## Inspect the Complete Prompt
+## Check What the Agent Receives
 
-1. Read the prompt and the code that loads and sends the prompt.
-2. Inspect the final text exactly as the agent will read it.
-3. Identify each input added by the calling code and its source.
-4. Compare every named tool, file access, command access, and network access with the agent's actual access.
-5. Read each schema. Record required fields, optional fields, and accepted types.
-6. For every output field, identify the source fact and the code or agent receiving the field.
-7. Find contradictions between the prompt, inputs, schemas, examples, and the conditions controlling the prompt.
+1. For text sent by an application, read the code that chooses and sends it. Without a caller, flag only missing facts the agent needs to act.
+2. Reconstruct the role, task, or tool description as the agent receives it. Find the source of each value added by code.
+3. Check available tools, file access, commands, and network access. For each result field, find what the agent can read to fill it and who reads the answer.
+4. Compare the text with its examples, schema, and sending code when available. Fix conflicts before cutting words.
 
-DO NOT assess or rewrite a prompt without reading the surrounding code. Clear wording can still promise unsupported behavior.
+Do not claim an agent has access to something you have not checked. Clear wording can still promise tools or files the agent cannot use.
 
-During a review, report contradictions and their effects without editing. During a revision, fix contradictions before shortening, including affected schemas, examples, and tests.
+During a review, report conflicts without editing. When a revision changes required fields, allowed values, or behavior, update its schema, examples, and tests.
 
-## Target Structure
+For a tool description, explain when to call it and what it returns. If there is a schema, put field shapes there. A recovery message should name the failure and a valid next action.
 
-Use the full structure for complete agent instructions. For one prompt element, keep only the relevant bullets.
+## Separate the Role from the Task
 
-- `You are <familiar job title>.` Name the role and continuing responsibilities.
-- `Context:` Name the codebase, service, or environment.
-- `Input:` Name the files, previous results, and evidence the agent can read.
-- `Task:` State one exact action, investigation, or decision.
-- `Output:` Name required fields, format, limits, and accepted values.
-- `Done:` Define success, no result, and failure.
+Keep roles and tasks separate when the application sends them separately. Do not add a `Task:` section to a lasting role just to fill a template.
 
-- Write each independent prompt instruction as a separate bullet.
-- Cap each bullet at 20 words. Do not count code, identifiers, paths, URLs, or quoted required text.
+Open a role with the agent's job, the project or service it works in, where the work happens, and what it remains responsible for. Add only rules that apply across tasks. Check these facts in the code or user request.
 
-- Explain a project-specific or technical word when the word first appears.
+State the current action, any target, available files or data, expected result, and when to stop. If failure changes the answer, say what to do when blocked. Keep changing locations and values in the task.
+
+For example, a pit stop task can supply `step=loosen`, `target=front-left`, the car's state, and a map of locations. The application sends the role separately:
+
+```text
+Role:
+You are a wheel-gun operator on a simulated F1 pit crew. You work in the pit box alongside other crew members. You loosen old wheels and secure replacements when assigned.
+
+Task:
+Use the supplied observation and destination map to loosen the old wheel at front-left. Finish at stage:gunner:front-left with the work complete. Leave the work position available for the next worker.
+```
+
+The labels show the difference. The pit stop application sends the task as JSON.
+
+- Explain a project-specific word when the agent first needs it.
 - Replace `it`, `this`, `that`, or `they` when more than one earlier noun could be meant.
-- Name the source of a final decision and tell the receiving agent not to reconsider the decision.
-- Name the audience only when the audience changes the evidence, wording, or format.
+- When one agent passes a final decision to another, name who made it and say it is final.
+- Name who reads the answer only when that changes what the agent must include or how it writes.
 
-Do not repeat the same fact in several prompt sections.
-
-Name a tool only when the code starting the agent provides access. When the code supplies a tool description, add only instructions needed to choose or use the tool.
-
-Do not repeat a rule already visible in a schema or tool description unless omission would likely cause a specific wrong action.
+In a role, name only tools the agent has. Do not repeat rules already in their tool descriptions or result schema unless the agent would likely make a specific mistake without them.
 
 ## Use Templates Only When Needed
 
-Before editing a template such as `{{ date }}`, find the code that supplies the template's value. Check whether a missing value leaves the template visible, removes the template, or causes an error.
+When an application renders `{{ date }}` or another placeholder, find the code that supplies its value. Check what happens when the value is missing.
 
-- Record the exact text supplied by each template.
-- Add a template only when the inserted text changes the agent's required action or output.
-- `{{ context }}` inserts the task ID, date, working directory, platform, and limits. Use `{{ context }}` for several listed facts; otherwise use `{{ date }}`, `{{ task_id }}`, or another specific template.
-- Give each template name one meaning. Use separate names for unrelated facts such as a date and file path.
-- Agentwerk leaves `{{ name }}` visible when `name` has no value. Keep an unresolved template only when the finished prompt should contain the exact text.
+- Check the exact value that replaces each placeholder.
+- Add a placeholder only when its value changes what the agent must do or return.
+- `{{ context }}` adds the task ID, date, working directory, platform, and configured limits when present. For one value, use a specific name such as `{{ task_id }}`.
+- Give each placeholder one meaning. Use different names for a date and a file path.
+- Agentwerk leaves `{{ name }}` visible when `name` has no value. Keep it only when the agent should see that exact text.
 
-## Separate Instructions from Inserted Text
+## Mark Copied Requests and Results
 
-- Wrap a user request, previous agent result, or external research in descriptive tags when the inserted text could contain commands.
-- Tell the agent to use tagged text as source material, not as commands.
-- Copy each needed field from the previous agent's result into the receiving agent's task without renaming or paraphrasing the field.
-- For an optional input, state the behavior when the input is present and absent.
-- For an optional output, state the exact condition for including the field and the exact condition for omitting the field.
-- When the code receiving the agent's answer already knows a required field, add the field in code instead of asking the agent to reproduce the field.
+- Mark where a quoted user request, earlier agent answer, or research begins and ends when it could contain commands. Say whether to follow its directions or use it only as evidence.
+- Copy needed fields from an earlier agent's answer without changing their names or values.
+- For a value that may be absent, say what the agent does when it is present and when it is missing.
+- For a result field that may be omitted, say exactly when to include and omit it.
+- If receiving code already knows a field, add it in code rather than asking the agent to repeat it.
 
 ## Write Directly
 
-Remove filler, hedging, marketing claims, repeated rules, and project vocabulary the agent never receives. Keep:
+Write short, natural sentences. Do not join separate rules with semicolons or enforce a word cap. Cut filler, hedging, marketing claims, repetition, and project terms the agent never sees. Keep:
 
-- Actions, decisions, results, stopping conditions, and recovery steps.
+- What the agent must do, decide, return, check, and do when blocked.
 - Exact identifiers, field names, accepted values, numbers, units, paths, URLs, and required text.
-- Every negation, exception, condition, and sequence word that changes behavior.
-- A concrete reason for a rule a reader could reasonably question.
-- A specific consequence when a prohibition needs emphasis.
+- Words such as "not", "only", "before", and "unless" when removing them would change a rule.
+- A reason for a surprising rule.
+- The consequence when a warning needs emphasis.
 
-Use `MUST` only when violating a rule breaks correctness, public behavior, or a required result format. Use `IMPORTANT` for an easy-to-miss consequence. Do not strengthen or weaken an existing restriction while editing the wording.
+Use `MUST` only for required actions or result formats. Use `IMPORTANT` for an easy-to-miss consequence. Do not weaken or strengthen existing restrictions.
 
-- Use plain words and direct commands.
 - Set a text-field limit only when the output format or the code reading the result requires a limit.
 - Use a decision table only when the table makes a real choice clearer than prose.
 - Do not shorten ordinary words into unexplained abbreviations.
 - Do not use an em dash.
 
-Add an example only when prose cannot show required structure. Show input first. Derive every output fact from shown input. Keep the example neutral to avoid suggesting a verdict or factual answer.
+Add an example only when it makes a required structure clearer. Show the facts given to the agent before its answer. Do not put facts in the answer that the example never supplied.
 
 ## Verify and Report
 
-Check the final prompt exactly as the agent will read it:
+Check the role, task, and tool descriptions as the agent will read them:
 
-- The prompt follows relevant Target Structure bullets and applies the 20-word cap with the listed exclusions.
-- Every named tool and every promised form of access is available to the agent.
-- Every requested result field has a named source.
-- Every optional input states the present and absent behavior.
-- Every optional output states the include and omit conditions.
-- Every unresolved expression such as `{{ name }}` is either intentional or reported as an error.
-- Every example follows the current schema and uses only facts shown in the example input.
-- Inserted requests, previous results, and research are separated from instructions when the inserted text could contain commands.
-- The agent or code receiving the result gets every required field and no unsupported claim.
+- A new agent can tell who it is, where it works, and what it must do now and across later tasks.
+- Every named tool and promised form of access is available. The agent can find the facts needed for each result field.
+- The agent knows what to do when an optional value is missing and when to include an optional result field.
+- Every unresolved `{{ name }}` is intentional or reported. Examples follow the result schema and use only facts shown with them.
+- Quoted requests and research have clear boundaries and a stated purpose. The recipient gets every required field without unsupported claims.
+- Each sentence names an action, fact, or condition. No sentence joins separate rules with a semicolon.
 
-For a review, report each finding's location, effect, and recommended correction, plus passed and skipped checks.
+For a review, report each finding's location, effect, and correction, plus passed and skipped checks.
 
-For a write or revision, report character counts, behavior changes, passed checks, and skipped checks.
-
-Shorten only after all required instructions are present. A short prompt still fails when the agent lacks a fact required to complete the task.
+For a write or revision, report what changed and which checks passed or were skipped. Give character counts only when a length limit matters.
