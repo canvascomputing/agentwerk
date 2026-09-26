@@ -1,7 +1,6 @@
 # Pit Stop
 
-Nineteen agentwerk agents complete 52 actions to service a racing car in a 3D
-browser scene. The car leaves only after the chief authorizes release.
+Nineteen agentwerk agents service a racing car in a 3D browser scene: 4 gunners, 4 wheel-off operators, 4 wheel-on operators, 2 jack operators, 2 steadiers, 2 wing mechanics, and 1 chief. They choose equipment, travel pace, and physical tasks. The Chief Mechanic reviews their `finish` reports before deciding GO or HOLD.
 
 ## Run the recording
 
@@ -18,11 +17,12 @@ uv run main.py
 
 Open `http://127.0.0.1:8423`. Playback needs no credentials or network after setup.
 Press **Space** to pause/resume or **R** to replay. Reduced motion starts paused.
+The crew starts and returns on the upper banner and between the lower equipment
+stations, with the whole group kept in view.
 
-Real agents using `qwen3-coder-next` produced the recording.
-Its approximately 70-second run plays in a 12-second loop with a reset interval;
-uniform acceleration preserves ordering and concurrency.
-This is an illustrative mechanical simulation, not a measured Formula 1 stop.
+The bundled recording comes from real agents. Its simulation timeline plays in a
+12-second loop with a reset interval; uniform acceleration preserves ordering and
+concurrency. This is an illustrative simulation, not measured Formula 1 performance.
 
 ## Run live agents
 
@@ -37,7 +37,7 @@ uv run main.py --live --seed 42
 With optional Sigrid shell integration:
 
 ```sh
-sigrid && MODEL=qwen3-coder-next LITELLM_PROVIDER=openai uv run main.py --live
+sigrid && MODEL=qwen3.8-flash-next LITELLM_PROVIDER=openai uv run main.py --live
 ```
 
 Credentials stay in the host process; the browser and recording receive only simulation state and selected
@@ -51,7 +51,8 @@ uv run main.py --replay .agentwerk/pit-stop.jsonl
 uv run main.py --live --record-only --record .agentwerk/new-stop.jsonl
 ```
 
-`--seed` fixes motion and work timing, not model or network timing. Omit it for
+`--seed` fixes assignments, equipment placement, arrival timing, and wing targets,
+not agent decisions or model timing. Omit it for
 a fresh seed. Metadata records the seed and configured model; only recordings
 reproduce runs exactly. Older recordings retain their original motion.
 Use `--port 8424` or `--no-browser` to change serving behavior.
@@ -59,29 +60,101 @@ Failed work or obstructed routes hold the car.
 
 ## Read the example
 
-Start at [main.py](main.py); [orchestration.py](orchestration.py) configures the
-agents, tools, tasks, and handoffs. Each agent calls `perform` once for its assigned
-action. Agents use host completion (`Agent.interactive()`), so their only tool is
-`perform`. A validated tool result completes the task through Werk; no additional
-model turn or `finish` call is needed. One-shot Conditions create dependent tasks
-from mechanical readiness events, and Werk runs independent crew members in parallel.
+Start at [main.py](main.py). [orchestration.py](orchestration.py) creates one Werk,
+nineteen agents, task result schemas, one-shot Conditions, and result hooks.
+Crew members receive objectives and observations rather than prescribed tool calls.
 
-Mechanical state and active routes are projections of Werk's ordered event log.
-The reducer records completed phases, transfers, mechanical effects, and holds;
-`PitStop.rebuild()` reconstructs the same projection from that log. Live sessions
-are saved under `.agentwerk/pit-stop-<id>/`. The browser receives derived snapshots
-and recorded paths, so it cannot change the car or authorize departure.
+- `move(destination, pace)` walks or runs to a named location. The planner records
+  curved paths, travel pace, arrival turns, and yielding reservations. Crew members face
+  their assigned work while waiting; parked crew face the car.
+- `operate(task, ...)` picks up, drops, or uses equipment at the crew member's actual
+  position. Wrong equipment can be picked up; incompatible use is rejected without
+  mechanical changes. Every response supplies fresh observations for recovery.
+- `finish({"status":"completed"})` reports completion; use `"blocked"` when stuck. The host records physical evidence and checks
+  its location, inventory, and completed work before opening dependent tasks.
 
-Crew follow curved, eased paths around the cupboards and tire platforms. Tools
-lie on the cupboard surfaces and rotate through handoffs. Fresh and used tires
-share two platforms: an old tire returns to the position vacated by its replacement.
+The Chief, jack operators, and steadiers approach first. Gunners and wing mechanics
+join once the car is stable; wheel-off and wheel-on crew members follow their corner's
+validated handoffs. Later crew members prepare at holding positions away from the car.
+Tasks include who is waiting and estimated walking/running times.
 
-One Werk runs all 52 tasks under a 300-second, 160-turn limit and Policy token
-limits. Mechanical effects and ownership changes are validated by the host;
-rendering and task completion claims cannot authorize them. All 52 actions,
-lowered jacks, cleared crew, and the chief's release are required for departure.
+Steadiers report clear from nearby safe positions so lowering can start while they
+walk back to parking. Jack operators stand behind the handles, back their lowered
+jacks clear of the car, and roll them into storage beside the equipment stations. Equipment returns can overlap other service.
 
-No external models, fonts, or CDN assets load at runtime. The bundled Silkscreen
+The Chief holds the STOP board in front of the car, reviews every report, steps
+aside, and calls `finish(decision, reviewed_tasks, reason)`. GO requires verified
+reports, requested service, lowered jacks, stored equipment, and all crew clear.
+The review task reads statuses with `{{ find_results(task.status = finished)[*].status }}`
+and verified reports with `{{ find_events(event.name = pit_report)[*].data }}`.
+A claim cannot change mechanical state. Blocked or contradictory reports prevent GO.
+
+The prompts live in [prompts/](prompts/). Crew members decide whether time permits
+walking, which inventory item fits the task, where to stage, and how to recover
+from a rejected call. `storage` in an inventory item names its original storage
+slot; tools and tires may use another compatible empty slot. Jacks return to their
+designated slots. `busy_destinations` identifies
+positions occupied or reserved by other crew members.
+
+### Custom events
+
+Observe the pit stop using the same `werk.on_event` API as agent lifecycle events:
+
+```python
+def log_pit_stop(_, event):
+    data = event.get_data()
+
+    match event.get_name():
+        case "car_approaching":
+            print(f"Car arrives in {data['arrives_in_seconds']}s.")
+        case "pit_service_completed":
+            print("Service complete.")
+        case "pit_released":
+            print("GO.")
+        case "pit_held":
+            print(f"HOLD: {data['message']}")
+
+
+werk.on_event(log_pit_stop)
+```
+
+`car_approaching` opens preparation and supplies `arrives_in_seconds`, the time
+until the car stops in the pit box. `car_arriving` and `car_stopped` follow.
+`pit_prepared` records all validated preparation reports. Service emits
+`pit_service_started` and `pit_service_completed`; physical clearance emits
+`pit_crew_clear`. The Chief's accepted verdict emits `pit_released` or `pit_held`.
+A released car emits `car_departing` and `car_departed`. Milestones occur once;
+`pit_prepared` can occur after arrival if the crew is late.
+
+Physical crew events, reports, and clock changes also pass through Werk. State and
+active routes rebuild from its ordered log with `PitStop.rebuild()`. Sessions are
+saved under `.agentwerk/pit-stop-<id>/`. The browser only observes snapshots,
+recorded paths, and events; it cannot authorize release.
+
+### Simulation time
+
+[sim_clock.py](sim_clock.py) advances all physical work together and pauses while
+runnable agents decide. Arrival has a seeded deadline on that clock and does not
+wait for crew readiness. The live scene pauses for decisions; replay omits their
+wall-clock latency. Version 6 records arrival turns, visible parking positions,
+and corrected jack grips and clearance. Earlier recordings retain their original
+motion and equipment poses.
+
+The title above the car illustrations shows the latest custom milestone. The
+separate 2×2 timer grid shows:
+
+- Preparation: approach notification until the car stops.
+- Service: car stopped until the wheels and wings meet their targets.
+- Clearance: service complete until the Chief's GO is accepted.
+- Total: approach notification until accepted GO.
+
+Completed timers freeze and turn green. HOLD freezes all timers and preserves
+only the completed phases in green. Pause, seek, and replay
+use the same recorded times. Policy still uses wall time: 900 seconds, 1,000 turns,
+1,000,000 input tokens, and bounded request retries. Recoverable tool errors return
+to the agent; terminal failures and policy exhaustion hold the car.
+
+No external models, fonts, or CDN assets load during replay. The bundled Silkscreen
 font is OFL-licensed; its license ships in `public/licenses/`.
 
 ## Develop and verify
@@ -110,8 +183,7 @@ npm run capture -- ../../../../assets/demo.gif
 ```
 
 Capture renders 180 frames at 800×450 for a 12-second loop. It tries 15 fps with
-smaller palettes, then 12 fps to stay below **2,000,000 bytes**. The current GIF
-uses 15 fps and approximately 1.88 MB. Oversized output never replaces the existing GIF.
+smaller palettes, then 12 fps to stay below **2,000,000 bytes**. Oversized output never replaces the existing GIF.
 
 FFmpeg comes from the locked `imageio-ffmpeg` dependency. Set `PIT_STOP_URL` for
 another viewer. Screenshots and GIFs without an output path go under `.context/`.

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
-import { Playback } from "../src/playback.js";
+import { Playback, normalizeFrame, phaseTimers } from "../src/playback.js";
 
 const frames = readFileSync(
   new URL("../recordings/showcase.jsonl", import.meta.url),
@@ -9,14 +9,17 @@ const frames = readFileSync(
 )
   .trim()
   .split("\n")
-  .map(JSON.parse);
+  .map(JSON.parse)
+  .map(normalizeFrame);
 
 test("streamed and loaded recordings produce the same state at every mechanical event", () => {
   const replay = new Playback(frames);
   const live = new Playback([], "live");
-  for (const frame of frames) {
+  for (let i = 0; i < frames.length; i++) {
+    const frame = frames[i];
     live.append([frame]);
-    assert.deepEqual(live.sample(frame.t), replay.sample(frame.t));
+    if (frames[i + 1]?.t !== frame.t)
+      assert.deepEqual(live.sample(frame.t), replay.sample(frame.t));
   }
 });
 
@@ -56,7 +59,7 @@ test("an event gap is reported rather than silently skipping car state", () => {
 test("a failure freezes active mechanical motion before it can look completed", () => {
   const stopped = frames.findIndex((frame) => frame.name === "car_stopped");
   const start = frames.findIndex(
-    (frame, index) => index > stopped && frame.name === "action_started",
+    (frame, index) => index > stopped && frame.name === "crew_task_started",
   );
   const history = frames.slice(0, start + 1);
   const time = history.at(-1).t + 0.1;
@@ -70,5 +73,97 @@ test("a failure freezes active mechanical motion before it can look completed", 
   });
   const replay = new Playback(history);
   assert.deepEqual(replay.sample(time), replay.sample(time + 100));
+  assert.deepEqual(
+    phaseTimers(replay.sample(time)),
+    phaseTimers(replay.sample(time + 100)),
+  );
   assert.equal(replay.sample(time + 100).state.car, "stopped");
+});
+
+test("phase timers follow simulation milestones and freeze at release", () => {
+  const sample = {
+    time: 50,
+    milestones: {
+      car_approaching: 0,
+      car_stopped: 10,
+      pit_service_completed: 30,
+      pit_released: 40,
+    },
+  };
+  assert.deepEqual(phaseTimers(sample), {
+    preparation: 10,
+    service: 20,
+    clearance: 10,
+    total: 40,
+  });
+  assert.deepEqual(phaseTimers({ ...sample, time: 100 }), phaseTimers(sample));
+  assert.deepEqual(
+    phaseTimers({ time: 5, milestones: { car_approaching: 0 } }),
+    { preparation: 5, service: 0, clearance: 0, total: 5 },
+  );
+});
+
+test("live clock follows server pauses while replay omits decision latency", () => {
+  const frames = [
+    { n: 0, t: 0, name: "run_metadata", data: { version: 4 } },
+    { n: 1, t: 2, name: "pit_clock", data: { running: false } },
+  ];
+  const live = new Playback(frames, "live");
+  live.tick(10);
+  assert.equal(live.time, 2);
+  live.append([
+    { n: 2, t: 2, name: "pit_clock", data: { running: true, until: 3 } },
+  ]);
+  live.tick(1);
+  assert.equal(live.time, 3);
+  live.tick(10);
+  assert.equal(live.time, 3);
+  live.append([{ n: 3, t: 2.5, name: "pit_clock", data: { running: false } }]);
+  assert.equal(live.time, 2.5);
+  const replay = new Playback(live.frames);
+  replay.tick(1);
+  assert.ok(replay.time > 0);
+});
+
+test("the heading follows custom events, ignoring clock and task events", async () => {
+  const { phaseTitle, MILESTONES } = await import("../src/playback.js");
+  const replay = new Playback(frames);
+  let last;
+  for (const frame of frames) {
+    if (MILESTONES.has(frame.name)) last = frame.name;
+    const next = frames[frame.n + 1];
+    if (last && next?.t !== frame.t)
+      assert.equal(phaseTitle(replay.sample(frame.t)), last);
+  }
+});
+
+test("completion colors survive seeking and HOLD only preserves finished phases", async () => {
+  const { phaseCompleted } = await import("../src/playback.js");
+  const replay = new Playback(frames);
+  const end = phaseCompleted(replay.sample(replay.duration));
+  assert.deepEqual(end, {
+    preparation: true,
+    service: true,
+    clearance: true,
+    total: true,
+  });
+  assert.deepEqual(phaseCompleted(replay.sample(0)), {
+    preparation: false,
+    service: false,
+    clearance: false,
+    total: false,
+  });
+  const service = frames.find(
+    (frame) => frame.name === "pit_service_completed",
+  );
+  const held = new Playback([
+    ...frames.slice(0, service.n + 1),
+    { n: service.n + 1, t: service.t, name: "pit_held", data: {} },
+  ]);
+  assert.deepEqual(phaseCompleted(held.sample(service.t + 100)), {
+    preparation: true,
+    service: true,
+    clearance: false,
+    total: false,
+  });
 });

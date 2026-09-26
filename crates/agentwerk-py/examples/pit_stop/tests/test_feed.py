@@ -49,26 +49,23 @@ async def test_browser_reconnect_receives_only_unseen_events(tmp_path):
 def test_showcase_is_a_complete_real_agent_run():
     frames = read_recording(Path(__file__).parents[1] / "recordings/showcase.jsonl")
     assert frames[0]["data"]["source"] == "agentwerk"
-    assert frames[-1]["name"] == "car_departed"
-    assert sum(frame["name"] == "action_completed" for frame in frames) == 52
-    assert sum(frame["name"] == "request_finished" for frame in frames) >= 27
-    stopped = next(frame["t"] for frame in frames if frame["name"] == "car_stopped")
-    actions = [frame for frame in frames if frame["name"] == "action_started"]
-    early = [frame for frame in actions if frame["t"] < stopped]
-    assert early
-    assert all(frame["data"]["action"] in ("collect", "position") for frame in early)
-    arriving = next(frame["t"] for frame in frames if frame["name"] == "car_arriving")
-    moving_before_arrival = {
-        frame["data"]["actor"]
-        for frame in frames
-        if frame["name"] == "action_phase"
-        and frame["t"] < arriving
-        and frame["data"]["action"] == "collect"
-        and frame["data"]["kind"] == "move"
+    assert frames[0]["data"]["version"] == 6
+    assert any(f["name"] == "car_departed" for f in frames)
+    reports = [f for f in frames if f["name"] == "pit_report"]
+    assert len(reports) > 19
+    assert all(f["data"]["valid"] for f in reports)
+    release = next(f for f in frames if f["name"] == "pit_released")
+    assert set(release["data"]["reviewed_tasks"]) == {
+        f["data"]["task_id"] for f in reports
     }
-    assert len(moving_before_arrival) >= 2
-    assert sum(frame["name"] == "run_finished" for frame in frames) == 1
-    assert sum(frame["name"] == "car_departing" for frame in frames) == 1
+    approaching = next(f for f in frames if f["name"] == "car_approaching")
+    stopped = next(f for f in frames if f["name"] == "car_stopped")
+    assert approaching["t"] < stopped["t"]
+    assert any(
+        f["name"] == "crew_task_started" and f["t"] < stopped["t"] for f in frames
+    )
+    assert sum(f["name"] == "car_departing" for f in frames) == 1
+    assert sum(f["name"] == "request_finished" for f in frames) > len(reports)
 
 
 def test_recorded_transfers_conserve_every_tool_and_tire():
@@ -77,10 +74,10 @@ def test_recorded_transfers_conserve_every_tool_and_tire():
         name: item["owner"]
         for name, item in frames[0]["data"]["state"]["items"].items()
     }
-    assert len(owners) == 14
+    assert set(owners) == set(frames[0]["data"]["state"]["items"])
     for frame in frames[1:]:
         data = frame["data"]
-        if frame["name"] == "action_transfer":
+        if frame["name"] == "crew_transfer":
             assert owners[data["item"]] == data["from"]
             owners[data["item"]] = data["to"]
         if "state" in data:
@@ -91,9 +88,11 @@ def test_recorded_transfers_conserve_every_tool_and_tire():
         if name.startswith("fresh-"):
             assert owner == f"hub:{name.removeprefix('fresh-')}"
         elif name.startswith("old-"):
-            assert owner == f"slot:used-{name.removeprefix('old-')}"
-        else:
+            assert owner.startswith("slot:tire-")
+        elif name.startswith("jack-"):
             assert owner == f"slot:{name}"
+        else:
+            assert owner.startswith("slot:bench-")
 
 
 def test_recording_shows_cleanup_overlapping_other_corners_service():
@@ -102,12 +101,12 @@ def test_recording_shows_cleanup_overlapping_other_corners_service():
     overlap = False
     for frame in frames:
         data = frame["data"]
-        if frame["name"] == "action_started":
-            active[data["actor"]] = data["action"]
-        if frame["name"] == "action_completed":
+        if frame["name"] == "crew_task_started":
+            active[data["actor"]] = data["task"]
+        if frame["name"] == "crew_task_completed":
             active.pop(data["actor"], None)
-        overlap |= "stow" in active.values() and any(
-            action in ("fit", "tighten", "remove") for action in active.values()
+        overlap |= "drop" in active.values() and any(
+            task in ("fit", "tighten", "remove") for task in active.values()
         )
     assert overlap
 
@@ -120,7 +119,7 @@ def test_recorded_paths_keep_moving_and_stationary_workers_apart():
 
     frames = read_recording(Path(__file__).parents[1] / "recordings/showcase.jsonl")
     state = frames[0]["data"]["state"]
-    actions, phases = {}, {}
+    tasks, phases = {}, {}
     index = 0
     for step in range(math.ceil(frames[-1]["t"] / 0.1)):
         now = step * 0.1
@@ -129,19 +128,19 @@ def test_recorded_paths_keep_moving_and_stationary_workers_apart():
             index += 1
             data = frame["data"]
             state = data.get("state", state)
-            if frame["name"] == "action_started":
-                actions[data["actor"]] = frame
-            if frame["name"] == "action_phase":
+            if frame["name"] == "crew_task_started":
+                tasks[data["actor"]] = frame
+            if frame["name"] == "crew_task_phase":
                 phases[data["actor"]] = frame
-            if frame["name"] == "action_completed":
-                actions.pop(data["actor"], None)
+            if frame["name"] == "crew_task_completed":
+                tasks.pop(data["actor"], None)
                 phases.pop(data["actor"], None)
         points = {}
         for actor, worker in state["crew"].items():
             points[actor] = worker["position"]
-            if actor in actions and actor in phases:
+            if actor in tasks and actor in phases:
                 phase = phases[actor]
-                route = actions[actor]["data"]["phases"][phase["data"]["phase"]]
+                route = tasks[actor]["data"]["phases"][phase["data"]["phase"]]
                 points[actor] = position([route], now - phase["t"])
         for a, b in combinations(points, 2):
             assert math.dist(points[a], points[b]) >= 0.46, (now, a, b)

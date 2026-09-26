@@ -1,20 +1,21 @@
 import * as THREE from "three";
 import { CORNERS } from "./car.js";
-import { actionMotion } from "./motion.js";
+import { taskMotion } from "./motion.js";
 import { equipmentPose } from "./equipment.js";
 
 const smooth = (p) => p * p * (3 - 2 * p);
 
 export function poseCharacter(worker, sample) {
-  const { id, role, station } = worker.member;
+  const { id, role } = worker.member;
+  const station = sample.state.crew[id].station ?? worker.member.station;
   const current = sample.state.crew[id];
-  const event = sample.actions[id];
-  const action = event?.data.action;
-  const motion = event ? actionMotion(event, sample.time) : null;
+  const event = sample.tasks[id];
+  const task = event?.data.task;
+  const motion = event ? taskMotion(event, sample.time) : null;
   const [x, z] = motion?.position ?? current.position;
   worker.root.position.set(x, 0, z);
   let target = CORNERS[station] ?? [role === "wing" ? 3 : 0, 0];
-  if (["collect", "return", "stow"].includes(action)) {
+  if (["collect", "return", "stow"].includes(task)) {
     const slot =
       role === "wheel-on"
         ? `fresh-${station}`
@@ -43,13 +44,20 @@ export function poseCharacter(worker, sample) {
       "release_item",
       "work",
     ].includes(kind);
-  const holdingPosition = !event && !current.clear;
+  const holdingPosition =
+    !event &&
+    (sample.metadata.version >= 4
+      ? ["jack", "steadier"].includes(role) &&
+        current.location?.startsWith("work:")
+      : !current.clear);
   const previous = handles(motion?.previousPhase?.kind) ? 1 : 0;
   const next = handles(kind) || holdingPosition ? 1 : 0;
   const transition = motion ? smooth(Math.min(1, motion.progress * 5)) : 1;
   const engaged = previous + (next - previous) * transition;
   const carrying = !!current.equipment || role === "chief";
-  const rushing = role === "chief" && action === "release" && walking;
+  const rushing =
+    walking &&
+    (motion?.phase?.pace === "run" || (role === "chief" && task === "release"));
   const pace = sample.metadata.motion[id].pace;
   const rhythm =
     sample.time * (rushing ? 16 : carrying ? 8 : 10) * pace +
@@ -122,13 +130,13 @@ function aimHand(worker, index, target) {
 
 export function poseHands(world, sample) {
   for (const [id, worker] of Object.entries(world.workers)) {
-    const event = sample.actions[id];
-    const motion = event?.data.phases ? actionMotion(event, sample.time) : null;
+    const event = sample.tasks[id];
+    const motion = event?.data.phases ? taskMotion(event, sample.time) : null;
     const current = sample.state.crew[id];
-    const action = event?.data.action;
+    const task = event?.data.task;
     if (worker.releaseSign) {
       const raised =
-        action !== "release"
+        task !== "release"
           ? 0
           : motion?.kind === "work"
             ? smooth(motion.progress)
@@ -151,20 +159,32 @@ export function poseHands(world, sample) {
     let item = current.equipment ?? motion?.phase?.transfer?.item;
     if (!item && motion?.kind === "release_item")
       item =
-        action === "fit"
-          ? `fresh-${worker.member.station}`
-          : action === "stow"
-            ? `old-${worker.member.station}`
+        task === "fit"
+          ? `fresh-${current.station ?? worker.member.station}`
+          : task === "stow"
+            ? `old-${current.station ?? worker.member.station}`
             : `tool-${id}`;
     if (!item && ["reach", "align"].includes(motion?.kind))
       item =
-        action === "remove"
-          ? `old-${worker.member.station}`
+        task === "remove"
+          ? `old-${current.station ?? worker.member.station}`
           : worker.member.role === "wheel-on"
-            ? `fresh-${worker.member.station}`
+            ? `fresh-${current.station ?? worker.member.station}`
             : `tool-${id}`;
     if (item && sample.state.items[item]) {
       const pose = equipmentPose(world, sample, item);
+      if (sample.state.items[item].kind === "jack") {
+        for (const i of [0, 1]) {
+          const grip = new THREE.Vector3(
+            ...(sample.metadata.layout.jack?.handle ?? [-0.72, 0.78, 0]),
+          )
+            .add(new THREE.Vector3(0, 0, i ? 0.18 : -0.18))
+            .applyQuaternion(pose.quaternion)
+            .add(pose.position);
+          aimHand(worker, i, grip);
+        }
+        continue;
+      }
       const isTire = ["fresh", "old"].includes(sample.state.items[item].kind);
       for (const i of isTire ? [0, 1] : [1]) {
         const offset = new THREE.Vector3(
@@ -190,8 +210,15 @@ export function poseHands(world, sample) {
         }
         aimHand(worker, i, target);
       }
-    } else if (worker.member.role === "steadier" && !current.clear) {
-      const side = worker.member.station === "left" ? -1 : 1;
+    } else if (
+      worker.member.role === "steadier" &&
+      (sample.metadata.version >= 4
+        ? sample.state.steadiers[current.station] === "braced" ||
+          ["brace", "clear"].includes(task)
+        : !current.clear)
+    ) {
+      const side =
+        (current.station ?? worker.member.station) === "left" ? -1 : 1;
       for (const i of [0, 1])
         aimHand(
           worker,
@@ -200,14 +227,20 @@ export function poseHands(world, sample) {
             new THREE.Vector3(i ? 0.2 : -0.2, 0.65, side * 0.9),
           ),
         );
-    } else if (worker.member.role === "jack") {
-      const jack = world.jacks[worker.member.station];
+    } else if (
+      worker.member.role === "jack" &&
+      (sample.metadata.version < 4 ||
+        (!motion?.walking && current.location?.startsWith("work:")))
+    ) {
+      const jack = world.jacks[current.station ?? worker.member.station];
       for (const i of [0, 1])
         aimHand(
           worker,
           i,
           jack.root.localToWorld(
-            new THREE.Vector3(-0.72, 0.78, i ? 0.18 : -0.18),
+            new THREE.Vector3(
+              ...(sample.metadata.layout.jack?.handle ?? [-0.72, 0.78, 0]),
+            ).add(new THREE.Vector3(0, 0, i ? 0.18 : -0.18)),
           ),
         );
     }

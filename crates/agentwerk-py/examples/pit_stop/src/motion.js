@@ -51,7 +51,7 @@ export function routePosition(points, progress) {
   return { position: points.at(-1), heading: null };
 }
 
-export function actionMotion(event, time) {
+export function taskMotion(event, time) {
   const phaseIndex = event.phaseEvent?.data.phase;
   let elapsed = Math.max(0, time - (event.phaseEvent?.t ?? event.t));
   let work = 0;
@@ -101,6 +101,6 @@ export function actionMotion(event, time) {
 
 export function workProgress(event, time) {
   if (!event) return 0;
-  if (event.data.phases) return actionMotion(event, time).work;
+  if (event.data.phases) return taskMotion(event, time).work;
   return clamp(((time - event.t) / event.data.duration - 0.25) / 0.5);
 }

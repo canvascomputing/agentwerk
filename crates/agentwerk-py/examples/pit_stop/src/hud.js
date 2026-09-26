@@ -1,34 +1,37 @@
-import { actionMotion, workProgress } from "./motion.js";
+import { workerAt } from "./playback.js";
+import { taskMotion, workProgress } from "./motion.js";
 
 export function wheelStatus(sample, corner) {
   const status = sample.state.wheels[corner];
   if (status === "secured") return "Done";
-  const active = (role, action) =>
-    sample.actions[`${role}-${corner}`]?.data.action === action;
+  const active = (role, task) =>
+    sample.tasks[workerAt(sample, role, corner)]?.data.task === task;
   if (active("gunner", "tighten")) return "Tightening";
   if (active("wheel-on", "fit")) return "Fitting";
   if (status === "empty") return "Hub clear";
   if (active("wheel-off", "remove")) return "Removing";
   if (active("gunner", "loosen")) return "Loosening";
   if (status !== "old-secured") return "Ready";
-  const prepared = ["gunner", "wheel-on"].every((role) =>
-    sample.state.crew[`${role}-${corner}`].done.includes("collect"),
+  const prepared = ["gunner", "wheel-on"].every(
+    (role) =>
+      sample.state.crew[workerAt(sample, role, corner)].equipment !== null,
   );
   return prepared ? "Ready" : "Fetching";
 }
 
 export function updateServiceDiagram(element, side, sample) {
-  const { state, actions, time } = sample;
+  const { state, tasks, time } = sample;
   const heights = {};
   for (const end of ["front", "rear"]) {
-    const action = actions[`jack-${end}`];
-    const height = action
-      ? action.data.action === "lift"
-        ? workProgress(action, time)
-        : 1 - workProgress(action, time)
-      : state.jacks[end] === "up"
-        ? 1
-        : 0;
+    const task = tasks[workerAt(sample, "jack", end)];
+    const height =
+      task && ["lift", "lower"].includes(task.data.task)
+        ? task.data.task === "lift"
+          ? workProgress(task, time)
+          : 1 - workProgress(task, time)
+        : state.jacks[end] === "up"
+          ? 1
+          : 0;
     heights[end] = height;
     side.dataset[end] = height;
     const jack = side.querySelector(`[data-end="${end}"]`);
@@ -52,16 +55,24 @@ export function updateServiceDiagram(element, side, sample) {
     const corner = wheel.dataset.corner;
     const status = state.wheels[corner];
     const working = ["gunner", "wheel-off", "wheel-on"].some((role) => {
-      const action = actions[`${role}-${corner}`];
+      const task = tasks[workerAt(sample, role, corner)];
       if (
-        !action ||
-        ["collect", "return", "stow", "withdraw"].includes(action.data.action)
+        !task ||
+        [
+          "collect",
+          "return",
+          "stow",
+          "withdraw",
+          "move",
+          "pickup",
+          "drop",
+        ].includes(task.data.task)
       )
         return false;
       return (
-        !action.data.phases ||
+        !task.data.phases ||
         ["work", "reach", "pull", "align", "seat"].includes(
-          actionMotion(action, time).kind,
+          taskMotion(task, time).kind,
         )
       );
     });
@@ -71,11 +82,11 @@ export function updateServiceDiagram(element, side, sample) {
     wheel.querySelector("title").textContent = label;
     wheel.setAttribute("aria-label", label);
     let detached = status === "empty" ? 1 : 0;
-    const removing = actions[`wheel-off-${corner}`];
-    const fitting = actions[`wheel-on-${corner}`];
-    if (removing?.data.action === "remove")
+    const removing = tasks[workerAt(sample, "wheel-off", corner)];
+    const fitting = tasks[workerAt(sample, "wheel-on", corner)];
+    if (removing?.data.task === "remove")
       detached = workProgress(removing, time);
-    if (fitting?.data.action === "fit")
+    if (fitting?.data.task === "fit")
       detached = 1 - workProgress(fitting, time);
     const tire = wheel.querySelector(".mini-tire");
     tire.setAttribute("opacity", 1 - detached);

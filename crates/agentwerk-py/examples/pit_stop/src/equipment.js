@@ -1,20 +1,23 @@
 import * as THREE from "three";
 import { box, cylinder, material, rod } from "./geometry.js";
 import { CORNERS, tire } from "./car.js";
-import { actionMotion } from "./motion.js";
+import { taskMotion } from "./motion.js";
 
 const smooth = (p) => p * p * (3 - 2 * p);
 
 export function createEquipment(scene, items) {
   return Object.fromEntries(
-    Object.entries(items).map(([id, item]) => {
-      const object =
-        item.kind === "fresh" || item.kind === "old"
-          ? tire(item.kind === "fresh")
-          : createTool(item.kind);
-      scene.add(object);
-      return [id, object];
-    }),
+    Object.entries(items)
+      .filter(([, item]) => item.kind !== "jack")
+      .map(([id, item]) => {
+        const object =
+          item.kind === "fresh" || item.kind === "old"
+            ? tire(item.kind === "fresh")
+            : createTool(item.kind);
+        object.userData.kind = item.kind;
+        scene.add(object);
+        return [id, object];
+      }),
   );
 }
 
@@ -41,11 +44,43 @@ function createTool(kind) {
 
 export function ownerPose(world, sample, owner, kind) {
   const [type, id] = owner.split(":");
+  if (kind === "jack") {
+    if (type === "slot")
+      return {
+        position: new THREE.Vector3(...sample.metadata.layout.slots[id]),
+        heading: sample.metadata.version >= 6 ? Math.PI / 2 : 0,
+      };
+    if (type === "mount")
+      return {
+        position: new THREE.Vector3(id === "front" ? 3.5 : -3.5, 0, 0),
+        heading: id === "front" ? Math.PI : 0,
+      };
+    const worker = world.workers[id];
+    return {
+      position: worker.root.localToWorld(
+        new THREE.Vector3(
+          0,
+          0,
+          sample.metadata.version >= 6
+            ? -sample.metadata.layout.jack.handle[0] +
+                sample.metadata.layout.jack.grip_forward
+            : 0.65,
+        ),
+      ),
+      heading:
+        worker.root.rotation.y +
+        (sample.metadata.version >= 6 ? -Math.PI / 2 : Math.PI / 2),
+    };
+  }
   if (type === "slot") {
     const position = new THREE.Vector3(...sample.metadata.layout.slots[id]);
     const resting =
       sample.metadata.version >= 3 && !["fresh", "old"].includes(kind);
-    if (resting) position.y += world.items[id].userData.restHeight;
+    if (resting)
+      position.y +=
+        Object.values(world.items).find(
+          (object) => object.userData.kind === kind,
+        )?.userData.restHeight ?? 0;
     return {
       position,
       heading: resting ? Math.PI / 2 : 0,
@@ -69,10 +104,11 @@ export function ownerPose(world, sample, owner, kind) {
     ),
     heading: worker.root.rotation.y,
   };
-  const event = sample.actions[id];
-  const motion = event ? actionMotion(event, sample.time) : null;
+  const event = sample.tasks[id];
+  const motion = event ? taskMotion(event, sample.time) : null;
   if (!isTire && motion?.kind === "work") {
-    const corner = CORNERS[worker.member.station];
+    const corner =
+      CORNERS[sample.state.crew[id].station ?? worker.member.station];
     const goal = corner
       ? world.car.chassis.localToWorld(
           new THREE.Vector3(corner[0], 0.49, corner[1]),
@@ -81,7 +117,9 @@ export function ownerPose(world, sample, owner, kind) {
           new THREE.Vector3(
             3.1,
             0.5,
-            worker.member.station === "left" ? -0.75 : 0.75,
+            (sample.state.crew[id].station ?? worker.member.station) === "left"
+              ? -0.75
+              : 0.75,
           ),
         );
     const toward = goal.clone().sub(pose.position).normalize();
@@ -109,15 +147,17 @@ export function equipmentPose(world, sample, id) {
       new THREE.Euler(0, pose.heading, pose.roll ?? 0),
     );
   pose.quaternion = rotation(pose);
-  for (const event of Object.values(sample.actions)) {
-    const motion = actionMotion(event, sample.time);
+  for (const event of Object.values(sample.tasks)) {
+    const motion = taskMotion(event, sample.time);
     const transfer = motion.phase?.transfer;
     if (transfer?.item !== id) continue;
     const from = ownerPose(world, sample, transfer.from, item.kind);
     const to = ownerPose(world, sample, transfer.to, item.kind);
     const p = smooth(motion.progress);
     pose.position.copy(from.position).lerp(to.position, p);
-    pose.position.y += Math.sin(Math.PI * p) * (isTire ? 0.025 : 0.12);
+    pose.position.y +=
+      Math.sin(Math.PI * p) *
+      (item.kind === "jack" ? 0 : isTire ? 0.025 : 0.12);
     // A tire's two faces are interchangeable; avoid sweeping it through the carrier with a half-turn.
     const symmetry = isTire ? 2 : 1;
     const angle = (to.heading - from.heading) * symmetry;

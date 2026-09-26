@@ -70,7 +70,9 @@ if __name__ == "__main__":
     )
     parser.add_argument("--no-browser", action="store_true")
     parser.add_argument(
-        "--seed", type=int, help="Seed authored motion; model timing remains live"
+        "--seed",
+        type=int,
+        help="Seed assignments, equipment, arrival timing, and service targets",
     )
     parser.add_argument("--port", type=int, default=8423)
     args = parser.parse_args()

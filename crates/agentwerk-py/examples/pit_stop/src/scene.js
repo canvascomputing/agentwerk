@@ -276,24 +276,43 @@ export function createScene(canvas, crew, metadata) {
   scene.add(car.root);
   const workers = Object.fromEntries(
     crew.map((member) => {
-      const worker = createCrew(member, metadata?.seed);
+      const worker = createCrew(
+        member,
+        metadata?.seed,
+        metadata?.layout ?? layout,
+      );
       scene.add(worker.root);
       return [member.id, worker];
     }),
   );
   const jacks = Object.fromEntries(
     ["front", "rear"].map((end) => {
-      const jack = createJack(end);
+      const jack = createJack(end, metadata?.layout.jack);
       scene.add(jack.root);
       return [end, jack];
     }),
   );
   const items = createEquipment(scene, metadata?.state.items ?? {});
+  for (const [id, item] of Object.entries(metadata?.state.items ?? {})) {
+    if (item.kind === "jack") items[id] = jacks[item.end].root;
+  }
   function resize() {
     const { width, height } = canvas.getBoundingClientRect();
     renderer.setSize(width, height, false);
     const aspect = width / height;
-    const halfWidth = Math.max(9.3, 4.15 * aspect);
+    camera.updateMatrixWorld(true);
+    let halfHeight = 4.15;
+    for (const spec of Object.values(metadata?.layout.crew ?? layout.crew)) {
+      for (const y of [0, 1.65]) {
+        const point = new THREE.Vector3(
+          spec.home[0],
+          y,
+          spec.home[1],
+        ).applyMatrix4(camera.matrixWorldInverse);
+        halfHeight = Math.max(halfHeight, Math.abs(point.y) + 0.3);
+      }
+    }
+    const halfWidth = Math.max(9.3, halfHeight * aspect);
     camera.left = -halfWidth;
     camera.right = halfWidth;
     camera.top = halfWidth / aspect;
