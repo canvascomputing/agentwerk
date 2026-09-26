@@ -19,6 +19,12 @@
 
 <br />
 
+<div align="center">
+  <a href="#lets-build-a-coding-harness">Coding Harness</a> •
+  <a href="#lets-build-a-research-harness">Research Harness</a> •
+  <a href="#lets-build-a-pit-stop-harness">Pit Stop Harness</a>
+</div>
+
 <div align="center"><strong>Beta:</strong> The API might introduce breaking changes before <code>0.2.0</code>.</div>
 
 ---
@@ -26,7 +32,7 @@
 <div align="center">
   <img src="assets/demo.gif" width="800" />
 </div>
-<div align="center"><a href="crates/agentwerk-py/examples/pit_stop/main.py">19 agents, 52 tasks, one pit stop</a></div>
+<div align="center"><a href="crates/agentwerk-py/examples/pit_stop/main.py">Watch 19 agents coordinate a pit stop in real time.</a></div>
 <div align="center">Coordinate agent fleets across complex tasks, with detailed observability and shared knowledge.</div>
 
 ---
@@ -343,13 +349,369 @@ println!("{report}");
 
 ---
 
+## Let's Build a Pit Stop Harness
+
+Give [19 agents](crates/agentwerk-py/examples/pit_stop/orchestration.py) the tools to change tires and adjust the front wing: 4 gunners, 4 wheel-off operators, 4 wheel-on operators, 2 jack operators, 2 steadiers, 2 wing mechanics, and 1 chief. The chief checks their work before sending the car back out.
+
+<details>
+<summary><code>gunner.md</code></summary>
+
+```markdown
+# Gunner
+
+You are a wheel-gun operator in a simulated F1 pit box.
+You loosen and tighten wheel fasteners.
+
+- You MUST do only the assigned task.
+- Read your assigned target from the task.
+- NEVER infer your corner, side, or end from your crew number.
+- Hold or store equipment as the task requires.
+- You MUST reach the requested finish position before reporting completion.
+
+Output:
+
+- Call `finish({"status":"completed"})` when finished.
+- If you cannot complete the task, stay at your current position.
+  Call `finish({"status":"blocked"})`.
+```
+
+</details>
+
+<details>
+<summary><code>wheel-off.md</code></summary>
+
+```markdown
+# Wheel-Off Operator
+
+You are a tire removal specialist in a simulated F1 pit box.
+You remove old tires and store them after service.
+
+- You MUST do only the assigned task.
+- Read your assigned target from the task.
+- NEVER infer your corner, side, or end from your crew number.
+- Hold or store equipment as the task requires.
+- You MUST reach the requested finish position before reporting completion.
+
+Output:
+
+- Call `finish({"status":"completed"})` when finished.
+- If you cannot complete the task, stay at your current position.
+  Call `finish({"status":"blocked"})`.
+```
+
+</details>
+
+<details>
+<summary><code>wheel-on.md</code></summary>
+
+```markdown
+# Wheel-On Operator
+
+You are a tire fitting specialist in a simulated F1 pit box.
+You collect and fit fresh tires.
+
+- You MUST do only the assigned task.
+- Read your assigned target from the task.
+- NEVER infer your corner, side, or end from your crew number.
+- Hold or store equipment as the task requires.
+- You MUST reach the requested finish position before reporting completion.
+
+Output:
+
+- Call `finish({"status":"completed"})` when finished.
+- If you cannot complete the task, stay at your current position.
+  Call `finish({"status":"blocked"})`.
+```
+
+</details>
+
+<details>
+<summary><code>jack.md</code></summary>
+
+```markdown
+# Jack Operator
+
+You are a jack operator in a simulated F1 pit box.
+You raise and lower the car.
+
+- You MUST do only the assigned task.
+- Read your assigned target from the task.
+- NEVER infer your corner, side, or end from your crew number.
+- Hold or store equipment as the task requires.
+- You MUST reach the requested finish position before reporting completion.
+
+Output:
+
+- Call `finish({"status":"completed"})` when finished.
+- If you cannot complete the task, stay at your current position.
+  Call `finish({"status":"blocked"})`.
+```
+
+</details>
+
+<details>
+<summary><code>steadier.md</code></summary>
+
+```markdown
+# Steadier
+
+You are a car steadier in a simulated F1 pit box.
+You brace the car during service.
+Let go when assigned to clear it.
+
+- You MUST do only the assigned task.
+- Read your assigned target from the task.
+- NEVER infer your corner, side, or end from your crew number.
+- Hold or store equipment as the task requires.
+- You MUST reach the requested finish position before reporting completion.
+
+Output:
+
+- Call `finish({"status":"completed"})` when finished.
+- If you cannot complete the task, stay at your current position.
+  Call `finish({"status":"blocked"})`.
+```
+
+</details>
+
+<details>
+<summary><code>wing.md</code></summary>
+
+```markdown
+# Wing Mechanic
+
+You are a front-wing mechanic in a simulated F1 pit box.
+You set the flap angles requested in your task.
+
+- You MUST do only the assigned task.
+- Read your assigned target from the task.
+- NEVER infer your corner, side, or end from your crew number.
+- Hold or store equipment as the task requires.
+- You MUST reach the requested finish position before reporting completion.
+
+Output:
+
+- Call `finish({"status":"completed"})` when finished.
+- If you cannot complete the task, stay at your current position.
+  Call `finish({"status":"blocked"})`.
+```
+
+</details>
+
+<details>
+<summary><code>chief.md</code></summary>
+
+```markdown
+# Chief Mechanic
+
+You are the Chief Mechanic in a simulated F1 pit box.
+You hold the car during service.
+You decide whether it can leave.
+
+During preparation:
+
+- Take the assigned board position with empty hands.
+  Standing there holds the STOP board.
+- Report `{"status":"completed"}` with `finish`.
+  Stay until review.
+- Report `{"status":"blocked"}` if you cannot reach the board position.
+
+During review:
+
+- Check the supplied reports and car state.
+- You MUST choose HOLD if anything is invalid, incomplete, unsafe, or unverified.
+- Require secured wheels and wings at the requested angles.
+- Require lowered jacks and both steadiers clear.
+- Require stored tools and old tires.
+- Jacks must be in their designated storage.
+- You MUST move clear before choosing GO.
+- Everyone MUST be clear of the car and empty-handed.
+- Everyone MUST be finished moving or working.
+
+Call `finish` with one object containing:
+
+- `decision`: `"go"` or `"hold"`.
+- `reviewed_tasks`: copy the supplied task ID list exactly.
+- `reason`: why the car can or cannot leave, at most 240 characters.
+```
+
+</details>
+
+Give each crew member tools to move around the pit and work on the car.
+
+```rust
+let werk = Werk(".pit-stop")?;
+
+for member in crew {
+    let (r#move, operate) = crew_tools(member);
+    let agent = Agent::from_env()
+        .label(member.id)
+        .role(member.role)
+        .tool(r#move)
+        .tool(operate);
+
+    werk.add_agent(agent);
+}
+```
+
+Start preparing when the car approaches. Each crew member gets a task with the location, equipment, and work needed.
+
+<details>
+<summary>Example task</summary>
+
+```text
+Prepare the rear-right wheel station. The car arrives in 15 seconds.
+
+Bring a wheel gun to the rear-right holding point.
+Stay there until the car is stable and you receive your next task.
+Workbench 6 has a wheel gun, and workbench 1 has a wing key.
+Choose whether to walk or run. Finish when you are ready.
+```
+
+</details>
+
+```rust
+let task = Task(assignment)
+    .label(member.id)
+    .schema(report_schema);
+
+let prepare = Condition("event.name = car_approaching").task(task);
+
+werk.add_condition(prepare);
+```
+
+Crew members call the built-in `finish` tool when their task is done. The [result handler](crates/agentwerk-py/examples/pit_stop/orchestration.py) checks their position, equipment, and completed work before starting the next task.
+
+```rust
+werk.on_result(accept_result);
+```
+
+<details>
+<summary>Worker result check</summary>
+
+For each crew report, `accept_result` records whether the work is valid. Here, `actor` and `step` come from the finished task.
+
+```rust
+let valid = report_valid(&pit, actor, step, result);
+let report = json!({
+    "task_id": task.get_id(),
+    "actor": actor,
+    "step": step,
+    "target": pit.assignments[actor],
+    "valid": valid,
+    "result": result,
+});
+let reported = Event("pit_report").data(report.clone());
+
+reports.push(report);
+werk.emit_event(reported);
+
+if valid {
+    completed.insert((actor, step));
+}
+schedule();
+```
+
+</details>
+
+The scheduler opens each task once its required reports are valid and the car is ready. Wheel removal waits for loosening. Fitting waits for removal. Each handoff uses a Condition and its matching event, just like preparation.
+
+The Chief reviews the crew’s reports before deciding GO or HOLD. The review task also receives the current car state, outstanding work, and destinations.
+
+<details>
+<summary>Review task</summary>
+
+```text
+Review the crew's work and decide GO or HOLD.
+
+Reported statuses:
+{{ find_results(task.status = finished)[*].status }}
+
+Verified reports and task IDs:
+{{ find_events(event.name = pit_report)[*].data }}
+
+Task IDs to copy into reviewed_tasks:
+{{ find_events(event.name = pit_report)[*].data.task_id }}
+
+Choose HOLD for blocked reports, invalid reports, or unfinished work.
+Check physical clearance before GO.
+```
+
+</details>
+
+```rust
+let review = Task(review_prompt)
+    .label("chief")
+    .schema(verdict_schema);
+
+let ready = Condition("event.name = pit_ready:chief:review").task(review);
+
+werk.add_condition(ready);
+```
+
+After the Chief finishes preparation, the scheduler opens review when all required work is verified or a blocked or invalid report needs attention. It emits this event once:
+
+```rust
+werk.emit_event(Event("pit_ready:chief:review"));
+```
+
+<details>
+<summary>Release check</summary>
+
+For the Chief’s verdict, `accept_result` compares the reviewed task IDs with the recorded report IDs. Both are sets, so their order does not matter. `all_done` requires every assigned task to have a valid report. `pit.clear()` checks the car, stored equipment, and crew clearance.
+
+```rust
+let reports_reviewed = reviewed_tasks == report_ids;
+
+if result["decision"] == "go" && reports_reviewed && all_done && pit.clear() {
+    pit.release(reviewed_tasks);
+} else {
+    pit.hold("HOLD: work or clearance unverified");
+}
+```
+
+</details>
+
+An accepted GO emits `pit_released`. HOLD or a rejected GO emits `pit_held` and stops the run.
+
+Follow the pit stop through custom events.
+
+```rust
+werk.on_event(|_, event| {
+    let data = event.get_data();
+
+    match event.get_name() {
+        "car_approaching" => println!("Car arrives in {}s.", data["arrives_in_seconds"]),
+        "pit_service_completed" => println!("Service complete."),
+        "pit_released" => println!("GO."),
+        "pit_held" => println!("HOLD: {}", data["message"].as_str().unwrap()),
+        _ => {}
+    }
+});
+```
+
+Tell the crew the car will arrive in 15 seconds. The simulation schedules arrival separately on its clock, emitting `car_arriving` and `car_stopped` even if preparation is unfinished.
+
+```rust
+let approaching = Event("car_approaching")
+    .data(json!({"arrives_in_seconds": 15}));
+
+werk.emit_event(approaching);
+
+werk.finish().await;
+```
+
+The Chief holds the STOP board during service and steps aside before GO. After release, the simulation drives the car out and emits `car_departing` and `car_departed`.
+
+---
+
 ## More Use Cases
 
 - [Hello World](crates/use-cases/src/hello_world/main.rs): basic example
 - [Terminal REPL](crates/use-cases/src/terminal_repl/main.rs): minimal multi-turn terminal chat
 - [Coding Harness](crates/use-cases/src/coding_harness/main.rs): plan, implement, and verify a repository change
 - [Deep Research](crates/use-cases/src/deep_research/main.rs): research across several sources (requires `BRAVE_API_KEY`)
-- [Pit Stop](crates/agentwerk-py/examples/pit_stop/main.py): coordinate a 3D pit crew
+- [Pit Stop](crates/agentwerk-py/examples/pit_stop/main.py): coordinate a pit crew
 - [Malware Scanner](https://github.com/canvascomputing/malwi): find signs of malware in a software package
 
 ---

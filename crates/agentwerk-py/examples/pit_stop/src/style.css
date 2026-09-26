@@ -11,24 +11,26 @@ body {
   margin: 0;
 }
 main {
+  display: grid;
+  grid-template-rows: minmax(0, 1fr) auto;
+  padding-bottom: 6px;
   height: 100svh;
   min-height: 440px;
   position: relative;
   overflow: hidden;
 }
 #scene {
-  position: absolute;
   width: 100%;
-  height: calc(100% - 72px);
+  height: 100%;
+  min-height: 0;
   display: block;
 }
 .status {
-  position: absolute;
+  position: relative;
   z-index: 2;
   left: 0;
   right: 0;
-  bottom: 8px;
-  padding: 0 24px;
+  padding: 0 24px 8px;
   color: #e8e3cf;
 }
 .status-body {
@@ -45,6 +47,11 @@ h2 {
   text-transform: uppercase;
   text-shadow: 2px 2px 0 #060f13;
   margin: 0;
+}
+.status-illustrations {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
 }
 .service-views {
   display: grid;
@@ -173,24 +180,45 @@ h2 {
   }
 }
 
-.activity {
-  margin: 5px 0 0;
-  text-align: center;
-  font-size: 10px;
-  color: #a7b6a7;
-}
 @media (max-width: 550px) {
   .status-body {
     grid-template-columns: 1fr;
     gap: 4px;
   }
-  #scene {
-    height: calc(100% - 125px);
-  }
   .status {
     padding: 4px 16px;
   }
-  .activity {
-    font-size: 9px;
-  }
+}
+.timers {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 5px;
+  margin-top: 0;
+  font-variant-numeric: tabular-nums;
+}
+.timers > div {
+  border: 1px solid #c8d3d02e;
+  padding: 5px 8px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+}
+.timers span {
+  font-size: 9px;
+  color: #a7b6a7;
+}
+.timers output {
+  font-size: 15px;
+}
+.timers [data-completed="true"] {
+  border-color: #93c98299;
+}
+.timers [data-completed="true"] output {
+  color: #a4d895;
+}
+#phase {
+  font-size: clamp(11px, 1.5vw, 17px);
+  text-transform: none;
+  overflow-wrap: anywhere;
 }

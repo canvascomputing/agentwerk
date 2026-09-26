@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { actionMotion, arrivalPose, workProgress } from "../src/motion.js";
+import { taskMotion, arrivalPose, workProgress } from "../src/motion.js";
 
 test("curved arrivals straighten and brake smoothly onto the same marks", () => {
   for (const offset of [-0.45, 0, 0.45]) {
@@ -69,22 +69,22 @@ test("mechanical motion waits for arrival at work, then persists through withdra
   assert.equal(workProgress(event, 12), 0);
   assert.equal(workProgress(event, 14), 0.5);
   assert.equal(workProgress(event, 15.5), 1);
-  assert.deepEqual(actionMotion(event, 16).position, [2, 4]);
+  assert.deepEqual(taskMotion(event, 16).position, [2, 4]);
 });
 
 test("recorded paths drive heading and movement independently of frame rate", () => {
-  assert.deepEqual(actionMotion(event, 11.5).position, [1, 3]);
-  assert.equal(actionMotion(event, 11.5).heading, Math.PI / 2);
-  assert.deepEqual(actionMotion(event, 12.5).position, [2, 2]);
-  assert.equal(actionMotion(event, 12.5).heading, Math.PI);
-  assert.equal(actionMotion(event, 14).walking, false);
+  assert.deepEqual(taskMotion(event, 11.5).position, [1, 3]);
+  assert.equal(taskMotion(event, 11.5).heading, Math.PI / 2);
+  assert.deepEqual(taskMotion(event, 12.5).position, [2, 2]);
+  assert.equal(taskMotion(event, 12.5).heading, Math.PI);
+  assert.equal(taskMotion(event, 14).walking, false);
 });
 
 test("observed phases hold their endpoint until the next event, despite clock drift", () => {
   const observed = { ...event, phaseEvent: { t: 12, data: { phase: 1 } } };
-  assert.deepEqual(actionMotion(observed, 12).position, [0, 3]);
-  assert.deepEqual(actionMotion(observed, 14.2).position, [2, 1]);
-  assert.equal(actionMotion(observed, 14.2).kind, "move");
+  assert.deepEqual(taskMotion(observed, 12).position, [0, 3]);
+  assert.deepEqual(taskMotion(observed, 14.2).position, [2, 1]);
+  assert.equal(taskMotion(observed, 14.2).kind, "move");
   assert.equal(workProgress(observed, 14.2), 0);
 });
 
@@ -95,9 +95,31 @@ test("walking uses the reservation sampler's eased distance profile", async () =
   );
   for (const sample of fixture.samples) {
     assert.deepEqual(
-      actionMotion({ t: 0, data: fixture }, sample.time).position,
+      taskMotion({ t: 0, data: fixture }, sample.time).position,
       sample.position,
     );
   }
-  assert.equal(actionMotion({ t: 0, data: fixture }, 2).walking, false);
+  assert.equal(taskMotion({ t: 0, data: fixture }, 2).walking, false);
+});
+
+test("arrival turns cross the angle seam smoothly and survive seeking", () => {
+  const event = {
+    t: 0,
+    data: {
+      phases: [
+        {
+          kind: "turn",
+          duration: 0.5,
+          points: [[2, 3]],
+          headings: [(179 * Math.PI) / 180, (181 * Math.PI) / 180],
+        },
+      ],
+    },
+  };
+  const midway = taskMotion(event, 0.25);
+  assert.ok(Math.abs(midway.heading - Math.PI) < 1e-10);
+  assert.deepEqual(midway.position, [2, 3]);
+  assert.equal(midway.walking, false);
+  taskMotion(event, 0.5);
+  assert.deepEqual(taskMotion(event, 0.25), midway);
 });

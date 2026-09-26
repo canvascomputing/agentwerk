@@ -12,6 +12,7 @@ from aiohttp import web
 class Feed:
     def __init__(self, record_file=None):
         self.frames = []
+        self.clock = None
         self.started = time.monotonic()
         self.lock = RLock()
         self.record = Path(record_file) if record_file else None
@@ -23,7 +24,9 @@ class Feed:
         with self.lock:
             frame = {
                 "n": len(self.frames),
-                "t": time.monotonic() - self.started,
+                "t": self.clock.seconds
+                if self.clock
+                else time.monotonic() - self.started,
                 "name": name,
                 "data": data,
             }
@@ -63,7 +66,14 @@ def application(feed, recording, dist):
             {
                 "mode": "live" if feed else "replay",
                 "frames": feed.after(-1) if feed else recording,
-                "elapsed": time.monotonic() - feed.started if feed else 0,
+                "elapsed": (
+                    feed.clock.seconds
+                    if feed.clock
+                    else time.monotonic() - feed.started
+                )
+                if feed
+                else 0,
+                "running": feed.clock.running if feed and feed.clock else True,
             }
         )
 

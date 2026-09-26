@@ -75,8 +75,8 @@ function createReleaseSign(torso) {
   return { root, plate, surfaces };
 }
 
-export function createCrew(member, seed = 27) {
-  const index = Object.keys(layout.crew).indexOf(member.id);
+export function createCrew(member, seed = 27, recordedLayout = layout) {
+  const index = Object.keys(recordedLayout.crew).indexOf(member.id);
   const root = new THREE.Group();
   const shirts = ["#ce3430", "#2869bd", "#ebc440", "#19212a", "#e9e9df"];
   const pants = ["#173250", "#17212a", "#e2e3d9", "#235daa", "#bc2928"];
@@ -172,7 +172,7 @@ export function createCrew(member, seed = 27) {
   const carried = tire(member.role === "wheel-on");
   root.add(carried);
   carried.visible = false;
-  const place = positions(member);
+  const place = recordedLayout.crew[member.id] ?? positions(member);
   root.position.set(place.home[0], 0, place.home[1]);
   const releaseSign = member.role === "chief" ? createReleaseSign(torso) : null;
   return {
@@ -193,13 +193,21 @@ export function createCrew(member, seed = 27) {
   };
 }
 
-export function createJack(end) {
+export function createJack(end, profile) {
   const root = new THREE.Group();
   const blue = material("#276fce", { metalness: 0.5, roughness: 0.4 });
   box(root, [0.78, 0.13, 0.42], blue, [0, 0.12, 0]);
   const arm = box(root, [0.62, 0.07, 0.12], metal, [0.13, 0.24, 0]);
-  rod(root, [-0.28, 0.16, 0], [-0.72, 0.78, 0], 0.036, metal);
-  rod(root, [-0.72, 0.78, -0.18], [-0.72, 0.78, 0.18], 0.038, dark);
+  const handle = profile?.handle ?? [-0.72, 0.78, 0];
+  root.userData.handle = handle;
+  rod(root, [-0.28, 0.16, 0], handle, 0.036, metal);
+  rod(
+    root,
+    [handle[0], handle[1], -0.18],
+    [handle[0], handle[1], 0.18],
+    0.038,
+    dark,
+  );
   for (const sign of [-1, 1]) {
     const wheel = cylinder(root, 0.12, 0.09, dark, [-0.27, 0.13, sign * 0.26]);
     wheel.rotation.x = Math.PI / 2;

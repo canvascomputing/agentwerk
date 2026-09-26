@@ -17,129 +17,144 @@
       <aside class="status" aria-label="Pit stop status">
         <div class="status-body">
           <div class="status-copy">
-            <h2 id="phase">Arriving</h2>
-            <p id="activity" class="activity"></p>
+            <div id="timers" class="timers" aria-label="Simulation timers">
+              <div data-timer="preparation">
+                <span>Preparation</span><output>0.0s</output>
+              </div>
+              <div data-timer="service">
+                <span>Service</span><output>0.0s</output>
+              </div>
+              <div data-timer="clearance">
+                <span>Clearance</span><output>0.0s</output>
+              </div>
+              <div data-timer="total">
+                <span>Total</span><output>0.0s</output>
+              </div>
+            </div>
           </div>
-          <div class="service-views">
-            <svg
-              id="service-car"
-              class="service-car"
-              viewBox="0 0 180 72"
-              role="img"
-              aria-label="Overhead car service status"
-            >
-              <title>Overhead car service status</title>
-              <ellipse class="car-shadow" cx="91" cy="41" rx="72" ry="14" />
-              <g class="car-diagram">
-                <path
-                  class="mini-suspension"
-                  d="M40 14V58 M138 14V58 M34 36H154"
-                />
-                <path
-                  class="mini-body"
-                  d="M22 27H55L69 21H108L122 29L166 33V39L122 43L108 51H69L55 45H22Z"
-                />
-                <path
-                  class="mini-sidepod"
-                  d="M60 26H109L120 31H63ZM60 46H109L120 41H63Z"
-                />
-                <rect
-                  class="mini-cockpit"
-                  x="87"
-                  y="30"
-                  width="22"
-                  height="12"
-                  rx="6"
-                />
-                <path class="mini-wing" d="M17 18V54M166 18V54" />
-                <g data-corner="rear-left" transform="translate(40 14)">
-                  <title></title>
-                  <circle class="mini-hub" r="3" />
+          <div class="status-illustrations">
+            <h2 id="phase">car_approaching</h2>
+            <div class="service-views">
+              <svg
+                id="service-car"
+                class="service-car"
+                viewBox="0 0 180 72"
+                role="img"
+                aria-label="Overhead car service status"
+              >
+                <title>Overhead car service status</title>
+                <ellipse class="car-shadow" cx="91" cy="41" rx="72" ry="14" />
+                <g class="car-diagram">
+                  <path
+                    class="mini-suspension"
+                    d="M40 14V58 M138 14V58 M34 36H154"
+                  />
+                  <path
+                    class="mini-body"
+                    d="M22 27H55L69 21H108L122 29L166 33V39L122 43L108 51H69L55 45H22Z"
+                  />
+                  <path
+                    class="mini-sidepod"
+                    d="M60 26H109L120 31H63ZM60 46H109L120 41H63Z"
+                  />
                   <rect
-                    class="mini-tire"
-                    x="-11"
-                    y="-6"
+                    class="mini-cockpit"
+                    x="87"
+                    y="30"
                     width="22"
                     height="12"
-                    rx="2"
+                    rx="6"
                   />
+                  <path class="mini-wing" d="M17 18V54M166 18V54" />
+                  <g data-corner="rear-left" transform="translate(40 14)">
+                    <title></title>
+                    <circle class="mini-hub" r="3" />
+                    <rect
+                      class="mini-tire"
+                      x="-11"
+                      y="-6"
+                      width="22"
+                      height="12"
+                      rx="2"
+                    />
+                  </g>
+                  <g data-corner="front-left" transform="translate(138 14)">
+                    <title></title>
+                    <circle class="mini-hub" r="3" />
+                    <rect
+                      class="mini-tire"
+                      x="-11"
+                      y="-6"
+                      width="22"
+                      height="12"
+                      rx="2"
+                    />
+                  </g>
+                  <g data-corner="rear-right" transform="translate(40 58)">
+                    <title></title>
+                    <circle class="mini-hub" r="3" />
+                    <rect
+                      class="mini-tire"
+                      x="-11"
+                      y="-6"
+                      width="22"
+                      height="12"
+                      rx="2"
+                    />
+                  </g>
+                  <g data-corner="front-right" transform="translate(138 58)">
+                    <title></title>
+                    <circle class="mini-hub" r="3" />
+                    <rect
+                      class="mini-tire"
+                      x="-11"
+                      y="-6"
+                      width="22"
+                      height="12"
+                      rx="2"
+                    />
+                  </g>
                 </g>
-                <g data-corner="front-left" transform="translate(138 14)">
-                  <title></title>
-                  <circle class="mini-hub" r="3" />
-                  <rect
-                    class="mini-tire"
-                    x="-11"
-                    y="-6"
-                    width="22"
-                    height="12"
-                    rx="2"
+              </svg>
+              <svg
+                id="service-side"
+                class="service-car"
+                viewBox="0 0 180 72"
+                role="img"
+                aria-label="Side view of front and rear jack lift"
+              >
+                <title>Side view of front and rear jack lift</title>
+                <path class="mini-ground" d="M7 59H173" />
+                <g class="side-jack" data-end="rear">
+                  <path d="M14 58H26" />
+                  <line x1="20" y1="58" x2="20" y2="48" />
+                </g>
+                <g class="side-jack" data-end="front">
+                  <path d="M152 58H164" />
+                  <line x1="158" y1="58" x2="158" y2="48" />
+                </g>
+                <g class="side-car">
+                  <path
+                    class="mini-body"
+                    d="M20 39H43L64 29H80L88 35H104L119 41L163 44L168 49H19Z"
                   />
+                  <path class="mini-sidepod" d="M55 42H112L121 47H52Z" />
+                  <path class="mini-cockpit" d="M82 35L87 30H99L106 39H89Z" />
+                  <path class="mini-suspension" d="M22 32V44" />
+                  <path class="mini-wing" d="M13 31H35M151 49H171" />
+                  <g data-corner="rear-left" transform="translate(40 47)">
+                    <title></title>
+                    <circle class="mini-hub" r="3" />
+                    <circle class="mini-tire" r="10" />
+                  </g>
+                  <g data-corner="front-left" transform="translate(138 47)">
+                    <title></title>
+                    <circle class="mini-hub" r="3" />
+                    <circle class="mini-tire" r="10" />
+                  </g>
                 </g>
-                <g data-corner="rear-right" transform="translate(40 58)">
-                  <title></title>
-                  <circle class="mini-hub" r="3" />
-                  <rect
-                    class="mini-tire"
-                    x="-11"
-                    y="-6"
-                    width="22"
-                    height="12"
-                    rx="2"
-                  />
-                </g>
-                <g data-corner="front-right" transform="translate(138 58)">
-                  <title></title>
-                  <circle class="mini-hub" r="3" />
-                  <rect
-                    class="mini-tire"
-                    x="-11"
-                    y="-6"
-                    width="22"
-                    height="12"
-                    rx="2"
-                  />
-                </g>
-              </g>
-            </svg>
-            <svg
-              id="service-side"
-              class="service-car"
-              viewBox="0 0 180 72"
-              role="img"
-              aria-label="Side view of front and rear jack lift"
-            >
-              <title>Side view of front and rear jack lift</title>
-              <path class="mini-ground" d="M7 59H173" />
-              <g class="side-jack" data-end="rear">
-                <path d="M14 58H26" />
-                <line x1="20" y1="58" x2="20" y2="48" />
-              </g>
-              <g class="side-jack" data-end="front">
-                <path d="M152 58H164" />
-                <line x1="158" y1="58" x2="158" y2="48" />
-              </g>
-              <g class="side-car">
-                <path
-                  class="mini-body"
-                  d="M20 39H43L64 29H80L88 35H104L119 41L163 44L168 49H19Z"
-                />
-                <path class="mini-sidepod" d="M55 42H112L121 47H52Z" />
-                <path class="mini-cockpit" d="M82 35L87 30H99L106 39H89Z" />
-                <path class="mini-suspension" d="M22 32V44" />
-                <path class="mini-wing" d="M13 31H35M151 49H171" />
-                <g data-corner="rear-left" transform="translate(40 47)">
-                  <title></title>
-                  <circle class="mini-hub" r="3" />
-                  <circle class="mini-tire" r="10" />
-                </g>
-                <g data-corner="front-left" transform="translate(138 47)">
-                  <title></title>
-                  <circle class="mini-hub" r="3" />
-                  <circle class="mini-tire" r="10" />
-                </g>
-              </g>
-            </svg>
+              </svg>
+            </div>
           </div>
         </div>
         <p id="hold-reason" hidden></p>

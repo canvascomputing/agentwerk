@@ -1,4 +1,5 @@
-import { actionMotion, arrivalPose, workProgress } from "./motion.js";
+import { workerAt } from "./playback.js";
+import { taskMotion, arrivalPose, workProgress } from "./motion.js";
 import { poseCharacter, poseHands } from "./character-motion.js";
 import { animateEquipment } from "./equipment.js";
 import { CORNERS } from "./car.js";
@@ -25,17 +26,17 @@ function vehiclePosition(carEvent, time, state) {
 }
 
 function jackHeight(sample, end) {
-  const active = sample.actions[`jack-${end}`];
-  if (active && ["lift", "lower"].includes(active.data.action)) {
+  const active = sample.tasks[workerAt(sample, "jack", end)];
+  if (active && ["lift", "lower"].includes(active.data.task)) {
     const p = smooth(workProgress(active, sample.time));
-    return active.data.action === "lift" ? p : 1 - p;
+    return active.data.task === "lift" ? p : 1 - p;
   }
   return sample.state.jacks[end] === "up" ? 1 : 0;
 }
 
-function workerTarget(worker, action, x, z) {
+function workerTarget(worker, task, x, z) {
   const { role, station } = worker.member;
-  if (action === "collect") return [x, Math.sign(z) * 4.6];
+  if (task === "collect") return [x, Math.sign(z) * 4.6];
   if (CORNERS[station]) return CORNERS[station];
   if (role === "jack") return [station === "front" ? 3 : -3, 0];
   return [role === "wing" ? 2.9 : 0, 0];
@@ -44,8 +45,8 @@ function workerTarget(worker, action, x, z) {
 function animateLegacyWorker(worker, sample) {
   const { id, role, station } = worker.member;
   const current = sample.state.crew[id];
-  const event = sample.actions[id];
-  const action = event?.data.action;
+  const event = sample.tasks[id];
+  const task = event?.data.task;
   const p = progress(event, sample.time);
   const goesHome = [
     "remove",
@@ -55,23 +56,22 @@ function animateLegacyWorker(worker, sample) {
     "clear",
     "lower",
     "release",
-  ].includes(action);
+  ].includes(task);
   let reach = current.clear ? 0 : 1;
   if (event) {
-    if (["clear", "lower"].includes(action))
-      reach = 1 - smooth((p - 0.4) / 0.6);
-    else if (action === "tighten") reach = 1 - smooth((p - 0.75) / 0.25);
+    if (["clear", "lower"].includes(task)) reach = 1 - smooth((p - 0.4) / 0.6);
+    else if (task === "tighten") reach = 1 - smooth((p - 0.75) / 0.25);
     else
       reach = smooth(p / 0.25) * (goesHome ? 1 - smooth((p - 0.75) / 0.25) : 1);
   }
   const x = lerp(worker.home[0], worker.work[0], reach);
   const z = lerp(worker.home[1], worker.work[1], reach);
   worker.root.position.set(x, 0, z);
-  const target = workerTarget(worker, action, x, z);
+  const target = workerTarget(worker, task, x, z);
   worker.root.rotation.y = Math.atan2(target[0] - x, target[1] - z);
   const walking =
     event &&
-    ((!["clear", "lower", "tighten"].includes(action) && p < 0.25) ||
+    ((!["clear", "lower", "tighten"].includes(task) && p < 0.25) ||
       (goesHome && p > 0.75));
   const work = reach * (walking ? 0.2 : 1);
   worker.torso.rotation.x = work * (role === "steadier" ? 0.3 : 0.5);
@@ -84,7 +84,7 @@ function animateLegacyWorker(worker, sample) {
   }
   if (
     role === "chief" &&
-    (action === "release" || current.done.includes("release"))
+    (task === "release" || current.done.includes("release"))
   )
     worker.arms[0].rotation.x = -2.4;
   worker.tool.visible = !!event;
@@ -94,12 +94,12 @@ function animateLegacyWorker(worker, sample) {
       !current.done.includes("fit") && (!event || p < 0.54);
   if (role === "wheel-off")
     worker.carried.visible =
-      current.done.includes("remove") || (action === "remove" && p > 0.5);
-  if (event && (action === "remove" || action === "fit")) {
+      current.done.includes("remove") || (task === "remove" && p > 0.5);
+  if (event && (task === "remove" || task === "fit")) {
     const [wx, wz] = CORNERS[station];
     // During the handoff, the wheel crosses the gap between hub and hands.
     const transfer =
-      action === "remove"
+      task === "remove"
         ? smooth((p - 0.5) / 0.22)
         : 1 - smooth((p - 0.32) / 0.22);
     worker.root.updateWorldMatrix(true, false);
@@ -120,16 +120,16 @@ function animateWorker(worker, sample) {
   const { id, role, station } = worker.member;
   const current = sample.state.crew[id];
   if (!current.position) return animateLegacyWorker(worker, sample);
-  const event = sample.actions[id];
-  const action = event?.data.action;
-  const motion = event ? actionMotion(event, sample.time) : null;
+  const event = sample.tasks[id];
+  const task = event?.data.task;
+  const motion = event ? taskMotion(event, sample.time) : null;
   const [x, z] = motion?.position ?? current.position;
   worker.root.position.set(x, 0, z);
-  const target = workerTarget(worker, action, x, z);
+  const target = workerTarget(worker, task, x, z);
   worker.root.rotation.y =
     motion?.heading ?? Math.atan2(target[0] - x, target[1] - z);
   const walking = motion?.walking;
-  const working = motion?.kind === "work" && action !== "collect";
+  const working = motion?.kind === "work" && task !== "collect";
   const engaged = working || (!current.clear && !event);
   const pace = sample.metadata.motion[id].pace;
   const rhythm = sample.time * 10 * pace + worker.index * 1.7;
@@ -140,8 +140,8 @@ function animateWorker(worker, sample) {
   const bend = engaged ? (role === "steadier" ? 0.3 : 0.38) : 0;
   const carrying =
     current.equipment?.includes("tire") ||
-    (action === "remove" && motion.kind === "work" && motion.work > 0.35) ||
-    (action === "fit" &&
+    (task === "remove" && motion.kind === "work" && motion.work > 0.35) ||
+    (task === "fit" &&
       motion.work < 0.5 &&
       motion.kind !== "pickup" &&
       motion.kind !== "wait");
@@ -168,7 +168,7 @@ function animateWorker(worker, sample) {
   }
   if (
     role === "chief" &&
-    ((action === "release" && motion.work > 0) ||
+    ((task === "release" && motion.work > 0) ||
       current.done.includes("release"))
   ) {
     worker.arms[0].rotation.x = -2.6;
@@ -178,14 +178,14 @@ function animateWorker(worker, sample) {
   worker.carried.visible = !!carrying;
   worker.carried.position.set(0, 0.58, 0.56);
   worker.carried.rotation.y = -worker.root.rotation.y;
-  if (motion?.kind === "work" && ["remove", "fit"].includes(action)) {
+  if (motion?.kind === "work" && ["remove", "fit"].includes(task)) {
     const [wx, wz] = CORNERS[station];
     const p = motion.work;
     const transfer =
-      action === "remove"
+      task === "remove"
         ? smooth((p - 0.35) / 0.5)
         : 1 - smooth((p - 0.15) / 0.5);
-    worker.carried.visible = action === "remove" ? p > 0.35 : p < 0.65;
+    worker.carried.visible = task === "remove" ? p > 0.35 : p < 0.65;
     worker.root.updateWorldMatrix(true, false);
     const local = worker.root.worldToLocal(
       worker.root.position.clone().set(wx, 0.75, wz),
@@ -214,15 +214,15 @@ function animateVehicle(world, sample) {
 }
 
 function animateWheels(world, sample) {
-  const { state, time, actions } = sample;
+  const { state, time, tasks } = sample;
   for (const [corner, wheels] of Object.entries(world.car.wheels)) {
     if (state.items) {
       wheels.old.visible = wheels.fresh.visible = false;
       continue;
     }
     const status = state.wheels[corner];
-    const removing = actions[`wheel-off-${corner}`];
-    const fitting = actions[`wheel-on-${corner}`];
+    const removing = tasks[`wheel-off-${corner}`];
+    const fitting = tasks[`wheel-on-${corner}`];
     wheels.old.visible =
       ["old-secured", "loose"].includes(status) &&
       !(removing && workProgress(removing, time) > 0.35);
@@ -235,25 +235,31 @@ function animateWheels(world, sample) {
 }
 
 function animateFlaps(world, sample) {
-  const { state, time, actions } = sample;
+  const { state, time, tasks } = sample;
   for (const [side, flap] of Object.entries(world.car.flaps)) {
-    const active = actions[`wing-${side}`];
+    const active = tasks[workerAt(sample, "wing", side)];
     const angle =
-      active?.data.action === "adjust"
-        ? smooth(workProgress(active, time)) * 12
+      active?.data.task === "adjust"
+        ? smooth(workProgress(active, time)) * (active.data.value ?? 12)
         : state.wings[side];
     flap.rotation.z = (angle * Math.PI) / 180;
   }
 }
 
 function animateJacks(world, sample) {
-  const { state, time, actions } = sample;
+  const { state, time, tasks } = sample;
   for (const [end, jack] of Object.entries(world.jacks)) {
-    const worker = world.workers[`jack-${end}`];
-    const event = actions[`jack-${end}`];
+    const worker = world.workers[workerAt(sample, "jack", end)];
+    const event = tasks[workerAt(sample, "jack", end)];
     const isUp = state.jacks[end] === "up";
     const sign = end === "front" ? 1 : -1;
-    if (sample.state.crew[`jack-${end}`].position) {
+    if (sample.metadata.version >= 5) {
+      jack.arm.rotation.z = sign * jackHeight(sample, end) * 0.4;
+      continue;
+    }
+    if (sample.metadata.version >= 4) {
+      jack.root.position.set(sign * 3.5, 0, 0);
+    } else if (sample.state.crew[workerAt(sample, "jack", end)].position) {
       const operating =
         isUp ||
         (event &&

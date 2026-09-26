@@ -22,7 +22,7 @@ test("resting tools contact the cupboard top and fit within its edges", () => {
     animateEquipment(world, {
       state: { items },
       metadata: { version: 3, layout },
-      actions: {},
+      tasks: {},
     });
     const bounds = new THREE.Box3().setFromObject(world.items[id]);
     assert.ok(Math.abs(bounds.min.y - 0.73) < 1e-7);
@@ -47,7 +47,7 @@ test("fresh and returned tires share two platforms and rest on their tops", () =
     animateEquipment(world, {
       state: { items },
       metadata: { version: 3, layout },
-      actions: {},
+      tasks: {},
     });
     const bounds = new THREE.Box3().setFromObject(world.items.wheel);
     assert.ok(Math.abs(bounds.min.y - 0.18) < 1e-7);
@@ -55,5 +55,29 @@ test("fresh and returned tires share two platforms and rest on their tops", () =
     assert.ok(
       bounds.min.z >= slot[2] - 0.345 && bounds.max.z <= slot[2] + 0.345,
     );
+  }
+});
+
+test("recorded jack geometry keeps the rolling handle ahead of the operator", async () => {
+  const { ownerPose } = await import("../src/equipment.js");
+  const handle = [-0.72, 0.78, 0],
+    grip_forward = 0.33;
+  const root = new THREE.Group();
+  const world = { workers: { operator: { root } } };
+  const sample = {
+    metadata: { version: 6, layout: { jack: { handle, grip_forward } } },
+  };
+  for (const heading of [-Math.PI, -Math.PI / 2, 0, Math.PI / 2, Math.PI]) {
+    root.rotation.y = heading;
+    const pose = ownerPose(world, sample, "crew:operator", "jack");
+    const grip = new THREE.Vector3(...handle)
+      .applyAxisAngle(new THREE.Vector3(0, 1, 0), pose.heading)
+      .add(pose.position);
+    assert.ok(
+      Math.abs(
+        grip.x * Math.sin(heading) + grip.z * Math.cos(heading) - grip_forward,
+      ) < 1e-8,
+    );
+    assert.equal(pose.position.y, 0);
   }
 });

@@ -81,7 +81,7 @@ try {
       "GIF exceeds 2,000,000 bytes; existing output was preserved.",
     );
   const removal = frames.find(
-    (frame) => frame.name === "action_phase" && frame.data.kind === "pull",
+    (frame) => frame.name === "crew_task_phase" && frame.data.kind === "pull",
   );
   const moments = {
     service: removal?.t ?? duration / 3,

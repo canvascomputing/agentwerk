@@ -2669,13 +2669,21 @@ These declarations belong to the consuming example, not the agentwerk library AP
 
 | Declaration | Purpose |
 | --- | --- |
-| `PROMPTS`, `MECHANICAL_EVENTS`, `LIFECYCLE_EVENTS`, `FAILURE_EVENTS` | Role prompts and browser event selection |
-| `action_tool(pit, member)` / `perform(action)` | Bind a validated mechanical tool to one crew identity |
-| `build_crew(pit)` | Compose nineteen host-completed agents and one-shot action Conditions on the simulation Werk |
-| `publish_ready_actions()` | Publish mechanically eligible actions; Conditions own one-shot task creation |
-| `advance_crew(host, event)` | Complete validated tool calls through Werk, publish readiness, and hold failures |
-| `run_stop(feed, seed=None)` | Run apron preparation alongside arrival, then stopped-car service and authorized departure |
-| `observe(_, event)` | Attach derived snapshots to browser events and cue arrival from recorded movement |
+| `PROMPTS, LIFECYCLE_EVENTS` | Prompt directory and browser lifecycle selection |
+| `REPORT, VERDICT, STEPS` | Worker and Chief result schemas and role-specific task outcomes |
+| `finish_destination(pit, actor, step)` | Choose holding, local clearance, work, or parking for each outcome |
+| `timing(pit, actor, step)` | Supply waiting-worker context and unobstructed travel estimates |
+| `objective(pit, actor, step)` | Describe required outcomes without prescribing tool calls |
+| `report_valid(pit, actor, step, result)` | Compare finish claims with physical position, inventory, and work |
+| `crew_tools(pit, member) / invoke(fn, **kwargs)` | Bind physical tools to an agent and return recoverable observations |
+| `move(destination, pace) / operate(task, item, target, work, value)` | Expose chosen journeys and explicit equipment handling |
+| `build_crew(pit)` | Compose nineteen agents, Conditions, validation hooks, and execution limits |
+| `add_task(actor, step, body, schema, prompt)` | Offer task context and result templates through one-shot readiness Conditions |
+| `ready(actor, step) / done(role, step, target)` | Derive report-backed mechanical dependencies |
+| `schedule() / review()` | Open eligible work or the Chief’s evidence review |
+| `accept_result(host, task, result)` | Validate worker reports and independently gate the Chief’s GO |
+| `observe(host, event)` | React to custom arrival events and terminal failures |
+| `run_stop(feed, seed=None) / observe(_, event)` | Record simulation time and selected Werk events through authorized departure |
 
 ## `crates/agentwerk-py/examples/pit_stop/simulation.py`
 
@@ -2683,19 +2691,21 @@ These declarations belong to the consuming example, not the agentwerk library AP
 
 | Declaration | Purpose |
 | --- | --- |
-| `CORNERS`, `DURATIONS`, `WHEEL_PREREQUISITES`, `WHEEL_RESULTS`, `CREW` | Wheel stations, action timings, transitions and nineteen crew assignments |
-| `Crew(id, role, station, actions)` | Immutable crew identity and permitted actions |
-| `PitStop(publish, sleep, seed=None, werk=None)` | Project mechanical state from Werk events; serialize validation and event emission |
-| `equipment()` | Create uniquely owned working tools and fresh/used tires |
-| `snapshot()` / `emit(name, **data)` | Copy projected state and append mechanical facts through Werk |
-| `observe(_, event)` / `rebuild()` | Maintain or reconstruct state and active reservations from the event log |
-| `reduce_event(state, active, name, data)` | Deterministically project recorded mechanical transitions and phase timing |
-| `arrive()` / `depart()` | Drive gated vehicle movement and its lifecycle events |
-| `serviced()` / `ready(actor, action)` | Derive mechanical prerequisites from state |
-| `eligible()` | Return actions whose prerequisites are satisfied |
-| `perform(actor, action)` | Validate ownership, execute recorded phases and commit mechanical work |
-| `complete_phase(actor, action, phase)` | Emit completion, ownership, and mechanical facts for one phase |
-| `hold(message)` | Prevent further action completion or release after failure |
+| `CORNERS, ROLES, WORK, DURATIONS, WHEEL_PREREQUISITES, WHEEL_RESULTS, MILESTONES, CREW` | Physical capabilities, timings, crew identities, and main custom events |
+| `Crew(id, role)` | Role-specialized identity independent of task target |
+| `setup(seed)` | Create repeatable assignments, map destinations, inventory, arrival, and requested wing angles |
+| `PitStop(publish, seed, werk, realtime)` | Own event-derived mechanical state and a shared simulation clock |
+| `observe(_, event) / rebuild() / reduce_event(state, active, name, data)` | Project physical state and active routes from Werk’s ordered log |
+| `emit(name, **data) / milestone(name, **data)` | Publish timestamped custom events and one-shot milestones through Werk |
+| `snapshot() / observation(actor)` | Expose state and current tool observations including occupied destinations |
+| `approach() / arrive() / depart()` | Drive preparation and vehicle travel on simulation time |
+| `serviced() / clear() / near(actor, destination)` | Check requested service, physical clearance, and proximity |
+| `hold(message) / release(reviewed_tasks)` | Freeze failed stops or accept the Chief’s validated release |
+| `available(actor) / validate_work(actor, work, target, value)` | Enforce physical availability, role, equipment, and mechanical prerequisites |
+| `facing(destination) / reach(worker)` | Resolve destination orientation and reserved jack clearance |
+| `move(actor, destination, pace)` | Reserve and execute an explicit walk or run |
+| `operate(actor, task, item, target, work, value)` | Validate and reserve pickup, drop, and mechanical work |
+| `begin(actor, task, phases, **data) / execute(actor, task, phases, destination)` | Record timed phases, ownership transfers, and physical effects |
 
 ## `crates/agentwerk-py/examples/pit_stop/feed.py`
 
@@ -2703,8 +2713,8 @@ These declarations belong to the consuming example, not the agentwerk library AP
 
 | Declaration | Purpose |
 | --- | --- |
-| `Feed(record_file)` | Ordered thread-safe browser history and optional JSONL recording |
-| `push(name, data)` / `after(number)` | Record events and recover those after a reconnect cursor |
+| `Feed(record_file)` | Ordered thread-safe browser history, optional simulation clock, and JSONL recording |
+| `push(name, data)` / `after(number)` | Record shared-clock events and recover those after a reconnect cursor |
 | `read_recording(path)` | Load and validate event ordering |
 | `application(feed, recording, dist)` | Construct the local aiohttp server |
 | `config(request)` / `events(request)` / `index(request)` | Serve initial state, resumable SSE and the built viewer |
@@ -2724,11 +2734,15 @@ These declarations belong to the consuming example, not the agentwerk library AP
 
 | Declaration | Purpose |
 | --- | --- |
-| `Playback(frames, mode)` | Shared deterministic live/replay event history and clock |
-| `REPLAY_SECONDS` | Shared twelve-second duration for browser replay and GIF capture |
-| `append(frames)` | Deduplicate reconnects and reject gaps or decreasing timestamps |
-| `duration` / `speed` | Derive loop duration and uniform replay compression |
-| `tick(seconds)` / `reset()` / `sample(time)` | Advance, reset and reconstruct state and active actions |
+| `REPLAY_SECONDS` | Shared twelve-second browser and GIF loop |
+| `normalizeFrame(frame)` | Adapt old physical event names and fields without rewriting recordings |
+| `workerAt(sample, role, target)` | Resolve assigned workers from state rather than identity spelling |
+| `MILESTONES / phaseTitle(sample)` | Display the latest physical milestone, excluding task and clock events |
+| `phaseCompleted(sample)` | Reconstruct green completion states from milestone history |
+| `phaseTimers(sample)` | Derive preparation, service, clearance, and total simulation seconds |
+| `Playback(frames, mode)` | Share ordered history between live observation and replay |
+| `append(frames)` | Deduplicate events and synchronize live simulation clock state from version four onward |
+| `duration / speed / tick(seconds) / reset() / sample(time)` | Advance or reconstruct recorded state, milestones, active tasks, and paused physical time |
 
 ## `crates/agentwerk-py/examples/pit_stop/src/animation.js`
 
@@ -2736,10 +2750,10 @@ These declarations belong to the consuming example, not the agentwerk library AP
 
 | Declaration | Purpose |
 | --- | --- |
-| `clamp`, `smooth`, `lerp`, `progress` | Bounded interpolation over recorded action time |
+| `clamp`, `smooth`, `lerp`, `progress` | Bounded interpolation over recorded task time |
 | `vehiclePosition(carEvent, time, state)` | Stationary and departure positions gated by authoritative events |
-| `jackHeight(sample, end)` | Chassis lift derived from each jack action |
-| `workerTarget(worker, action, x, z)` | Give legacy and recorded crew motion the same facing target |
+| `jackHeight(sample, end)` | Chassis lift derived from each jack task |
+| `workerTarget(worker, task, x, z)` | Give legacy and recorded crew motion the same facing target |
 | `animateLegacyWorker(worker, sample)` | Preserve motion for recordings without route phases |
 | `animateWorker(worker, sample)` | Crew poses, tool work, wheel carrying and withdrawal |
 | `animateVehicle`, `animateWheels`, `animateFlaps`, `animateJacks`, `animateReleaseSign` | Apply recorded state to each scene component |
@@ -2770,8 +2784,8 @@ These declarations belong to the consuming example, not the agentwerk library AP
 | `pick(colors)` | Choose clothing colors deterministically from the recorded seed |
 | `clothingTexture(color, index)` | Local pixel fabric texture with seams and pockets |
 | `createReleaseSign(torso)` | Rectangular board gripped directly with both hands, with release-gated rim colors |
-| `createCrew(member, seed=27)` | Articulated crew, seeded racing-color clothing, carried wheels and role equipment |
-| `createJack(end)` | Movable jack and lifting arm |
+| `createCrew(member, seed=27, recordedLayout=layout)` | Articulated crew, seeded racing-color clothing, carried wheels and role equipment |
+| `createJack(end, profile)` | Movable jack, lifting arm, and recorded handle geometry |
 
 ## `crates/agentwerk-py/examples/pit_stop/src/geometry.js`
 
@@ -2796,7 +2810,7 @@ These declarations belong to the consuming example, not the agentwerk library AP
 | `paintApron`, `buildGarage`, `buildStations`, `garageDetails` | Build pit markings, garage, versioned storage, hose, extinguisher, and cupboard props |
 | `environment(scene, metadata)` | Pit box, garage and equipment stations |
 | `createScene(canvas, crew, metadata)` | Orthographic scene, lighting, models and renderer |
-| `resize()` | Fit the closer camera view to the browser aspect ratio |
+| `resize()` | Fit the viewport while keeping complete parked characters visible |
 
 ## `crates/agentwerk-py/examples/pit_stop/src/main.js`
 
@@ -2805,7 +2819,8 @@ These declarations belong to the consuming example, not the agentwerk library AP
 | Declaration | Purpose |
 | --- | --- |
 | `ui` | Phase, wheel readiness, progress and error elements |
-| `phase(state)` / `updateHud(playback, sample)` | Readable service and release status |
+| `updateHud(playback, sample)` | Custom milestone title, service diagrams, and four completion-colored timer cells |
+| `projectedBounds(object, camera)` | Project character bounds for framing verification |
 | `currentItem(sample, actor)` | Resolve the authoritative equipment held by one worker |
 | `showError(message)` | Browser-visible startup or graphics failures |
 | `inspectScene(world, playback)` | Read renderer state for capture and browser verification |
@@ -2844,14 +2859,15 @@ These declarations belong to the consuming example, not the agentwerk library AP
 
 | Declaration | Purpose |
 | --- | --- |
-| `LAYOUT` | Shared staging, work, equipment and vehicle-clearance geometry |
-| `route(start, target, lane)` / `apron_access(point)` / `distance(points)` | Curve apron paths around station footprints and measure their length |
-| `end_heading(phase)` | Preserve recorded orientation through phases and task handoffs |
-| `position(phases, seconds)` | Sample recorded movement for reservation checks |
-| `Movement(seed, crew, durations)` | Precompute independent pace, action timing and arrival variation |
-| `plan(member, action, start, now, crew=None, reservations=())` / `walk(target, kind, loaded)` | Author turns, travel, local yields, handoffs and cleanup phases |
-| `pause(kind, duration, **data)` / `face(target)` / `transfer(kind, item, source, target, effect)` | Append recorded handling, facing, and ownership changes |
-| `conflicts(phases, now, occupied=(), reservations=())` | Check travel and handling against supplied event-derived reservations and stationary workers |
+| `LAYOUT` | Shared static geometry loaded from layout.json |
+| `distance(points) / trajectory(phases, with_heading) / sample(seconds) / position(phases, seconds)` | Sample eased paths by arc length using compiled phase and distance intervals |
+| `end_heading(phase)` | Resolve the final recorded turn or path heading |
+| `footprint(point, heading, reach) / reservation(phases) / occupied(seconds)` | Sample crew and jack clearance throughout travel and turns |
+| `turn(point, start, end)` | Record a timed shortest-direction turn |
+| `Movement(layout)` | Plan physical journeys independent of agent decisions |
+| `clear_point(point, occupied, approaching, equipment) / path(start, target, occupied, approaching, reach) / clear(point, equipment) / segment(a, b)` | Find and round obstacle-safe routes across either side of the car |
+| `plan(start, target, pace, heading, now, occupied, reservations, approaching, loaded, facing, reach, end_reach)` | Combine explicit pace, carrying speed, turning, and timed yielding |
+| `conflicts(phases, now, occupied, reservations)` | Reject intersections with standing workers, active journeys, and reserved endpoints |
 
 ## `crates/agentwerk-py/examples/pit_stop/src/motion.js`
 
@@ -2862,7 +2878,7 @@ These declarations belong to the consuming example, not the agentwerk library AP
 | `clamp(value)` | Bound motion progress to one phase |
 | `arrivalPose(data, progress)` | Curved approach, tangent heading, and smooth braking onto the marks |
 | `routePosition(points, progress)` | Interpolate distance and heading along recorded waypoints |
-| `actionMotion(event, time)` | Sample movement, work progress and gait state without frame history |
+| `taskMotion(event, time)` | Sample movement, work progress and gait state without frame history |
 | `workProgress(event, time)` | Mechanical progress with legacy-recording fallback |
 
 ## `crates/agentwerk-py/examples/pit_stop/src/equipment.js`
@@ -2894,5 +2910,18 @@ These declarations belong to the consuming example, not the agentwerk library AP
 
 | Declaration | Purpose |
 | --- | --- |
-| `wheelStatus(sample, corner)` / `active(role, action)` | Derive parallel corner progress from validated work |
+| `wheelStatus(sample, corner)` / `active(role, task)` | Derive parallel corner progress from validated work |
 | `updateServiceDiagram(element, side, sample)` | Compact overhead tire status and side view with independent front/rear lift |
+
+## `crates/agentwerk-py/examples/pit_stop/sim_clock.py`
+
+### Internal
+
+| Declaration | Purpose |
+| --- | --- |
+| `SimulationClock(publish, realtime)` | Shared physical time with decision barriers and cancellable concurrent waits |
+| `start() / advance()` | Drive timed operations in a background thread |
+| `decide(actor) / idle(actor)` | Block or release simulation time while an agent can decide |
+| `set_running(running)` | Publish clock pause/resume events and the next physical deadline |
+| `wait(seconds, actor)` | Register timed work and reserve the next decision before returning |
+| `close()` | Stop the clock and wake all pending tool waits |

@@ -1,6 +1,12 @@
 import "@fontsource/silkscreen/latin-400.css";
 import "./style.css";
-import { Playback } from "./playback.js";
+import { Box3, Vector3 } from "three";
+import {
+  Playback,
+  phaseTimers,
+  phaseTitle,
+  phaseCompleted,
+} from "./playback.js";
 import { createScene } from "./scene.js";
 import { animateScene } from "./animation.js";
 import { updateServiceDiagram } from "./hud.js";
@@ -11,46 +17,24 @@ const ui = Object.fromEntries(
     "hold-reason",
     "progress",
     "error",
-    "activity",
+    "timers",
     "service-car",
     "service-side",
   ].map((id) => [id, document.getElementById(id)]),
 );
 
-function phase(state) {
-  if (state.held) return "Car held";
-  if (state.car === "approaching") return "Arriving";
-  if (state.car === "departed") return "Back to racing";
-  if (state.car === "departing") return "Departing";
-  if (state.car === "released") return "Released";
-  const wheelsSecured = Object.values(state.wheels).every(
-    (wheel) => wheel === "secured",
-  );
-  const wingsAdjusted = Object.values(state.wings).every(
-    (angle) => angle === 12,
-  );
-  if (wheelsSecured && wingsAdjusted) return "Clear & lower";
-
-  const jacksUp = Object.values(state.jacks).every((jack) => jack === "up");
-  const steadiersBraced = Object.values(state.steadiers).every(
-    (value) => value === "braced",
-  );
-  if (jacksUp && steadiersBraced) return "Changing tires";
-  return "Lift & stabilize";
-}
-
 function updateHud(playback, sample) {
   const { state, time } = sample;
   if (!state) return;
-  ui.phase.textContent = phase(state);
+  ui.phase.textContent = phaseTitle(sample);
   updateServiceDiagram(ui["service-car"], ui["service-side"], sample);
-  const collected = Object.values(state.crew).filter((worker) =>
-    worker.done.includes("collect"),
-  ).length;
-  const wings = Object.values(state.wings).filter(
-    (angle) => angle === 12,
-  ).length;
-  ui.activity.textContent = `${sample.activeAgents.length} active · kit ${collected}/${state.items ? 10 : 6} · wings ${wings}/2`;
+  const timers = phaseTimers(sample);
+  const completed = phaseCompleted(sample);
+  for (const [name, seconds] of Object.entries(timers)) {
+    const cell = ui.timers.querySelector(`[data-timer="${name}"]`);
+    cell.querySelector("output").textContent = `${seconds.toFixed(1)}s`;
+    cell.dataset.completed = String(completed[name]);
+  }
   ui["hold-reason"].hidden = !state.held;
   ui["hold-reason"].textContent = state.held ?? "";
   ui.progress.style.width = `${Math.min(100, (time / playback.duration) * 100)}%`;
@@ -65,6 +49,21 @@ function currentItem(sample, actor) {
   return sample.state.items[sample.state.crew[actor].equipment];
 }
 
+function projectedBounds(object, camera) {
+  const box = new Box3().setFromObject(object);
+  const points = [];
+  for (const x of [box.min.x, box.max.x])
+    for (const y of [box.min.y, box.max.y])
+      for (const z of [box.min.z, box.max.z])
+        points.push(new Vector3(x, y, z).project(camera));
+  return {
+    left: Math.min(...points.map((p) => p.x)),
+    right: Math.max(...points.map((p) => p.x)),
+    bottom: Math.min(...points.map((p) => p.y)),
+    top: Math.max(...points.map((p) => p.y)),
+  };
+}
+
 function inspectScene(world, playback) {
   const sample = playback.sample();
   const crew = world
@@ -73,7 +72,9 @@ function inspectScene(world, playback) {
           id,
           {
             position: [worker.root.position.x, worker.root.position.z],
+            bounds: projectedBounds(worker.root, world.camera),
             heading: worker.root.rotation.y,
+            legs: worker.legs.map((leg) => leg.rotation.x),
             boardGrip: worker.releaseSign
               ? worker.hands.map((hand, i) =>
                   hand
@@ -121,6 +122,11 @@ function inspectScene(world, playback) {
           position: object.position.toArray(),
           heading: object.rotation.y,
           visible: object.visible,
+          grip: object.userData.handle
+            ? object
+                .localToWorld(new Vector3(...object.userData.handle))
+                .toArray()
+            : null,
         },
       ]),
     ),
@@ -155,7 +161,10 @@ async function start() {
     throw new Error("The pit-stop server could not load this run.");
   const config = await response.json();
   const playback = new Playback(config.frames, config.mode);
-  if (config.mode === "live") playback.time = config.elapsed;
+  if (config.mode === "live") {
+    playback.time = config.elapsed;
+    playback.clockRunning = config.running ?? true;
+  }
   const reduced = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
   playback.paused = reduced;
   let world = null;

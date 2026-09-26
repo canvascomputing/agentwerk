@@ -1,240 +1,274 @@
-"""Each crew action earns its place in the release gate."""
+"""Physical tool decisions cannot bypass equipment or service prerequisites."""
 
 from concurrent.futures import ThreadPoolExecutor
-from threading import Barrier, local
+from copy import deepcopy
 
 import pytest
 
-from simulation import CORNERS, CREW, PitStop
+from orchestration import report_valid
+from simulation import PitStop, setup
 
 
-def stop():
-    events = []
-    pit = PitStop(lambda name, data: events.append((name, data)), sleep=lambda _: None)
-    return pit, events
+@pytest.fixture
+def pit():
+    pit = PitStop(seed=42, realtime=False)
+    pit.clock.start()
+    yield pit
+    pit.clock.close()
 
 
-def finish_available(pit, omit=None):
-    while True:
-        actions = [action for action in pit.eligible() if action != omit]
-        if not actions:
-            return
-        for actor, action in actions:
-            pit.perform(actor, action)
+def execute(pit, tool, actor, *args, **kwargs):
+    try:
+        return getattr(pit, tool)(actor, *args, **kwargs)
+    finally:
+        pit.clock.idle(actor)
 
 
-def test_arrival_blocks_service_until_car_stops():
-    pit, events = stop()
-    assert len(pit.eligible()) == 11
-    assert all(action in ("collect", "position") for _, action in pit.eligible())
-    with pytest.raises(ValueError):
-        pit.perform("jack-front", "lift")
-    pit.arrive()
-    assert [name for name, _ in events] == [
-        "pit_initialized",
-        "car_arriving",
-        "car_stopped",
-    ]
-    assert len(pit.eligible()) == 15
-
-
-def test_early_tool_collection_stays_clear_and_cannot_start_mechanical_work():
-    from movement import LAYOUT
-
-    pit, events = stop()
-    for actor, action in pit.eligible():
-        pit.perform(actor, action)
-    assert pit.snapshot()["car"] == "approaching"
-    assert not pit.eligible()
-    for name, data in events:
-        if name != "action_started":
-            continue
-        if data["actor"] == "chief":
-            assert data["action"] == "position"
-            assert all(
-                point[0] >= 5.3 for phase in data["phases"] for point in phase["points"]
-            )
-            continue
-        side = 1 if data["actor"].endswith("right") else -1
-        for phase in data["phases"]:
-            assert all(
-                side * point[1] > LAYOUT["corridor"] + 0.45 for point in phase["points"]
-            )
-    for member in CREW:
-        for action in member.actions:
-            if action != "collect":
-                with pytest.raises(ValueError):
-                    pit.perform(member.id, action)
-    pit.arrive()
-    assert len(pit.eligible()) == 4
-
-
-@pytest.mark.parametrize(
-    "omitted", [(member.id, action) for member in CREW for action in member.actions]
-)
-def test_omitting_any_required_action_prevents_departure(omitted):
-    pit, _ = stop()
-    pit.arrive()
-    finish_available(pit, omit=omitted)
-    assert pit.snapshot()["car"] == "stopped"
-    with pytest.raises(ValueError, match="chief"):
-        pit.depart()
-
-
-def test_every_role_changes_the_car_and_chief_releases_it_once():
-    pit, events = stop()
-    pit.arrive()
-    finish_available(pit)
-    assert pit.snapshot()["car"] == "released"
-    completed = [data for name, data in events if name == "action_completed"]
-    assert len(completed) == 52
-    assert {data["actor"] for data in completed} == {member.id for member in CREW}
-    for corner in CORNERS:
-        stages = [
-            data["state"]["wheels"][corner]
-            for data in completed
-            if data["actor"].endswith(corner)
-            and data["action"] in ("loosen", "remove", "fit", "tighten")
-        ]
-        assert stages == ["loose", "empty", "fitted", "secured"]
-    assert all(angle == 12 for angle in pit.snapshot()["wings"].values())
-    assert all(worker["clear"] for worker in pit.snapshot()["crew"].values())
-    pit.depart()
-    assert pit.snapshot()["car"] == "departed"
-    with pytest.raises(ValueError):
-        pit.depart()
-
-
-def test_duplicate_or_wrong_role_action_leaves_state_unchanged():
-    pit, _ = stop()
-    pit.arrive()
-    pit.perform("jack-front", "lift")
-    before = pit.snapshot()
-    for actor, action in (
-        ("jack-front", "lift"),
-        ("chief", "lift"),
-        ("missing", "lift"),
-    ):
-        with pytest.raises(ValueError):
-            pit.perform(actor, action)
-        assert pit.snapshot() == before
-
-
-def test_wheel_teams_can_loosen_concurrently():
-    pit, events = stop()
-    pit.arrive()
-    for actor, action in pit.eligible():
-        pit.perform(actor, action)
-    barrier = Barrier(4)
-    threads = local()
-
-    def sleep(_):
-        if not getattr(threads, "started", False):
-            threads.started = True
-            barrier.wait(timeout=5)
-
-    pit.sleep = sleep
-    with ThreadPoolExecutor(4) as pool:
-        list(
-            pool.map(lambda corner: pit.perform(f"gunner-{corner}", "loosen"), CORNERS)
-        )
-    names = [
-        name
-        for name, data in events
-        if data.get("action") == "loosen"
-        and name in ("action_started", "action_completed")
-    ]
-    assert names[:4] == ["action_started"] * 4
-    assert names[4:] == ["action_completed"] * 4
-
-
-def test_hold_during_an_action_prevents_its_completion():
-    pit, _ = stop()
-    pit.arrive()
-    pit.sleep = lambda _: pit.hold("Equipment failure")
-    with pytest.raises(ValueError, match="held"):
-        pit.perform("jack-front", "lift")
-    assert pit.snapshot()["jacks"]["front"] == "down"
-    assert not pit.eligible()
-
-
-def test_fitting_and_tightening_do_not_wait_for_cleanup():
-    pit, _ = stop()
-    for actor, action in pit.eligible():
-        pit.perform(actor, action)
-    pit.arrive()
-    for actor, action in pit.eligible():
-        pit.perform(actor, action)
-    corner = "front-left"
-    pit.perform(f"gunner-{corner}", "loosen")
-    pit.perform(f"wheel-off-{corner}", "remove")
-    assert pit.ready(f"wheel-on-{corner}", "fit")
-    assert pit.ready(f"wheel-off-{corner}", "stow")
-    assert (
-        pit.snapshot()["items"][f"old-{corner}"]["owner"] == f"crew:wheel-off-{corner}"
-    )
-    pit.perform(f"wheel-on-{corner}", "fit")
-    assert pit.ready(f"gunner-{corner}", "tighten")
-    assert pit.ready(f"wheel-on-{corner}", "withdraw")
-    assert pit.snapshot()["items"][f"fresh-{corner}"]["owner"] == f"hub:{corner}"
-
-
-def test_tool_use_requires_actual_item_ownership():
-    pit, _ = stop()
-    pit.arrive()
-    for actor, action in pit.eligible():
-        pit.perform(actor, action)
-    item = "tool-gunner-front-left"
+def place(pit, actor, destination):
     state = pit.snapshot()
-    state["items"][item]["owner"] = f"slot:{item}"
-    pit.emit("pit_initialized", initial=state, seed=pit.seed)
+    state["crew"][actor].update(
+        position=pit.layout["destinations"][destination], location=destination
+    )
+    pit.emit("pit_initialized", initial=state)
+
+
+def stop(pit):
+    pit.milestone("car_stopped")
+
+
+def equip(pit, actor, item):
+    slot = pit.snapshot()["items"][item]["owner"].removeprefix("slot:")
+    place(pit, actor, f"storage:{slot}")
+    execute(pit, "operate", actor, "pickup", item=item)
+    return slot
+
+
+def test_seed_controls_assignments_inventory_targets_and_arrival():
+    assert setup(42) == setup(42)
+    a, b = setup(42), setup(43)
+    assert a[1] != b[1]
+    assert a[2] != b[2]
+    assert a[3:] != b[3:]
+    assert set(a[1]) == set(b[1])
+    for role in ("gunner", "wheel-on", "wheel-off"):
+        assert (
+            len(
+                {
+                    target
+                    for actor, target in a[1].items()
+                    if actor.startswith(role + "-")
+                }
+            )
+            == 4
+        )
+
+
+def test_wrong_tool_can_be_picked_up_but_rejected_use_preserves_state(
+    pit, assert_rebuilt
+):
+    actor = "gunner-1"
+    slot = equip(pit, actor, "wing-key-5")
+    stop(pit)
+    target = pit.assignments[actor]
+    place(pit, actor, f"work:gunner:{target}")
     before = pit.snapshot()
-    with pytest.raises(ValueError):
-        pit.perform("gunner-front-left", "loosen")
+    with pytest.raises(ValueError, match="Wrong equipment"):
+        pit.operate(actor, "use", work="loosen", target=target)
+    assert pit.snapshot() == before
+    place(pit, actor, f"storage:{slot}")
+    execute(pit, "operate", actor, "drop", item="wing-key-5", target=slot)
+    equip(pit, actor, "wheel-gun-1")
+    assert pit.snapshot()["crew"][actor]["equipment"] == "wheel-gun-1"
+    assert_rebuilt(pit)
+
+
+def test_operate_requires_physical_proximity_and_never_move_the_worker(pit):
+    before = pit.snapshot()
+    with pytest.raises(ValueError, match="Move to storage"):
+        pit.operate("gunner-1", "pickup", item="wheel-gun-1")
     assert pit.snapshot() == before
 
 
-def test_chief_steps_aside_before_the_sign_can_release_the_car():
-    pit, events = stop()
-    assert pit.snapshot()["crew"]["chief"]["position"] == [9, -5.8]
-    pit.arrive()
-    finish_available(pit, omit=("chief", "release"))
-    assert pit.snapshot()["crew"]["chief"]["position"] == [5.3, 0]
-    assert pit.ready("chief", "release")
+def test_competing_pickups_transfer_an_item_to_only_one_worker(pit):
+    slot = pit.snapshot()["items"]["wheel-gun-1"]["owner"][5:]
+    for actor in ("gunner-1", "gunner-2"):
+        place(pit, actor, f"storage:{slot}")
 
-    def check_departure_is_blocked(_):
-        assert pit.snapshot()["car"] == "stopped"
-        with pytest.raises(ValueError, match="chief"):
-            pit.depart()
+    def pickup(actor):
+        try:
+            execute(pit, "operate", actor, "pickup", item="wheel-gun-1")
+            return True
+        except ValueError:
+            return False
 
-    pit.sleep = check_departure_is_blocked
-    pit.perform("chief", "release")
-    release = next(
-        data
-        for name, data in events
-        if name == "action_started" and data["action"] == "release"
+    with ThreadPoolExecutor(2) as pool:
+        results = list(pool.map(pickup, ("gunner-1", "gunner-2")))
+    assert sum(results) == 1
+    assert (
+        sum(w["equipment"] == "wheel-gun-1" for w in pit.snapshot()["crew"].values())
+        == 1
     )
-    assert release["duration"] < 3
-    travel = [phase for phase in release["phases"] if len(phase["points"]) > 1]
-    assert len(travel) == 1
-    assert travel[0]["kind"] == "withdraw"
-    assert travel[0]["points"][0] == [5.3, 0]
-    assert travel[0]["points"][-1] == [9, -5.8]
-    assert pit.snapshot()["car"] == "released"
-    assert pit.snapshot()["crew"]["chief"]["clear"]
 
 
-def test_event_history_reconstructs_active_routes_and_final_mechanical_state(
-    assert_rebuilt,
-):
-    pit, _ = stop()
+def test_storage_rejects_occupied_and_incompatible_slots(pit):
+    equip(pit, "gunner-1", "wheel-gun-1")
+    state = pit.snapshot()
+    occupied = state["items"]["wing-key-5"]["owner"][5:]
+    with pytest.raises(ValueError, match="occupied"):
+        pit.operate("gunner-1", "drop", item="wheel-gun-1", target=occupied)
+    with pytest.raises(ValueError, match="tire platforms"):
+        pit.operate("gunner-1", "drop", item="wheel-gun-1", target="tire-1")
+    assert pit.snapshot() == state
 
-    def check_projection(_):
-        assert_rebuilt(pit)
 
-    pit.sleep = check_projection
-    pit.arrive()
-    finish_available(pit)
-    pit.depart()
+def test_task_target_and_lift_prerequisites_are_enforced(pit):
+    actor = "gunner-1"
+    equip(pit, actor, "wheel-gun-1")
+    target = pit.assignments[actor]
+    place(pit, actor, f"work:gunner:{target}")
+    with pytest.raises(ValueError, match="car must be stopped"):
+        pit.operate(actor, "use", work="loosen", target=target)
+    stop(pit)
+    other = next(c for c in pit.snapshot()["wheels"] if c != target)
+    with pytest.raises(ValueError, match="outside"):
+        pit.operate(actor, "use", work="loosen", target=other)
+    before = pit.snapshot()
+    with pytest.raises(ValueError, match="Both jacks"):
+        pit.operate(actor, "use", work="loosen", target=target)
+    assert pit.snapshot() == before
+
+
+def test_finish_reports_cannot_create_mechanical_facts(pit):
+    report = {"status": "completed"}
+    before = deepcopy(pit.snapshot())
+    assert not report_valid(pit, "gunner-1", "prepare", report)
+    assert pit.snapshot() == before
+    with pytest.raises(ValueError, match="not ready"):
+        pit.release([])
+
+
+def test_jack_is_owned_engaged_lowered_and_stored_explicitly(pit, assert_rebuilt):
+    actor = "jack-1"
+    target = pit.assignments[actor]
+    item = f"jack-{target}"
+    equip(pit, actor, item)
+    stop(pit)
+    execute(pit, "move", actor, f"work:jack:{target}", "run")
+    execute(pit, "operate", actor, "use", work="lift", target=target)
+    assert pit.snapshot()["items"][item]["owner"] == f"mount:{target}"
+    before = pit.snapshot()
+    with pytest.raises(ValueError, match="withdraw"):
+        pit.move(actor, f"parking:{actor}", "walk")
+    with pytest.raises(ValueError, match="lowered jack"):
+        pit.operate(actor, "pickup", item=item)
+    with pytest.raises(ValueError, match="Complete wheel"):
+        pit.operate(actor, "use", work="lower", target=target)
+    assert pit.snapshot() == before
+    state = pit.snapshot()
+    state["wheels"] = dict.fromkeys(state["wheels"], "secured")
+    state["wings"] = state["wing_angles"].copy()
+    state["steadiers"] = dict.fromkeys(state["steadiers"], "clear")
+    pit.emit("pit_initialized", initial=state)
+    execute(pit, "operate", actor, "use", work="lower", target=target)
+    assert report_valid(pit, actor, "lower", {"status": "completed"})
+    assert not pit.clear()
+    execute(pit, "operate", actor, "pickup", item=item)
+    execute(pit, "move", actor, f"storage:{item}", "walk")
+    execute(pit, "operate", actor, "drop", item=item, target=item)
+    execute(pit, "move", actor, f"parking:{actor}", "walk")
+    assert report_valid(pit, actor, "cleanup", {"status": "completed"})
+    assert pit.snapshot()["items"][item]["owner"] == f"slot:{item}"
     assert_rebuilt(pit)
+
+
+def test_release_rejects_unstored_jack_and_chief_in_departure_corridor(pit):
+    state = pit.snapshot()
+    state["wheels"] = dict.fromkeys(state["wheels"], "secured")
+    state["wings"] = state["wing_angles"].copy()
+    state["steadiers"] = dict.fromkeys(state["steadiers"], "clear")
+    state["items"]["jack-front"]["owner"] = "mount:front"
+    pit.emit("pit_initialized", initial=state)
+    with pytest.raises(ValueError, match="not ready"):
+        pit.release([])
+    state["items"]["jack-front"]["owner"] = "slot:jack-front"
+    state["crew"]["chief"]["clear"] = False
+    pit.emit("pit_initialized", initial=state)
+    with pytest.raises(ValueError, match="not ready"):
+        pit.release([])
+    execute(pit, "move", "chief", "stage:chief:chief", "walk")
+    pit.release([])
+    assert pit.snapshot()["car"] == "released"
+
+
+def test_holding_positions_leave_first_wave_approaches_open(pit):
+    occupied = [
+        point
+        for name, point in pit.layout["destinations"].items()
+        if name.startswith("holding:")
+    ]
+    for actor, member in pit.crew.items():
+        if member.role not in ("chief", "jack", "steadier"):
+            continue
+        start = pit.layout["destinations"][f"parking:{actor}"]
+        target = pit.layout["destinations"][
+            f"work:{member.role}:{pit.assignments[actor]}"
+        ]
+        assert pit.movement.path(start, target, occupied)
+
+
+def test_cancelling_jack_pickup_releases_reservations_without_transfer():
+    from threading import Event
+
+    began = Event()
+    pit = PitStop(seed=42, realtime=False)
+    actor = "jack-1"
+    item = f"jack-{pit.assignments[actor]}"
+    place(pit, actor, f"storage:{item}")
+    pit.werk.on_event(
+        lambda _, event: (
+            began.set() if event.get_name() == "crew_task_started" else None
+        )
+    )
+    pit.clock.decide("test barrier")
+    pit.clock.start()
+    with ThreadPoolExecutor(1) as pool:
+        pickup = pool.submit(pit.operate, actor, "pickup", item=item)
+        assert began.wait(timeout=2)
+        pit.hold("Cancelled during pickup")
+        with pytest.raises(ValueError, match="stopped"):
+            pickup.result(timeout=2)
+    assert not pit.claims
     assert not pit.active
+    assert pit.snapshot()["items"][item]["owner"] == f"slot:{item}"
+
+
+def test_chief_faces_the_driver_after_arrival_and_after_stepping_aside(pit):
+    import math
+
+    for destination in ("work:chief:chief", "stage:chief:chief"):
+        execute(pit, "move", "chief", destination, "walk")
+        worker = pit.snapshot()["crew"]["chief"]
+        x, z = worker["position"]
+        assert math.sin(worker["heading"]) == pytest.approx(-x / math.hypot(x, z))
+        assert math.cos(worker["heading"]) == pytest.approx(-z / math.hypot(x, z))
+
+
+def test_parking_groups_face_the_car_and_leave_jacks_clear_of_people_and_benches(pit):
+    import math
+    from itertools import combinations
+
+    homes = [w["position"] for w in pit.snapshot()["crew"].values()]
+    assert sum(z < 0 for x, z in homes) == 10
+    assert sum(z > 0 for x, z in homes) == 9
+    assert all(math.dist(a, b) >= 0.58 for a, b in combinations(homes, 2))
+    for worker in pit.snapshot()["crew"].values():
+        x, z = worker["position"]
+        assert math.sin(worker["heading"]) == pytest.approx(-x / math.hypot(x, z))
+    for end in ("front", "rear"):
+        x, _, z = pit.layout["slots"][f"jack-{end}"]
+        assert all(
+            abs(x - cx) > 1.95 or abs(z - cz) > 0.68
+            for cx, cz in pit.layout["stations"].values()
+        )
+        grip = [x, z + 0.72]
+        assert all(math.dist(grip, home) > 0.32 for home in homes)
