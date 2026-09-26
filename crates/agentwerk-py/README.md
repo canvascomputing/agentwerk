@@ -643,10 +643,10 @@ Issue any newly needed instructions, then finish this review.
 ```python
 review_reports = Task(review_prompt, label="chief", schema=VERDICT)
 
-crew_reported = Condition("event.name = task_finished AND task.label != chief")
-crew_reported.times(None).task(review_reports)
+crew_task_finished = Condition("event.name = task_finished AND task.label != chief")
+crew_task_finished.times(None).task(review_reports)
 
-werk.add_condition(crew_reported)
+werk.add_condition(crew_task_finished)
 ```
 
 Follow the crew through `werk.on_event`. The Chief’s GO emits `pit_released`; HOLD emits `pit_held` and stops the run.
