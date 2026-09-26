@@ -84,7 +84,7 @@ Schema-bound results must be objects. agentwerk repairs quoted numbers and objec
 
 ## Templates
 
-Templates insert shared values, task results, and event data into roles and tasks. The [prompt skill](../../../../skills/prompt/SKILL.md) provides a compact role template. Set template values before adding the task:
+Templates insert shared values, task results, and event data into roles and tasks. The [prompt skill](../../../../skills/prompt/SKILL.md) explains how to write roles and tasks. Set template values before adding the task:
 
 ```python
 from agentwerk import Agent, Task
