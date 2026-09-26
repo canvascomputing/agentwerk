@@ -2,28 +2,28 @@
 
 import asyncio
 import json
+import math
 
 import pytest
 from aiohttp import web
 from aiohttp.test_utils import TestServer
 
 from feed import Feed
-from orchestration import build_crew, run_stop
+from orchestration import STEPS, TRIGGERS, assignment, build_crew, run_stop
 from simulation import CREW, MILESTONES, PitStop
 
 
 def choose(task, observation):
     actor, step, target = task["actor"], task["step"], task["target"]
     if step == "review":
-        worker = observation["self"] if observation else task["state"]["crew"]["chief"]
-        if not worker["clear"] and not task["outstanding"]:
-            return "move", {"destination": "stage:chief:chief", "pace": "walk"}
+        if "blocked" in task["reports"].values():
+            decision = "hold"
+        elif not observation["self"]["clear"]:
+            return "move", {"destination": "chief-home", "pace": "walk"}
+        else:
+            decision = "go"
         return "finish", {
-            "decision": "hold"
-            if task["outstanding"] or any(not r["valid"] for r in task["reports"])
-            else "go",
-            "reviewed_tasks": task["reviewed_tasks"],
-            "reason": "Reviewed all recorded outcomes and physical clearance",
+            "decision": decision,
         }
     worker = observation["self"]
     role = worker["role"]
@@ -61,7 +61,7 @@ def choose(task, observation):
             if role == "chief"
             else "stage"
         )
-        destination = f"{prefix}:{role}:{target}"
+        destination = "pit-board" if role == "chief" else f"{prefix}:{role}:{target}"
         return finish() if worker["location"] == destination else move(destination)
     if step == "cleanup":
         if (
@@ -126,58 +126,90 @@ def choose(task, observation):
     return finish() if worker["location"] == destination else move(destination)
 
 
-def scripted_provider(false_report=False, chief_go=False, chief_parks=False):
+def scripted_provider(false_report=False, chief_go=False, blocked=False):
     calls = []
 
     async def respond(request):
         body = await request.json()
-        assert {t["function"]["name"] for t in body["tools"]} == {
-            "move",
-            "operate",
-            "finish",
-        }
+        tool_names = {t["function"]["name"] for t in body["tools"]}
         content = next(m["content"] for m in body["messages"] if m["role"] == "user")
         if isinstance(content, list):
             content = " ".join(p.get("text", "") for p in content)
         task = json.JSONDecoder().raw_decode(content.lstrip())[0]
+        task.update(json.JSONDecoder().raw_decode(content.split("Context:\n", 1)[1])[0])
+        assert tool_names == {"move", "operate", "finish"}
         if task["step"] == "review":
-            statuses = json.JSONDecoder().raw_decode(
-                content.split("Reported statuses:\n", 1)[1]
-            )[0]
-            task["reports"] = json.JSONDecoder().raw_decode(
-                content.split("Verified reports and task IDs:\n", 1)[1]
-            )[0]
-            task["reviewed_tasks"] = json.JSONDecoder().raw_decode(
-                content.split("Task IDs to copy into reviewed_tasks:\n", 1)[1]
-            )[0]
-            assert task["reviewed_tasks"] == [r["task_id"] for r in task["reports"]]
-            assert statuses and all(s in ("completed", "blocked") for s in statuses)
-            assert task["reports"] and all(r["task_id"] for r in task["reports"])
-            calls.append(("review", task["actor"], task["reports"]))
+
+            def section(title):
+                text = content.split(title + ":\n", 1)[1].lstrip()
+                return (
+                    json.JSONDecoder().raw_decode(text)[0]
+                    if text.startswith("[")
+                    else []
+                )
+
+            reports = section("Crew reports")
+            finished = [t for t in task["tasks"] if t["status"] == "finished"]
+            task["reports"] = {t["id"]: t["result"]["status"] for t in finished}
+            assert len(reports) >= len(finished)
+            assert all(status in ("completed", "blocked") for status in reports)
+            calls.append(("review", task["actor"], task))
         observation = task.get("observation")
-        latest_result = None
+        latest_result, rejections = None, 0
         for message in body["messages"]:
             if message["role"] == "tool":
-                result = json.loads(message["content"])
-                if "observation" in result:
+                try:
+                    result = json.loads(message["content"])
+                except json.JSONDecodeError:
+                    continue
+                if isinstance(result, dict) and "observation" in result:
                     observation = result["observation"]
                     latest_result = result
+                    rejections += not result["ok"]
         if latest_result and not latest_result["ok"]:
             calls.append(("rejected", task["actor"], latest_result["message"]))
         name, args = choose(task, observation)
-        if chief_parks and task["step"] == "review":
-            worker = (
-                observation["self"] if observation else task["state"]["crew"]["chief"]
+        if latest_result and "Wrong equipment" in latest_result.get("message", ""):
+            name, args = "finish", {"status": "blocked"}
+        if (
+            latest_result
+            and not latest_result["ok"]
+            and name == "move"
+            and any(
+                word in latest_result["message"].lower()
+                for word in ("route", "occupied")
             )
-            if worker["location"] != "parking:chief":
-                name, args = "move", {"destination": "parking:chief", "pace": "walk"}
-        if false_report and task["actor"] == "gunner-1" and task["step"] == "prepare":
-            name, args = "finish", {"status": "completed"}
-        if chief_go and task["step"] == "review" and name == "finish":
-            args["decision"] = "go"
+        ):
+            alternatives = {
+                destination: point
+                for destination, point in task["destinations"].items()
+                if destination not in observation["busy_destinations"]
+                and destination
+                not in (observation["self"]["location"], args["destination"])
+            }
+            # Paused time never clears a busy route, so try each alternative in turn.
+            nearest = sorted(
+                alternatives,
+                key=lambda destination: math.dist(
+                    observation["self"]["position"], alternatives[destination]
+                ),
+            )
+            args["destination"] = nearest[rejections % len(nearest)]
+            args["pace"] = "walk"
+        if (
+            (false_report or blocked)
+            and task["actor"] == "gunner-1"
+            and task["step"] == "prepare"
+        ):
+            name, args = "finish", {"status": "blocked" if blocked else "completed"}
+        if chief_go and task["step"] == "review":
+            name, args = (
+                "finish",
+                {"decision": "go"},
+            )
         calls.append((name, task["actor"], args))
         if len(calls) > 1200:
-            raise RuntimeError(str(calls[-15:]))
+            raise RuntimeError(str([(name, actor) for name, actor, _ in calls[-15:]]))
         chunk = {
             "model": "test",
             "choices": [
@@ -217,22 +249,11 @@ def configure_provider(monkeypatch, server):
     monkeypatch.setenv("MODEL", "test")
 
 
-@pytest.mark.parametrize(
-    "false_report, seed, chief_go",
-    [
-        (False, 42, True),
-        (False, 43, True),
-        (False, 7, True),
-        (True, 42, True),
-        (True, 42, False),
-    ],
-)
-async def test_reports_require_physical_work_and_chief_checks_all_results(
-    monkeypatch, false_report, seed, chief_go, assert_rebuilt
+@pytest.mark.parametrize("seed", [42, 43, 7])
+async def test_conditions_and_chief_coordinate_the_full_stop(
+    monkeypatch, seed, assert_rebuilt
 ):
-    app, calls = scripted_provider(
-        false_report, chief_go=chief_go, chief_parks=not false_report
-    )
+    app, calls = scripted_provider()
     async with TestServer(app) as server:
         configure_provider(monkeypatch, server)
         pit = PitStop(seed=seed, realtime=False)
@@ -244,91 +265,92 @@ async def test_reports_require_physical_work_and_chief_checks_all_results(
         try:
             werk.start()
             await asyncio.wait_for(werk.finish(), timeout=90)
-            await asyncio.gather(arrival, return_exceptions=True)
-            state = pit.snapshot()
-            assert state["car"] in (
-                ("approaching", "stopped") if false_report else ("released",)
-            ), (state["held"], calls[-20:])
-            assert bool(state["held"]) == false_report
+            await arrival
+            assert pit.snapshot()["car"] == "released", calls[-20:]
+            assert pit.clear()
             assert_rebuilt(pit)
-            reviewed = next(c[2] for c in calls if c[0] == "review")
-            assert any(not report["valid"] for report in reviewed) == false_report
-            assert {r["task_id"] for r in reviewed} <= {
-                event.get_data()["task_id"]
-                for event in events
-                if event.get_name() == "pit_report"
-            }
-            if not false_report:
-                assert state["crew"]["chief"]["location"] == "parking:chief"
-                names = [e.get_name() for e in events]
-                for name in MILESTONES - {"pit_held", "car_departing", "car_departed"}:
-                    assert names.count(name) == 1, name
-                assert (
-                    names.index("car_approaching")
-                    < names.index("car_stopped")
-                    < names.index("pit_service_completed")
-                    < names.index("pit_released")
+            names = [e.get_name() for e in events]
+            for name in MILESTONES - {"pit_held", "car_departing", "car_departed"}:
+                assert names.count(name) == 1, name
+            assert (
+                names.index("car_approaching")
+                < names.index("car_stopped")
+                < names.index("pit_service_completed")
+                < names.index("pit_released")
+            )
+            assert not any(
+                name.startswith("pit_ready:") or name == "pit_report" for name in names
+            )
+            assert (
+                len(werk.find_tasks("task.label = chief AND task.input ~ review")) == 1
+            )
+            tasks = werk.find_tasks("task.label != chief")
+            assert len(tasks) == sum(
+                len(STEPS[m.role]) for m in CREW if m.role != "chief"
+            )
+            assert len(
+                {(assignment(t)["actor"], assignment(t)["step"]) for t in tasks}
+            ) == len(tasks)
+            # GO cancels the run, so a parked crew member may not have reported yet.
+            assert all(
+                t.get_result() == {"status": "completed"}
+                or (t.get_result() is None and assignment(t)["step"] == "cleanup")
+                for t in tasks
+            )
+            for t in tasks:
+                step, target = assignment(t)["step"], assignment(t)["target"]
+                if step not in ("remove", "fit", "tighten"):
+                    continue
+                handoff_at = next(
+                    i
+                    for i, e in enumerate(events)
+                    if e.get_name() == TRIGGERS[step]
+                    and e.get_data()["corner"] == target
                 )
-                approach = next(
-                    e.get_data() for e in events if e.get_name() == "car_approaching"
+                started_at = next(
+                    i
+                    for i, e in enumerate(events)
+                    if e.get_name() == "task_started" and e.get_task_id() == t.get_id()
                 )
-                stopped = next(
-                    e.get_data() for e in events if e.get_name() == "car_stopped"
-                )
-                assert stopped["seconds"] - approach["seconds"] == pytest.approx(
-                    approach["arrives_in_seconds"]
-                )
-                assert sum(c[0] == "move" for c in calls) > len(CREW)
-                assert sum(c[0] == "operate" for c in calls) > len(CREW)
-                verified = set()
-                last_clear = None
-                lowerings = []
-                for event in events:
-                    name, data = event.get_name(), event.get_data()
-                    if name == "pit_report" and data["valid"]:
-                        verified.add((data["actor"], data["step"]))
-                        if data["step"] == "clear":
-                            last_clear = data["seconds"]
-                    if name != "crew_task_started":
-                        continue
-                    if data["task"] == "lower":
-                        lowerings.append(data["seconds"])
-                        assert all(
-                            (m.id, "clear") in verified
-                            for m in CREW
-                            if m.role == "steadier"
-                        )
-                    destination = data.get("destination", "")
-                    if not destination.startswith("work:"):
-                        continue
-                    role = pit.crew[data["actor"]].role
-                    target = pit.assignments[data["actor"]]
-                    if role in ("gunner", "wing", "wheel-off", "wheel-on"):
-                        assert all(
-                            (m.id, "lift" if m.role == "jack" else "brace") in verified
-                            for m in CREW
-                            if m.role in ("jack", "steadier")
-                        )
-                    predecessor = {
-                        "wheel-off": ("gunner", "loosen"),
-                        "wheel-on": ("wheel-off", "remove"),
-                    }.get(role)
-                    if predecessor:
-                        assert any(
-                            m.role == predecessor[0]
-                            and pit.assignments[m.id] == target
-                            and (m.id, predecessor[1]) in verified
-                            for m in CREW
-                        )
-                assert lowerings and min(lowerings) - last_clear < 0.01
-                assert any(c[0] == "move" and c[2]["pace"] == "walk" for c in calls)
-                assert any(c[0] == "move" and c[2]["pace"] == "run" for c in calls)
-            else:
-                assert sum(e.get_name() == "pit_held" for e in events) == 1
-                assert not any(e.get_name() == "pit_released" for e in events)
+                assert handoff_at < started_at
+            assert any(c[0] == "move" and c[2]["pace"] == "walk" for c in calls)
+            assert any(c[0] == "move" and c[2]["pace"] == "run" for c in calls)
         finally:
             pit.clock.close()
             werk.cancel()
+            await asyncio.gather(arrival, return_exceptions=True)
+
+
+@pytest.mark.parametrize(
+    "false_report,blocked,chief_go",
+    [(True, False, False), (False, True, False), (True, False, True)],
+)
+async def test_chief_owns_hold_and_go_without_a_host_verdict(
+    monkeypatch, false_report, blocked, chief_go
+):
+    app, _ = scripted_provider(
+        false_report=false_report, blocked=blocked, chief_go=chief_go
+    )
+    async with TestServer(app) as server:
+        configure_provider(monkeypatch, server)
+        pit = PitStop(seed=42, realtime=False)
+        werk = build_crew(pit)
+        pit.approach()
+        arrival = asyncio.create_task(asyncio.to_thread(pit.arrive))
+        try:
+            werk.start()
+            await asyncio.wait_for(werk.finish(), timeout=30)
+            state = pit.snapshot()
+            assert bool(state["held"]) == (not chief_go)
+            if chief_go:
+                assert state["car"] == "released"
+                assert not pit.clear()
+            else:
+                assert not werk.find_events("event.name = pit_released")
+        finally:
+            pit.clock.close()
+            werk.cancel()
+            await asyncio.gather(arrival, return_exceptions=True)
 
 
 async def test_run_stop_records_simulation_time_and_model(monkeypatch):
@@ -347,6 +369,11 @@ async def test_run_stop_records_simulation_time_and_model(monkeypatch):
         )
         assert all(a["t"] <= b["t"] for a, b in zip(feed.frames, feed.frames[1:]))
         assert any(f["name"] == "car_departed" for f in feed.frames)
+        lifted = next(f for f in feed.frames if f["name"] == "car_lifted")
+        assert "state" in lifted["data"]
+        titles = [f["data"]["title"] for f in feed.frames if f["name"] == "pit_title"]
+        assert titles[0].startswith("Car arrives in")
+        assert "Car lifted" in titles and titles[-1] == "Car departed"
 
 
 async def test_cancelled_run_holds_the_car_and_releases_the_clock(monkeypatch):
@@ -367,3 +394,55 @@ async def test_cancelled_run_holds_the_car_and_releases_the_clock(monkeypatch):
         assert feed.clock.closed
         assert sum(f["name"] == "pit_held" for f in feed.frames) == 1
         assert not any(f["name"] == "pit_released" for f in feed.frames)
+
+
+def test_conditions_and_results_start_the_right_tasks_once(monkeypatch):
+    from agentwerk import Event, Task
+
+    monkeypatch.setenv("LITELLM_PROVIDER", "openai")
+    monkeypatch.setenv("OPENAI_API_KEY", "test-key")
+    monkeypatch.setenv("MODEL", "test")
+    pit = PitStop(seed=42, realtime=False)
+    werk = build_crew(pit)
+    before = pit.snapshot()
+    corner = pit.assignments["gunner-1"]
+    remover = next(
+        m.id for m in CREW if m.role == "wheel-off" and pit.assignments[m.id] == corner
+    )
+    removal = f"task.label = {remover} AND task.input ~ remove"
+    cleanup = "task.label = gunner-1 AND task.input ~ cleanup"
+
+    def loosened(actor):
+        data = {"actor": actor, "corner": pit.assignments[actor]}
+        werk.emit_event(Event("wheel_loosened").data(data))
+
+    def report(actor, step, status):
+        body = json.dumps({"actor": actor, "step": step}, separators=(",", ":"))
+        task_id = werk.add_task(Task(body, label=actor))
+        werk.set_task_finished(task_id, {"status": status})
+        return task_id
+
+    try:
+        loosened("gunner-2")
+        assert not werk.find_tasks(removal)
+        loosened("gunner-1")
+        loosened("gunner-1")
+        assert len(werk.find_tasks(removal)) == 1
+        finished = report("gunner-1", "loosen", "completed")
+        werk.emit_event(Event("task_created").task_id(finished))
+        assert "gunner-1" not in pit.clock.deciding
+        assert not werk.find_tasks(cleanup)
+        werk.emit_event(Event("car_lowered"))
+        werk.emit_event(Event("car_lowered"))
+        assert len(werk.find_tasks(cleanup)) == 1
+        assert len(werk.find_tasks("task.input ~ cleanup")) == len(CREW) - 1
+        assert not werk.find_tasks("task.label = chief AND task.input ~ review")
+        report("gunner-2", "loosen", "blocked")
+        assert len(werk.find_tasks("task.label = chief AND task.input ~ review")) == 1
+        assert pit.snapshot() == before
+        werk.emit_event(Event("car_stopped"))
+        werk.emit_event(Event("car_stopped"))
+        assert len(werk.find_tasks("task.label = jack-1 AND task.input ~ lift")) == 1
+    finally:
+        pit.clock.close()
+        werk.cancel()

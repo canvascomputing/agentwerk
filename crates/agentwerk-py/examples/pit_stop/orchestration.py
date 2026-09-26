@@ -2,10 +2,20 @@
 
 import asyncio
 import json
+from collections import defaultdict
 from pathlib import Path
 from uuid import uuid4
 
-from agentwerk import Agent, Condition, Event, Model, Policy, Schema, Task, Werk, tool
+from agentwerk import (
+    Agent,
+    Condition,
+    Model,
+    Policy,
+    Schema,
+    Task,
+    Werk,
+    tool,
+)
 
 from simulation import CREW, PitStop
 
@@ -35,13 +45,8 @@ VERDICT = Schema(
         "type": "object",
         "properties": {
             "decision": {"type": "string", "enum": ["go", "hold"]},
-            "reviewed_tasks": {
-                "type": "array",
-                "items": {"type": "string"},
-            },
-            "reason": {"type": "string", "maxLength": 240},
         },
-        "required": ["decision", "reviewed_tasks", "reason"],
+        "required": ["decision"],
         "additionalProperties": False,
     }
 )
@@ -54,13 +59,28 @@ STEPS = {
     "steadier": ("prepare", "brace", "clear", "cleanup"),
     "chief": ("prepare",),
 }
+TRIGGERS = {
+    "prepare": "car_approaching",
+    "lift": "car_stopped",
+    "brace": "car_stopped",
+    "loosen": "car_lifted",
+    "adjust": "car_lifted",
+    "remove": "wheel_loosened",
+    "fit": "wheel_removed",
+    "tighten": "wheel_fitted",
+    "clear": "pit_service_completed",
+    "lower": "car_unbraced",
+    "cleanup": "car_lowered",
+}
 
 
 def finish_destination(pit, actor, step):
     role, target = pit.crew[actor].role, pit.assignments[actor]
+    if role == "chief":
+        return "pit-board"
     if step == "cleanup":
         return f"parking:{actor}"
-    if step in ("lift", "brace", "lower") or role == "chief":
+    if step in ("lift", "brace", "lower"):
         return f"work:{role}:{target}"
     prefix = (
         "holding"
@@ -115,19 +135,30 @@ def timing(pit, actor, step):
         if step in ("prepare", "cleanup")
         else f"work:{role}:{target}"
     )
-    # Estimates omit temporary traffic; the move tool reserves the actual route.
-    phases = pit.movement.plan(
-        worker["position"],
-        pit.layout["destinations"][destination],
-        "walk",
-        worker["heading"],
-        0,
-        [],
-        [],
-        pit.snapshot()["car"] == "approaching",
-        bool(worker["equipment"]),
-    )
-    seconds = sum(p["duration"] for p in phases)
+    travel = {"destination": destination}
+    try:
+        # Estimates omit temporary traffic; the move tool reserves the actual route.
+        phases = pit.movement.plan(
+            worker["position"],
+            pit.layout["destinations"][destination],
+            "walk",
+            worker["heading"],
+            0,
+            [],
+            [],
+            pit.snapshot()["car"] == "approaching",
+            bool(worker["equipment"]),
+        )
+        travel.update(
+            walk_seconds=round(sum(p["duration"] for p in phases), 1),
+            run_seconds=round(
+                sum(p["duration"] / (2 if p["kind"] == "move" else 1) for p in phases),
+                1,
+            ),
+        )
+    except ValueError:
+        # Work positions lie in the arriving car's path until it stops.
+        pass
     waiting = {
         "loosen": "wheel-off worker",
         "remove": "wheel-on worker",
@@ -143,44 +174,11 @@ def timing(pit, actor, step):
         "waiting_on_you": waiting.get(
             step, "nobody yet" if step == "prepare" else "Chief's release review"
         ),
-        "prerequisite": "Earlier required work is complete."
+        "prerequisite": "Check the current observation before working."
         if step != "prepare"
         else "The car is approaching.",
-        "travel": {
-            "destination": destination,
-            "walk_seconds": round(seconds, 1),
-            "run_seconds": round(
-                sum(p["duration"] / (2 if p["kind"] == "move" else 1) for p in phases),
-                1,
-            ),
-        },
+        "travel": travel,
     }
-
-
-def report_valid(pit, actor, step, result):
-    state = pit.snapshot()
-    worker = state["crew"][actor]
-    if (
-        result.get("status") != "completed"
-        or worker["task"]
-        or not pit.near(actor, finish_destination(pit, actor, step))
-    ):
-        return False
-    role, target = worker["role"], worker["station"]
-    if step == "prepare":
-        item = state["items"].get(worker["equipment"], {})
-        if role in ("gunner", "wing"):
-            return item.get("kind") == role
-        if role == "wheel-on":
-            return item.get("kind") == "fresh" and item.get("corner") == target
-        if role == "jack":
-            return item.get("kind") == "jack" and item.get("end") == target
-        return worker["equipment"] is None
-    if step in ("cleanup", "clear", "lower") and worker["equipment"]:
-        return False
-    if step == "cleanup" and role == "jack":
-        return state["items"][f"jack-{target}"]["owner"] == f"slot:jack-{target}"
-    return step == "cleanup" or step in worker["done"]
 
 
 def crew_tools(pit, member):
@@ -192,13 +190,13 @@ def crew_tools(pit, member):
                 )
                 if current is None:
                     raise ValueError("There is no assigned task")
-                assignment = json.JSONDecoder().raw_decode(current.get_task())[0]
+                assigned = assignment(current)
                 if (
                     kwargs.get("task") == "use"
-                    and kwargs.get("work") != assignment["step"]
+                    and kwargs.get("work") != assigned["step"]
                 ):
                     raise ValueError(
-                        f"Work {kwargs.get('work')!r} is not assigned. {assignment['objective']}"
+                        f"Work {kwargs.get('work')!r} is not assigned. {objective(pit, member.id, assigned['step'])}"
                     )
             return {"ok": True, "observation": fn(member.id, **kwargs)}
         except ValueError as error:
@@ -225,7 +223,7 @@ def crew_tools(pit, member):
             "additionalProperties": False,
         },
     )
-    def move(destination: str, pace: str):
+    def move_tool(destination: str, pace: str):
         return invoke(pit.move, destination=destination, pace=pace)
 
     @tool(
@@ -258,7 +256,7 @@ def crew_tools(pit, member):
             "additionalProperties": False,
         },
     )
-    def operate(
+    def operate_tool(
         task: str,
         item: str | None = None,
         target: str | None = None,
@@ -269,7 +267,11 @@ def crew_tools(pit, member):
             pit.operate, task=task, item=item, target=target, work=work, value=value
         )
 
-    return move, operate
+    return move_tool, operate_tool
+
+
+def assignment(task):
+    return json.JSONDecoder().raw_decode(task.get_task())[0]
 
 
 def build_crew(pit):
@@ -282,212 +284,119 @@ def build_crew(pit):
             max_request_retries=2,
         )
     )
-    offered, completed, reports = set(), set(), []
-    reviewing = False
     for member in CREW:
         role = (PROMPTS / f"{member.role}.md").read_text()
         agent = Agent.from_env().label(member.id).role(role)
-        for crew_tool in crew_tools(pit, member):
-            agent = agent.tool(crew_tool)
+        agent.tools(crew_tools(pit, member))
         werk.add_agent(agent)
 
-    def add_task(actor, step, body, schema, prompt=""):
-        offered.add((actor, step))
-        pit.clock.decide(actor)
-        payload = {
-            "actor": actor,
-            "step": step,
-            "target": pit.assignments[actor],
-            **body,
-        }
-        task = Task(
-            json.dumps(payload, separators=(",", ":")) + "\n\n" + prompt,
-            label=actor,
-            schema=schema,
-        )
-        name = f"pit_ready:{actor}:{step}"
-        ready = Condition(f"event.name = {name}").task(task)
-        werk.add_condition(ready)
-        werk.emit_event(Event(name))
+    def task_for(actor, step):
+        payload = {"actor": actor, "step": step, "target": pit.assignments[actor]}
+        task = json.dumps(payload, separators=(",", ":"))
+        task += "\n\nContext:\n{{ context_" + actor + " }}"
+        if step == "review":
+            task += "\n\n" + (PROMPTS / "review.task.md").read_text()
+        return Task(task, label=actor, schema=VERDICT if step == "review" else REPORT)
 
-    def review():
-        nonlocal reviewing
-        if reviewing:
+    crew_labels = ", ".join(m.id for m in CREW if m.role != "chief")
+    werk.set_template("crew_labels", crew_labels)
+    triggers = defaultdict(list)
+    for member in CREW:
+        actor, role = member.id, member.role
+        for step in STEPS[role]:
+            if step in ("remove", "fit", "tighten"):
+                corner = pit.assignments[actor]
+                query = f"event.name = {TRIGGERS[step]} AND event.data ~ {corner}"
+            else:
+                query = f"event.name = {TRIGGERS[step]}"
+            triggers[query].append(task_for(actor, step))
+    triggers["event.name = pit_crew_clear"].append(task_for("chief", "review"))
+    for query, tasks in triggers.items():
+        werk.add_condition(Condition(query).tasks(tasks))
+
+    def apply_result(host, task, result):
+        actor = task.get_label()
+        if actor == "chief" and "decision" in result:
+            if result["decision"] == "go":
+                pit.release()
+                host.cancel()
+            else:
+                pit.hold("The Chief held the car")
             return
-        # The chief's preparation must finish before it can claim the verdict task.
-        if (
-            ("chief", "prepare") not in completed
-            and ("chief", "prepare") in offered
-            and not any(r["actor"] == "chief" for r in reports)
-        ):
-            return
-        reviewing = True
-        missing = [
-            f"{m.id}:{s}"
-            for m in CREW
-            for s in STEPS[m.role]
-            if (m.id, s) not in completed
-        ]
-        add_task(
-            "chief",
-            "review",
-            {
-                "objective": "Decide whether the car can leave. Move to parking:chief or stage:chief:chief before choosing go. Choose hold if any release check fails.",
-                "outstanding": missing,
-                "state": pit.snapshot(),
-                "destinations": pit.layout["destinations"],
-            },
-            VERDICT,
-            """Review the crew's work and decide GO or HOLD.
+        if result.get("status") == "blocked":
+            host.add_task(task_for("chief", "review"))
 
-Reported statuses:
-{{ find_results(task.status = finished)[*].status }}
-
-Verified reports and task IDs:
-{{ find_events(event.name = pit_report)[*].data }}
-
-Task IDs to copy into reviewed_tasks:
-{{ find_events(event.name = pit_report)[*].data.task_id }}
-
-Choose HOLD for blocked reports, invalid reports, or unfinished work.
-Check physical clearance before GO.""",
-        )
-
-    def ready(actor, step):
-        role, target = pit.crew[actor].role, pit.assignments[actor]
-        steps = STEPS[role]
-        index = steps.index(step)
-        if index and (actor, steps[index - 1]) not in completed:
-            return False
-        if step == "prepare":
-            return True
-        if pit.snapshot()["car"] != "stopped":
-            return False
-
-        def done(role, step, target=None):
-            members = [
-                m
-                for m in CREW
-                if m.role == role
-                and (target is None or pit.assignments[m.id] == target)
-            ]
-            return all((m.id, step) in completed for m in members)
-
-        if step in ("loosen", "remove", "fit", "tighten"):
-            if not done("jack", "lift") or not done("steadier", "brace"):
-                return False
-            predecessor = {
-                "remove": ("gunner", "loosen"),
-                "fit": ("wheel-off", "remove"),
-                "tighten": ("wheel-on", "fit"),
-            }.get(step)
-            return not predecessor or done(*predecessor, target)
-        if step == "adjust":
-            return done("jack", "lift") and done("steadier", "brace")
-        if step == "clear":
-            return done("gunner", "tighten") and done("wing", "adjust")
-        if step == "lower":
-            return done("steadier", "clear")
-        return True
-
-    def schedule():
-        if pit.snapshot()["held"] or reviewing:
-            return
-        if any(not r["valid"] for r in reports):
-            review()
-            return
-        for member in CREW:
-            for step in STEPS[member.role]:
-                key = member.id, step
-                if key not in offered and ready(*key):
-                    add_task(
-                        member.id,
-                        step,
-                        {
-                            "objective": objective(pit, *key),
-                            "timing": timing(pit, *key),
-                            "observation": pit.observation(member.id),
-                            "destinations": {
-                                name: point
-                                for name, point in pit.layout["destinations"].items()
-                                if name.startswith("storage:")
-                                or name
-                                in (
-                                    f"parking:{member.id}",
-                                    f"work:{member.role}:{pit.assignments[member.id]}",
-                                    f"stage:{member.role}:{pit.assignments[member.id]}",
-                                    f"holding:{member.role}:{pit.assignments[member.id]}",
-                                )
-                            },
-                            "reports": [
-                                r
-                                for r in reports
-                                if r["target"] == pit.assignments[member.id]
-                            ],
-                        },
-                        REPORT,
-                    )
-        if all((m.id, "prepare") in completed for m in CREW):
-            pit.milestone("pit_prepared")
-        if all((m.id, s) in completed for m in CREW for s in STEPS[m.role]):
-            review()
-
-    def accept_result(host, task, result):
-        with pit.lock:
-            actor, step = (
-                task.get_label(),
-                json.JSONDecoder().raw_decode(task.get_task())[0]["step"],
-            )
-            pit.clock.idle(actor)
-            if step == "review":
-                ids = {r["task_id"] for r in reports}
-                all_done = all(
-                    (m.id, s) in completed for m in CREW for s in STEPS[m.role]
-                )
-                if (
-                    result["decision"] == "go"
-                    and set(result["reviewed_tasks"]) == ids
-                    and all_done
-                    and pit.clear()
-                ):
-                    pit.release(result["reviewed_tasks"])
-                else:
-                    pit.hold(
-                        result["reason"]
-                        if result["decision"] == "hold"
-                        else "Chief GO rejected: incomplete reports or physical clearance"
-                    )
-                return
-            valid = report_valid(pit, actor, step, result)
-            report = {
-                "task_id": task.get_id(),
-                "actor": actor,
-                "step": step,
-                "target": pit.assignments[actor],
-                "valid": valid,
-                "result": result,
-                "observed": {
-                    key: pit.snapshot()["crew"][actor][key]
-                    for key in ("location", "equipment", "done")
-                },
-            }
-            reports.append(report)
-            pit.emit("pit_report", **report)
-            if valid:
-                completed.add((actor, step))
-            schedule()
+    werk.on_result(apply_result)
 
     def observe(host, event):
-        name = event.get_name()
+        name, actor = event.get_name(), event.get_label()
         with pit.lock:
-            if name in ("car_approaching", "car_stopped"):
-                schedule()
+            if name == "task_created":
+                # Creation can arrive after completion; queued reviews must not
+                # interrupt an operation already waiting on the clock.
+                created = host.get_task(event.get_task_id())
+                if created.get_status() == "todo" and actor not in pit.clock.waiters:
+                    pit.clock.decide(actor)
+            elif name == "task_started":
+                pit.clock.decide(actor)
+                current = assignment(host.get_task(event.get_task_id()))
+                step = current["step"]
+                context = {
+                    "observation": pit.observation(actor),
+                    "destinations": {
+                        key: point
+                        for key, point in pit.layout["destinations"].items()
+                        if key.startswith("storage:")
+                        or key == f"parking:{actor}"
+                        or (
+                            actor == "chief"
+                            and key in ("pit-board", "chief-home", "chief-clear")
+                        )
+                        or key.endswith(
+                            f":{pit.crew[actor].role}:{pit.assignments[actor]}"
+                        )
+                    },
+                }
+                if step == "review":
+                    context["observation"] = {
+                        "self": context["observation"]["self"],
+                        "seconds": pit.clock.seconds,
+                    }
+                    context["destinations"] = {
+                        key: pit.layout["destinations"][key]
+                        for key in ("pit-board", "chief-home", "chief-clear")
+                    }
+                    context.update(
+                        state=pit.snapshot(),
+                        assignments=pit.assignments,
+                        tasks=[
+                            {
+                                "id": t.get_id(),
+                                **assignment(t),
+                                "status": t.get_status(),
+                                "result": t.get_result(),
+                            }
+                            for t in host.find_tasks(
+                                f"task.label IN ({crew_labels}) ORDER BY task.id"
+                            )
+                        ],
+                    )
+                else:
+                    context.update(
+                        objective=objective(pit, actor, step),
+                        timing=timing(pit, actor, step),
+                    )
+                host.set_template(
+                    f"context_{actor}", json.dumps(context, separators=(",", ":"))
+                )
+            elif name == "task_finished":
+                pit.clock.idle(actor)
             elif name in ("task_failed", "policy_violated"):
-                pit.hold(f"{event.get_label() or 'Run'}: {name.replace('_', ' ')}")
+                pit.clock.idle(actor)
+                pit.hold(f"{actor or 'Run'}: {name.replace('_', ' ')}")
             elif name == "pit_held":
                 host.cancel()
 
-    werk.on_result(accept_result)
     werk.on_event(observe)
     return werk
 
@@ -499,15 +408,53 @@ async def run_stop(feed, seed=None):
     werk = build_crew(pit)
     feed.clock = pit.clock
 
+    def show_title(_, event):
+        data = event.get_data()
+        match event.get_name():
+            case "car_approaching":
+                title = f"Car arrives in {data['arrives_in_seconds']:.0f} s"
+            case "car_arriving":
+                title = "Car arriving"
+            case "car_stopped":
+                title = "Car stopped"
+            case "pit_service_started":
+                title = "Service started"
+            case "car_lifted":
+                title = "Car lifted"
+            case "pit_service_completed":
+                title = "Service complete"
+            case "car_unbraced":
+                title = "Lowering the car"
+            case "car_lowered":
+                title = "Car lowered"
+            case "pit_crew_clear":
+                title = "Crew clear"
+            case "pit_released":
+                title = "GO"
+            case "pit_held":
+                title = f"HOLD: {data['message']}"
+            case "car_departing":
+                title = "Car leaving"
+            case "car_departed":
+                title = "Car departed"
+            case _:
+                return
+        feed.set_title(title)
+
     def observe(_, event):
         name = event.get_name()
-        if name.startswith(("pit_", "car_", "crew_")) and not name.startswith(
-            "pit_ready:"
-        ):
-            feed.push(name, {**event.get_data(), "state": pit.snapshot()})
+        if name.startswith(("pit_", "car_", "crew_")):
+            data = event.get_data()
+            data = data if isinstance(data, dict) else {"data": data}
+            feed.push(name, {**data, "state": pit.snapshot()})
         elif name in LIFECYCLE_EVENTS:
-            feed.push(name, {"actor": event.get_label(), "task": event.get_task_id()})
+            data = {"actor": event.get_label(), "task": event.get_task_id()}
+            if name == "task_finished":
+                task = werk.get_task(event.get_task_id())
+                data.update(step=assignment(task)["step"], result=task.get_result())
+            feed.push(name, data)
 
+    werk.on_event(show_title)
     werk.on_event(observe)
     feed.push(
         "run_metadata",

@@ -35,6 +35,9 @@ class Feed:
                 with self.record.open("a") as record:
                     record.write(json.dumps(frame, separators=(",", ":")) + "\n")
 
+    def set_title(self, title):
+        self.push("pit_title", {"title": title})
+
     def after(self, number):
         with self.lock:
             return list(self.frames[number + 1 :])
