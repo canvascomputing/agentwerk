@@ -125,16 +125,28 @@ test("live clock follows server pauses while replay omits decision latency", () 
   assert.ok(replay.time > 0);
 });
 
-test("the heading follows custom events, ignoring clock and task events", async () => {
-  const { phaseTitle, MILESTONES } = await import("../src/playback.js");
+test("the heading follows recorded titles, ignoring clock and task events", async () => {
+  const { phaseTitle } = await import("../src/playback.js");
   const replay = new Playback(frames);
   let last;
   for (const frame of frames) {
-    if (MILESTONES.has(frame.name)) last = frame.name;
+    if (frame.name === "pit_title") last = frame.data.title;
     const next = frames[frame.n + 1];
     if (last && next?.t !== frame.t)
       assert.equal(phaseTitle(replay.sample(frame.t)), last);
   }
+});
+
+test("the heading shows the title werk.on_event set", async () => {
+  const { phaseTitle } = await import("../src/playback.js");
+  const replay = new Playback([
+    { n: 0, t: 0, name: "run_metadata", data: { version: 6 } },
+    { n: 1, t: 1, name: "car_lifted", data: {} },
+    { n: 2, t: 1, name: "pit_title", data: { title: "car_lifted" } },
+    { n: 3, t: 2, name: "car_unbraced", data: {} },
+  ]);
+  assert.equal(phaseTitle(replay.sample(1)), "car_lifted");
+  assert.equal(phaseTitle(replay.sample(2)), "car_lifted");
 });
 
 test("completion colors survive seeking and HOLD only preserves finished phases", async () => {

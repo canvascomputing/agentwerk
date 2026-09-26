@@ -30,7 +30,10 @@ export const MILESTONES = new Set([
   "car_stopped",
   "pit_prepared",
   "pit_service_started",
+  "car_lifted",
   "pit_service_completed",
+  "car_unbraced",
+  "car_lowered",
   "pit_crew_clear",
   "pit_released",
   "pit_held",
@@ -39,7 +42,8 @@ export const MILESTONES = new Set([
 ]);
 
 export function phaseTitle(sample) {
-  return sample.milestone ?? "car_approaching";
+  // Recordings before titles were set through werk.on_event show the milestone.
+  return sample.title ?? sample.milestone ?? "car_approaching";
 }
 
 export function phaseCompleted(sample) {
@@ -126,7 +130,8 @@ export class Playback {
     let carEvent = null,
       heldAt = null,
       latest = null,
-      milestone = null;
+      milestone = null,
+      title = null;
     const tasks = {},
       completed = {},
       milestones = {};
@@ -146,6 +151,7 @@ export class Playback {
         carEvent = frame;
       if (name === "pit_held") heldAt = frame.t;
       if (MILESTONES.has(name)) milestone = name;
+      if (name === "pit_title") title = data.title;
       if (name.startsWith("pit_") || name.startsWith("car_"))
         milestones[name] ??= frame.t;
       if (name === "crew_task_started") tasks[data.actor] = frame;
@@ -174,6 +180,7 @@ export class Playback {
       completed,
       milestones,
       milestone,
+      title,
       latest,
       time: heldAt ?? time,
     };

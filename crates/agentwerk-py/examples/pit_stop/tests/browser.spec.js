@@ -287,7 +287,7 @@ test("title and green timer cells follow milestones on desktop, mobile, and HOLD
     await expect(page.locator('#timers [data-completed="true"]')).toHaveCount(
       4,
     );
-    await expect(page.locator("#phase")).toHaveText("car_departed");
+    await expect(page.locator("#phase")).toHaveText("Car departed");
   }
   const frozen = await page.evaluate(() => {
     const pit = window.pitStop;
@@ -302,6 +302,12 @@ test("title and green timer cells follow milestones on desktop, mobile, and HOLD
         name: "pit_held",
         data: { state: { ...service.data.state, held: "Test HOLD" } },
       },
+      {
+        n: service.n + 2,
+        t: service.t,
+        name: "pit_title",
+        data: { title: "HOLD: Test HOLD" },
+      },
     ]);
     pit.seek(service.t);
     const content = document.querySelector("#timers").textContent;
@@ -309,7 +315,7 @@ test("title and green timer cells follow milestones on desktop, mobile, and HOLD
     return content;
   });
   await expect(page.locator("#timers")).toHaveText(frozen);
-  await expect(page.locator("#phase")).toHaveText("pit_held");
+  await expect(page.locator("#phase")).toHaveText("HOLD: Test HOLD");
   await expect(page.locator('#timers [data-completed="true"]')).toHaveCount(2);
   await expect(page.locator('[data-timer="service"] output')).toHaveCSS(
     "color",
@@ -471,7 +477,7 @@ test("waiting workers face their hubs and the Chief faces the driver", async ({
     const frames = pit.playback.frames;
     const reports = frames.filter(
       (f) =>
-        f.name === "pit_report" &&
+        f.name === "task_finished" &&
         f.data.step === "prepare" &&
         (f.data.actor === "chief" || f.data.actor.startsWith("wheel-on-")),
     );
@@ -481,7 +487,9 @@ test("waiting workers face their hubs and the Chief faces the driver", async ({
       const target =
         frame.data.actor === "chief"
           ? [0, 0]
-          : frames[0].data.layout.corners[frame.data.target];
+          : frames[0].data.layout.corners[
+              frames[0].data.crew.find((m) => m.id === frame.data.actor).station
+            ];
       const delta = target.map((v, i) => v - worker.position[i]);
       return (
         (Math.sin(worker.heading) * delta[0] +

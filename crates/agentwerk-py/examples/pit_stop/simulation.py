@@ -56,13 +56,20 @@ WHEEL_RESULTS = {
     "fit": "fitted",
     "tighten": "secured",
 }
+WHEEL_EVENTS = {
+    "loosen": "wheel_loosened",
+    "remove": "wheel_removed",
+    "fit": "wheel_fitted",
+}
 MILESTONES = {
     "car_approaching",
     "car_arriving",
     "car_stopped",
-    "pit_prepared",
     "pit_service_started",
+    "car_lifted",
     "pit_service_completed",
+    "car_unbraced",
+    "car_lowered",
     "pit_crew_clear",
     "pit_released",
     "pit_held",
@@ -99,10 +106,6 @@ def setup(seed):
             if count == 2
             else ["chief"]
         )
-        homes = [
-            LAYOUT["crew"][f"{role}-{target}" if role != "chief" else "chief"]["home"]
-            for target in targets
-        ]
         rng.shuffle(targets)
         for i, target in enumerate(targets):
             actor = "chief" if role == "chief" else f"{role}-{i + 1}"
@@ -110,21 +113,26 @@ def setup(seed):
             old = deepcopy(
                 LAYOUT["crew"][f"{role}-{target}" if role != "chief" else "chief"]
             )
-            old["home"] = homes[i]
             if role == "chief":
                 old["work"] = [6.2, 0]
             if role == "jack":
                 old["work"] = [4.65 if target == "front" else -4.65, 0]
             layout["crew"][actor] = old
             destinations = layout["destinations"]
-            destinations[f"parking:{actor}"] = homes[i]
-            destinations[f"work:{role}:{target}"] = old["work"]
+            destinations["chief-home" if role == "chief" else f"parking:{actor}"] = old[
+                "home"
+            ]
+            destinations[
+                "pit-board" if role == "chief" else f"work:{role}:{target}"
+            ] = old["work"]
             stage = [old["work"][0], math.copysign(2.8, old["work"][1] or -1)]
             if role == "jack":
                 stage = [5.2, -2.5] if target == "front" else [-3.8, -2.95]
             if role == "chief":
                 stage = [5.3, -2.8]
-            destinations[f"stage:{role}:{target}"] = stage
+            destinations[
+                "chief-clear" if role == "chief" else f"stage:{role}:{target}"
+            ] = stage
             if role in ("gunner", "wheel-off", "wheel-on", "wing"):
                 distance = {
                     "gunner": 3.4,
@@ -174,7 +182,9 @@ def setup(seed):
         )
         for actor, home in zip(members, positions, strict=True):
             layout["crew"][actor]["home"] = home
-            layout["destinations"][f"parking:{actor}"] = home
+            layout["destinations"][
+                "chief-home" if actor == "chief" else f"parking:{actor}"
+            ] = home
     layout["jack"] = {"handle": [-0.72, 0.78, 0], "grip_forward": 0.33, "reach": 1.15}
     slots = {}
     for i, point in enumerate(
@@ -269,7 +279,9 @@ class PitStop:
                         "role": m.role,
                         "station": self.assignments[m.id],
                         "position": self.layout["crew"][m.id]["home"],
-                        "location": f"parking:{m.id}",
+                        "location": "chief-home"
+                        if m.id == "chief"
+                        else f"parking:{m.id}",
                         "heading": math.atan2(
                             -self.layout["crew"][m.id]["home"][0],
                             -self.layout["crew"][m.id]["home"][1],
@@ -288,6 +300,7 @@ class PitStop:
         name, data = event.get_name(), event.get_data()
         if not name.startswith(("pit_", "car_", "crew_")):
             return
+        data = data if isinstance(data, dict) else {"data": data}
         with self.lock:
             reduce_event(self._state, self.active, name, data)
             self.publish(name, {**data, "state": self.snapshot()})
@@ -361,10 +374,8 @@ class PitStop:
 
     def depart(self):
         with self.lock:
-            if self._state["car"] != "released" or not self.clear():
-                raise ValueError(
-                    "Departure requires the Chief's validated GO and a clear pit box"
-                )
+            if self._state["car"] != "released":
+                raise ValueError("Departure requires the Chief's GO")
             self.milestone("car_departing", duration=4)
         self.clock.wait(4, "@car")
         self.milestone("car_departed")
@@ -376,15 +387,15 @@ class PitStop:
             and self._state["wings"] == self._state["wing_angles"]
         )
 
-    def clear(self):
+    def clear(self, crew=CREW):
         state = self._state
+        workers = [state["crew"][m.id] for m in crew]
         return (
             self.serviced()
             and all(v == "down" for v in state["jacks"].values())
             and all(v == "clear" for v in state["steadiers"].values())
             and all(
-                w["clear"] and not w["task"] and not w["equipment"]
-                for w in state["crew"].values()
+                w["clear"] and not w["task"] and not w["equipment"] for w in workers
             )
             and all(
                 item["owner"] == f"slot:{item['storage']}"
@@ -397,15 +408,12 @@ class PitStop:
             )
         )
 
+    def release(self):
+        self.milestone("pit_released")
+
     def hold(self, message):
         self.milestone("pit_held", message=message)
         self.clock.close()
-
-    def release(self, reviewed_tasks):
-        with self.lock:
-            if self._state["held"] or not self.clear():
-                raise ValueError("The pit box is not ready for release")
-            self.milestone("pit_released", reviewed_tasks=reviewed_tasks)
 
     def available(self, actor):
         if self._state["held"] or self._state["car"] not in ("approaching", "stopped"):
@@ -451,26 +459,36 @@ class PitStop:
                 and item["owner"].startswith("slot:")
                 and destination != f"storage:{item['storage']}"
             )
-            phases = self.movement.plan(
-                worker["position"],
-                target,
-                pace,
-                worker["heading"],
-                self.clock.seconds,
-                occupied,
-                list(self.active.values()),
-                self._state["car"] == "approaching",
-                bool(worker["equipment"]),
-                facing=self.facing(destination),
-                end_reach=self.layout["jack"]["reach"]
-                if destination.startswith("storage:jack-") and worker["role"] == "jack"
-                else None,
-                reach=self.layout["jack"]["reach"]
-                if self._state["items"].get(worker["equipment"], {}).get("kind")
-                == "jack"
-                else 0,
-            )
-            self.begin(actor, "move", phases, destination=destination, pace=pace)
+            try:
+                phases = self.movement.plan(
+                    worker["position"],
+                    target,
+                    pace,
+                    worker["heading"],
+                    self.clock.seconds,
+                    occupied,
+                    list(self.active.values()),
+                    self._state["car"] == "approaching",
+                    bool(worker["equipment"]),
+                    facing=self.facing(destination),
+                    end_reach=self.layout["jack"]["reach"]
+                    if destination.startswith("storage:jack-")
+                    and worker["role"] == "jack"
+                    else None,
+                    reach=self.layout["jack"]["reach"]
+                    if self._state["items"].get(worker["equipment"], {}).get("kind")
+                    == "jack"
+                    else 0,
+                )
+            except ValueError as error:
+                rejected = error
+            else:
+                rejected = None
+                self.begin(actor, "move", phases, destination=destination, pace=pace)
+        if rejected:
+            # Time stays paused while an agent decides, so a busy route would never clear.
+            self.clock.wait(0.5, actor)
+            raise rejected
         self.execute(actor, "move", phases, destination=destination)
         return self.observation(actor)
 
@@ -484,7 +502,9 @@ class PitStop:
     def facing(self, destination):
         point = self.layout["destinations"][destination]
         parts = destination.split(":")
-        if parts[0] == "storage":
+        if destination in ("pit-board", "chief-home", "chief-clear"):
+            target = [0, 0]
+        elif parts[0] == "storage":
             target = self.layout["slots"][parts[1]][::2]
         elif parts[0] != "parking" and parts[1] == "jack":
             target = [3.5 if parts[2] == "front" else -3.5, 0]
@@ -748,6 +768,17 @@ class PitStop:
                     self.emit("crew_transfer", actor=actor, **transfer)
                 if effect := phase.get("effect"):
                     self.emit("crew_work", actor=actor, **effect)
+                    if handoff := WHEEL_EVENTS.get(effect["work"]):
+                        self.emit(handoff, actor=actor, corner=effect["target"])
+                    jacks, steadiers = self._state["jacks"], self._state["steadiers"]
+                    if all(v == "up" for v in jacks.values()) and all(
+                        v == "braced" for v in steadiers.values()
+                    ):
+                        self.milestone("car_lifted")
+                    if all(v == "clear" for v in steadiers.values()):
+                        self.milestone("car_unbraced")
+                    if self.serviced() and all(v == "down" for v in jacks.values()):
+                        self.milestone("car_lowered")
         with self.lock:
             self.emit(
                 "crew_task_completed", actor=actor, task=task, destination=destination
@@ -756,7 +787,8 @@ class PitStop:
                 self.milestone(
                     "pit_service_completed", wing_angles=self._state["wing_angles"]
                 )
-            if self.clear():
+            # The Chief holds the board in front of the car until GO.
+            if self.clear([m for m in CREW if m.role != "chief"]):
                 self.milestone("pit_crew_clear")
 
 

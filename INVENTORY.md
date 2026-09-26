@@ -2671,19 +2671,17 @@ These declarations belong to the consuming example, not the agentwerk library AP
 | --- | --- |
 | `PROMPTS, LIFECYCLE_EVENTS` | Prompt directory and browser lifecycle selection |
 | `REPORT, VERDICT, STEPS` | Worker and Chief result schemas and role-specific task outcomes |
+| `TRIGGERS` | Event that starts each task step; wheel events also match the corner |
 | `finish_destination(pit, actor, step)` | Choose holding, local clearance, work, or parking for each outcome |
 | `timing(pit, actor, step)` | Supply waiting-worker context and unobstructed travel estimates |
 | `objective(pit, actor, step)` | Describe required outcomes without prescribing tool calls |
-| `report_valid(pit, actor, step, result)` | Compare finish claims with physical position, inventory, and work |
 | `crew_tools(pit, member) / invoke(fn, **kwargs)` | Bind physical tools to an agent and return recoverable observations |
-| `move(destination, pace) / operate(task, item, target, work, value)` | Expose chosen journeys and explicit equipment handling |
-| `build_crew(pit)` | Compose nineteen agents, Conditions, validation hooks, and execution limits |
-| `add_task(actor, step, body, schema, prompt)` | Offer task context and result templates through one-shot readiness Conditions |
-| `ready(actor, step) / done(role, step, target)` | Derive report-backed mechanical dependencies |
-| `schedule() / review()` | Open eligible work or the Chief’s evidence review |
-| `accept_result(host, task, result)` | Validate worker reports and independently gate the Chief’s GO |
-| `observe(host, event)` | React to custom arrival events and terminal failures |
-| `run_stop(feed, seed=None) / observe(_, event)` | Record simulation time and selected Werk events through authorized departure |
+| `move_tool(destination, pace) / operate_tool(task, item, target, work, value)` | Expose `move` and `operate` for chosen journeys and equipment handling |
+| `assignment(task)` | Read actor, step, and target from a task's static header |
+| `build_crew(pit) / task_for(actor, step)` | Register nineteen agents and one Condition per trigger holding every task it starts, including the Chief's single review |
+| `apply_result(host, task, result)` | From `werk.on_result`, apply the Chief's GO or HOLD and start the review after a blocked report |
+| `observe(host, event)` | Refresh task context, synchronize clock barriers, and hold on failures |
+| `run_stop(feed, seed=None) / show_title(_, event) / observe(_, event)` | Set the viewer title from each milestone and record simulation time, crew results, and custom events through departure |
 
 ## `crates/agentwerk-py/examples/pit_stop/simulation.py`
 
@@ -2691,7 +2689,7 @@ These declarations belong to the consuming example, not the agentwerk library AP
 
 | Declaration | Purpose |
 | --- | --- |
-| `CORNERS, ROLES, WORK, DURATIONS, WHEEL_PREREQUISITES, WHEEL_RESULTS, MILESTONES, CREW` | Physical capabilities, timings, crew identities, and main custom events |
+| `CORNERS, ROLES, WORK, DURATIONS, WHEEL_PREREQUISITES, WHEEL_RESULTS, WHEEL_EVENTS, MILESTONES, CREW` | Physical capabilities, timings, per-corner handoff events, crew identities, and main custom events |
 | `Crew(id, role)` | Role-specialized identity independent of task target |
 | `setup(seed)` | Create repeatable assignments, map destinations, inventory, arrival, and requested wing angles |
 | `PitStop(publish, seed, werk, realtime)` | Own event-derived mechanical state and a shared simulation clock |
@@ -2699,11 +2697,11 @@ These declarations belong to the consuming example, not the agentwerk library AP
 | `emit(name, **data) / milestone(name, **data)` | Publish timestamped custom events and one-shot milestones through Werk |
 | `snapshot() / observation(actor)` | Expose state and current tool observations including occupied destinations |
 | `approach() / arrive() / depart()` | Drive preparation and vehicle travel on simulation time |
-| `serviced() / clear() / near(actor, destination)` | Check requested service, physical clearance, and proximity |
-| `hold(message) / release(reviewed_tasks)` | Freeze failed stops or accept the Chief’s validated release |
+| `serviced() / clear(crew=CREW) / near(actor, destination)` | Check requested service, physical clearance of the given crew, and proximity |
+| `release() / hold(message)` | Announce the Chief's GO, or freeze physical work on HOLD or runtime failure |
 | `available(actor) / validate_work(actor, work, target, value)` | Enforce physical availability, role, equipment, and mechanical prerequisites |
 | `facing(destination) / reach(worker)` | Resolve destination orientation and reserved jack clearance |
-| `move(actor, destination, pace)` | Reserve and execute an explicit walk or run |
+| `move(actor, destination, pace)` | Reserve and execute an explicit walk or run; a rejected move costs half a second |
 | `operate(actor, task, item, target, work, value)` | Validate and reserve pickup, drop, and mechanical work |
 | `begin(actor, task, phases, **data) / execute(actor, task, phases, destination)` | Record timed phases, ownership transfers, and physical effects |
 
@@ -2714,7 +2712,7 @@ These declarations belong to the consuming example, not the agentwerk library AP
 | Declaration | Purpose |
 | --- | --- |
 | `Feed(record_file)` | Ordered thread-safe browser history, optional simulation clock, and JSONL recording |
-| `push(name, data)` / `after(number)` | Record shared-clock events and recover those after a reconnect cursor |
+| `push(name, data)` / `set_title(title)` / `after(number)` | Record shared-clock events, the viewer title, and recover those after a reconnect cursor |
 | `read_recording(path)` | Load and validate event ordering |
 | `application(feed, recording, dist)` | Construct the local aiohttp server |
 | `config(request)` / `events(request)` / `index(request)` | Serve initial state, resumable SSE and the built viewer |
@@ -2737,7 +2735,7 @@ These declarations belong to the consuming example, not the agentwerk library AP
 | `REPLAY_SECONDS` | Shared twelve-second browser and GIF loop |
 | `normalizeFrame(frame)` | Adapt old physical event names and fields without rewriting recordings |
 | `workerAt(sample, role, target)` | Resolve assigned workers from state rather than identity spelling |
-| `MILESTONES / phaseTitle(sample)` | Display the latest physical milestone, excluding task and clock events |
+| `MILESTONES / phaseTitle(sample)` | Display the latest title set through `werk.on_event`, or the latest milestone in older recordings |
 | `phaseCompleted(sample)` | Reconstruct green completion states from milestone history |
 | `phaseTimers(sample)` | Derive preparation, service, clearance, and total simulation seconds |
 | `Playback(frames, mode)` | Share ordered history between live observation and replay |

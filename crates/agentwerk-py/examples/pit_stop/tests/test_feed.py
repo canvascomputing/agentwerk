@@ -50,22 +50,34 @@ def test_showcase_is_a_complete_real_agent_run():
     frames = read_recording(Path(__file__).parents[1] / "recordings/showcase.jsonl")
     assert frames[0]["data"]["source"] == "agentwerk"
     assert frames[0]["data"]["version"] == 6
-    assert any(f["name"] == "car_departed" for f in frames)
-    reports = [f for f in frames if f["name"] == "pit_report"]
-    assert len(reports) > 19
-    assert all(f["data"]["valid"] for f in reports)
-    release = next(f for f in frames if f["name"] == "pit_released")
-    assert set(release["data"]["reviewed_tasks"]) == {
-        f["data"]["task_id"] for f in reports
-    }
-    approaching = next(f for f in frames if f["name"] == "car_approaching")
-    stopped = next(f for f in frames if f["name"] == "car_stopped")
-    assert approaching["t"] < stopped["t"]
+    names = [f["name"] for f in frames]
+    order = [
+        "car_approaching",
+        "car_stopped",
+        "car_lifted",
+        "pit_service_completed",
+        "car_unbraced",
+        "car_lowered",
+        "pit_crew_clear",
+        "pit_released",
+        "car_departed",
+    ]
+    positions = [names.index(name) for name in order]
+    assert positions == sorted(positions)
+    reviews = [
+        f["data"]["result"]
+        for f in frames
+        if f["name"] == "task_finished" and f["data"].get("step") == "review"
+    ]
+    assert reviews == [{"decision": "go"}]
+    titles = [f["data"]["title"] for f in frames if f["name"] == "pit_title"]
+    assert titles[-1] == "Car departed"
+    stopped = frames[names.index("car_stopped")]
     assert any(
         f["name"] == "crew_task_started" and f["t"] < stopped["t"] for f in frames
     )
-    assert sum(f["name"] == "car_departing" for f in frames) == 1
-    assert sum(f["name"] == "request_finished" for f in frames) > len(reports)
+    assert names.count("car_departing") == 1
+    assert names.count("request_finished") > names.count("task_finished")
 
 
 def test_recorded_transfers_conserve_every_tool_and_tire():
@@ -93,22 +105,6 @@ def test_recorded_transfers_conserve_every_tool_and_tire():
             assert owner == f"slot:{name}"
         else:
             assert owner.startswith("slot:bench-")
-
-
-def test_recording_shows_cleanup_overlapping_other_corners_service():
-    frames = read_recording(Path(__file__).parents[1] / "recordings/showcase.jsonl")
-    active = {}
-    overlap = False
-    for frame in frames:
-        data = frame["data"]
-        if frame["name"] == "crew_task_started":
-            active[data["actor"]] = data["task"]
-        if frame["name"] == "crew_task_completed":
-            active.pop(data["actor"], None)
-        overlap |= "drop" in active.values() and any(
-            task in ("fit", "tighten", "remove") for task in active.values()
-        )
-    assert overlap
 
 
 def test_recorded_paths_keep_moving_and_stationary_workers_apart():

@@ -1,11 +1,9 @@
 """Physical tool decisions cannot bypass equipment or service prerequisites."""
 
 from concurrent.futures import ThreadPoolExecutor
-from copy import deepcopy
 
 import pytest
 
-from orchestration import report_valid
 from simulation import PitStop, setup
 
 
@@ -138,15 +136,6 @@ def test_task_target_and_lift_prerequisites_are_enforced(pit):
     assert pit.snapshot() == before
 
 
-def test_finish_reports_cannot_create_mechanical_facts(pit):
-    report = {"status": "completed"}
-    before = deepcopy(pit.snapshot())
-    assert not report_valid(pit, "gunner-1", "prepare", report)
-    assert pit.snapshot() == before
-    with pytest.raises(ValueError, match="not ready"):
-        pit.release([])
-
-
 def test_jack_is_owned_engaged_lowered_and_stored_explicitly(pit, assert_rebuilt):
     actor = "jack-1"
     target = pit.assignments[actor]
@@ -170,34 +159,31 @@ def test_jack_is_owned_engaged_lowered_and_stored_explicitly(pit, assert_rebuilt
     state["steadiers"] = dict.fromkeys(state["steadiers"], "clear")
     pit.emit("pit_initialized", initial=state)
     execute(pit, "operate", actor, "use", work="lower", target=target)
-    assert report_valid(pit, actor, "lower", {"status": "completed"})
+    assert pit.snapshot()["jacks"][target] == "down"
     assert not pit.clear()
     execute(pit, "operate", actor, "pickup", item=item)
     execute(pit, "move", actor, f"storage:{item}", "walk")
     execute(pit, "operate", actor, "drop", item=item, target=item)
     execute(pit, "move", actor, f"parking:{actor}", "walk")
-    assert report_valid(pit, actor, "cleanup", {"status": "completed"})
+    assert pit.snapshot()["crew"][actor]["location"] == f"parking:{actor}"
     assert pit.snapshot()["items"][item]["owner"] == f"slot:{item}"
     assert_rebuilt(pit)
 
 
-def test_release_rejects_unstored_jack_and_chief_in_departure_corridor(pit):
+def test_clearance_observation_includes_jacks_and_chief(pit):
     state = pit.snapshot()
     state["wheels"] = dict.fromkeys(state["wheels"], "secured")
     state["wings"] = state["wing_angles"].copy()
     state["steadiers"] = dict.fromkeys(state["steadiers"], "clear")
     state["items"]["jack-front"]["owner"] = "mount:front"
     pit.emit("pit_initialized", initial=state)
-    with pytest.raises(ValueError, match="not ready"):
-        pit.release([])
+    assert not pit.clear()
     state["items"]["jack-front"]["owner"] = "slot:jack-front"
     state["crew"]["chief"]["clear"] = False
     pit.emit("pit_initialized", initial=state)
-    with pytest.raises(ValueError, match="not ready"):
-        pit.release([])
-    execute(pit, "move", "chief", "stage:chief:chief", "walk")
-    pit.release([])
-    assert pit.snapshot()["car"] == "released"
+    assert not pit.clear()
+    execute(pit, "move", "chief", "chief-clear", "walk")
+    assert pit.clear()
 
 
 def test_holding_positions_leave_first_wave_approaches_open(pit):
@@ -209,9 +195,13 @@ def test_holding_positions_leave_first_wave_approaches_open(pit):
     for actor, member in pit.crew.items():
         if member.role not in ("chief", "jack", "steadier"):
             continue
-        start = pit.layout["destinations"][f"parking:{actor}"]
+        start = pit.layout["destinations"][
+            "chief-home" if actor == "chief" else f"parking:{actor}"
+        ]
         target = pit.layout["destinations"][
-            f"work:{member.role}:{pit.assignments[actor]}"
+            "pit-board"
+            if actor == "chief"
+            else f"work:{member.role}:{pit.assignments[actor]}"
         ]
         assert pit.movement.path(start, target, occupied)
 
@@ -245,7 +235,7 @@ def test_cancelling_jack_pickup_releases_reservations_without_transfer():
 def test_chief_faces_the_driver_after_arrival_and_after_stepping_aside(pit):
     import math
 
-    for destination in ("work:chief:chief", "stage:chief:chief"):
+    for destination in ("pit-board", "chief-clear"):
         execute(pit, "move", "chief", destination, "walk")
         worker = pit.snapshot()["crew"]["chief"]
         x, z = worker["position"]

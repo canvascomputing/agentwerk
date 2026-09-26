@@ -61,7 +61,7 @@ Failed work or obstructed routes hold the car.
 ## Read the example
 
 Start at [main.py](main.py). [orchestration.py](orchestration.py) creates one Werk,
-nineteen agents, task result schemas, one-shot Conditions, and result hooks.
+nineteen agents, task result schemas, and Conditions for crew handoffs.
 Crew members receive objectives and observations rather than prescribed tool calls.
 
 - `move(destination, pace)` walks or runs to a named location. The planner records
@@ -70,26 +70,22 @@ Crew members receive objectives and observations rather than prescribed tool cal
 - `operate(task, ...)` picks up, drops, or uses equipment at the crew member's actual
   position. Wrong equipment can be picked up; incompatible use is rejected without
   mechanical changes. Every response supplies fresh observations for recovery.
-- `finish({"status":"completed"})` reports completion; use `"blocked"` when stuck. The host records physical evidence and checks
-  its location, inventory, and completed work before opening dependent tasks.
+- `finish({"status":"completed"})` reports completion; use `"blocked"` when stuck. Conditions trigger the next task from the assigned actor, task step, and reported status.
+- `move` and `operate` emit an event when they change the car. `operate` emits `wheel_loosened`, `wheel_removed`, and `wheel_fitted` for the next crew member at that corner, and `car_lifted`, `pit_service_completed`, and `car_unbraced` when a call completes a phase. The car’s arrival emits `car_stopped`. One Condition per event starts every task waiting on it. `car_lowered` starts every crew member's cleanup.
 
 The Chief, jack operators, and steadiers approach first. Gunners and wing mechanics
 join once the car is stable; wheel-off and wheel-on crew members follow their corner's
-validated handoffs. Later crew members prepare at holding positions away from the car.
+wheel events. Later crew members prepare at holding positions away from the car.
 Tasks include who is waiting and estimated walking/running times.
 
-Steadiers report clear from nearby safe positions so lowering can start while they
-walk back to parking. Jack operators stand behind the handles, back their lowered
-jacks clear of the car, and roll them into storage beside the equipment stations. Equipment returns can overlap other service.
+Steadiers let go from nearby safe positions so lowering can start right away. Jack operators stand behind the handles, back their lowered
+jacks clear of the car, and roll them into storage beside the equipment stations. The crew returns equipment once the car is back on the ground.
 
-The Chief holds the STOP board in front of the car, reviews every report, steps
-aside, and calls `finish(decision, reviewed_tasks, reason)`. GO requires verified
-reports, requested service, lowered jacks, stored equipment, and all crew clear.
-The review task reads statuses with `{{ find_results(task.status = finished)[*].status }}`
-and verified reports with `{{ find_events(event.name = pit_report)[*].data }}`.
-A claim cannot change mechanical state. Blocked or contradictory reports prevent GO.
+The Chief holds the STOP board at `pit-board` and reviews once: when `pit_crew_clear` reports everyone else clear, or earlier when a crew member reports `blocked`. The Chief steps aside to `chief-clear` before GO and chooses HOLD for blocked or contradictory reports.
 
-The prompts live in [prompts/](prompts/). Crew members decide whether time permits
+The review task reads reports by crew label with `{{ find_results(task.label IN ({{ crew_labels }}) AND task.status = finished ORDER BY task.id)[*].status }}`. Its context pairs each task ID with its result. Context refreshes when each task starts. `werk.on_result` applies the Chief's verdict: GO releases the car, HOLD keeps it. Physical tools still enforce equipment ownership, positions, and mechanical prerequisites.
+
+Roles, tasks, and tool descriptions live in [prompts/](prompts/). Crew members decide whether time permits
 walking, which inventory item fits the task, where to stage, and how to recover
 from a rejected call. `storage` in an inventory item names its original storage
 slot; tools and tires may use another compatible empty slot. Jacks return to their
@@ -98,33 +94,55 @@ positions occupied or reserved by other crew members.
 
 ### Custom events
 
-Observe the pit stop using the same `werk.on_event` API as agent lifecycle events:
+`werk.on_event` sets the viewer’s title from the same events agents trigger:
 
 ```python
-def log_pit_stop(_, event):
+def show_title(_, event):
     data = event.get_data()
 
     match event.get_name():
         case "car_approaching":
-            print(f"Car arrives in {data['arrives_in_seconds']}s.")
+            title = f"Car arrives in {data['arrives_in_seconds']:.0f} s"
+        case "car_arriving":
+            title = "Car arriving"
+        case "car_stopped":
+            title = "Car stopped"
+        case "pit_service_started":
+            title = "Service started"
+        case "car_lifted":
+            title = "Car lifted"
         case "pit_service_completed":
-            print("Service complete.")
+            title = "Service complete"
+        case "car_unbraced":
+            title = "Lowering the car"
+        case "car_lowered":
+            title = "Car lowered"
+        case "pit_crew_clear":
+            title = "Crew clear"
         case "pit_released":
-            print("GO.")
+            title = "GO"
         case "pit_held":
-            print(f"HOLD: {data['message']}")
+            title = f"HOLD: {data['message']}"
+        case "car_departing":
+            title = "Car leaving"
+        case "car_departed":
+            title = "Car departed"
+        case _:
+            return
+
+    feed.set_title(title)
 
 
-werk.on_event(log_pit_stop)
+werk.on_event(show_title)
 ```
 
 `car_approaching` opens preparation and supplies `arrives_in_seconds`, the time
 until the car stops in the pit box. `car_arriving` and `car_stopped` follow.
-`pit_prepared` records all validated preparation reports. Service emits
-`pit_service_started` and `pit_service_completed`; physical clearance emits
-`pit_crew_clear`. The Chief's accepted verdict emits `pit_released` or `pit_held`.
-A released car emits `car_departing` and `car_departed`. Milestones occur once;
-`pit_prepared` can occur after arrival if the crew is late.
+Service emits `pit_service_started`, `car_lifted` once both jacks are up and both
+sides braced, and `pit_service_completed`. `car_unbraced` follows when both steadiers
+let go, and `car_lowered` once both jacks are down. `pit_crew_clear` fires once everyone except the Chief is clear with equipment
+stored. The Chief's verdict emits `pit_released` or `pit_held`. A released car emits
+`car_departing` and `car_departed`. Milestones occur once.
 
 Physical crew events, reports, and clock changes also pass through Werk. State and
 active routes rebuild from its ordered log with `PitStop.rebuild()`. Sessions are
@@ -145,8 +163,8 @@ separate 2×2 timer grid shows:
 
 - Preparation: approach notification until the car stops.
 - Service: car stopped until the wheels and wings meet their targets.
-- Clearance: service complete until the Chief's GO is accepted.
-- Total: approach notification until accepted GO.
+- Clearance: service complete until the Chief chooses GO.
+- Total: approach notification until Chief GO.
 
 Completed timers freeze and turn green. HOLD freezes all timers and preserves
 only the completed phases in green. Pause, seek, and replay
