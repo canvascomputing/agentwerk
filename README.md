@@ -580,13 +580,7 @@ let prepare = Condition("event.name = car_approaching").task(task);
 werk.add_condition(prepare);
 ```
 
-Crew members call the built-in `finish` tool when their task is done. The [result handler](crates/agentwerk-py/examples/pit_stop/orchestration.py) checks their position, equipment, and completed work before starting the next task.
-
-```rust
-werk.on_result(accept_result);
-```
-
-`accept_result` validates each crew report using the finished task’s `actor` and `step`.
+Crew members report completion with `finish`. The [simulation](crates/agentwerk-py/examples/pit_stop/orchestration.py) checks the reported work before opening dependent tasks.
 
 ```rust
 let valid = report_valid(&pit, actor, step, result);
