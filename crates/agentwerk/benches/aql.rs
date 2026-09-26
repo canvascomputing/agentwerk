@@ -257,7 +257,7 @@ fn benchmark_task_selection(runner: &mut Runner, lazy: &LazyFixture) {
     let fixture = lazy.get();
     let work = Work::records(fixture.task_count);
     let label = Query::new("task.label = scan").unwrap();
-    let input = Query::new("task.input ~ needle").unwrap();
+    let content = Query::new("task.content ~ needle").unwrap();
     let rare = Query::new("task.label = rare").unwrap();
     let all = Query::new("task.status = todo").unwrap();
     let rare_ordered = Query::new("task.label = rare ORDER BY task.id DESC").unwrap();
@@ -277,7 +277,7 @@ fn benchmark_task_selection(runner: &mut Runner, lazy: &LazyFixture) {
         black_box(fixture.werk.find_tasks("task.label = scan"));
     });
     runner.bench(NAMES[3], work, || {
-        black_box(fixture.werk.find_tasks(input.clone()));
+        black_box(fixture.werk.find_tasks(content.clone()));
     });
     runner.bench(NAMES[4], work, || {
         black_box(fixture.werk.find_tasks(rare.clone()));

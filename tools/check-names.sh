@@ -1,7 +1,7 @@
 #!/bin/sh
 set -eu
 
-legacy='finish_all_tasks|cancel_all_tasks|TasksTool|TasksArgs|FetchUrlTool|FetchUrlArgs|fetch_url|Agent::task|Agent\.task|Agent::handover|Agent\.handover|\.handover\(|get_parent|task\.parent_id|HANDOVER_|TaskMissing|PageMissing|UnknownField|UnknownStatus|InvalidTime|RepeatedField|UnexpectedToken|UnexpectedEnd|set_char_limit|agentwerk::Template|aw\.Template|Template::|PyTemplate|TEMPLATE_RENDER_FAILED|template_render_failed|Prompt::render\(|Werk::render\(|render_with\(|Agent::system_prompt\(|Task::labeled|Werk::load|Knowledge::load|Werk\.load|Knowledge\.load|\.set_dir\(|Agent::directive|Agent\.directive|Agent::directives|Agent\.directives|Event::directive|Event\.directive|pub fn directive|pub fn directives|fn directive\(|fn directives\(|def directive|def directives|fn get_directive|def get_directive'
+legacy='finish_all_tasks|cancel_all_tasks|TasksTool|TasksArgs|FetchUrlTool|FetchUrlArgs|fetch_url|Agent::task|Agent\.task|Agent::handover|Agent\.handover|\.handover\(|get_parent|task\.parent_id|task\.input|HANDOVER_|TaskMissing|PageMissing|UnknownField|UnknownStatus|InvalidTime|RepeatedField|UnexpectedToken|UnexpectedEnd|set_char_limit|agentwerk::Template|aw\.Template|Template::|PyTemplate|TEMPLATE_RENDER_FAILED|template_render_failed|Prompt::render\(|Werk::render\(|render_with\(|Agent::system_prompt\(|Task::labeled|Werk::load|Knowledge::load|Werk\.load|Knowledge\.load|\.set_dir\(|Agent::directive|Agent\.directive|Agent::directives|Agent\.directives|Event::directive|Event\.directive|pub fn directive|pub fn directives|fn directive\(|fn directives\(|def directive|def directives|fn get_directive|def get_directive'
 if rg -n "$legacy" \
     --glob '!target/**' \
     --glob '!.git/**' \

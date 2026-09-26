@@ -282,7 +282,7 @@ async def test_conditions_and_chief_coordinate_the_full_stop(
                 name.startswith("pit_ready:") or name == "pit_report" for name in names
             )
             assert (
-                len(werk.find_tasks("task.label = chief AND task.input ~ review")) == 1
+                len(werk.find_tasks("task.label = chief AND task.content ~ review")) == 1
             )
             tasks = werk.find_tasks("task.label != chief")
             assert len(tasks) == sum(
@@ -409,8 +409,8 @@ def test_conditions_and_results_start_the_right_tasks_once(monkeypatch):
     remover = next(
         m.id for m in CREW if m.role == "wheel-off" and pit.assignments[m.id] == corner
     )
-    removal = f"task.label = {remover} AND task.input ~ remove"
-    cleanup = "task.label = gunner-1 AND task.input ~ cleanup"
+    removal = f"task.label = {remover} AND task.content ~ remove"
+    cleanup = "task.label = gunner-1 AND task.content ~ cleanup"
 
     def loosened(actor):
         data = {"actor": actor, "corner": pit.assignments[actor]}
@@ -435,14 +435,14 @@ def test_conditions_and_results_start_the_right_tasks_once(monkeypatch):
         werk.emit_event(Event("car_lowered"))
         werk.emit_event(Event("car_lowered"))
         assert len(werk.find_tasks(cleanup)) == 1
-        assert len(werk.find_tasks("task.input ~ cleanup")) == len(CREW) - 1
-        assert not werk.find_tasks("task.label = chief AND task.input ~ review")
+        assert len(werk.find_tasks("task.content ~ cleanup")) == len(CREW) - 1
+        assert not werk.find_tasks("task.label = chief AND task.content ~ review")
         report("gunner-2", "loosen", "blocked")
-        assert len(werk.find_tasks("task.label = chief AND task.input ~ review")) == 1
+        assert len(werk.find_tasks("task.label = chief AND task.content ~ review")) == 1
         assert pit.snapshot() == before
         werk.emit_event(Event("car_stopped"))
         werk.emit_event(Event("car_stopped"))
-        assert len(werk.find_tasks("task.label = jack-1 AND task.input ~ lift")) == 1
+        assert len(werk.find_tasks("task.label = jack-1 AND task.content ~ lift")) == 1
     finally:
         pit.clock.close()
         werk.cancel()
