@@ -689,7 +689,7 @@ def log_pit_stop(_, event):
 werk.on_event(log_pit_stop)
 ```
 
-Announce arrival in 15 seconds. The simulation emits `car_arriving` and `car_stopped` on its clock, even if preparation is unfinished.
+Announce the approaching car.
 
 ```python
 approaching = Event("car_approaching").data({"arrives_in_seconds": 15})

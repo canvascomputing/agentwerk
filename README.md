@@ -686,7 +686,7 @@ werk.on_event(|_, event| {
 });
 ```
 
-Announce arrival in 15 seconds. The simulation emits `car_arriving` and `car_stopped` on its clock, even if preparation is unfinished.
+Announce the approaching car.
 
 ```rust
 let approaching = Event("car_approaching")
