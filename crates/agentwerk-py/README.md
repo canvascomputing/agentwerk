@@ -600,12 +600,12 @@ Crew members report completion with `finish`. Conditions pass work to the next c
 ```python
 remove_tire = Task(removal_task, label=remover.id, schema=REPORT)
 
-remove = Condition(
+wheel_loosened = Condition(
     "event.name = task_finished AND task.label = gunner-1 "
     "AND task.input ~ loosen AND task.result ~ completed"
 ).task(remove_tire)
 
-werk.add_condition(remove)
+werk.add_condition(wheel_loosened)
 ```
 
 The Chief uses `event` to coordinate work that needs several crew members. Each instruction triggers a Condition once.
