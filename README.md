@@ -580,7 +580,7 @@ let prepare = Condition("event.name = car_approaching").task(task);
 werk.add_condition(prepare);
 ```
 
-Crew members report completion with `finish`. The [simulation](crates/agentwerk-py/examples/pit_stop/orchestration.py) checks the reported work before opening dependent tasks.
+Crew members report completion with `finish`. Agentwerk Conditions start the next tasks when their prerequisites are met.
 
 ```rust
 let valid = report_valid(&pit, actor, step, result);
