@@ -585,13 +585,7 @@ prepare = Condition("event.name = car_approaching").task(task)
 werk.add_condition(prepare)
 ```
 
-Crew members call the built-in `finish` tool when their task is done. The [result handler](examples/pit_stop/orchestration.py) checks their position, equipment, and completed work before starting the next task.
-
-```python
-werk.on_result(accept_result)
-```
-
-`accept_result` validates each crew report using the finished task’s `actor` and `step`.
+Crew members report completion with `finish`. The [simulation](examples/pit_stop/orchestration.py) checks the reported work before opening dependent tasks.
 
 ```python
 valid = report_valid(pit, actor, step, result)
