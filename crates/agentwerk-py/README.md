@@ -613,12 +613,12 @@ The Chief uses `event` to coordinate work that needs several crew members. Each 
 ```python
 lift_car = Task(lifting_task, label="jack-1", schema=REPORT)
 
-lift = Condition(
+chief_requested_lift = Condition(
     "event.name = crew_dispatch:jack-1:lift "
     "AND task.label = chief AND task.status = in_progress"
 ).task(lift_car)
 
-werk.add_condition(lift)
+werk.add_condition(chief_requested_lift)
 ```
 
 The Chief reviews crew reports and the current car state after each completion, then issues instructions or chooses GO/HOLD. Arrival and service completion also trigger reviews.
@@ -641,12 +641,12 @@ Issue any newly needed instructions, then finish this review.
 </details>
 
 ```python
-review_task = Task(review_prompt, label="chief", schema=VERDICT)
+review_reports = Task(review_prompt, label="chief", schema=VERDICT)
 
-review = Condition("event.name = task_finished AND task.label != chief")
-review.times(None).task(review_task)
+crew_reported = Condition("event.name = task_finished AND task.label != chief")
+crew_reported.times(None).task(review_reports)
 
-werk.add_condition(review)
+werk.add_condition(crew_reported)
 ```
 
 Follow the crew through `werk.on_event`. The Chief’s GO emits `pit_released`; HOLD emits `pit_held` and stops the run.
