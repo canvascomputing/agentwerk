@@ -61,18 +61,19 @@ function streetPaint(scene) {
   const texture = new THREE.CanvasTexture(canvas);
   texture.colorSpace = THREE.SRGBColorSpace;
   texture.wrapS = THREE.RepeatWrapping;
-  texture.repeat.set(6, 1);
+  texture.repeat.set(9, 1);
   const paint = material("#ffffff", {
     map: texture,
     transparent: true,
     depthWrite: false,
     roughness: 1,
   });
+  // In front of the parked crew, so standing people never hide part of a word.
   const word = mesh(
     scene,
-    new THREE.PlaneGeometry(51.6, 1.65),
+    new THREE.PlaneGeometry(50.9, 1.1),
     paint,
-    [0.35, 0.025, -4.05],
+    [0, 0.025, -3.05],
   );
   word.rotation.x = -Math.PI / 2;
   word.receiveShadow = true;

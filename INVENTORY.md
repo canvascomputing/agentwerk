@@ -2804,7 +2804,7 @@ These declarations belong to the consuming example, not the agentwerk library AP
 | Declaration | Purpose |
 | --- | --- |
 | `asphaltTexture()` | Seeded procedural asphalt without external assets |
-| `streetPaint(scene)` | Repeating pixel sponsor panels painted onto the asphalt |
+| `streetPaint(scene)` | Repeating pixel sponsor panels painted onto the asphalt in front of the parked crew |
 | `pitMarkings(scene)` / `strip(width, depth, x, z)` | Worn yellow pit rails and alignment ticks |
 | `paintApron`, `buildGarage`, `buildStations`, `garageDetails` | Build pit markings, garage, versioned storage, hose, extinguisher, and cupboard props |
 | `environment(scene, metadata)` | Pit box, garage and equipment stations |
