@@ -85,7 +85,7 @@ try {
   );
   const moments = {
     service: removal?.t ?? duration / 3,
-    departure: frames.find((frame) => frame.name === "car_departing").t + 1.5,
+    departure: frames.find((frame) => frame.name === "car_departed").t + 1.5,
   };
   for (const [name, time] of Object.entries(moments)) {
     await page.evaluate((time) => window.pitStop.seek(time), time);

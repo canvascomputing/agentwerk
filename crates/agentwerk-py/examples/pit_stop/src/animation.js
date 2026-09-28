@@ -12,16 +12,22 @@ const smooth = (value) => {
 const lerp = (a, b, t) => a + (b - a) * t;
 
 function progress(event, time) {
-  return event?.data.duration
-    ? clamp((time - event.t) / event.data.duration)
-    : 0;
+  // car_approaching announces the drive-in, which starts after its warning.
+  const start =
+    event?.name === "car_approaching" ? event.t + event.data.warning : event?.t;
+  return event?.data.duration ? clamp((time - start) / event.data.duration) : 0;
 }
 
 function vehiclePosition(carEvent, time, state) {
   if (!carEvent) return -19;
   const p = progress(carEvent, time);
+  // Older recordings emit car_departing, then a car_departed without duration.
+  if (
+    ["car_departing", "car_departed"].includes(carEvent.name) &&
+    carEvent.data.duration
+  )
+    return 22 * p * p;
   if (state.car === "departed") return 22;
-  if (carEvent.name === "car_departing") return 22 * p * p;
   return 0;
 }
 
@@ -201,7 +207,7 @@ function animateWorker(worker, sample) {
 function animateVehicle(world, sample) {
   const { state, time, carEvent } = sample;
   const { car } = world;
-  const arrival = carEvent?.name === "car_arriving";
+  const arrival = ["car_approaching", "car_arriving"].includes(carEvent?.name);
   const pose = arrival
     ? arrivalPose(carEvent.data, progress(carEvent, time))
     : { x: vehiclePosition(carEvent, time, state), z: 0, heading: 0 };

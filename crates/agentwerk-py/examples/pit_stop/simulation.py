@@ -61,9 +61,10 @@ WHEEL_EVENTS = {
     "remove": "wheel_removed",
     "fit": "wheel_fitted",
 }
+# Half-width of the departing car's path; wheel crew work at 1.95 m.
+PATH_CLEARANCE = 2.2
 MILESTONES = {
     "car_approaching",
-    "car_arriving",
     "car_stopped",
     "pit_service_started",
     "car_lifted",
@@ -73,7 +74,6 @@ MILESTONES = {
     "pit_crew_clear",
     "pit_released",
     "pit_held",
-    "car_departing",
     "car_departed",
 }
 
@@ -186,11 +186,12 @@ def setup(seed):
                 "chief-home" if actor == "chief" else f"parking:{actor}"
             ] = home
     layout["jack"] = {"handle": [-0.72, 0.78, 0], "grip_forward": 0.33, "reach": 1.15}
-    slots = {}
-    for i, point in enumerate(
-        p for key, p in LAYOUT["slots"].items() if key.startswith("tool-")
+    slots, benches = {}, {}
+    for i, (key, point) in enumerate(
+        (key, p) for key, p in LAYOUT["slots"].items() if key.startswith("tool-")
     ):
         slots[f"bench-{i + 1}"] = point
+        benches[key] = f"bench-{i + 1}"
     for i, corner in enumerate(CORNERS):
         slots[f"tire-{i + 1}"] = LAYOUT["slots"][f"fresh-{corner}"]
     for end, x in (("front", 4.6), ("rear", -3.2)):
@@ -202,20 +203,24 @@ def setup(seed):
             point[2]
             - math.copysign(1.45 if name.startswith("jack-") else 0.8, point[2]),
         ]
-    bench = [name for name in slots if name.startswith("bench")]
-    rng.shuffle(bench)
-    kinds = ["gunner"] * 4 + ["wing"] * 2
+    # Tools start on their crew member's side, so nobody crosses the car to fetch one.
+    tools = [
+        (
+            f"wheel-gun-{i + 1}",
+            "gunner",
+            f"tool-gunner-{assignments[f'gunner-{i + 1}']}",
+        )
+        for i in range(4)
+    ] + [
+        (f"wing-key-{i + 5}", "wing", f"tool-wing-{assignments[f'wing-{i + 1}']}")
+        for i in range(2)
+    ]
     items = {
-        f"{'wheel-gun' if kind == 'gunner' else 'wing-key'}-{i + 1}": {
-            "kind": kind,
-            "storage": slot,
-            "owner": f"slot:{slot}",
-        }
-        for i, (kind, slot) in enumerate(zip(kinds, bench))
+        name: {"kind": kind, "storage": benches[key], "owner": f"slot:{benches[key]}"}
+        for name, kind, key in tools
     }
-    tires = [name for name in slots if name.startswith("tire")]
-    rng.shuffle(tires)
-    for corner, slot in zip(CORNERS, tires):
+    for i, corner in enumerate(CORNERS):
+        slot = f"tire-{i + 1}"
         items[f"fresh-{corner}"] = {
             "kind": "fresh",
             "corner": corner,
@@ -250,6 +255,7 @@ class PitStop:
         self.session = TemporaryDirectory(prefix="pit-stop-") if werk is None else None
         self.werk = werk or Werk(self.session.name)
         self.seed = seed if seed is not None else secrets.randbits(32)
+        self.rng = random.Random(self.seed)
         self.layout, self.assignments, items, wing_angles, self.arrival = setup(
             self.seed
         )
@@ -302,8 +308,13 @@ class PitStop:
             return
         data = data if isinstance(data, dict) else {"data": data}
         with self.lock:
+            # GO and HOLD may come from other emitters, such as the Chief's verdict.
+            if name in MILESTONES:
+                self.milestones.add(name)
             reduce_event(self._state, self.active, name, data)
             self.publish(name, {**data, "state": self.snapshot()})
+            if name == "pit_held":
+                self.clock.close()
 
     def emit(self, name, **data):
         self.werk.emit_event(Event(name).data({"seconds": self.clock.seconds, **data}))
@@ -359,14 +370,13 @@ class PitStop:
         self.milestone(
             "car_approaching",
             arrives_in_seconds=self.arrival["warning"] + self.arrival["duration"],
+            **self.arrival,
         )
         self.clock.start()
 
     def arrive(self):
         try:
-            self.clock.wait(self.arrival["warning"], "@car")
-            self.milestone("car_arriving", **self.arrival)
-            self.clock.wait(self.arrival["duration"], "@car")
+            self.clock.wait(self.arrival["warning"] + self.arrival["duration"], "@car")
             self.milestone("car_stopped")
             self.milestone("pit_service_started")
         finally:
@@ -376,9 +386,9 @@ class PitStop:
         with self.lock:
             if self._state["car"] != "released":
                 raise ValueError("Departure requires the Chief's GO")
-            self.milestone("car_departing", duration=4)
+            self.milestone("car_departed", duration=4)
+        # The live viewer only animates while the clock runs.
         self.clock.wait(4, "@car")
-        self.milestone("car_departed")
         self.clock.idle("@car")
 
     def serviced(self):
@@ -387,36 +397,32 @@ class PitStop:
             and self._state["wings"] == self._state["wing_angles"]
         )
 
-    def clear(self, crew=CREW):
+    def clear(self):
+        # The car may leave while the crew still stores equipment.
         state = self._state
-        workers = [state["crew"][m.id] for m in crew]
         return (
             self.serviced()
             and all(v == "down" for v in state["jacks"].values())
             and all(v == "clear" for v in state["steadiers"].values())
-            and all(
-                w["clear"] and not w["task"] and not w["equipment"] for w in workers
+            and not any(
+                item["owner"].startswith("mount:") for item in state["items"].values()
             )
-            and all(
-                item["owner"] == f"slot:{item['storage']}"
-                for item in state["items"].values()
-                if item["kind"] == "jack"
-            )
-            and all(
-                not item["owner"].startswith(("crew:", "mount:"))
-                for item in state["items"].values()
-            )
+            and all(self.out_of_path(m.id) for m in CREW if m.role != "chief")
         )
 
-    def release(self):
-        self.milestone("pit_released")
+    def out_of_path(self, actor):
+        # Uses recorded state, so the Chief's review sees what triggered it.
+        clear = self._state["crew"][actor]["clear"]
+        if actor not in self.active:
+            return clear
+        end = self.active[actor][2][-1]["points"][-1]
+        return clear and abs(end[1]) > PATH_CLEARANCE
 
     def hold(self, message):
         self.milestone("pit_held", message=message)
-        self.clock.close()
 
     def available(self, actor):
-        if self._state["held"] or self._state["car"] not in ("approaching", "stopped"):
+        if self._state["held"]:
             raise ValueError("The pit stop is no longer accepting work")
         if self._state["crew"][actor]["task"]:
             raise ValueError(
@@ -468,7 +474,7 @@ class PitStop:
                     self.clock.seconds,
                     occupied,
                     list(self.active.values()),
-                    self._state["car"] == "approaching",
+                    self._state["car"] != "stopped",
                     bool(worker["equipment"]),
                     facing=self.facing(destination),
                     end_reach=self.layout["jack"]["reach"]
@@ -517,13 +523,10 @@ class PitStop:
         return math.atan2(target[0] - point[0], target[1] - point[1])
 
     def near(self, actor, destination):
-        return (
-            math.dist(
-                self._state["crew"][actor]["position"],
-                self.layout["destinations"][destination],
-            )
-            < 0.12
-        )
+        return self.near_point(self._state["crew"][actor]["position"], destination)
+
+    def near_point(self, point, destination):
+        return math.dist(point, self.layout["destinations"][destination]) < 0.12
 
     def operate(self, actor, task, item=None, target=None, work=None, value=None):
         with self.lock:
@@ -631,16 +634,23 @@ class PitStop:
             self.claims[resource] = actor
             origin = worker["position"]
             heading = math.atan2(face[0] - origin[0], face[1] - origin[1])
+            hesitation, stretch = 0, 1
+            if operation in WHEEL_RESULTS:
+                # Wheel crews never work in lockstep.
+                hesitation, stretch = (
+                    self.rng.uniform(0, 1.2),
+                    self.rng.uniform(0.8, 1.6),
+                )
             phases = [
                 {
                     "kind": "turn",
-                    "duration": 0.15,
+                    "duration": 0.15 + hesitation,
                     "points": [origin],
                     "headings": [worker["heading"], heading],
                 },
                 {
                     "kind": kind,
-                    "duration": DURATIONS[operation],
+                    "duration": DURATIONS[operation] * stretch,
                     "points": [origin],
                     "heading": heading,
                     "transfer": transfer,
@@ -662,6 +672,8 @@ class PitStop:
             raise ValueError(
                 "This work or target is outside your assigned task. Follow your task's assignment."
             )
+        if state["car"] in ("released", "departed"):
+            raise ValueError("The car has been released. Report blocked.")
         if state["car"] != "stopped" or not self.near(actor, f"work:{role}:{target}"):
             raise ValueError(
                 "The car must be stopped and you must be at the assigned work position"
@@ -750,12 +762,16 @@ class PitStop:
             with self.lock:
                 if self._state["held"]:
                     raise ValueError("The pit stop is held")
+                arrived = destination and self.near_point(
+                    phase["points"][-1], destination
+                )
                 self.emit(
                     "crew_task_phase_completed",
                     actor=actor,
                     task=task,
                     position=phase["points"][-1],
                     heading=end_heading(phase),
+                    location=destination if arrived else None,
                 )
                 if transfer := phase.get("transfer"):
                     if (
@@ -779,6 +795,8 @@ class PitStop:
                         self.milestone("car_unbraced")
                     if self.serviced() and all(v == "down" for v in jacks.values()):
                         self.milestone("car_lowered")
+                if self.clear():
+                    self.milestone("pit_crew_clear")
         with self.lock:
             self.emit(
                 "crew_task_completed", actor=actor, task=task, destination=destination
@@ -787,8 +805,7 @@ class PitStop:
                 self.milestone(
                     "pit_service_completed", wing_angles=self._state["wing_angles"]
                 )
-            # The Chief holds the board in front of the car until GO.
-            if self.clear([m for m in CREW if m.role != "chief"]):
+            if self.clear():
                 self.milestone("pit_crew_clear")
 
 
@@ -800,7 +817,7 @@ def reduce_event(state, active, name, data):
     elif name == "pit_held":
         state["held"] = data["message"]
         active.clear()
-    elif name in ("car_stopped", "car_departing", "car_departed", "pit_released"):
+    elif name in ("car_stopped", "car_departed", "pit_released"):
         state["car"] = (
             "released" if name == "pit_released" else name.removeprefix("car_")
         )
@@ -812,6 +829,9 @@ def reduce_event(state, active, name, data):
             active[actor] = (actor, data["began"], data["phases"])
         elif name == "crew_task_phase_completed":
             worker.update(position=data["position"], heading=data["heading"])
+            worker["clear"] = abs(data["position"][1]) > PATH_CLEARANCE
+            if data.get("location"):
+                worker["location"] = data["location"]
         elif name == "crew_transfer":
             state["items"][data["item"]]["owner"] = data["to"]
             worker["equipment"] = (
@@ -832,5 +852,4 @@ def reduce_event(state, active, name, data):
             worker["task"] = None
             if data.get("destination"):
                 worker["location"] = data["destination"]
-            worker["clear"] = abs(worker["position"][1]) > LAYOUT["corridor"]
             active.pop(actor, None)

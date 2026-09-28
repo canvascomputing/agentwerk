@@ -76,7 +76,7 @@ def test_showcase_is_a_complete_real_agent_run():
     assert any(
         f["name"] == "crew_task_started" and f["t"] < stopped["t"] for f in frames
     )
-    assert names.count("car_departing") == 1
+    assert names.count("car_departed") == 1
     assert names.count("request_finished") > names.count("task_finished")
 
 

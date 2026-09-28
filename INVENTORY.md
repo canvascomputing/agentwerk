@@ -2672,16 +2672,17 @@ These declarations belong to the consuming example, not the agentwerk library AP
 | `PROMPTS, LIFECYCLE_EVENTS` | Prompt directory and browser lifecycle selection |
 | `REPORT, VERDICT, STEPS` | Worker and Chief result schemas and role-specific task outcomes |
 | `TRIGGERS` | Event that starts each task step; wheel events also match the corner |
-| `finish_destination(pit, actor, step)` | Choose holding, local clearance, work, or parking for each outcome |
+| `equipment(pit, actor, step)` | Name the item a crew member carries into service or back to storage |
+| `finish_destination(pit, actor, step)` | Choose holding, local clearance, work, or parking for each outcome; the Chief's cleanup ends at `chief-clear` |
 | `timing(pit, actor, step)` | Supply waiting-worker context and unobstructed travel estimates |
-| `objective(pit, actor, step)` | Describe required outcomes without prescribing tool calls |
+| `objective(pit, actor, step)` | Describe required outcomes and name the assigned item and storage slot without prescribing tool calls |
 | `crew_tools(pit, member) / invoke(fn, **kwargs)` | Bind physical tools to an agent and return recoverable observations |
 | `move_tool(destination, pace) / operate_tool(task, item, target, work, value)` | Expose `move` and `operate` for chosen journeys and equipment handling |
 | `assignment(task)` | Read actor, step, and target from a task's static header |
 | `build_crew(pit) / task_for(actor, step)` | Register nineteen agents and one Condition per trigger holding every task it starts, including the Chief's single review |
-| `apply_result(host, task, result)` | From `werk.on_result`, apply the Chief's GO or HOLD and start the review after a blocked report |
+| `apply_result(host, task, result)` | From `werk.on_result`, emit the Chief's GO or HOLD as `pit_released` or `pit_held` and start the review after a blocked report before GO |
 | `observe(host, event)` | Refresh task context, synchronize clock barriers, and hold on failures |
-| `run_stop(feed, seed=None) / show_title(_, event) / observe(_, event)` | Set the viewer title from each milestone and record simulation time, crew results, and custom events through departure |
+| `run_stop(feed, seed=None) / show_title(_, event) / observe(_, event) / watch_release(_, event) / departure()` | Set the viewer title from each milestone, start the departure on GO while cleanup continues, and record simulation time, crew results, and custom events |
 
 ## `crates/agentwerk-py/examples/pit_stop/simulation.py`
 
@@ -2689,20 +2690,20 @@ These declarations belong to the consuming example, not the agentwerk library AP
 
 | Declaration | Purpose |
 | --- | --- |
-| `CORNERS, ROLES, WORK, DURATIONS, WHEEL_PREREQUISITES, WHEEL_RESULTS, WHEEL_EVENTS, MILESTONES, CREW` | Physical capabilities, timings, per-corner handoff events, crew identities, and main custom events |
+| `CORNERS, ROLES, WORK, DURATIONS, WHEEL_PREREQUISITES, WHEEL_RESULTS, WHEEL_EVENTS, PATH_CLEARANCE, MILESTONES, CREW` | Physical capabilities, timings, per-corner handoff events, the departing car's path half-width, crew identities, and main custom events |
 | `Crew(id, role)` | Role-specialized identity independent of task target |
-| `setup(seed)` | Create repeatable assignments, map destinations, inventory, arrival, and requested wing angles |
+| `setup(seed)` | Create repeatable assignments, map destinations, inventory on each crew member's side of the car, arrival, and requested wing angles |
 | `PitStop(publish, seed, werk, realtime)` | Own event-derived mechanical state and a shared simulation clock |
-| `observe(_, event) / rebuild() / reduce_event(state, active, name, data)` | Project physical state and active routes from Werk’s ordered log |
+| `observe(_, event) / rebuild() / reduce_event(state, active, name, data)` | Project physical state and active routes from Werk’s ordered log, updating clearance and arrival per phase; `pit_held` from any emitter stops the clock |
 | `emit(name, **data) / milestone(name, **data)` | Publish timestamped custom events and one-shot milestones through Werk |
 | `snapshot() / observation(actor)` | Expose state and current tool observations including occupied destinations |
 | `approach() / arrive() / depart()` | Drive preparation and vehicle travel on simulation time |
-| `serviced() / clear(crew=CREW) / near(actor, destination)` | Check requested service, physical clearance of the given crew, and proximity |
-| `release() / hold(message)` | Announce the Chief's GO, or freeze physical work on HOLD or runtime failure |
-| `available(actor) / validate_work(actor, work, target, value)` | Enforce physical availability, role, equipment, and mechanical prerequisites |
+| `serviced() / clear() / out_of_path(actor) / near(actor, destination) / near_point(point, destination)` | Check requested service, withdrawn jacks with every crew member except the Chief out of the car's path, and proximity |
+| `hold(message)` | Freeze physical work on a runtime failure |
+| `available(actor) / validate_work(actor, work, target, value)` | Enforce physical availability, role, equipment, and mechanical prerequisites; cleanup continues after GO |
 | `facing(destination) / reach(worker)` | Resolve destination orientation and reserved jack clearance |
 | `move(actor, destination, pace)` | Reserve and execute an explicit walk or run; a rejected move costs half a second |
-| `operate(actor, task, item, target, work, value)` | Validate and reserve pickup, drop, and mechanical work |
+| `operate(actor, task, item, target, work, value)` | Validate and reserve pickup, drop, and mechanical work; wheel work gets seeded hesitation and pace |
 | `begin(actor, task, phases, **data) / execute(actor, task, phases, destination)` | Record timed phases, ownership transfers, and physical effects |
 
 ## `crates/agentwerk-py/examples/pit_stop/feed.py`
@@ -2749,7 +2750,7 @@ These declarations belong to the consuming example, not the agentwerk library AP
 | Declaration | Purpose |
 | --- | --- |
 | `clamp`, `smooth`, `lerp`, `progress` | Bounded interpolation over recorded task time |
-| `vehiclePosition(carEvent, time, state)` | Stationary and departure positions gated by authoritative events |
+| `vehiclePosition(carEvent, time, state)` | Stationary and departure positions gated by authoritative events, including older `car_departing` recordings |
 | `jackHeight(sample, end)` | Chassis lift derived from each jack task |
 | `workerTarget(worker, task, x, z)` | Give legacy and recorded crew motion the same facing target |
 | `animateLegacyWorker(worker, sample)` | Preserve motion for recordings without route phases |

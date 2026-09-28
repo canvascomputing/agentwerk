@@ -146,7 +146,8 @@ export class Playback {
           "car_stopped",
           "car_departing",
           "car_departed",
-        ].includes(name)
+        ].includes(name) ||
+        (name === "car_approaching" && data.duration)
       )
         carEvent = frame;
       if (name === "pit_held") heldAt = frame.t;

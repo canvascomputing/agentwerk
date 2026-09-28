@@ -6,6 +6,6 @@ Crew reports:
 Before GO:
 
 - Wheels are secured and wings match the requested angles.
-- Jacks are lowered and back in storage. All other equipment is stored.
-- Everyone is clear, empty-handed, and still.
-- Step aside to `chief-clear` first.
+- Jacks are lowered and withdrawn from the car.
+- The crew is out of the car's path. Equipment storage may still be running.
+- You stand at `chief-clear`, out of the car's path.
