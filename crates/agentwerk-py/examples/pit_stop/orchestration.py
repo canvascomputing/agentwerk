@@ -9,6 +9,7 @@ from uuid import uuid4
 from agentwerk import (
     Agent,
     Condition,
+    Event,
     Model,
     Policy,
     Schema,
@@ -57,7 +58,7 @@ STEPS = {
     "wing": ("prepare", "adjust", "cleanup"),
     "jack": ("prepare", "lift", "lower", "cleanup"),
     "steadier": ("prepare", "brace", "clear", "cleanup"),
-    "chief": ("prepare",),
+    "chief": ("prepare", "cleanup"),
 }
 TRIGGERS = {
     "prepare": "car_approaching",
@@ -74,10 +75,24 @@ TRIGGERS = {
 }
 
 
+def equipment(pit, actor, step):
+    role, target = pit.crew[actor].role, pit.assignments[actor]
+    if role == "chief":
+        return None
+    number = int(actor.rsplit("-", 1)[1])
+    return {
+        "gunner": f"wheel-gun-{number}",
+        "wing": f"wing-key-{number + 4}",
+        "jack": f"jack-{target}",
+        "wheel-on": f"fresh-{target}" if step == "prepare" else None,
+        "wheel-off": f"old-{target}" if step == "cleanup" else None,
+    }.get(role)
+
+
 def finish_destination(pit, actor, step):
     role, target = pit.crew[actor].role, pit.assignments[actor]
     if role == "chief":
-        return "pit-board"
+        return "chief-clear" if step == "cleanup" else "pit-board"
     if step == "cleanup":
         return f"parking:{actor}"
     if step in ("lift", "brace", "lower"):
@@ -93,13 +108,10 @@ def finish_destination(pit, actor, step):
 def objective(pit, actor, step):
     role, target = pit.crew[actor].role, pit.assignments[actor]
     destination = finish_destination(pit, actor, step)
+    item = equipment(pit, actor, step)
+    storage = item and f"storage:{pit.snapshot()['items'][item]['storage']}"
     if step == "prepare":
-        kit = {
-            "gunner": "a wheel gun",
-            "wing": "a wing key",
-            "wheel-on": f"the fresh tire for {target}",
-            "jack": f"the {target} jack",
-        }.get(role, "empty hands")
+        kit = f"{item} from {storage}" if item else "empty hands"
         board = (
             " Hold the STOP board there throughout service."
             if role == "chief"
@@ -107,8 +119,11 @@ def objective(pit, actor, step):
         )
         return f"Prepare at {destination} with {kit}.{board}"
     if step == "cleanup":
+        if role == "chief":
+            return f"Step aside to {destination} with the STOP board and wait there for the review."
         withdraw = "Pick up your lowered jack first. " if role == "jack" else ""
-        return f"{withdraw}Store your equipment and return to {destination} with empty hands."
+        store = f"Store {item} at {storage} and return" if item else "Return"
+        return f"{withdraw}{store} to {destination} with empty hands."
     work = {
         "loosen": f"Loosen the wheel fasteners at {target}",
         "remove": f"Remove the old tire at {target}",
@@ -146,7 +161,7 @@ def timing(pit, actor, step):
             0,
             [],
             [],
-            pit.snapshot()["car"] == "approaching",
+            pit.snapshot()["car"] != "stopped",
             bool(worker["equipment"]),
         )
         travel.update(
@@ -318,12 +333,13 @@ def build_crew(pit):
         actor = task.get_label()
         if actor == "chief" and "decision" in result:
             if result["decision"] == "go":
-                pit.release()
-                host.cancel()
+                host.emit_event(Event("pit_released"))
             else:
-                pit.hold("The Chief held the car")
+                held = Event("pit_held").data({"message": "The Chief held the car"})
+                host.emit_event(held)
             return
-        if result.get("status") == "blocked":
+        released = host.find_events("event.name = pit_released")
+        if result.get("status") == "blocked" and not released:
             host.add_task(task_for("chief", "review"))
 
     werk.on_result(apply_result)
@@ -413,8 +429,6 @@ async def run_stop(feed, seed=None):
         match event.get_name():
             case "car_approaching":
                 title = f"Car arrives in {data['arrives_in_seconds']:.0f} s"
-            case "car_arriving":
-                title = "Car arriving"
             case "car_stopped":
                 title = "Car stopped"
             case "pit_service_started":
@@ -433,8 +447,6 @@ async def run_stop(feed, seed=None):
                 title = "GO"
             case "pit_held":
                 title = f"HOLD: {data['message']}"
-            case "car_departing":
-                title = "Car leaving"
             case "car_departed":
                 title = "Car departed"
             case _:
@@ -454,8 +466,20 @@ async def run_stop(feed, seed=None):
                 data.update(step=assignment(task)["step"], result=task.get_result())
             feed.push(name, data)
 
+    loop = asyncio.get_running_loop()
+    released = asyncio.Event()
+
+    def watch_release(_, event):
+        if event.get_name() == "pit_released":
+            loop.call_soon_threadsafe(released.set)
+
+    async def departure():
+        await released.wait()
+        await asyncio.to_thread(pit.depart)
+
     werk.on_event(show_title)
     werk.on_event(observe)
+    werk.on_event(watch_release)
     feed.push(
         "run_metadata",
         {
@@ -472,15 +496,18 @@ async def run_stop(feed, seed=None):
             "state": pit.snapshot(),
         },
     )
-    arrival = None
+    arrival = leaving = None
     try:
         pit.approach()
         arrival = asyncio.create_task(asyncio.to_thread(pit.arrive))
+        # The car leaves on GO while the crew finishes cleanup.
+        leaving = asyncio.create_task(departure())
         werk.start()
-        await asyncio.wait_for(werk.finish(), timeout=900)
+        # A crew prepared early leaves no tasks until the car stops.
         await arrival
-        if pit.snapshot()["car"] == "released":
-            await asyncio.to_thread(pit.depart)
+        await asyncio.wait_for(werk.finish(), timeout=900)
+        if released.is_set():
+            await leaving
         elif not pit.snapshot()["held"]:
             pit.hold("Crew stopped before the Chief authorized release")
     except asyncio.CancelledError:
@@ -493,6 +520,8 @@ async def run_stop(feed, seed=None):
     finally:
         pit.clock.close()
         werk.cancel()
-        if arrival:
-            await asyncio.gather(arrival, return_exceptions=True)
+        for task in (arrival, leaving):
+            if task:
+                task.cancel()
+                await asyncio.gather(task, return_exceptions=True)
     return pit.snapshot()["car"] == "departed"

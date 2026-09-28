@@ -64,6 +64,9 @@ def choose(task, observation):
         destination = "pit-board" if role == "chief" else f"{prefix}:{role}:{target}"
         return finish() if worker["location"] == destination else move(destination)
     if step == "cleanup":
+        if role == "chief":
+            destination = "chief-clear"
+            return finish() if worker["location"] == destination else move(destination)
         if (
             role == "jack"
             and observation["items"][f"jack-{target}"]["owner"] == f"mount:{target}"
@@ -169,7 +172,10 @@ def scripted_provider(false_report=False, chief_go=False, blocked=False):
         if latest_result and not latest_result["ok"]:
             calls.append(("rejected", task["actor"], latest_result["message"]))
         name, args = choose(task, observation)
-        if latest_result and "Wrong equipment" in latest_result.get("message", ""):
+        if latest_result and any(
+            text in latest_result.get("message", "")
+            for text in ("Wrong equipment", "Report blocked")
+        ):
             name, args = "finish", {"status": "blocked"}
         if (
             latest_result
@@ -270,7 +276,7 @@ async def test_conditions_and_chief_coordinate_the_full_stop(
             assert pit.clear()
             assert_rebuilt(pit)
             names = [e.get_name() for e in events]
-            for name in MILESTONES - {"pit_held", "car_departing", "car_departed"}:
+            for name in MILESTONES - {"pit_held", "car_departed"}:
                 assert names.count(name) == 1, name
             assert (
                 names.index("car_approaching")
@@ -282,7 +288,8 @@ async def test_conditions_and_chief_coordinate_the_full_stop(
                 name.startswith("pit_ready:") or name == "pit_report" for name in names
             )
             assert (
-                len(werk.find_tasks("task.label = chief AND task.content ~ review")) == 1
+                len(werk.find_tasks("task.label = chief AND task.content ~ review"))
+                == 1
             )
             tasks = werk.find_tasks("task.label != chief")
             assert len(tasks) == sum(
@@ -291,12 +298,8 @@ async def test_conditions_and_chief_coordinate_the_full_stop(
             assert len(
                 {(assignment(t)["actor"], assignment(t)["step"]) for t in tasks}
             ) == len(tasks)
-            # GO cancels the run, so a parked crew member may not have reported yet.
-            assert all(
-                t.get_result() == {"status": "completed"}
-                or (t.get_result() is None and assignment(t)["step"] == "cleanup")
-                for t in tasks
-            )
+            # Cleanup continues after GO, so every crew member reports.
+            assert all(t.get_result() == {"status": "completed"} for t in tasks)
             for t in tasks:
                 step, target = assignment(t)["step"], assignment(t)["target"]
                 if step not in ("remove", "fit", "tighten"):
@@ -435,7 +438,7 @@ def test_conditions_and_results_start_the_right_tasks_once(monkeypatch):
         werk.emit_event(Event("car_lowered"))
         werk.emit_event(Event("car_lowered"))
         assert len(werk.find_tasks(cleanup)) == 1
-        assert len(werk.find_tasks("task.content ~ cleanup")) == len(CREW) - 1
+        assert len(werk.find_tasks("task.content ~ cleanup")) == len(CREW)
         assert not werk.find_tasks("task.label = chief AND task.content ~ review")
         report("gunner-2", "loosen", "blocked")
         assert len(werk.find_tasks("task.label = chief AND task.content ~ review")) == 1

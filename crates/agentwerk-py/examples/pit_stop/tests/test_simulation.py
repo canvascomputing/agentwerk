@@ -170,7 +170,7 @@ def test_jack_is_owned_engaged_lowered_and_stored_explicitly(pit, assert_rebuilt
     assert_rebuilt(pit)
 
 
-def test_clearance_observation_includes_jacks_and_chief(pit):
+def test_clearance_needs_withdrawn_jacks_and_an_empty_path_but_not_the_chief(pit):
     state = pit.snapshot()
     state["wheels"] = dict.fromkeys(state["wheels"], "secured")
     state["wings"] = state["wing_angles"].copy()
@@ -178,12 +178,14 @@ def test_clearance_observation_includes_jacks_and_chief(pit):
     state["items"]["jack-front"]["owner"] = "mount:front"
     pit.emit("pit_initialized", initial=state)
     assert not pit.clear()
-    state["items"]["jack-front"]["owner"] = "slot:jack-front"
+    state["items"]["jack-front"]["owner"] = "crew:jack-2"
+    state["crew"]["jack-2"]["equipment"] = "jack-front"
     state["crew"]["chief"]["clear"] = False
     pit.emit("pit_initialized", initial=state)
-    assert not pit.clear()
-    execute(pit, "move", "chief", "chief-clear", "walk")
     assert pit.clear()
+    state["crew"]["gunner-1"]["clear"] = False
+    pit.emit("pit_initialized", initial=state)
+    assert not pit.clear()
 
 
 def test_holding_positions_leave_first_wave_approaches_open(pit):

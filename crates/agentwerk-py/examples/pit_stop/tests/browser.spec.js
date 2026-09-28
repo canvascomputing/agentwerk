@@ -18,8 +18,10 @@ test("recorded agents prepare, service the car, report, and depart after GO", as
       return pit.inspect();
     };
     const initial = at(0);
-    const arrival = frames.find((f) => f.name === "car_arriving");
-    const entering = at(arrival.t + arrival.data.duration / 2);
+    const arrival = frames.find((f) => f.name === "car_approaching");
+    const entering = at(
+      arrival.t + arrival.data.warning + arrival.data.duration / 2,
+    );
     const removed = frames.find(
       (f) => f.name === "crew_work" && f.data.work === "remove",
     );
