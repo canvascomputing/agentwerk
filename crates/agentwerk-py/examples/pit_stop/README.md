@@ -17,7 +17,7 @@ uv run main.py
 
 Open `http://127.0.0.1:8423`. Playback needs no credentials or network after setup.
 Press **Space** to pause/resume or **R** to replay. Reduced motion starts paused.
-The crew starts and returns on the upper banner and between the lower equipment
+The crew starts and returns behind the upper banner and between the lower equipment
 stations, with the whole group kept in view.
 
 The bundled recording comes from real agents. Its simulation timeline plays in a
