@@ -1,4 +1,4 @@
-.PHONY: build test test_integration bench_aql fmt clean update use_case litellm bump doc hooks skills python python_test python_test_integration check_names
+.PHONY: build test test_integration bench_aql fmt clean update audit use_case litellm bump doc hooks skills python python_test python_test_integration check_names
 
 CLAUDE_SKILLS_DIR := $(HOME)/.claude/skills
 OPENCODE_SKILLS_DIR := $(HOME)/.config/opencode/skills
@@ -66,9 +66,13 @@ fmt:
 clean:
 	cargo clean
 
-# Update dependencies.
+# Update Rust dependencies within their declared version ranges.
 update:
 	cargo update
+
+# Check the workspace lockfile against the RustSec advisory database.
+audit:
+	cargo audit
 
 # Run a use-case binary.
 # Usage: make use_case name=deep-research args="Should we use Rust or Go?"

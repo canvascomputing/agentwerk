@@ -12,8 +12,14 @@ make fmt             # format Rust code
 make doc             # build strict rustdoc for agentwerk
 make check_names     # reject removed names and missing inventory files
 make clean           # remove build artifacts
-make update          # update dependencies
+make update          # update Rust dependencies within declared version ranges
+make audit           # audit Cargo.lock for known vulnerabilities
 ```
+
+- Install Cargo audit with `cargo install cargo-audit --locked` before running
+  `make audit`. The audit requires network access to the RustSec advisory database.
+- CI runs `make audit` on pull requests and pushes to `main`; audit failures fail
+  the audit job.
 
 - Run `make` after Rust changes.
 - Run `make doc` after public API or rustdoc changes.
@@ -63,6 +69,7 @@ make python_test
 make python_test_integration
 ```
 
+- Python bindings require Python 3.10 or newer and maturin 1.15 or newer.
 - `make python` runs `maturin develop` in `crates/agentwerk-py/`.
 - `make python_test` runs tests not marked `live`.
 - `make python_test_integration` runs only tests marked `live` against the configured provider.

@@ -6,6 +6,15 @@ on:
     branches: [main]
 
 jobs:
+  audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo install cargo-audit --locked
+      - run: make audit
+
   rust:
     runs-on: ubuntu-latest
     steps:
@@ -24,16 +33,19 @@ jobs:
 
   python:
     runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ['3.10', '3.12']
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - uses: actions/setup-python@v5
         with:
-          python-version: '3.12'
+          python-version: ${{ matrix.python-version }}
       - uses: Swatinem/rust-cache@v2
       - run: sudo apt-get update && sudo apt-get install -y ripgrep
       - run: python -m venv .venv
-      - run: .venv/bin/python -m pip install maturin pytest pytest-asyncio
+      - run: .venv/bin/python -m pip install 'maturin>=1.15.0,<2.0' 'pytest>=9.1.1' 'pytest-asyncio>=1.4.0'
       - run: .venv/bin/maturin develop --manifest-path crates/agentwerk-py/Cargo.toml
       - run: .venv/bin/python -m pytest crates/agentwerk-py/tests -q -m 'not live'
       - run: make check_names

@@ -154,17 +154,14 @@ fn fallback_http_error(status: u16, body: String, retry_delay: Option<Duration>)
 /// own reference agent (`claude-code`).
 ///
 /// Trusts custom certificate authorities the way OpenSSL and curl do: when
-/// `SSL_CERT_FILE` or `SSL_CERT_DIR` is set, the built-in root store is
+/// `SSL_CERT_FILE` or `SSL_CERT_DIR` is set, the platform root store is
 /// replaced entirely by the certificates loaded from them.
 fn build_client(timeout: Duration) -> reqwest::Client {
     let mut builder = reqwest::Client::builder().timeout(timeout);
     let file = environment::env_opt("SSL_CERT_FILE");
     let dir = environment::env_opt("SSL_CERT_DIR");
     if file.is_some() || dir.is_some() {
-        builder = builder.tls_built_in_root_certs(false);
-        for cert in root_certificates_from(file.as_deref(), dir.as_deref()) {
-            builder = builder.add_root_certificate(cert);
-        }
+        builder = builder.tls_certs_only(root_certificates_from(file.as_deref(), dir.as_deref()));
     }
     builder
         .build()
@@ -173,7 +170,7 @@ fn build_client(timeout: Duration) -> reqwest::Client {
 
 /// Load CA certificates from a PEM bundle file, a directory of PEM files, or
 /// both. Panics if either path is unreadable, contains invalid PEM data, or if
-/// the combined result is empty: with the built-in roots off, an empty trust
+/// the combined result is empty: with the platform roots off, an empty trust
 /// store would quietly reject every connection.
 fn root_certificates_from(file: Option<&str>, dir: Option<&str>) -> Vec<reqwest::Certificate> {
     let mut certs = Vec::new();

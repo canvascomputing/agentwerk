@@ -39,6 +39,8 @@
 
 ## Installation
 
+Requires Python 3.10 or newer.
+
 ```bash
 pip install agentwerk
 ```
