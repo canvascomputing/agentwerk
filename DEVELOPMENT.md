@@ -13,13 +13,19 @@ make                # build (warnings are errors)
 make test           # library, doctest, and use-case tests
 make fmt            # format code
 make clean          # remove build artifacts
-make update         # update dependencies
+make update         # update Rust dependencies within declared version ranges
+make audit          # audit Cargo.lock for known vulnerabilities
 make hooks          # install Claude Code hooks
 ```
 
+Install the audit tool with `cargo install cargo-audit --locked`. Run `make audit`
+from the repository root; it checks the committed workspace lockfile against the
+RustSec advisory database and requires network access. CI runs the same audit on
+pull requests and pushes to `main`, and fails when the audit fails.
+
 ## Python Bindings
 
-Create a virtual environment at the repository root and activate it. Maturin installs into the active environment, and the test targets use the `python3` on your `PATH`.
+Use Python 3.10 or newer. Create a virtual environment at the repository root and activate it. Maturin installs into the active environment, and the test targets use the `python3` on your `PATH`.
 
 ```bash
 python3 -m venv .venv
@@ -100,8 +106,8 @@ Use cases and integration tests read these environment variables from the shell.
 | `MODEL` | Set the model returned by `Model::from_env()`. |
 | `MODEL_CONTEXT_WINDOW` | Set its context window in tokens, overriding the model registry. |
 | `BRAVE_API_KEY` | Authenticate the `deep-research` example. |
-| `SSL_CERT_FILE` | Trust a PEM CA bundle instead of the built-in root store. |
-| `SSL_CERT_DIR` | Trust PEM CA certificate files from a directory instead of the built-in root store. |
+| `SSL_CERT_FILE` | Trust a PEM CA bundle instead of the platform root store. |
+| `SSL_CERT_DIR` | Trust PEM CA certificate files from a directory instead of the platform root store. |
 
 **Anthropic**
 
