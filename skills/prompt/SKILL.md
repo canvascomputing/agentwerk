@@ -134,22 +134,38 @@ Template values:
 
 ## 6. Write Clearly and Emphasize Key Rules
 
+Sentence structure:
+
 - Write short, natural sentences with one action or constraint per sentence
 - Split long sentences into shorter ones
 - NEVER wrap prose at a fixed line width
-- Use bullets for instruction lists in this skill and the prompts you write or revise
-- Keep one rule per bullet, with its explanation or example directly below it
 - Use line breaks between complete sentences when a paragraph becomes hard to scan
-- Keep related instructions together
-- Do not invent word caps
-- Preserve limits required by the output format or calling code
 - Do not join separate rules with semicolons
+
+Bullet and list limits:
+
+- Apply these limits to this skill and every prompt you write or revise
+- Use bullets for instruction lists
+- Limit each instruction bullet to one sentence of at most 30 words
+- Keep one rule per bullet, with its supporting explanation or example directly below it
+- Limit each bulleted or numbered instruction list to seven sibling items at every nesting level
+- Split longer lists into meaningful, named subcategories using headings or standalone labels
+- Count words by whitespace, treating an uninterrupted identifier or path as one word
+
+Preservation and grouping:
+
+- Preserve verbatim quotations, code, and schemas when applying these limits
+- Apply the limits to instructions surrounding verbatim material
+- Keep related instructions together rather than dividing lists into arbitrary groups such as "Part 1"
+- Preserve limits required by the output format or calling code
 
 For example:
 
 > - You MUST read your assigned target from the task.
 > - Choose the required equipment from the inventory.
 > - NEVER infer your corner or side from your crew role.
+
+Wording:
 
 - Cut repetition, filler, and unexplained jargon
 - Keep exact names, values, units, and paths
@@ -161,6 +177,10 @@ Trigger words:
 - Emphasize key requirements, prohibitions, and consequences with capitalized trigger words
 - Apply this to roles, tasks, tool descriptions, and recovery messages when writing or revising them
 - MUST preserve existing trigger words when revising
+- Keep routine instructions in normal case so the key rules stand out
+- NEVER weaken or strengthen existing restrictions when shortening them
+
+Trigger meanings:
 
 - `MUST` marks a required action or result format
   Example: You MUST reach the requested finish position before reporting completion
@@ -169,21 +189,30 @@ Trigger words:
 - `IMPORTANT` highlights an easy-to-miss consequence or limitation
   Example: IMPORTANT: Travel estimates exclude equipment collection, handling, and traffic
 
-- Keep routine instructions in normal case so the key rules stand out
-- NEVER weaken or strengthen existing restrictions when shortening them
-
 ## 7. Verify and Report
+
+Agent walkthrough:
 
 - Walk through a sample task from the receiving agent's perspective
 - Use only its supplied role, inputs, tools, and result schema
 - Check that it can identify its job, act, and report completion or a block
 - Fix missing orientation and impossible instructions
+- Check that a reader with no project memory can name every referent in the prompt
+
+Meaning and consistency:
+
 - NEVER invent facts in examples or show results that break the schema
 - Check that key rules have appropriate trigger words and retain their original meaning
 - MUST keep embedded prompt copies in READMEs or other documentation synchronized
 - Update examples, schemas, or tests when their requirements change
-- Check that a reader with no project memory can name every referent in the prompt
-- Check the prompt against this skill's own rules: bullets for instruction lists, one rule per bullet, examples directly below rules
+
+Bullet and list review:
+
+- Check this skill and the prompt against the same bullet and list limits
+- Check that instruction lists use bullets, with one rule per bullet and supporting explanations or examples directly below
+- Check that every instruction bullet contains one sentence of at most 30 words
+- Check that every bulleted or numbered instruction list has at most seven sibling items, including nested lists
+- Check that longer lists use meaningful subcategories rather than arbitrary divisions
 
 Report the result:
 
