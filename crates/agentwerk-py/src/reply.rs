@@ -55,7 +55,7 @@ impl PyReply {
 
 /// One block inside a reply: text, a tool call, a tool result, or the model's
 /// reasoning.
-#[pyclass(name = "ReplyContent", skip_from_py_object)]
+#[pyclass(name = "ReplyContent")]
 #[derive(Clone)]
 pub struct PyReplyContent {
     pub(crate) inner: ReplyContent,
