@@ -88,7 +88,7 @@ Tool descriptions use the contract guidance below rather than the role prompt's 
 - IMPORTANT: Keep changing assignments in the task
 - The role must remain valid across assignments
 
-In the pit stop, a gunner's role can say:
+For example, a gunner's role can say:
 
 > You are a wheel-gun operator on a simulated F1 pit crew.
 > You work in the pit box.
@@ -100,8 +100,7 @@ A task for one corner could include:
 {"step":"loosen","target":"front-left","objective":"Loosen wheel fasteners at front-left. Finish at stage:gunner:front-left."}
 ```
 
-The pit stop stores the role in `gunner.md`.
-Its full task also includes the current observation and destination map.
+The role can be stored in `gunner.md`. The full task can also include the current observation and destination map.
 
 ## 5. Check Tools, Inputs, and Results
 
