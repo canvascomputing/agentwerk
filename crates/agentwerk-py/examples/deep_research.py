@@ -8,7 +8,7 @@ import os
 import sys
 from pathlib import Path
 
-from agentwerk import Agent, Condition, Event, FetchTool, Knowledge, Policy, Task, Werk
+from agentwerk import Agent, Condition, Event, FetchTool, Knowledge, KnowledgeTool, Policy, Task, Werk
 
 from web_search import brave_search_tool
 
@@ -35,21 +35,21 @@ async def main(question: str) -> None:
     researcher = Agent.from_env()
     researcher.label(RESEARCH)
     researcher.role(RESEARCHER_ROLE)
-    researcher.knowledge(knowledge)
+    researcher.tool(KnowledgeTool())
     researcher.tool(brave_search_tool(os.environ["BRAVE_API_KEY"]))
     researcher.tool(FetchTool())
 
     writer = Agent.from_env()
     writer.label(REPORT)
     writer.role(WRITER_ROLE)
-    writer.knowledge(knowledge)
+    writer.tool(KnowledgeTool())
 
     research_task = Task(RESEARCH_TASK, label=RESEARCH)
     report_task = Task(REPORT_TASK, label=REPORT)
     write_report = Condition("task.label = research AND task.status = finished")
     write_report.task(report_task)
 
-    werk = Werk()
+    werk = Werk().set_knowledge(knowledge)
     werk.set_policy(Policy(max_time=300))
     werk.set_template("question", question)
     werk.set_template("focus", FOCUS)

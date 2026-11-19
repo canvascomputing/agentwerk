@@ -13,6 +13,7 @@ use tokio::task::JoinHandle;
 
 use super::super::agent::Agent;
 use super::super::condition::Condition;
+use super::super::knowledge::Knowledge;
 use super::super::policy::Policy;
 use super::super::query::{Matcher, Origin, Query};
 use super::super::r#loop::run_main_loop;
@@ -316,6 +317,7 @@ pub struct Werk {
     /// in a host that awaits in a loop.
     pub(super) event_stream: broadcast::Sender<Event>,
     pub(super) dir: PathBuf,
+    knowledge: Mutex<Option<Arc<Knowledge>>>,
     pub(super) events_lock: Mutex<()>,
     /// The main loop, held so `start()` can join a previous one before starting
     /// the next.
@@ -413,6 +415,7 @@ impl Werk {
             awaited_events: AwaitedEvents::default(),
             event_stream: broadcast::Sender::new(EVENT_STREAM_CAPACITY),
             dir: PathBuf::from(".agentwerk"),
+            knowledge: Mutex::new(None),
             events_lock: Mutex::new(()),
             join_handle: Mutex::new(None),
             next_task_id: Mutex::new(None),
@@ -501,10 +504,26 @@ impl Werk {
             awaited_events: AwaitedEvents::default(),
             event_stream: broadcast::Sender::new(EVENT_STREAM_CAPACITY),
             dir: werk_dir,
+            knowledge: Mutex::new(None),
             events_lock: Mutex::new(()),
             join_handle: Mutex::new(None),
             next_task_id: Mutex::new(Some(next_id)),
         }))
+    }
+
+    /// Get the shared knowledge store, opened at `<werk_dir>/knowledge` by default.
+    pub fn get_knowledge(&self) -> Arc<Knowledge> {
+        let mut knowledge = self.knowledge.lock().unwrap();
+        Arc::clone(knowledge.get_or_insert_with(|| {
+            super::super::knowledge::Knowledge(self.dir.join("knowledge"))
+                .expect("open knowledge store")
+        }))
+    }
+
+    /// Replace the store used by subsequent prompts and default knowledge tool calls.
+    pub fn set_knowledge(&self, store: Arc<Knowledge>) -> &Self {
+        *self.knowledge.lock().unwrap() = Some(store);
+        self
     }
 
     /// Get the input tokens across the run's finished requests.

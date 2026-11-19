@@ -2,17 +2,22 @@
 
 Use `Knowledge` to store pages on disk and share them between agents and tasks.
 
+Agents receive the index from their Werk’s shared store, opened lazily at `<werk_dir>/knowledge` by default. A standalone agent uses `.agentwerk/knowledge`. The agent’s file-access directory does not change this location. A tool targeting an explicit store does not change the prompt index.
+
 <img src="https://raw.githubusercontent.com/canvascomputing/agentwerk/main/assets/knowledge.gif" width="600" alt="Agents sharing knowledge" />
 
 ```rust
 use agentwerk::Knowledge;
 
 let store = Knowledge("./notes")?;
-let alice = Agent().knowledge(&store);
-let bob = Agent().knowledge(&store);
+let werk = agentwerk::Werk("./session")?;
+werk.set_knowledge(std::sync::Arc::clone(&store));
+let alice = Agent::from_env().tool(agentwerk::tools::KnowledgeTool::default());
+let bob = Agent::from_env().tool(agentwerk::tools::KnowledgeTool::default());
+werk.add_agent(alice).add_agent(bob);
 ```
 
-Calling `.knowledge(&store)` registers a `KnowledgeTool` for shared pages. OKF pages live at `./notes/pages/<slug>.md` and appear in `./notes/index.md`. Shared prompts include the first 12,000 index characters by default; agents can read the rest from `index.md`. Pages are always saved in full. Create entries in code:
+Configure the store once on Werk and register `KnowledgeTool::default()` on agents that need page access. OKF pages live at `./notes/pages/<slug>.md` and appear in `./notes/index.md`. Shared prompts include the first 12,000 index characters by default; agents can read the rest from `index.md`. Pages are always saved in full. Create entries in code:
 
 ```rust
 use agentwerk::agents::knowledge::Page;

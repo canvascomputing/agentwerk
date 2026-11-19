@@ -194,14 +194,14 @@ fn list_directory_tool() -> PyTool {
     handle(ListDirectoryTool)
 }
 
-/// Point the knowledge tool at `store` without making it the agent's own.
-///
-/// `Agent.knowledge(store)` is the usual entry point, and also shows the store's index
-/// in the prompt.
+/// Use this Werk's knowledge store, or an explicitly supplied store.
 #[pyfunction]
-#[pyo3(name = "KnowledgeTool")]
-fn knowledge_tool(store: PyRef<'_, PyKnowledge>) -> PyTool {
-    handle(KnowledgeTool::new(Arc::clone(&store.inner)))
+#[pyo3(name = "KnowledgeTool", signature = (store=None))]
+fn knowledge_tool(store: Option<PyRef<'_, PyKnowledge>>) -> PyTool {
+    handle(match store {
+        Some(store) => KnowledgeTool::new(Arc::clone(&store.inner)),
+        None => KnowledgeTool::default(),
+    })
 }
 
 /// Publish an event for the current task and agent. Registered explicitly.

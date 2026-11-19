@@ -328,12 +328,13 @@ pub async fn run_one(
     });
 
     werk.on_event(move |_, e| handler(e));
+    werk.set_knowledge(Arc::clone(&knowledge));
     werk.add_agent(
         crate::Agent()
             .provider(provider.clone())
             .model("mock")
             .role("test")
-            .knowledge(&knowledge)
+            .tool(crate::tools::KnowledgeTool::default())
             .tool(TaskTool),
     );
 

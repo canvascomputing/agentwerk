@@ -92,9 +92,11 @@ fn io_failed(message: impl Into<String>) -> impl FnOnce(io::Error) -> KnowledgeE
 ///
 /// # fn run() -> Result<(), Box<dyn std::error::Error>> {
 /// let store = Knowledge("./.agentwerk/knowledge")?;
-/// let alice = Agent().knowledge(&store);
-/// let bob = Agent().knowledge(&store);
-/// # let _ = (alice, bob);
+/// let werk = agentwerk::Werk("./session")?;
+/// werk.set_knowledge(std::sync::Arc::clone(&store));
+/// let alice = Agent::from_env().tool(agentwerk::tools::KnowledgeTool::default());
+/// let bob = Agent::from_env().tool(agentwerk::tools::KnowledgeTool::default());
+/// werk.add_agent(alice).add_agent(bob);
 /// # Ok(())
 /// # }
 /// ```
@@ -107,8 +109,10 @@ fn io_failed(message: impl Into<String>) -> impl FnOnce(io::Error) -> KnowledgeE
 ///
 /// # fn run() -> Result<(), Box<dyn std::error::Error>> {
 /// let seeded = Knowledge("./known-signatures")?;
-/// let scanner = Agent().knowledge(&seeded);
-/// # let _ = scanner;
+/// let werk = agentwerk::Werk("./session")?;
+/// werk.set_knowledge(std::sync::Arc::clone(&seeded));
+/// let scanner = Agent::from_env().tool(agentwerk::tools::KnowledgeTool::default());
+/// werk.add_agent(scanner);
 /// # Ok(())
 /// # }
 /// ```

@@ -421,29 +421,32 @@ Custom milestones leave the task open; `task_finished` is special and completes 
 ### Share Durable Reference Pages with Knowledge
 
 Use shared [Knowledge](../../docs/api/knowledge.md) for reusable findings or project notes that later tasks should discover and read.
-Both agents must receive the same store explicitly.
+Configure the shared store once on the Werk.
 
 Rust:
 
 ```rust
 use agentwerk::Knowledge;
 
-let notes = Knowledge("./shared-notes")?;
-werk.add_agent(Agent::from_env().label("research").knowledge(&notes));
-werk.add_agent(Agent::from_env().label("report").knowledge(&notes));
+let notes = Knowledge("./shared-notes")
+werk.set_knowledge(notes)?;
+werk.set_knowledge(notes);
+werk.add_agent(Agent::from_env().label("research").tool(agentwerk::tools::KnowledgeTool::default()));
+werk.add_agent(Agent::from_env().label("report").tool(agentwerk::tools::KnowledgeTool::default()));
 ```
 
 Python:
 
 ```python
-from agentwerk import Knowledge
+from agentwerk import Knowledge, KnowledgeTool
 
 notes = Knowledge("./shared-notes")
-werk.add_agent(Agent.from_env().label("research").knowledge(notes))
-werk.add_agent(Agent.from_env().label("report").knowledge(notes))
+werk.set_knowledge(notes)
+werk.add_agent(Agent.from_env().label("research").tool(KnowledgeTool()))
+werk.add_agent(Agent.from_env().label("report").tool(KnowledgeTool()))
 ```
 
-The attachment registers `KnowledgeTool` and adds the store's index to the agent prompt.
+The Werk supplies the index to agent prompts; explicitly register `KnowledgeTool` for page access.
 Full pages are read on demand; index changes appear in subsequent tasks rather than refreshing an active prompt.
 Keep bounded handoff outputs in task results and use Conditions or hooks to establish readiness even when agents share knowledge.
 

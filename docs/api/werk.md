@@ -50,6 +50,8 @@ Use these members to set policy, inspect the session directory, and register age
 | `set_policy(policy)` | Set execution limits and retry settings. |
 | `get_policy()` | Get the active policy. |
 | `get_dir()` | Get the session directory. |
+| `get_knowledge()` | Get the shared knowledge store. |
+| `set_knowledge(store)` | Replace the store used by prompts and default knowledge tools. |
 | `add_agent(agent)` | Add an agent to the Werk. |
 | `add_condition(condition)` | Add a runtime AQL condition and return its ID. |
 
@@ -190,7 +192,7 @@ Use a session directory to save tasks, replies, and recorded events, then resume
 
 <img src="https://raw.githubusercontent.com/canvascomputing/agentwerk/main/assets/sessions.gif" width="600" alt="A persisted agentwerk session" />
 
-The session directory is `./.agentwerk` by default.
+The session directory is `./.agentwerk` by default. Its `knowledge/` directory holds the default shared knowledge store. Configure another store once with `set_knowledge(store)`.
 
 ```rust
 let werk = Werk(".agentwerk")?;

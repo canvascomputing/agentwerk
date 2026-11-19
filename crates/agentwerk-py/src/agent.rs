@@ -4,14 +4,11 @@
 //! why the agent sits in an `Option` here: a setter takes it out and puts the
 //! returned one back.
 
-use std::sync::Arc;
-
 use agentwerk::providers::{Model, Provider};
-use agentwerk::{Agent, Knowledge};
+use agentwerk::Agent;
 use pyo3::prelude::*;
 
 use crate::convert::{py_to_templates, runtime_error, value_to_py};
-use crate::knowledge::PyKnowledge;
 use crate::providers::{PyModel, PyProvider};
 use crate::query::to_task_matcher;
 use crate::task::to_task;
@@ -155,16 +152,6 @@ impl PyAgent {
     /// Set the directory the agent has access to.
     fn dir(mut slf: PyRefMut<'_, Self>, dir: String) -> PyRefMut<'_, Self> {
         slf.set(|agent| agent.dir(dir));
-        slf
-    }
-
-    /// Share a knowledge store and register its knowledge tool.
-    fn knowledge<'py>(
-        mut slf: PyRefMut<'py, Self>,
-        store: PyRef<'_, PyKnowledge>,
-    ) -> PyRefMut<'py, Self> {
-        let store: Arc<Knowledge> = Arc::clone(&store.inner);
-        slf.set(|agent| agent.knowledge(&store));
         slf
     }
 

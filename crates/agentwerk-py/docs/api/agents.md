@@ -37,7 +37,6 @@ Use these members to define the agent's role, tools, routing, and shared context
 | `dir(dir)` | Set the directory the agent can access. |
 | `template(key, value)` | Set a shared template value. |
 | `templates(variables)` | Set several shared template values together. |
-| `knowledge(store)` | Share a knowledge store and register its `KnowledgeTool`. |
 | `interactive()` | Keep a task in progress while waiting for new instructions. |
 
 ## Run an agent

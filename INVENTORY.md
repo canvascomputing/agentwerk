@@ -75,7 +75,6 @@ The rules the tables never repeat.
 | both | `.tool(tool: Tool): this` | pub |
 | both | `.tools(tools: Tool[]): this` | pub |
 | both | `.dir(dir: string): this` | pub |
-| both | `.knowledge(store: Knowledge): this` | pub |
 | both | `.get_id(): string` | pub |
 | both | `.add_task(task: Task): string` | pub |
 | both | `.add_task(task)`: a string or json value stands in for the `Task` | |
@@ -685,6 +684,8 @@ The rules the tables never repeat.
 | Python | `.set_templates(variables: Record<string, string>): this` | |
 | both | `.set_policy(policy: Policy): this` | pub |
 | both | `.get_policy(): Policy` | pub |
+| both | `.get_knowledge(): Knowledge` | pub |
+| both | `.set_knowledge(store: Knowledge): this` | pub |
 | both | `.get_dir(): string` | pub |
 | both | `.add_condition(condition: Condition): string` | pub |
 | both | `.add_task(task: Task): string` | pub |
@@ -1998,10 +1999,11 @@ Not bound: it is how `CommandTool` reads one command line.
 
 | Language | Item | Visibility |
 |----------|------|------------|
-| both | `KnowledgeTool { store: Knowledge }` | pub |
+| both | `KnowledgeTool { store: Option<Knowledge> }` | pub |
 | Rust | `KnowledgeTool(store: Knowledge): KnowledgeTool` | pub |
+| Rust | `KnowledgeTool::default(): KnowledgeTool` | pub |
 | Rust | `.new(store: Knowledge): this` | pub |
-| Python | `KnowledgeTool(store)` | |
+| Python | `KnowledgeTool(store=None)` | |
 | Rust | `impl From<KnowledgeTool> for Tool` | pub |
 
 ### Internal
@@ -2263,7 +2265,6 @@ Binds `agents/agent.rs`, whose section holds the Python spelling of each method.
 | Rust | `.template(key: string, value: string): this` | python |
 | Rust | `.templates(variables: dict): this throws PyErr` | python |
 | Rust | `.dir(dir: string): this` | python |
-| Rust | `.knowledge(store: PyKnowledge): this` | python |
 | Rust | `.tool(tool: any): this throws PyErr` | python |
 | Rust | `.tools(tools: any): this throws PyErr` | python |
 | Rust | `.add_task(task: PyTask): string throws PyErr` | python |

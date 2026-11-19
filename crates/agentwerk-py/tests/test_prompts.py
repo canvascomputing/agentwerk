@@ -333,3 +333,56 @@ def test_prompt_api_and_path_inputs_are_not_public(werk, tmp_path):
     ]:
         with pytest.raises((TypeError, ValueError)):
             call()
+
+
+async def test_custom_werk_uses_its_knowledge_directory(tmp_path, monkeypatch, scripted_openai):
+    monkeypatch.chdir(tmp_path)
+    session = tmp_path / "session"
+    store = aw.Knowledge(str(session / "knowledge"))
+    store.get_pages().save(aw.Page("session-note", "Session finding", "Details"))
+    scripted_openai.respond_with_tool("finish", {"answer": "done"})
+    agent = aw.Agent().provider(scripted_openai.provider()).model("mock")
+    assert not (tmp_path / ".agentwerk").exists()
+    werk = aw.Werk(str(session))
+    werk.add_agent(agent)
+    werk.add_task("go")
+
+    await asyncio.wait_for(werk.finish(), timeout=5)
+
+    assert "Session finding" in scripted_openai.requests[0]["messages"][0]["content"]
+    assert not (tmp_path / ".agentwerk").exists()
+
+
+@pytest.mark.parametrize("explicit", [False, True])
+async def test_knowledge_tool_and_prompt_follow_werk_store_replacement(
+    tmp_path, scripted_openai, explicit
+):
+    first = aw.Knowledge(str(tmp_path / "first"))
+    second = aw.Knowledge(str(tmp_path / "second"))
+    first.get_pages().save(aw.Page("first", "First store index", "first body"))
+    second.get_pages().save(aw.Page("second", "Second store index", "second body"))
+    werk = aw.Werk(str(tmp_path / "session")).set_knowledge(first)
+    tool = aw.KnowledgeTool(first) if explicit else aw.KnowledgeTool()
+    agent = aw.Agent().provider(scripted_openai.provider()).model("mock").tool(tool)
+    werk.add_agent(agent)
+    scripted_openai.respond_with_tool("finish", {"answer": "first"})
+    werk.add_task("first")
+    await asyncio.wait_for(werk.finish(), timeout=5)
+    assert "First store index" in scripted_openai.requests[0]["messages"][0]["content"]
+
+    werk.set_knowledge(second)
+    scripted_openai.respond_with_tool(
+        "knowledge", {"action": "write", "slug": "new", "description": "New note", "content": "body"}
+    )
+    scripted_openai.respond_with_tool("finish", {"answer": "second"})
+    werk.add_task("second")
+    await asyncio.wait_for(werk.finish(), timeout=5)
+
+    prompt = scripted_openai.requests[1]["messages"][0]["content"]
+    assert "Second store index" in prompt
+    assert "First store index" not in prompt
+    target = first if explicit else second
+    other = second if explicit else first
+    assert target.get_pages().get_page("new").get_content() == "body\n"
+    assert "New note" not in other.get_index()
+    assert not hasattr(agent, "knowledge")
