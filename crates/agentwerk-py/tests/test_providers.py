@@ -166,7 +166,9 @@ def test_clear_empties_the_store(knowledge_dir):
     assert store.get_index() == ""
 
 
-def test_agent_binds_a_knowledge_store(knowledge_dir):
+def test_werk_binds_a_knowledge_store(knowledge_dir):
     store = aw.Knowledge(knowledge_dir)
-    agent = aw.Agent()
-    assert agent.knowledge(store) is agent
+    werk = aw.Werk()
+    assert werk.set_knowledge(store) is werk
+    store.get_pages().save(aw.Page("shared", "Shared page", "body"))
+    assert "Shared page" in werk.get_knowledge().get_index()

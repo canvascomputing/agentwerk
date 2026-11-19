@@ -2,17 +2,21 @@
 
 Use `Knowledge` to store pages on disk and share them between agents and tasks.
 
+Agents receive the index from their Werk’s shared store, opened lazily at `<werk_dir>/knowledge` by default. A standalone agent uses `.agentwerk/knowledge`. The agent’s file-access directory does not change this location. A tool targeting an explicit store does not change the prompt index.
+
 <img src="https://raw.githubusercontent.com/canvascomputing/agentwerk/main/assets/knowledge.gif" width="600" alt="Agents sharing knowledge" />
 
 ```python
-from agentwerk import Agent, Knowledge
+from agentwerk import Agent, Knowledge, KnowledgeTool, Werk
 
 store = Knowledge("./notes")
-alice = Agent().knowledge(store)
-bob = Agent().knowledge(store)
+werk = Werk("./session").set_knowledge(store)
+alice = Agent.from_env().tool(KnowledgeTool())
+bob = Agent.from_env().tool(KnowledgeTool())
+werk.add_agent(alice).add_agent(bob)
 ```
 
-Calling `.knowledge(store)` registers a `KnowledgeTool` for shared pages. OKF pages live at `./notes/pages/<slug>.md` and appear in `./notes/index.md`. Shared prompts include the first 12,000 index characters by default; agents can read the rest from `index.md`. Pages are always saved in full. Create entries in code:
+Configure the store once on Werk and register `KnowledgeTool()` on agents that need page access. OKF pages live at `./notes/pages/<slug>.md` and appear in `./notes/index.md`. Shared prompts include the first 12,000 index characters by default; agents can read the rest from `index.md`. Pages are always saved in full. Create entries in code:
 
 ```python
 from agentwerk import Page

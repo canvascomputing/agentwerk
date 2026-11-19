@@ -5,7 +5,7 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex, OnceLock, Weak};
 
 use crate::providers::{Model, Provider};
-use crate::tools::{EventTool, FinishTool, KnowledgeTool, Tool};
+use crate::tools::{EventTool, FinishTool, Tool};
 
 use super::knowledge::Knowledge;
 use super::query::Matcher;
@@ -82,7 +82,6 @@ pub struct Agent {
     role: String,
     tools: Vec<Tool>,
     dir: PathBuf,
-    knowledge: Arc<Knowledge>,
 }
 
 impl Clone for Agent {
@@ -100,7 +99,6 @@ impl Clone for Agent {
             role: self.role.clone(),
             tools: self.tools.clone(),
             dir: self.dir.clone(),
-            knowledge: Arc::clone(&self.knowledge),
         }
     }
 }
@@ -119,8 +117,6 @@ impl Agent {
     /// Give it a provider and a model before it starts work. It begins with no
     /// tools; joining a Werk registers [`FinishTool`] unless it is interactive.
     pub fn new() -> Self {
-        let knowledge =
-            super::knowledge::Knowledge(".agentwerk/knowledge").expect("open knowledge store");
         Self {
             id: OnceLock::new(),
             provider: None,
@@ -131,7 +127,6 @@ impl Agent {
             werk: WerkRef::private(Werk::new()),
             tools: Vec::new(),
             dir: std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")),
-            knowledge,
         }
     }
 
@@ -254,18 +249,6 @@ impl Agent {
         self
     }
 
-    /// Share a knowledge store, the durable memory the agent carries across
-    /// tasks and shares with other agents.
-    ///
-    /// It replaces the store opened by default for what the prompt shows and
-    /// registers a [`struct@KnowledgeTool`] bound to it. Hand the same store to several
-    /// agents to share it between them.
-    pub fn knowledge(mut self, store: &Arc<Knowledge>) -> Self {
-        self.register_tool(KnowledgeTool(Arc::clone(store)));
-        self.knowledge = Arc::clone(store);
-        self
-    }
-
     /// The unique identifier this agent works under, `<label>-<n>` for a
     /// labeled agent and `agent-<n>` for one without. It names the agent in
     /// [`Event::get_agent_id`] and in [`Task::get_assignee`].
@@ -334,7 +317,10 @@ impl Agent {
     }
 
     pub(super) fn get_knowledge(&self) -> Arc<Knowledge> {
-        Arc::clone(&self.knowledge)
+        self.werk
+            .upgrade()
+            .expect("agent Werk dropped")
+            .get_knowledge()
     }
 
     pub(super) fn get_dir(&self) -> PathBuf {
@@ -905,11 +891,21 @@ mod tests {
         assert_eq!(werk.get_task(&id).unwrap().get_task(), "Inspect {target}.");
     }
 
+    fn agent_with_knowledge(store: &Arc<Knowledge>) -> Agent {
+        let agent = crate::Agent().tool(crate::tools::KnowledgeTool::default());
+        agent
+            .werk
+            .upgrade()
+            .unwrap()
+            .set_knowledge(Arc::clone(store));
+        agent
+    }
+
     #[test]
-    fn knowledge_registers_the_knowledge_tool_on_the_agent() {
+    fn knowledge_tool_is_registered_explicitly() {
         let dir = crate::test_util::TempDir::new().unwrap();
         let store = Knowledge(dir.path()).unwrap();
-        let agent = crate::Agent().knowledge(&store);
+        let agent = agent_with_knowledge(&store);
         let registry = agent.tool_list();
         let names: Vec<String> = registry
             .iter()
@@ -922,12 +918,12 @@ mod tests {
     }
 
     #[test]
-    fn knowledge_binds_the_passed_store() {
+    fn agent_reads_the_store_configured_on_its_werk() {
         let dir = crate::test_util::TempDir::new().unwrap();
         let store = Knowledge(dir.path()).unwrap();
-        let agent = crate::Agent().knowledge(&store);
+        let agent = agent_with_knowledge(&store);
         agent
-            .knowledge
+            .get_knowledge()
             .get_pages()
             .save(crate::agents::knowledge::Page {
                 slug: "from-store".into(),
@@ -944,10 +940,10 @@ mod tests {
     fn cloned_agent_observes_writes_through_original_handle() {
         let dir = crate::test_util::TempDir::new().unwrap();
         let store = Knowledge(dir.path()).unwrap();
-        let agent = crate::Agent().knowledge(&store);
+        let agent = agent_with_knowledge(&store);
         let cloned = agent.clone();
         agent
-            .knowledge
+            .get_knowledge()
             .get_pages()
             .save(crate::agents::knowledge::Page {
                 slug: "shared".into(),
@@ -957,17 +953,17 @@ mod tests {
                 tags: vec![],
             })
             .unwrap();
-        assert!(cloned.knowledge.get_index().contains("shared"));
+        assert!(cloned.get_knowledge().get_index().contains("shared"));
     }
 
     #[test]
     fn two_agents_bound_to_one_store_see_each_others_writes() {
         let dir = crate::test_util::TempDir::new().unwrap();
         let store = Knowledge(dir.path()).unwrap();
-        let alice = crate::Agent().knowledge(&store);
-        let bob = crate::Agent().knowledge(&store);
+        let alice = agent_with_knowledge(&store);
+        let bob = agent_with_knowledge(&store);
         alice
-            .knowledge
+            .get_knowledge()
             .get_pages()
             .save(crate::agents::knowledge::Page {
                 slug: "from-alice".into(),
@@ -977,7 +973,7 @@ mod tests {
                 tags: vec![],
             })
             .unwrap();
-        assert!(bob.knowledge.get_index().contains("from-alice"));
+        assert!(bob.get_knowledge().get_index().contains("from-alice"));
     }
 
     #[test]
@@ -1071,14 +1067,55 @@ mod tests {
         assert_eq!(werk.clone_agents().len(), 1);
     }
 
+    #[test]
+    fn default_knowledge_follows_the_bound_werk_and_is_shared() {
+        let dir = crate::test_util::TempDir::new().unwrap();
+        let session = dir.path().join("session");
+        let seeded = Knowledge(session.join("knowledge")).unwrap();
+        seeded
+            .get_pages()
+            .save(crate::agents::knowledge::Page {
+                slug: "session-note".into(),
+                kind: String::new(),
+                description: "Session note".into(),
+                content: "# Session note".into(),
+                tags: vec![],
+            })
+            .unwrap();
+        let werk = crate::agents::Werk(&session).unwrap();
+        let mut alice = callable(crate::Agent());
+        let alice_clone = alice.clone();
+        let mut bob = callable(crate::Agent());
+        werk.bind_agent(&mut alice);
+        werk.bind_agent(&mut bob);
+
+        let store = alice.get_knowledge();
+        assert!(store.get_index().contains("session-note"));
+        assert!(Arc::ptr_eq(&store, &bob.get_knowledge()));
+        assert!(Arc::ptr_eq(&store, &alice_clone.get_knowledge()));
+        assert!(!alice
+            .tool_list()
+            .iter()
+            .any(|tool| tool.get_name() == "knowledge"));
+    }
+
+    #[test]
+    fn standalone_agent_uses_the_private_werk_directory() {
+        let agent = crate::Agent();
+        let werk = agent.werk.upgrade().unwrap();
+        assert_eq!(werk.get_dir(), std::path::PathBuf::from(".agentwerk"));
+        assert!(Arc::ptr_eq(&agent.get_knowledge(), &werk.get_knowledge()));
+    }
+
     #[tokio::test]
-    async fn binding_agent_with_explicit_knowledge_keeps_explicit_store() {
+    async fn binding_agent_uses_the_new_werks_knowledge() {
         let dir = crate::test_util::TempDir::new().unwrap();
         let store = Knowledge(dir.path()).unwrap();
-        let werk = crate::agents::Werk::new();
-        let mut agent = callable(crate::Agent().knowledge(&store));
+        let werk = crate::agents::Werk(dir.path().join("session")).unwrap();
+        let mut agent = callable(agent_with_knowledge(&store));
         werk.bind_agent(&mut agent);
-        assert!(Arc::ptr_eq(&store, &agent.knowledge));
+        assert!(Arc::ptr_eq(&werk.get_knowledge(), &agent.get_knowledge()));
+        assert!(!Arc::ptr_eq(&store, &agent.get_knowledge()));
     }
 
     #[tokio::test]

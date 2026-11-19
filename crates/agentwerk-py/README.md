@@ -279,6 +279,8 @@ NOTE: Keep the report focused on the assigned question.
 </details>
 
 ```python
+from agentwerk import KnowledgeTool
+
 knowledge = Knowledge("./research")
 brave_key = os.environ["BRAVE_API_KEY"]
 web_search = brave_search_tool(brave_key)
@@ -286,13 +288,13 @@ web_search = brave_search_tool(brave_key)
 researcher = Agent.from_env()
 researcher.label("research")
 researcher.role(Path("researcher.md").read_text())
-researcher.knowledge(knowledge)
+researcher.tool(KnowledgeTool())
 researcher.tool(web_search).tool(FetchTool())
 
 writer = Agent.from_env()
 writer.label("report")
 writer.role(Path("writer.md").read_text())
-writer.knowledge(knowledge)
+writer.tool(KnowledgeTool())
 ```
 
 Labels route tasks to agents. Queue the report when research finishes.
@@ -316,7 +318,7 @@ write_report = Condition(
 Set the `Werk` time limit, question, and focus.
 
 ```python
-werk = Werk()
+werk = Werk().set_knowledge(knowledge)
 
 werk.set_policy(Policy(max_time=300))
 

@@ -164,7 +164,9 @@ async fn seeker_pool_finds_planted_indicators(
                 .template("instruction", "")
                 .label(SEEKER_LABEL)
                 .dir(root.to_path_buf())
-                .knowledge(&knowledge)
+                .tool(agentwerk::tools::KnowledgeTool(std::sync::Arc::clone(
+                    &knowledge,
+                )))
                 .tool(GrepTool),
         );
     }

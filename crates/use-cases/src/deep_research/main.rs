@@ -29,14 +29,19 @@ async fn main() {
     let researcher = Agent::from_env()
         .label(RESEARCH)
         .role(RESEARCHER_ROLE)
-        .knowledge(&knowledge)
+        .tool(agentwerk::tools::KnowledgeTool(std::sync::Arc::clone(
+            &knowledge,
+        )))
         .tool(brave_search_tool(brave_key))
         .tool(FetchTool);
 
-    let writer = Agent::from_env()
-        .label(REPORT)
-        .role(WRITER_ROLE)
-        .knowledge(&knowledge);
+    let writer =
+        Agent::from_env()
+            .label(REPORT)
+            .role(WRITER_ROLE)
+            .tool(agentwerk::tools::KnowledgeTool(std::sync::Arc::clone(
+                &knowledge,
+            )));
 
     let research_task = Task(RESEARCH_TASK).label(RESEARCH);
     let report_task = Task(REPORT_TASK).label(REPORT);
@@ -44,6 +49,7 @@ async fn main() {
     let write_report = Condition(finished_research).task(report_task);
 
     let werk = Werk(".agentwerk").unwrap_or_else(|error| exit(&error.to_string()));
+    werk.set_knowledge(std::sync::Arc::clone(&knowledge));
     werk.set_policy(Policy {
         max_time: Some(Duration::from_secs(300)),
         ..Default::default()

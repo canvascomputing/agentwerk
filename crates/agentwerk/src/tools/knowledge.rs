@@ -12,8 +12,7 @@ use crate::prompts::templates::{
 use super::tool::{Tool, ToolContext};
 
 /// The model's four-action handle on a `Knowledge` store:
-/// `write`, `read`, `remove`, `list`. `Agent::knowledge` registers it with
-/// the passed store.
+/// `write`, `read`, `remove`, `list`. The default uses the calling Werk’s store.
 ///
 /// # Examples
 ///
@@ -21,10 +20,11 @@ use super::tool::{Tool, ToolContext};
 /// use agentwerk::{Agent, Knowledge};
 ///
 /// let store = Knowledge(".agentwerk/knowledge").expect("knowledge dir");
-/// Agent().knowledge(&store);
+/// Agent().tool(agentwerk::tools::KnowledgeTool(store));
 /// ```
+#[derive(Default)]
 pub struct KnowledgeTool {
-    store: Arc<Knowledge>,
+    store: Option<Arc<Knowledge>>,
 }
 
 /// Bind the tool to `store` without making it the agent's own knowledge.
@@ -34,13 +34,9 @@ pub fn KnowledgeTool(store: Arc<Knowledge>) -> KnowledgeTool {
 }
 
 impl KnowledgeTool {
-    /// Bind the tool to `store` without making it the agent's own knowledge.
-    /// `Agent::knowledge` is the usual entry point: it does this and also
-    /// renders the store's index into the system prompt. Reach for the
-    /// constructor when an agent should write to a store it is not told about.
-    /// `KnowledgeTool(store)` is the preferred spelling.
+    /// Bind the tool to `store`. Prompts continue to use the Werk's knowledge index.
     pub fn new(store: Arc<Knowledge>) -> Self {
-        Self { store }
+        Self { store: Some(store) }
     }
 }
 
@@ -89,7 +85,7 @@ impl From<KnowledgeTool> for Tool {
             .description(include_str!("knowledge.tool.md"))
             .schema(include_str!("knowledge.schema.json"))
             .handler_with_context(move |args: KnowledgeArgs, ctx: ToolContext| {
-                let store = Arc::clone(&store);
+                let store = store.clone().unwrap_or_else(|| ctx.werk.get_knowledge());
                 async move { run(&store, args, &ctx) }
             })
     }
@@ -208,8 +204,8 @@ mod tests {
         let function = KnowledgeTool(Arc::clone(&store));
         let associated = KnowledgeTool::new(Arc::clone(&store));
 
-        assert!(Arc::ptr_eq(&function.store, &store));
-        assert!(Arc::ptr_eq(&associated.store, &store));
+        assert!(Arc::ptr_eq(function.store.as_ref().unwrap(), &store));
+        assert!(Arc::ptr_eq(associated.store.as_ref().unwrap(), &store));
     }
 
     fn fresh_store() -> (Arc<Knowledge>, crate::test_util::TempDir) {
@@ -240,6 +236,26 @@ mod tests {
             content.contains(fragment),
             "expected `{fragment}` in `{content}`"
         );
+    }
+
+    #[tokio::test]
+    async fn default_tool_follows_werk_store_replacements_but_explicit_tool_stays_bound() {
+        let (first, _first_dir) = fresh_store();
+        let (second, _second_dir) = fresh_store();
+        save_page(&first, "first", "First store", "first body", &[]);
+        save_page(&second, "second", "Second store", "second body", &[]);
+        let werk = crate::Werk::new();
+        werk.set_knowledge(Arc::clone(&first));
+        let ctx = ToolContext::new(std::env::current_dir().unwrap(), Arc::clone(&werk));
+        let default: Tool = KnowledgeTool::default().into();
+        let explicit: Tool = KnowledgeTool(Arc::clone(&first)).into();
+        let args = serde_json::json!({"action": "list"});
+
+        assert_success(&default.call(args.clone(), &ctx).await, "First store");
+        werk.set_knowledge(Arc::clone(&second));
+        assert_success(&default.call(args.clone(), &ctx).await, "Second store");
+        assert_success(&explicit.call(args, &ctx).await, "First store");
+        assert!(Arc::ptr_eq(&second, &werk.get_knowledge()));
     }
 
     #[test]

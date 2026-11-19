@@ -68,12 +68,13 @@ werk.add_task(report)
 Give agents the same knowledge store so either can write pages that the other reads:
 
 ```python
-from agentwerk import Knowledge
+from agentwerk import Knowledge, KnowledgeTool
 
 store = Knowledge("./notes")
+werk.set_knowledge(store)
 
-researcher = Agent.from_env().label("research").knowledge(store)
-writer = Agent.from_env().label("report").knowledge(store)
+researcher = Agent.from_env().label("research").tool(KnowledgeTool())
+writer = Agent.from_env().label("report").tool(KnowledgeTool())
 ```
 
 ## TaskTool

@@ -274,14 +274,14 @@ let web_search = brave_search_tool(brave_key);
 let researcher = Agent::from_env()
     .label("research")
     .role(include_str!("researcher.md"))
-    .knowledge(&knowledge)
+    .tool(agentwerk::tools::KnowledgeTool::default())
     .tool(web_search)
     .tool(FetchTool);
 
 let writer = Agent::from_env()
     .label("report")
     .role(include_str!("writer.md"))
-    .knowledge(&knowledge);
+    .tool(agentwerk::tools::KnowledgeTool::default());
 ```
 
 Labels route tasks to agents. Queue the report when research finishes.
@@ -301,6 +301,7 @@ Set the `Werk` time limit, question, and focus.
 
 ```rust
 let werk = Werk(".agentwerk")?;
+werk.set_knowledge(std::sync::Arc::clone(&knowledge));
 
 werk.set_policy(Policy {
     max_time: Some(Duration::from_secs(300)),

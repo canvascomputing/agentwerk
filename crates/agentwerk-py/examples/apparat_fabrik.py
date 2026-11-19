@@ -14,6 +14,7 @@ import time
 from pathlib import Path
 
 from agentwerk import (
+    KnowledgeTool,
     Agent,
     Policy,
     GrepTool,
@@ -183,13 +184,13 @@ def worker_names(pruefer, meister, monteur):
     }
 
 
-def build_shift(tasks, book, pruefer, meister, monteur):
+def build_shift(tasks, pruefer, meister, monteur):
     for _ in range(pruefer):
         werk.add_agent(
             Agent.from_env()
             .label("pruefung")
             .role(PRUEFER_ROLE.strip())
-            .knowledge(book)
+            .tool(KnowledgeTool())
             .dir(str(REPO))
             .tools([GrepTool(), ReadFileTool()])
         )
@@ -198,7 +199,7 @@ def build_shift(tasks, book, pruefer, meister, monteur):
             Agent.from_env()
             .label("abnahme")
             .role(MEISTER_ROLE.strip())
-            .knowledge(book)
+            .tool(KnowledgeTool())
             .dir(str(REPO))
             .tool(ReadFileTool())
         )
@@ -207,7 +208,7 @@ def build_shift(tasks, book, pruefer, meister, monteur):
             Agent.from_env()
             .label("montage")
             .role(MONTEUR_ROLE.strip())
-            .knowledge(book)
+            .tool(KnowledgeTool())
             .dir(str(REPO))
             .tool(ReadFileTool())
         )
@@ -224,7 +225,7 @@ async def main(pruefer, meister, monteur):
     started_at = time.monotonic()
     # Every request resends the context, so the input-token limit is what bounds
     # the bill; the shift bell is the time limit, and both end the run on screen.
-    werk = Werk().set_policy(
+    werk = Werk().set_knowledge(book).set_policy(
         Policy(max_time=SHIFT, max_input_tokens=2_000_000)
     )
 
@@ -288,7 +289,7 @@ async def main(pruefer, meister, monteur):
 
     werk.on_event(publish)
     werk.on_result(publish_result)
-    build_shift(tasks, book, pruefer, meister, monteur)
+    build_shift(tasks, pruefer, meister, monteur)
 
     works = apparate.build(WORKS_DIR, REPO)
     feed.push({"t": 0, "kind": "world", "shift": SHIFT, "stations": STATIONS, "apparate": works})

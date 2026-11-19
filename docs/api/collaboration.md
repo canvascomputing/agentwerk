@@ -66,14 +66,15 @@ Give agents the same knowledge store so either can write pages that the other re
 use agentwerk::Knowledge;
 
 let store = Knowledge("./notes")?;
+werk.set_knowledge(std::sync::Arc::clone(&store));
 
 let researcher = Agent::from_env()
     .label("research")
-    .knowledge(&store);
+    .tool(agentwerk::tools::KnowledgeTool::default());
 
 let writer = Agent::from_env()
     .label("report")
-    .knowledge(&store);
+    .tool(agentwerk::tools::KnowledgeTool::default());
 ```
 
 ## TaskTool

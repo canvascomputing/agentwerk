@@ -1522,12 +1522,13 @@ mod tests {
             request_retry_delay: Duration::from_millis(1),
             ..Default::default()
         });
+        werk.set_knowledge(Arc::clone(&store));
         werk.add_agent(
             crate::Agent()
                 .provider(provider.clone())
                 .model("mock")
                 .role("test")
-                .knowledge(&store),
+                .tool(crate::tools::KnowledgeTool::default()),
         );
         werk.add_task("first");
         werk.add_task("second");
@@ -1576,12 +1577,13 @@ mod tests {
             max_time: Some(Duration::from_millis(500)),
             ..Default::default()
         });
+        werk.set_knowledge(Arc::clone(&store));
         werk.add_agent(
             crate::Agent()
                 .provider(provider.clone())
                 .model("mock")
                 .role("test")
-                .knowledge(&store),
+                .tool(crate::tools::KnowledgeTool::default()),
         );
         werk.add_task("hi");
         let _ = werk.finish().await;
@@ -1619,13 +1621,14 @@ mod tests {
             ..Default::default()
         });
 
+        werk.set_knowledge(Arc::clone(&store));
         werk.add_agent(
             crate::Agent()
                 .label("a")
                 .provider(p_a.clone())
                 .model("mock")
                 .role("test")
-                .knowledge(&store),
+                .tool(crate::tools::KnowledgeTool::default()),
         );
         werk.add_agent(
             crate::Agent()
@@ -1633,7 +1636,7 @@ mod tests {
                 .provider(p_b.clone())
                 .model("mock")
                 .role("test")
-                .knowledge(&store),
+                .tool(crate::tools::KnowledgeTool::default()),
         );
 
         werk.add_task(Task::new("alice work").label("a"));
@@ -1822,12 +1825,13 @@ mod tests {
             max_time: Some(Duration::from_millis(500)),
             ..Default::default()
         });
+        werk.set_knowledge(Arc::clone(&store));
         werk.add_agent(
             crate::Agent()
                 .provider(provider.clone())
                 .model("mock")
                 .role("test")
-                .knowledge(&store),
+                .tool(crate::tools::KnowledgeTool::default()),
         );
         werk.add_task("first");
         werk.add_task("second");

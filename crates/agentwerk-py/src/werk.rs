@@ -13,6 +13,7 @@ use crate::agent::PyAgent;
 use crate::condition::PyCondition;
 use crate::convert::{py_to_templates, py_to_value, runtime_error, value_to_py};
 use crate::event::{to_py_event, PyEvent};
+use crate::knowledge::PyKnowledge;
 use crate::policy::PyPolicy;
 use crate::query::{to_event_matcher, to_task_matcher};
 use crate::reply::{py_to_replies, replies_to_py};
@@ -35,6 +36,22 @@ impl PyWerk {
             None => Werk::new(),
         };
         Ok(PyWerk { inner })
+    }
+
+    /// Get this Werk's shared knowledge store.
+    fn get_knowledge(&self) -> PyKnowledge {
+        PyKnowledge {
+            inner: self.inner.get_knowledge(),
+        }
+    }
+
+    /// Set the store used by subsequent prompts and default knowledge tools.
+    fn set_knowledge<'py>(
+        slf: PyRef<'py, Self>,
+        store: PyRef<'_, PyKnowledge>,
+    ) -> PyRef<'py, Self> {
+        slf.inner.set_knowledge(Arc::clone(&store.inner));
+        slf
     }
 
     /// Add an agent to this Werk, moving any tasks it queued on its
